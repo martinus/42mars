@@ -29,7 +29,7 @@ int main(int argc, char **argv) {
     }
     clock_gettime(CLOCK_MONOTONIC, &t0); // do not count reading the input
     mars_load(cfg[7], 0);
-    total += mars_run_match(cfg[8], argc > 2, 0, -1, 0);
+    total += mars_run_match(cfg[8], argc > 2, 0);
     clock_gettime(CLOCK_MONOTONIC, &t1);
     seconds += (double)(t1.tv_sec - t0.tv_sec) + 1e-9 * (double)(t1.tv_nsec - t0.tv_nsec);
   }

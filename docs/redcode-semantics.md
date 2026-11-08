@@ -806,8 +806,8 @@ export async function createWasmMars(options) -> engine        // Node and brows
 export function createWasmMarsSync(options, module?) -> engine
 engine: opt, coreSize, load(codes, { seed, positions }), startRound(),
   run(n), step(), endRound(), runMatch(codes, { rounds, seed, positions,
-  earlyTie = true, firstRound = 0, stop }) -> { warriors: [{ name, wins,
-  losses, ties, score }], results, instructions, rounds },
+  earlyTie = true, firstRound = 0 }) -> { warriors: [{ name, wins, losses,
+  ties, score }], results, instructions },
   round, roundOver, roundResult, results, time, cyclesLeft, warriorsLeft,
   current, op, am, bm, av, bv, cell(addr),
   warriors[i]: index, code, name, author, position, tasks, alive, diedAt,
@@ -838,23 +838,6 @@ LDP reads them, and opcodes are only copied, so when no warrior's code
 contains LDP every round gives the same result as in the whole match, and
 blocks of rounds can run on several engines (`tools/tournament.mjs` splits
 pairings that way when it has fewer than 4 pairings per job).
-
-`stop: { width, minRounds = 20 }` (off by default, two warriors only)
-stops the match early and so changes results against pMARS (section 4).
-Warrior 0 gets 3 points for a win, 1 for a tie and 0 for a loss. After
-round n, for n at least max(minRounds, 2), with mean m = s / n and sample
-variance v = max((q - n * m * m) / (n - 1), 0) of the points so far (s
-their sum, q the sum of their squares), the match stops when
-`2 * 1.96 * sqrt(v / n) * 100 <= width`, evaluated in that order in
-doubles: the 95% interval of its points per 100 rounds is at most `width`
-wide. `rounds` in the result is the number of rounds played, `results`
-has one entry per played round, and wins, losses, ties and instructions
-are those of exactly these rounds, so they equal `runMatch` with `rounds`
-set to that number. With `width` 0 the match stops after `minRounds` rounds
-exactly when all of them ended the same way (the variance is exactly 0
-then and positive otherwise). Without `stop`, `rounds` is the requested
-number. The js engine of `tools/tournament.mjs` applies the same rule
-after each round, in the same operations, and gives the same rounds.
 
 With `earlyTie` (the default) a
 round stops as soon as it can only end in a tie: a warrior loses at most one
@@ -925,16 +908,3 @@ leave these inputs out.
   no instructions; the engine reports the error in pass 2.
 - pMARS keeps its scratch buffer between the warriors of one run (see "The
   scratch buffer"); the engine starts each assembly with a fresh one.
-
-One deviation is opt-in and differs from pMARS on purpose, where pMARS
-does have a result:
-
-- `runMatch({ stop })` and `tools/tournament.mjs --ci-width` stop a match
-  before its last round once its result looks settled (section 3.7). The
-  played rounds are exact, but the match has fewer rounds than pMARS plays,
-  and the tournament scales the score of such a pairing to the full number
-  of rounds, an estimate. Repeated looks at the interval are not corrected
-  for. Off by default; `tools/tournament.mjs` refuses it together with
-  `--pmars`, `--compare` and `--native-input`, and `--exact-top N` plays
-  the stopped pairings among the best N warriors again with all rounds,
-  exact.

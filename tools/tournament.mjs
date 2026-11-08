@@ -9,7 +9,6 @@
 //        [--seed 1] [--size 8000 --cycles 80000 --processes 8000 --length 100
 //        --distance 100] [--engine js|wasm] [--matrix] [--json out.json]
 //        [--pmars path/to/pmars [--compare]] [--native-input file]
-//        [--ci-width W [--min-rounds 20] [--exact-top N]]
 //
 // Every pairing plays --rounds rounds. The start position of the second
 // warrior in the first round is derived from --seed and the pairing, later
@@ -30,18 +29,6 @@
 //
 // --native-input writes every pairing as a match in the input format of
 // src/engine/wasm/bench-native.c and exits, for tools/bench-native.mjs --input.
-//
-// --ci-width W stops each pairing early, which changes results against
-// pMARS (runMatch's `stop`, docs/redcode-semantics.md section 4): from round
-// --min-rounds on, once the 95% interval of the first warrior's points per
-// 100 rounds is at most W wide. Scores are then estimates for --rounds
-// rounds: 3 per win and 1 per tie of the played rounds, scaled by --rounds /
-// played. W 0 stops a pairing whose first --min-rounds rounds all ended the
-// same way. --exact-top N then plays the stopped pairings among the N best
-// warriors of that first pass again with all rounds and replaces their
-// results; the scores of these warriors still hold the estimated pairings
-// against the others. Refused together with --pmars, --compare and
-// --native-input.
 
 import { Worker, isMainThread, parentPort, workerData } from 'node:worker_threads';
 import { spawn } from 'node:child_process';
@@ -68,43 +55,27 @@ async function workerMain() {
   }
   parentPort.on('message', (task) => {
     if (task === null) return process.exit(0);
-    const { id, a, b, seed, firstRound, rounds, stop } = task;
-    let wa, wb, instructions, played;
+    const { id, a, b, seed, firstRound, rounds } = task;
+    let wa, wb, instructions;
     if (wasm) {
       // The match, or a block of its rounds, runs inside WebAssembly, with
       // early tie detection.
-      const r = wasm.runMatch([codes[a], codes[b]], { rounds, seed, firstRound, stop });
+      const r = wasm.runMatch([codes[a], codes[b]], { rounds, seed, firstRound });
       [wa, wb] = r.warriors;
       instructions = r.instructions;
-      played = r.rounds;
     } else {
       if (firstRound) throw new Error('--engine js plays whole matches only');
       const m = new Mars({ ...opts, headless: true });
       m.load([codes[a], codes[b]], { seed });
       instructions = 0;
-      let sum = 0;
-      let squares = 0;
-      for (played = 0; played < rounds;) {
+      for (let r = 0; r < rounds; r++) {
         m.startRound();
         while (!m.roundOver) m.run(1 << 22);
         instructions += m.time;
-        played++;
-        // The stop rule of runMatch in mars.c, same operations in the same
-        // order.
-        if (stop) {
-          const x = m.warriors[0].alive ? (m.warriors[1].alive ? 1 : 3) : 0;
-          sum += x;
-          squares += x * x;
-          if (played >= Math.max(stop.minRounds, 2)) {
-            const mean = sum / played;
-            const v = Math.max((squares - played * mean * mean) / (played - 1), 0);
-            if (2 * 1.96 * Math.sqrt(v / played) * 100 <= stop.width) break;
-          }
-        }
       }
       [wa, wb] = m.warriors;
     }
-    parentPort.postMessage({ id, a: [wa.wins, wa.losses, wa.ties], b: [wb.wins, wb.losses, wb.ties], instructions, rounds: played });
+    parentPort.postMessage({ id, a: [wa.wins, wa.losses, wa.ties], b: [wb.wins, wb.losses, wb.ties], instructions });
   });
 }
 
@@ -130,9 +101,6 @@ function parseArgs(argv) {
     else if (a === '--pmars') o.pmars = argv[++i];
     else if (a === '--compare') o.compare = true;
     else if (a === '--native-input') o.nativeInput = argv[++i];
-    else if (a === '--ci-width') o.ciWidth = num();
-    else if (a === '--min-rounds') o.minRounds = num();
-    else if (a === '--exact-top') o.exactTop = num();
     else o.files.push(a);
   }
   return o;
@@ -156,11 +124,10 @@ function pairPosition(seed, a, b, o) {
 }
 
 // The tasks for the workers: a pairing each, or blocks of its rounds when
-// there are few pairings (see the header). A pairing that may stop early
-// plays its rounds in order, so it is never split.
-function makeTasks(o, codes, pairs, stop) {
+// there are few pairings (see the header).
+function makeTasks(o, codes, pairs) {
   const hasLdp = codes.map((c) => c.instructions.some((x) => x.op === OP.LDP));
-  const blocks = o.engine === 'wasm' && !stop && pairs.length < 4 * o.jobs ? Math.min(o.rounds, Math.ceil((4 * o.jobs) / pairs.length)) : 1;
+  const blocks = o.engine === 'wasm' && pairs.length < 4 * o.jobs ? Math.min(o.rounds, Math.ceil((4 * o.jobs) / pairs.length)) : 1;
   const tasks = [];
   pairs.forEach((p, k) => {
     const n = hasLdp[p.a] || hasLdp[p.b] ? 1 : Math.max(1, blocks);
@@ -172,17 +139,14 @@ function makeTasks(o, codes, pairs, stop) {
   return tasks;
 }
 
-// Plays `pairs` on the engine; with `stop` ({ width, minRounds }) each
-// pairing may stop early. Results per pairing: wins, losses and ties of
-// both sides, instructions and rounds played.
-async function runEngine(o, codes, pairs, stop = null) {
+async function runEngine(o, codes, pairs) {
   const module = o.engine === 'wasm' ? await (await import('../src/engine/mars-wasm.js')).compileWasmMars() : null;
-  const tasks = makeTasks(o, codes, pairs, stop);
+  const tasks = makeTasks(o, codes, pairs);
   if (tasks.length > pairs.length) console.error(`${tasks.length} tasks: pairings without LDP split into blocks of rounds`);
   return new Promise((resolve, reject) => {
     const opts = { coreSize: o.size, maxCycles: o.cycles, maxProcesses: o.processes, maxLength: o.length, minDistance: o.distance, rounds: o.rounds };
     // Wins, losses and ties of the blocks of a pairing add up.
-    const results = pairs.map((_, id) => ({ id, a: [0, 0, 0], b: [0, 0, 0], instructions: 0, rounds: 0 }));
+    const results = pairs.map((_, id) => ({ id, a: [0, 0, 0], b: [0, 0, 0], instructions: 0 }));
     let next = 0;
     let done = 0;
     let instructions = 0;
@@ -190,7 +154,7 @@ async function runEngine(o, codes, pairs, stop = null) {
     const feed = (w) => {
       if (next < tasks.length) {
         const t = tasks[next];
-        w.postMessage({ id: next++, a: t.a, b: t.b, seed: t.seed, firstRound: t.firstRound, rounds: t.rounds, stop });
+        w.postMessage({ id: next++, a: t.a, b: t.b, seed: t.seed, firstRound: t.firstRound, rounds: t.rounds });
       } else w.postMessage(null);
     };
     for (const w of workers) {
@@ -198,7 +162,6 @@ async function runEngine(o, codes, pairs, stop = null) {
         const sum = results[tasks[r.id].pairing];
         for (let i = 0; i < 3; i++) { sum.a[i] += r.a[i]; sum.b[i] += r.b[i]; }
         sum.instructions += r.instructions;
-        sum.rounds += r.rounds;
         instructions += r.instructions;
         if (++done === tasks.length) resolve({ results, instructions });
         feed(w);
@@ -250,7 +213,7 @@ function runPmars(o, files, pairs) {
             return reject(new Error(`pMARS gave ${JSON.stringify(line)}${err ? `, stderr: ${err.trim()}` : ''}`));
           }
           const [id, wa, ta, wb, tb] = v;
-          results[id] = { id, a: [wa, wb, ta], b: [wb, wa, tb], rounds: o.rounds };
+          results[id] = { id, a: [wa, wb, ta], b: [wb, wa, tb] };
           if (++done === pairs.length) resolve({ results });
           feed();
         }
@@ -260,17 +223,9 @@ function runPmars(o, files, pairs) {
   });
 }
 
-// Score of a pairing: 3 per win and 1 per tie, for a pairing that stopped
-// early scaled to --rounds rounds.
-const pairScore = (o, wlt, played) => {
-  const s = 3 * wlt[0] + wlt[2];
-  return played === o.rounds ? s : (s * o.rounds) / played;
-};
-const showScore = (s, digits) => (Number.isInteger(s) ? String(s) : s.toFixed(digits));
-
 function table(o, names, pairs, results) {
   const n = names.length;
-  const total = names.map((name, i) => ({ name, i, w: 0, l: 0, t: 0, score: 0, rounds: 0 }));
+  const total = names.map((name, i) => ({ name, i, w: 0, l: 0, t: 0, score: 0 }));
   const matrix = Array.from({ length: n }, () => new Array(n).fill(null));
   pairs.forEach((p, k) => {
     const r = results[k];
@@ -278,52 +233,30 @@ function table(o, names, pairs, results) {
       total[side].w += wlt[0];
       total[side].l += wlt[1];
       total[side].t += wlt[2];
-      total[side].rounds += r.rounds;
-      total[side].score += pairScore(o, wlt, r.rounds);
-      matrix[side][other] = pairScore(o, wlt, r.rounds);
+      total[side].score += 3 * wlt[0] + wlt[2];
+      matrix[side][other] = 3 * wlt[0] + wlt[2];
     }
   });
   const rows = [...total].sort((x, y) => y.score - x.score);
   const opponents = Math.max(1, n - 1);
   const width = Math.min(32, Math.max(...names.map((s) => s.length), 4));
-  const stopped = o.ciWidth !== undefined;
-  const lines = [`${'#'.padStart(3)}  ${'warrior'.padEnd(width)} ${'score'.padStart(7)} ${'per 100'.padStart(8)} ${'wins'.padStart(6)} ${'ties'.padStart(6)} ${'losses'.padStart(6)}${stopped ? ' rounds'.padStart(8) : ''}`];
+  const lines = [`${'#'.padStart(3)}  ${'warrior'.padEnd(width)} ${'score'.padStart(7)} ${'per 100'.padStart(8)} ${'wins'.padStart(6)} ${'ties'.padStart(6)} ${'losses'.padStart(6)}`];
   rows.forEach((r, k) => {
-    lines.push(`${String(k + 1).padStart(3)}  ${r.name.slice(0, width).padEnd(width)} ${showScore(r.score, 1).padStart(7)} ${((100 * r.score) / (o.rounds * opponents)).toFixed(1).padStart(8)} ${String(r.w).padStart(6)} ${String(r.t).padStart(6)} ${String(r.l).padStart(6)}${stopped ? String(r.rounds).padStart(8) : ''}`);
+    lines.push(`${String(k + 1).padStart(3)}  ${r.name.slice(0, width).padEnd(width)} ${String(r.score).padStart(7)} ${((100 * r.score) / (o.rounds * opponents)).toFixed(1).padStart(8)} ${String(r.w).padStart(6)} ${String(r.t).padStart(6)} ${String(r.l).padStart(6)}`);
   });
   if (o.matrix) {
     lines.push('', 'score of row against column:');
-    rows.forEach((r) => lines.push(`${r.name.slice(0, width).padEnd(width)} ${rows.map((c) => (matrix[r.i][c.i] === null ? '-' : showScore(matrix[r.i][c.i], 0)).padStart(5)).join('')}`));
+    rows.forEach((r) => lines.push(`${r.name.slice(0, width).padEnd(width)} ${rows.map((c) => (matrix[r.i][c.i] === null ? '-' : String(matrix[r.i][c.i])).padStart(5)).join('')}`));
   }
   return { text: lines.join('\n'), rows, matrix };
-}
-
-// The pairings among the n best warriors of `rows`.
-function topPairings(pairs, rows, n) {
-  const top = new Set(rows.slice(0, n).map((r) => r.i));
-  return pairs.map((p, k) => k).filter((k) => top.has(pairs[k].a) && top.has(pairs[k].b));
 }
 
 async function main() {
   const o = parseArgs(process.argv.slice(2));
   const all = collectFiles(o.files);
   if (all.length < 2) {
-    console.error('usage: node tools/tournament.mjs <dir or .red files...> [--rounds N] [--jobs N] [--engine js|wasm] [--pmars path [--compare]] [--ci-width W [--min-rounds N] [--exact-top N]] [--matrix] [--json file]');
+    console.error('usage: node tools/tournament.mjs <dir or .red files...> [--rounds N] [--jobs N] [--engine js|wasm] [--pmars path [--compare]] [--matrix] [--json file]');
     process.exit(2);
-  }
-  const refuse = (why) => {
-    console.error(why);
-    process.exit(2);
-  };
-  if (o.ciWidth !== undefined) {
-    if (!(o.ciWidth >= 0) || !Number.isFinite(o.ciWidth)) refuse(`--ci-width must be a number >= 0: ${o.ciWidth}`);
-    if (o.pmars || o.compare) refuse('--ci-width changes results against pMARS: not together with --pmars or --compare');
-    if (o.nativeInput) refuse('--native-input writes whole matches: not together with --ci-width');
-    o.minRounds ??= 20;
-    if (!Number.isSafeInteger(o.minRounds) || o.minRounds < 0) refuse(`--min-rounds must be a count: ${o.minRounds}`);
-    if (o.exactTop !== undefined && !(Number.isSafeInteger(o.exactTop) && o.exactTop >= 0)) refuse(`--exact-top must be a count: ${o.exactTop}`);
-  } else if (o.minRounds !== undefined || o.exactTop !== undefined) {
-    refuse('--min-rounds and --exact-top need --ci-width');
   }
   const files = [];
   const codes = []; // what the engines read of each assembled warrior
@@ -353,28 +286,12 @@ async function main() {
   let report = {};
   if (!o.pmars || o.compare) {
     const t0 = performance.now();
-    const stop = o.ciWidth === undefined ? null : { width: o.ciWidth, minRounds: o.minRounds };
-    let { results, instructions } = await runEngine(o, codes, pairs, stop);
-    let exact = [];
-    if (stop) {
-      const played = results.reduce((a, r) => a + r.rounds, 0);
-      const early = results.filter((r) => r.rounds < o.rounds).length;
-      console.error(`early stop (width ${o.ciWidth}, at least ${o.minRounds} rounds): ${early} of ${pairs.length} pairings stopped, ${((100 * played) / (pairs.length * o.rounds)).toFixed(1)}% of the rounds played`);
-      if (o.exactTop) {
-        // Second pass: the pairings among the best of the first pass again
-        // with all rounds, results as without --ci-width.
-        exact = topPairings(pairs, table(o, names, pairs, results).rows, o.exactTop).filter((k) => results[k].rounds < o.rounds);
-        const again = await runEngine(o, codes, exact.map((k) => pairs[k]));
-        exact.forEach((k, j) => { results[k] = { ...again.results[j], id: k }; });
-        instructions += again.instructions;
-        console.error(`exact second pass: ${exact.length} stopped pairings among the top ${o.exactTop}, ${(again.instructions / 1e6).toFixed(0)}M instructions`);
-      }
-    }
+    const { results, instructions } = await runEngine(o, codes, pairs);
     const s = (performance.now() - t0) / 1000;
     const t = table(o, names, pairs, results);
     console.log(t.text);
     console.error(`engine (${o.engine}): ${s.toFixed(2)} s, ${(instructions / 1e6).toFixed(0)}M instructions executed, ${(instructions / s / 1e6).toFixed(0)}M instructions/s`);
-    report = { engine: o.engine, seconds: s, instructions, ranking: t.rows, matrix: t.matrix, results, ...(stop ? { exact } : {}) };
+    report = { engine: o.engine, seconds: s, instructions, ranking: t.rows, matrix: t.matrix, results };
   }
   if (o.pmars) {
     const t0 = performance.now();

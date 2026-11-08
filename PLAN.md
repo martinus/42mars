@@ -5,9 +5,8 @@ Core War Theater is a browser visualizer for [Core War](https://corewar.co.uk/) 
 - 565 of 567 hill warriors from [n1LS/redcode-warriors](https://github.com/n1LS/redcode-warriors) assemble. The 2 failures are real syntax errors (`fail.red` is broken on purpose, `stone.red` has `dat #0 #0` without a comma, which pMARS rejects too).
 - pMARS's own `validate.red` self-ties for all 80,000 cycles, which it only does on a MARS with ICWS'88 semantics and in-register evaluation.
 - A differential test against a pMARS 0.9.5 binary finds no difference: all 567 corpus listings, thousands of random expressions and sources, and 9,600 battles per run where the instruction count and a hash of the whole core after every round are equal. See [Validation](#validation).
-- 262 tests, `npm test`.
+- 258 tests, `npm test`.
 - A WebAssembly simulator for tournaments runs about 295M instructions/s in a single thread, about 3.2 times pMARS and, warmed up, 1.7 times the exMARS build on [corewar.dev](https://corewar.dev/). A round-robin tournament of 80 hill warriors (3,160 pairings, 100 rounds each) takes 3.28 s on 16 cores, against 5.4 s for corewar.dev's exMARS and 10.8 s for parallel pMARS processes (details under [Speed](#speed)).
-- Opt-in, with results that differ from pMARS: `tools/tournament.mjs --ci-width 60` stops each pairing once the 95% interval of its score per 100 rounds is at most 60 points wide. The 80-warrior round robin then runs 43% of the instructions, 1.36 s on 31 jobs against 3.11 s for the full run measured the same day, with a pairing score error of 7.5 points of 300 on average and the ranking at Spearman 0.9992 (`docs/performance-log.md`).
 - The JavaScript simulator used by the visualizer does about 40M instructions/s with its bookkeeping, 61M/s headless.
 - Thanks to the differential test, a few pMARS quirks are now reproduced too, e.g. a pMARS buffer bug that turns `dat#9` at the end of a line into `dat #90` in one hill warrior.
 
@@ -113,7 +112,7 @@ Where pMARS hangs (lines over 255 characters, a `\` at the end of the file, huge
 
 ### Other checks
 
-1. 262 tests, among them: assembler (35), pMARS quirks with expected values taken from pMARS (21), simulator (19), visualizer bookkeeping and headless equivalence (2), trace buffer (8), the pmars-diff temporary folder (4), reference expressions and sources (147). The fixes and the speed work were checked with deliberate mutations: each test fails when the code it covers is broken.
+1. 258 tests, among them: assembler (35), pMARS quirks with expected values taken from pMARS (21), simulator (19), visualizer bookkeeping and headless equivalence (2), trace buffer (8), the pmars-diff temporary folder (4), reference expressions and sources (147). The fixes and the speed work were checked with deliberate mutations: each test fails when the code it covers is broken.
 2. Corpus check: `node tools/corpus.mjs <dir>`, 565/567.
 3. `validate.red` from the pMARS distribution. It is GPL and not in this repository, the test runs when `PMARS_VALIDATE` points to it.
 
