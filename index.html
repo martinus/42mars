@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Core War Theater</title>
+  <link rel="stylesheet" href="src/ui/style.css">
+</head>
+<body>
+  <header class="marquee">
+    <div class="title"><span class="bulbs" aria-hidden="true"></span>Core War <b>Theater</b></div>
+    <div class="playbill" id="playbill"></div>
+    <div class="clock">
+      <span id="round-label">round –</span>
+      <span class="sep">·</span>
+      <span id="cycle-label">cycle –</span>
+      <div class="budget"><div id="budget-bar"></div></div>
+    </div>
+    <button id="btn-guide" class="help" title="How to read this (?)">?</button>
+  </header>
+
+  <main>
+    <section class="stage" id="stage">
+      <canvas id="core"></canvas>
+      <canvas id="overlay"></canvas>
+      <div class="explainer" id="explainer" hidden></div>
+      <div class="center-clock" id="center-clock"><div class="big" id="center-cycle">0</div><div class="small" id="center-sub"></div></div>
+      <div class="tooltip" id="tooltip" hidden></div>
+      <div class="banner" id="banner" hidden></div>
+      <div class="toasts" id="toasts"></div>
+      <div class="legend" id="legend">
+        <span><i class="sw fill"></i>code</span>
+        <span><i class="sw hollow"></i>DAT</span>
+        <span><i class="sw flash"></i>fresh write</span>
+        <span><i class="sw proc"></i>process</span>
+        <span><i class="sw read"></i>read</span>
+        <span><i class="sw arc"></i>write</span>
+        <span><i class="sw arc dashed"></i>jump / split</span>
+      </div>
+    </section>
+
+    <aside class="cast" id="cast">
+      <section class="story">
+        <div class="cast-head"><h2>What's happening</h2><span class="hint-inline">click to locate</span></div>
+        <ol id="story"></ol>
+      </section>
+      <div class="cast-head">
+        <h2>Cast</h2>
+        <button id="add-warrior" title="Add a warrior">+ warrior</button>
+      </div>
+      <div id="cards"></div>
+      <p class="hint">Drop <code>.red</code> files anywhere to load them.</p>
+    </aside>
+  </main>
+
+  <footer class="transport">
+    <div class="controls">
+      <button id="btn-restart" title="Restart match (R)">⟲</button>
+      <button id="btn-play" class="primary" title="Play / pause (Space)">▶</button>
+      <button id="btn-step" title="Step one instruction (→)">⇥</button>
+      <button id="btn-next" title="Next round (N)">⏭</button>
+      <label class="speed">speed <input id="speed" type="range" min="0" max="16" value="11"><span id="speed-label"></span></label>
+      <div class="seg" id="speed-presets" role="group" aria-label="speed presets">
+        <button data-speed="1" title="2 instructions per second, every step explained">learn</button>
+        <button data-speed="9" title="2,500 instructions per second">watch</button>
+        <button data-speed="13" title="100,000 instructions per second">fast</button>
+      </div>
+      <div class="seg" role="group" aria-label="layout">
+        <button id="lay-ring" title="Ring layout (L)">ring</button>
+        <button id="lay-grid" title="Grid layout (L)">grid</button>
+      </div>
+      <label>rules <select id="preset"></select></label>
+      <label>rounds <input id="rounds" type="number" min="1" max="1000" value="10"></label>
+      <label class="trails">trails <input id="trails" type="range" min="0" max="100" value="60"></label>
+      <label class="chk"><input id="bloom" type="checkbox" checked> glow</label>
+      <span class="score" id="score"></span>
+    </div>
+    <canvas id="timeline"></canvas>
+  </footer>
+
+  <dialog id="editor">
+    <form method="dialog" class="editor">
+      <div class="editor-head">
+        <h3 id="editor-title">Edit warrior</h3>
+        <span class="status" id="editor-status"></span>
+      </div>
+      <div class="editor-body">
+        <textarea id="editor-text" spellcheck="false"></textarea>
+        <pre id="editor-out"></pre>
+      </div>
+      <div class="editor-foot">
+        <label class="file">load file… <input id="editor-file" type="file" accept=".red,.rc,.txt"></label>
+        <span class="grow"></span>
+        <button value="cancel">cancel</button>
+        <button value="apply" id="editor-apply" class="primary">use this warrior</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="guide">
+    <form method="dialog" class="guide">
+      <h3>How to read the theater</h3>
+      <p><b>Core War in short.</b> Two or more programs, the warriors, share one circular memory, the core. Every cell holds one instruction. The warriors take turns, one instruction each. A process dies when it executes a <code>DAT</code>, and a warrior is out when its last process is dead. When nobody wins before the cycle limit, the round is a tie.</p>
+      <p><b>The core.</b> In the ring layout, address 0 is at the top of the innermost ring, addresses go clockwise and continue on the next ring outward. The grid layout is row by row. The end of the core wraps around to address 0, there is no edge.</p>
+      <div class="guide-legend">
+        <div><i class="sw fill"></i><span><b>Color</b>: the warrior that wrote the cell last. Untouched core is a faint dot.</span></div>
+        <div><i class="sw fill"></i><span><b>Filled tile</b>: code. <b>Hollow tile</b>: <code>DAT</code>, usually a bomb.</span></div>
+        <div><i class="sw flash"></i><span><b>Flash</b>: just written. <b>White glow</b>: just executed.</span></div>
+        <div><i class="sw proc"></i><span><b>Pulsing dot</b>: a process sits here. The one that runs next has a white outline.</span></div>
+        <div><i class="sw arc"></i><span><b>Solid arc</b>: an instruction wrote to that cell. <b>Dashed arc</b>: a jump or a new process. <b>Blue line</b>: a scanner compared those cells.</span></div>
+        <div><i class="sw ringx"></i><span><b>Small ring</b>: a process died. <b>Big ring</b>: a warrior is out.</span></div>
+      </div>
+      <p><b>Common strategies.</b> A <i>stone</i> or bomber throws <code>DAT</code> bombs across the core and hopes to hit. A <i>paper</i> copies itself to new places and runs many processes, so single hits do not kill it. A <i>scanner</i> compares cells to find enemy code before it attacks. An <i>imp</i> is <code>MOV 0, 1</code>: it copies itself one cell ahead, forever. A <i>clear</i> wipes the core cell by cell. The cards on the right guess what each warrior is doing right now.</p>
+      <p><b>How to learn with it.</b> Press <b>learn</b>: 2 instructions per second, and the box at the bottom explains each one, with tags for the executing cell and its A and B targets. Choose the rules <b>nano · 80</b> to see the instruction text inside every cell. Hover a cell to see its instruction and its neighbours. <i>What's happening</i> lists hits, deaths and changes in behavior, click an entry to see where it happened.</p>
+      <p class="keys"><kbd>Space</kbd> play/pause · <kbd>→</kbd> one step · <kbd>Shift</kbd>+<kbd>→</kbd> 100 steps · <kbd>N</kbd> next round · <kbd>R</kbd> restart · <kbd>L</kbd> ring/grid · <kbd>[</kbd> <kbd>]</kbd> speed · <kbd>?</kbd> this guide</p>
+      <div class="editor-foot"><span class="grow"></span><button value="close" class="primary">got it</button></div>
+    </form>
+  </dialog>
+
+  <noscript>Core War Theater needs JavaScript and WebGL2.</noscript>
+  <script type="module" src="src/ui/app.js"></script>
+</body>
+</html>

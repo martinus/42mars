@@ -1,0 +1,16 @@
+{
+  "name": "corewar-theater",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Core War visualizer with a pMARS-compatible Redcode assembler and MARS simulator",
+  "type": "module",
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "serve": "node tools/serve.mjs",
+    "asm": "node tools/asm.mjs",
+    "corpus": "node tools/corpus.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
