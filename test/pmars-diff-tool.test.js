@@ -4,10 +4,10 @@
 // takes pMARS's place, so this runs without pMARS: one that prints our own
 // listing (nothing differs), one that prints nothing (everything differs)
 // and one that hangs (the run gets aborted).
-import { test } from 'node:test';
+import { after, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawn } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -15,6 +15,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 const root = fileURLToPath(new URL('..', import.meta.url));
 const tool = join(root, 'tools/pmars-diff.mjs');
 const dir = mkdtempSync(join(tmpdir(), 'pmars-diff-tool-test-'));
+after(() => rmSync(dir, { recursive: true, force: true }));
 
 function script(name, text) {
   const p = join(dir, name);

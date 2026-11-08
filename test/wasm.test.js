@@ -255,6 +255,70 @@ test('runMatch in blocks with firstRound gives the rounds of the whole match whe
   assert.throws(() => createWasmMarsSync({}, module).runMatch(codes, { rounds: 2, firstRound: -1 }), RangeError);
 });
 
+// runMatch({ stop }) is an opt-in early stop that changes results against
+// pMARS (issue #19). The rule as the issue states it, on the points of
+// warrior 0 per round of the whole match: the number of rounds to play.
+function stopRound(results, width, minRounds) {
+  let s = 0;
+  let q = 0;
+  for (let k = 1; k <= results.length; k++) {
+    const r = results[k - 1];
+    const x = r.survivors.length === 2 ? 1 : r.survivors[0] === 0 ? 3 : 0;
+    s += x;
+    q += x * x;
+    if (k >= Math.max(minRounds, 2)) {
+      const m = s / k;
+      const v = (q - k * m * m) / (k - 1);
+      if (2 * 1.96 * Math.sqrt(Math.max(v, 0) / k) * 100 <= width) return k;
+    }
+  }
+  return results.length;
+}
+
+test('runMatch without stop plays every round, also when every round ends the same way', () => {
+  const imp = warrior('mov 0, 1\n');
+  for (const opts of [{}, { stop: undefined }, { stop: null }]) {
+    const r = createWasmMarsSync({}, module).runMatch([imp, imp], { rounds: 30, seed: 5, ...opts });
+    assert.equal(r.rounds, 30);
+    assert.equal(r.results.length, 30);
+    assert.equal(r.warriors[0].ties, 30);
+  }
+  const stopped = createWasmMarsSync({}, module).runMatch([imp, imp], { rounds: 30, seed: 5, stop: { width: 0 } });
+  assert.equal(stopped.rounds, 20); // minRounds defaults to 20
+  assert.equal(stopped.warriors[0].ties, 20);
+});
+
+test('runMatch with stop plays the prefix of the whole match that the stop rule gives', () => {
+  // The sample warriors: most pairings have wins, losses and ties mixed.
+  const o = {};
+  const samples = ['dwarf', 'imp', 'lantern', 'origami', 'seeker'].map((n) => warrior(readFileSync(new URL(`../warriors/${n}.red`, import.meta.url), 'latin1')));
+  const matches = [];
+  for (let a = 0; a < samples.length; a++) for (let b = a + 1; b < samples.length; b++) for (let k = 0; k < 3; k++) matches.push([samples[a], samples[b]]);
+  let stoppedEarly = 0;
+  for (const [i, codes] of matches.entries()) {
+    const seed = rand(7801);
+    const firstRound = i % 3 === 2 ? 7 : 0;
+    const whole = createWasmMarsSync(o, module).runMatch(codes, { rounds: 60, seed, firstRound });
+    for (const [width, minRounds] of [[0, 20], [0, 3], [30, 20], [60, 20], [60, 1], [100, 10], [150, 0]]) {
+      const n = stopRound(whole.results, width, minRounds);
+      const where = `${i} seed ${seed} width ${width} min ${minRounds}`;
+      const r = createWasmMarsSync(o, module).runMatch(codes, { rounds: 60, seed, firstRound, stop: { width, minRounds } });
+      assert.equal(r.rounds, n, where);
+      assert.deepEqual(r.results, whole.results.slice(0, n), where);
+      const prefix = createWasmMarsSync(o, module).runMatch(codes, { rounds: n, seed, firstRound });
+      assert.deepEqual(r.warriors, prefix.warriors, where);
+      assert.equal(r.instructions, prefix.instructions, where);
+      if (n < 60 && new Set(whole.results.slice(0, n).map((x) => x.survivors.join())).size > 1) stoppedEarly++;
+    }
+  }
+  assert.ok(stoppedEarly > 20, `only ${stoppedEarly} stops after mixed rounds`);
+  const two = [warrior('jmp 0\n'), warrior('jmp 0\n')];
+  for (const stop of [{ width: -1 }, { width: NaN }, { width: Infinity }, { width: '60' }, { width: 60, minRounds: 1.5 }, {}]) {
+    assert.throws(() => createWasmMarsSync({}, module).runMatch(two, { rounds: 2, stop }), RangeError, JSON.stringify(stop));
+  }
+  assert.throws(() => createWasmMarsSync({}, module).runMatch([...two, two[0]], { rounds: 2, stop: { width: 60 } }), RangeError);
+});
+
 test('targeted: maxCycles 0, a single warrior, empty warriors and fractional run counts', () => {
   const empty = (name) => ({ ok: true, instructions: [], start: 0, pin: null, name, author: 'nobody' });
   compareMatch({ maxCycles: 0 }, [warrior('jmp 0\n'), warrior('jmp 0\n')], { seed: 3, rounds: 2, steps: true });

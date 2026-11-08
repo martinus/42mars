@@ -394,6 +394,45 @@ to 12.8 s and 10.8 s. For fmars, whose 100 rounds take a fraction of
 pMARS's, the start cost was most of its tournament time (section above).
 `--compare` gives SAME on t20 and t80.
 
+### Opt-in early stop of a pairing (8th November 2026, #19)
+
+Kept as an opt-in that changes results against pMARS:
+`runMatch({ stop: { width, minRounds } })` and `tools/tournament.mjs
+--ci-width W [--min-rounds N] [--exact-top N]`, the rule of "Statistical
+early stopping" in the table of rmars ideas below (semantics doc, 3.7 and
+4). Without the option nothing changes: the default tournament output is
+byte-identical to before.
+
+The engine reproduces the offline replay (`cwbench/stop/perround.mjs` and
+`stop.mjs`, seed 1, 100 rounds) pairing by pairing: rounds played, wins,
+losses, ties and executed instructions are the same in all 190 (t20) and
+3,160 (t80) pairings, for width 30 and 60 with at least 20 rounds. Neither
+set has a pairing with LDP, so no instruction count was approximated.
+
+t80, 31 jobs, wasm, 3 runs each; error against the full 100 rounds per
+pairing, of 300 points:
+
+| | executed | time | pairing error mean / max | Spearman, max rank shift | top 10 order |
+|---|---|---|---|---|---|
+| full | 16,335M | 3.11 to 3.13 s | 0 | 1, 0 | same |
+| `--ci-width 30` | 12,532M (76.7%) | 2.36 to 2.37 s | 1.9 / 58 | 0.9998, 2 | changed |
+| `--ci-width 60` | 7,036M (43.1%) | 1.35 to 1.37 s | 7.5 / 58 | 0.9992, 4 | changed |
+| `--ci-width 0` (20 identical rounds) | 14,809M (90.7%) | 2.82 to 2.84 s | 0.8 / 58 | 0.9998, 2 | changed |
+| `--ci-width 60 --exact-top 20` | 8,181M (50.1%) | 1.69 to 1.70 s | 7.2 / 58 | 0.9992, 4 | changed |
+
+t20 (190 pairings): width 30 80.0% of the instructions, error 1.6 / 24;
+width 60 42.0%, 7.5 / 41; width 0 error 0.9 / 24. On t20 `--exact-top 20`
+replays every pairing and is exact.
+
+`--ci-width 0`, the "stop only lopsided pairings" variant from the issue,
+stops 405 of 3,160 t80 pairings and saves 9% of the instructions, but its
+worst pairing is as wrong as with width 60: one pairing had 20 identical
+rounds and turned later. `--exact-top 20` replays the 190 pairings among
+the first pass's top 20 (1,145M instructions, 0.33 s more) and still leaves
+the top 10 order changed on t80: every top-20 score also holds 60
+estimated pairings against the rest. Exact scores for the top 20 would need
+all 1,390 pairings that involve one of them.
+
 State: bench about 294M/s in WebAssembly, about 413M/s natively; corpus
 pairs 280M/s; t20 3.84 s single thread; t80 3.63 s with 16 jobs and 3.28 s
 with 31 jobs (8th November 2026; the machine ran 2 to 4% slower than on the

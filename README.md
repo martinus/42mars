@@ -4,7 +4,7 @@ A browser visualizer for [Core War](https://corewar.co.uk/), with a Redcode asse
 
 ```sh
 npm run serve          # http://127.0.0.1:8000/
-npm test               # 258 tests, Node 20 or newer, no dependencies
+npm test               # 262 tests, Node 20 or newer, no dependencies
 node tools/asm.mjs warriors/dwarf.red      # pMARS-style listing
 node tools/corpus.mjs path/to/warriors     # assemble a whole folder
 node tools/pmars-diff.mjs --pmars path/to/pmars --corpus path/to/warriors   # compare with pMARS
