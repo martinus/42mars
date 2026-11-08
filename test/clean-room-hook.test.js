@@ -33,6 +33,12 @@ const blocked = [
   ['Bash', { command: 'git log --all -p | grep queue' }],
   ['WebFetch', { url: 'https://corewar.co.uk/ankerl/exmars.htm', prompt: 'x' }],
   ['WebFetch', { url: 'https://corewar.dev/dist/exmars/fighter.mjs', prompt: 'x' }],
+  // Transcripts of earlier sessions quote GPL source that was read there.
+  ['Read', { file_path: '/home/u/.claude/projects/-home-u-repo/3dc4449d.jsonl' }],
+  ['Read', { file_path: '/home/u/.claude/projects/-home-u-repo/3dc4449d/tool-results/toolu_01.txt' }],
+  ['Grep', { pattern: 'queue', path: '/home/u/.claude/projects' }],
+  ['Bash', { command: 'grep -rl queue ~/.claude/projects/-home-u-repo' }],
+  ['Read', { file_path: '/tmp/claude-1000/-home-u-repo/3dc4449d/tasks/a5d8eed9.output' }],
 ];
 
 const allowed = [
@@ -48,6 +54,7 @@ const allowed = [
   ['Read', { file_path: '/repo/docs/performance-log.md' }],
   ['Edit', { file_path: 'src/engine/mars.js', old_string: 'a', new_string: 'b' }],
   ['WebFetch', { url: 'https://corewar.co.uk/standards/icws94.htm', prompt: 'x' }],
+  ['Read', { file_path: '/home/u/.claude/projects/-home-u-repo/memory/MEMORY.md' }],
 ];
 
 test('clean-room hook blocks reads of GPL engine source', () => {

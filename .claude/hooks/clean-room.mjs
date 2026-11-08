@@ -4,8 +4,9 @@
 //
 // PreToolUse hook: blocks tool calls that would show GPL Core War source
 // code (pMARS, exMARS, exhaust, corewar.dev, the GPL-derived prototype
-// branch). Running pMARS as a program stays allowed. A safety net for the
-// clean-room rule in CLAUDE.md, not a complete filter.
+// branch, transcripts of earlier sessions). Running pMARS as a program stays
+// allowed. A safety net for the clean-room rule in CLAUDE.md, not a complete
+// filter.
 //
 // Test: echo '{"tool_name":"Read","tool_input":{"file_path":"/x/pmars-0.9.4/src/sim.c"}}' | node .claude/hooks/clean-room.mjs; echo $?
 
@@ -20,6 +21,7 @@ const rules = [
   [new RegExp(String.raw`${DIR}/(?:[^\s'"]*/)?[^\s/'"]*\.(?:c|h|cc|cpp|js|mjs|zip|tar|tgz|gz|xz|bz2)\b`, 'i'), 'source or archive of a GPL engine'],
   [/(?:pmars|exmars|app|fighter)-source\.zip|fighter-src/i, 'corewar.dev source archive'],
   [/corewar\.co\.uk\/ankerl\/exmars|sourceforge\.net\/projects\/corewar|github\.com\/[^\s'"]*(?:pmars|exmars|exhaust)|corewar\.dev\/[^\s'"]*\.(?:m?js|wasm|zip|map)\b/i, 'web source of a GPL engine'],
+  [/\.claude\/projects\/[^\s'"]*\.jsonl|\.claude\/projects\/[^\s'"]*\/(?:tool-results|subagents)\b|\.claude\/projects(?:\/[^\s'"\/]+)?\/?(?=[\s'"]|$)|\/tasks\/[^\s'"]*\.output\b/i, 'transcripts and tool output of earlier sessions can hold GPL source excerpts'],
   [/\bgit\b[^;|&\n]*\b(?:log|show|diff|grep|whatchanged)\b[^;|&\n]*--all\b[^;|&\n]*(?:\s-p\b|--patch|\s-S|\s-G|--stat)/i, 'patches of all branches include the GPL-derived prototype branch'],
 ];
 // Commands that print file contents, when pointed at a GPL engine directory.

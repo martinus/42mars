@@ -6,7 +6,7 @@ Core War Theater is a browser visualizer for [Core War](https://corewar.co.uk/) 
 - pMARS's own `validate.red` self-ties for all 80,000 cycles, which it only does on a MARS with ICWS'88 semantics and in-register evaluation.
 - A differential test against a pMARS 0.9.5 binary finds no difference: all 567 corpus listings, thousands of random expressions and sources, and 9,600 battles per run where the instruction count and a hash of the whole core after every round are equal. See [Validation](#validation).
 - 248 tests, `npm test`.
-- A WebAssembly simulator for tournaments runs about 280M instructions/s in a single thread, about 3.1 times pMARS and 2.1 times the exMARS build on [corewar.dev](https://corewar.dev/). A round-robin tournament of 80 hill warriors (3,160 pairings, 100 rounds each) takes 3.44 s on 16 cores, against 5.4 s for corewar.dev's exMARS and 10.9 s for parallel pMARS processes (details under [Speed](#speed)).
+- A WebAssembly simulator for tournaments runs about 280M instructions/s in a single thread, about 3.1 times pMARS and, warmed up, 1.6 times the exMARS build on [corewar.dev](https://corewar.dev/). A round-robin tournament of 80 hill warriors (3,160 pairings, 100 rounds each) takes 3.44 s on 16 cores, against 5.4 s for corewar.dev's exMARS and 10.9 s for parallel pMARS processes (details under [Speed](#speed)).
 - The JavaScript simulator used by the visualizer does about 40M instructions/s with its bookkeeping, 61M/s headless.
 - Thanks to the differential test, a few pMARS quirks are now reproduced too, e.g. a pMARS buffer bug that turns `dat#9` at the end of a line into `dat #90` in one hill warrior.
 
@@ -125,13 +125,13 @@ Single thread, `node tools/bench.mjs <corpus>`: 3 hill pairs, 200 rounds each, 2
 | ours, WebAssembly, `runMatch` | 279.5 (276.3 to 282.2) |
 | ours, WebAssembly, step API (`run()` from JS) | 280.6 (277.2 to 281.6) |
 | same C natively (`clang -O3 -march=native`, `tools/bench-native.mjs`) | about 405 to 415 |
-| [corewar.dev](https://corewar.dev/) exMARS build (WebAssembly) | 132.3 (131.4 to 132.8) |
+| [corewar.dev](https://corewar.dev/) exMARS build (WebAssembly) | 132.3 (131.4 to 132.8); warmed up 186 to 190 |
 | pMARS 0.9.5 native, `-O2` | 90.7 (87.2 to 90.7) |
 | ours, JavaScript, `headless: true` | 61.4 (59.6 to 63.4) |
 | corewar.dev pMARS build (WebAssembly) | 51.6 (45.7 to 52.8) |
 | ours, JavaScript with visualizer bookkeeping | about 40 |
 
-All engines play the same battles with the same results. The corewar.dev numbers come from driving their published modules (`exmars.mjs`, `engine.mjs`) from Node with the warriors already loaded; that harness is not in this repository because their code is GPL. The JS benchmark is short enough that JIT warm-up is part of it: warmed up, the JS engine reaches about 51M/s with bookkeeping and 75 to 80M/s headless.
+All engines play the same battles with the same results. The corewar.dev numbers come from driving their published modules (`exmars.mjs`, `engine.mjs`) from Node with the warriors already loaded; that harness is not in this repository because their code is GPL. The JS benchmark is short enough that JIT warm-up is part of it: warmed up, the JS engine reaches about 51M/s with bookkeeping and 75 to 80M/s headless. The same holds for the WebAssembly engines: each run takes 80 to 170 ms and includes V8's tier-up. Warmed up (each bench pair timed alone, best of 5) ours runs 259 to 310M/s and exMARS 134 to 190M/s, 1.6 to 1.9 times; on the tournament warriors the warmed-up ratio is 1.6 (`docs/performance-log.md`, "Measurements after the second round").
 
 Single thread on a tournament mix, all 190 pairings of the first 20 corpus warriors, 100 rounds each: ours 4.13 s, corewar.dev exMARS 6.14 s. Ours is faster in every one of the 190 pairings, by at least 20%.
 
