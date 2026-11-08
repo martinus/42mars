@@ -33,13 +33,14 @@ import { Mars } from '../src/engine/mars.js';
 // ------------------------------------------------------------------ worker
 
 async function workerMain() {
-  const { sources, opts, engine } = workerData;
-  const codes = sources.map((s) => assemble(s, { ...opts, warriors: 2 }));
+  // The main thread assembled the warriors and compiled the module once; a
+  // WebAssembly.Module sent to a worker shares its compiled code.
+  const { codes, opts, module } = workerData;
   // One engine per worker, reused for every pairing.
   let wasm = null;
-  if (engine === 'wasm') {
-    const { createWasmMars } = await import('../src/engine/mars-wasm.js');
-    wasm = await createWasmMars(opts);
+  if (module) {
+    const { createWasmMarsSync } = await import('../src/engine/mars-wasm.js');
+    wasm = createWasmMarsSync(opts, module);
   }
   parentPort.on('message', (task) => {
     if (task === null) return process.exit(0);
@@ -108,14 +109,15 @@ function pairPosition(seed, a, b, o) {
   return o.distance + (h % (o.size + 1 - 2 * o.distance));
 }
 
-function runEngine(o, sources, pairs) {
+async function runEngine(o, codes, pairs) {
+  const module = o.engine === 'wasm' ? await (await import('../src/engine/mars-wasm.js')).compileWasmMars() : null;
   return new Promise((resolve, reject) => {
     const opts = { coreSize: o.size, maxCycles: o.cycles, maxProcesses: o.processes, maxLength: o.length, minDistance: o.distance, rounds: o.rounds };
     const results = new Array(pairs.length);
     let next = 0;
     let done = 0;
     let instructions = 0;
-    const workers = Array.from({ length: Math.min(o.jobs, pairs.length) }, () => new Worker(fileURLToPath(import.meta.url), { workerData: { sources, opts, engine: o.engine } }));
+    const workers = Array.from({ length: Math.min(o.jobs, pairs.length) }, () => new Worker(fileURLToPath(import.meta.url), { workerData: { codes, opts, module } }));
     const feed = (w) => {
       if (next < pairs.length) {
         const p = pairs[next];
@@ -194,7 +196,7 @@ async function main() {
     process.exit(2);
   }
   const files = [];
-  const sources = [];
+  const codes = []; // what the engines read of each assembled warrior
   const names = [];
   for (const f of all) {
     const src = readFileSync(f, 'latin1');
@@ -204,7 +206,7 @@ async function main() {
       continue;
     }
     files.push(f);
-    sources.push(src);
+    codes.push({ ok: w.ok, name: w.name, author: w.author, start: w.start, pin: w.pin, instructions: w.instructions });
     names.push(`${w.name} (${basename(f)})`);
   }
   const pairs = [];
@@ -216,7 +218,7 @@ async function main() {
   let report = {};
   if (!o.pmars || o.compare) {
     const t0 = performance.now();
-    const { results, instructions } = await runEngine(o, sources, pairs);
+    const { results, instructions } = await runEngine(o, codes, pairs);
     const s = (performance.now() - t0) / 1000;
     const t = table(o, names, pairs, results);
     console.log(t.text);
