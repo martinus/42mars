@@ -19,7 +19,8 @@
 //
 // --pmars runs the same tournament with pMARS processes instead of the
 // engine (for timing), --compare runs both and checks that every pairing has
-// the same wins, losses and ties.
+// the same wins, losses and ties. Each job is a /bin/sh that starts the pMARS
+// processes.
 //
 // With --engine wasm and fewer than 4 pairings per job, each pairing whose
 // warriors have no LDP is split into blocks of rounds that run on several
@@ -30,7 +31,7 @@
 // src/engine/wasm/bench-native.c and exits, for tools/bench-native.mjs --input.
 
 import { Worker, isMainThread, parentPort, workerData } from 'node:worker_threads';
-import { execFile } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { cpus } from 'node:os';
 import { basename, join } from 'node:path';
@@ -172,25 +173,53 @@ async function runEngine(o, codes, pairs) {
   });
 }
 
+// Reads lines "<id>\t<pos>\t<file a>\t<file b>" and answers each with one
+// line "<id> <wins a> <ties a> <wins b> <ties b>". $0 is pMARS, "$@" the
+// rules.
+const PMARS_LOOP = `while IFS='\t' read -r id pos a b; do echo "$id" $("$0" -b -k "$@" -F "$pos" "$a" "$b"); done`;
+
+// Each job is one shell that starts the pMARS processes of its pairings one
+// after another. Starting them from Node costs about 1.4 ms per process on
+// the main thread (also from worker threads, which make it slower), a small
+// shell starts them about 10 times faster (docs/performance-log.md).
 function runPmars(o, files, pairs) {
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     const results = new Array(pairs.length);
     let next = 0;
     let done = 0;
-    const rules = ['-s', o.size, '-c', o.cycles, '-p', o.processes, '-l', o.length, '-d', o.distance].map(String);
-    const start = () => {
-      if (next >= pairs.length) return;
-      const id = next++;
-      const p = pairs[id];
-      execFile(o.pmars, ['-b', '-k', ...rules, '-r', String(o.rounds), '-F', String(p.pos), files[p.a], files[p.b]], (err, out) => {
-        const [[wa, ta], [wb, tb]] = out.trim().split('\n').map((l) => l.trim().split(/\s+/).map(Number));
-        results[id] = { id, a: [wa, wb, ta], b: [wb, wa, tb] };
-        if (++done === pairs.length) resolve({ results });
-        else start();
+    const rules = ['-s', o.size, '-c', o.cycles, '-p', o.processes, '-l', o.length, '-d', o.distance, '-r', o.rounds].map(String);
+    if (pairs.length === 0) return resolve({ results });
+    for (let k = 0; k < Math.min(o.jobs, pairs.length); k++) {
+      const sh = spawn('/bin/sh', ['-c', PMARS_LOOP, o.pmars, ...rules], { stdio: ['pipe', 'pipe', 'pipe'] });
+      let out = '';
+      let err = '';
+      const feed = () => {
+        if (next >= pairs.length) return sh.stdin.end();
+        const id = next++;
+        const p = pairs[id];
+        sh.stdin.write(`${id}\t${p.pos}\t${files[p.a]}\t${files[p.b]}\n`);
+      };
+      sh.on('error', reject);
+      sh.stderr.setEncoding('latin1').on('data', (d) => { err = (err + d).slice(-2000); });
+      sh.stdout.setEncoding('latin1').on('data', (d) => {
+        out += d;
+        let nl;
+        while ((nl = out.indexOf('\n')) >= 0) {
+          const line = out.slice(0, nl);
+          out = out.slice(nl + 1);
+          const v = line.trim().split(/\s+/).map(Number);
+          if (v.length !== 5 || v.some((x) => !Number.isInteger(x))) {
+            sh.kill();
+            return reject(new Error(`pMARS gave ${JSON.stringify(line)}${err ? `, stderr: ${err.trim()}` : ''}`));
+          }
+          const [id, wa, ta, wb, tb] = v;
+          results[id] = { id, a: [wa, wb, ta], b: [wb, wa, tb] };
+          if (++done === pairs.length) resolve({ results });
+          feed();
+        }
       });
-    };
-    for (let k = 0; k < Math.min(o.jobs, pairs.length); k++) start();
-    if (pairs.length === 0) resolve({ results });
+      feed();
+    }
   });
 }
 

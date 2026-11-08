@@ -366,7 +366,33 @@ instructions per simulated instruction (issue #20) costs once per thread and
 again under SMT. Side finding: `tools/tournament.mjs --pmars` starts its
 processes from Node's event loop at about 1.4 ms each, 4.6 s of the 3,160
 pairings of t80 with 31 jobs, so the parallel pMARS number in `PLAN.md`
-(11.0 s) is mostly process start, not pMARS.
+(11.0 s) is mostly process start, not pMARS. Measured afterwards: for pMARS
+it is not, see the next section.
+
+### `tournament.mjs --pmars` starts pMARS from shells (8th November 2026, #25)
+
+t80, 3,160 pairings, 31 jobs unless noted, idle machine, wall time of the
+pMARS part as `tools/tournament.mjs` prints it:
+
+| | before | after |
+|---|---|---|
+| `--rounds 1` | 4.53, 4.50, 4.91 s | 0.33, 0.33, 0.34 s |
+| `--rounds 100` | 10.94, 10.92 s | 10.78, 10.79 s |
+| `--rounds 100`, 16 jobs | 13.07, 13.08 s | 12.77, 12.77 s |
+
+Before, Node started every pMARS process with `execFile` from the main
+thread. Starting them from worker threads instead (each worker its own
+`execFile` or `execFileSync` loop) took 7.4 to 7.6 s for `--rounds 1`, so
+the cost is in forking the large Node process, wherever the fork comes
+from. `xargs -P 31` starting the same 3,160 processes takes 0.93 s. Now each
+job is one `/bin/sh` that reads pairings from stdin and runs pMARS for them
+one after another, so Node starts 31 processes instead of 3,160.
+
+With 100 rounds pMARS's own run time dominates: the 4.5 s of process start
+overlapped with it, and the pMARS rows in `PLAN.md` drop by 1 to 2% only,
+to 12.8 s and 10.8 s. For fmars, whose 100 rounds take a fraction of
+pMARS's, the start cost was most of its tournament time (section above).
+`--compare` gives SAME on t20 and t80.
 
 State: bench about 294M/s in WebAssembly, about 413M/s natively; corpus
 pairs 280M/s; t20 3.84 s single thread; t80 3.63 s with 16 jobs and 3.28 s
