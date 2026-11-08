@@ -48,7 +48,8 @@ static void trace_step(const Warrior *W, u32 pc, Cell ir, u32 tasks) {
   execPc[t] = (u16)pc;
   const u32 op = (ir.ins & 0xff) >> 3, mod = ir.ins & 7, am = (ir.ins >> 8) & 7, bm = ir.ins >> 11;
   u8 kind = 0;
-  if (op <= 5 || op == 8 || op == 17) kind |= bm >= 2 ? 4 : (op == 0 && mod == 6 ? 1 : 2); // MOV to MOD, DJN, LDP
+  // MOV to MOD, DJN, LDP write their B target; # and $ (modes 0, 1) are direct.
+  if (op <= 5 || op == 8 || op == 17) kind |= bm >= 2 ? 4 : (op == 0 && mod == 6 ? 1 : 2);
   const u32 incdec = (1u << 3) | (1u << 4) | (1u << 6) | (1u << 7);         // < > { }
   if ((incdec >> am & 1) || (incdec >> bm & 1)) kind |= 8;
   execKind[t] = kind;
@@ -111,6 +112,7 @@ int main(int argc, char **argv) {
   u8 *inS = malloc(65536);
   while (fscanf(f, "%u %u %u %u %u %u %u %u %u", &cfg[0], &cfg[1], &cfg[2], &cfg[3], &cfg[4], &cfg[5], &cfg[6], &cfg[7], &cfg[8]) == 9) {
     i32 *in = mars_config(cfg[0], cfg[1], cfg[2], cfg[3], cfg[4], cfg[5], cfg[6]);
+    if (!in) { fprintf(stderr, "match %u does not fit into the arena\n", match); return 2; }
     for (unsigned k = 0; k < 4 * cfg[5] + 5 * cfg[6]; k++) {
       if (fscanf(f, "%d", &in[k]) != 1) { fprintf(stderr, "bad input\n"); return 2; }
     }
@@ -125,10 +127,7 @@ int main(int argc, char **argv) {
     lastChange = realloc(lastChange, N * sizeof(i32));
     shadow = realloc(shadow, N * sizeof(u64));
     if (!execW || !execKind || !execPc || !lastChange || !shadow || !inS) { fprintf(stderr, "out of memory\n"); return 2; }
-    round_ = 0;
-    starter = 0;
-    logFirst = 0;
-    for (u32 r = 0; r < cfg[8]; r++) {
+    for (u32 r = 0; r < cfg[8]; r++) { // as mars_run_match() with firstRound 0
       mars_start_round();
       traceT = 0;
       traceL = (u32)cyclesLeft;
@@ -143,6 +142,12 @@ int main(int argc, char **argv) {
         } else {
           run_some(~0ull);
         }
+      }
+      // trace_step() checks only the cells an instruction can change (its
+      // B target and both indirection cells); any other write would make
+      // lastChange wrong.
+      for (u32 c = 0; c < N; c++) {
+        if (cell_of(&core[c]) != shadow[c]) { fprintf(stderr, "untracked write to cell %u in match %u round %u\n", c, match, r); return 1; }
       }
       const int tie = nw == 2 && war[0].alive && war[1].alive;
       if (stopped >= 0 && !tie) { fprintf(stderr, "early tie at %lld but no tie in match %u round %u\n", (long long)stopped, match, r); return 1; }

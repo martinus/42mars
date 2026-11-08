@@ -619,14 +619,19 @@ count proof checked after every instruction instead of every 4096 would
 gain 0.01%.
 
 At |S| <= 32, by what makes the two warriors safe and how the opponent of
-a looping warrior writes after t0:
+a looping warrior writes after t0 (the tool's last lines):
 
-| | both loop, opponent writes through pointers or increments | both loop, opponent writes only directly or not | one immortal by count, the other loops |
-|---|---|---|---|
-| t20 | 1.10% | 0.09% | 0.15% |
-| t80 | 4.33% | 0.37% | 0.29% |
-| 400 corpus pairs | 9.03% | 0.49% | 0.37% |
-| t80, `-p 8` | 7.11% | 0.41% | 0.00% |
+| | both loop, opponent writes through pointers or increments | both loop, opponent writes only directly or not | one immortal by count, the other loops | both immortal by count |
+|---|---|---|---|---|
+| t20 | 1.10% | 0.09% | 0.15% | 0.00% |
+| t80 | 4.33% | 0.37% | 0.29% | 0.01% |
+| 400 corpus pairs | 9.03% | 0.49% | 0.37% | 0.01% |
+| t20, `-p 8` | 2.14% | 0.10% | 0.00% | 0.00% |
+| t80, `-p 8` | 7.11% | 0.41% | 0.00% | 0.00% |
+
+After every round the driver compares the whole core with its shadow
+core; no round of these five inputs had a write outside the three cells
+it tracks.
 
 Verdict: above 3% on t80, but not where #27 expected it. A paper against
 a stone or scanner in a loop is 0.29% of t80, and a cheap proof "the
