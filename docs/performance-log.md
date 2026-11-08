@@ -433,6 +433,40 @@ the top 10 order changed on t80: every top-20 score also holds 60
 estimated pairings against the rest. Exact scores for the top 20 would need
 all 1,390 pairings that involve one of them.
 
+### Three small changes in the two-warrior loop, all rejected (8th November 2026, #22)
+
+Each change alone against `main` (`mars.wasm` md5 `7e5832d4...`), wasm
+with `tools/ab-wasm.mjs` (7 runs, t80 5 runs, median and range), native on
+the t20 mix (`tournament.mjs --native-input`, `bench-native --early-tie`,
+5 alternating runs of two builds). Machine: idle apart from a browser, load
+below 1 before each A/B (the A/B itself raises it).
+
+| Change | bench M/s | pairs M/s | t20 s | t80 16 jobs s | t80 31 jobs s | native t20 M/s |
+|---|---|---|---|---|---|---|
+| 1. branch-free `SPL` push on linear queues | 296.5 → 292.6 | 285.5 → 284.3 | 3.78 → 3.84 | 3.47 → 3.50 | 3.12 → 3.16 | 373 → 364 |
+| 2. queue counters as byte offsets (`execute2_8000` only) | 296.9 → 276.8 | 283.2 → 270.1 | 3.78 → 4.08 | 3.46 → 3.72 | 3.12 → 3.32 | 371 → 379 |
+| 3. one wraparound for every queued address | 297.9 → 281.0 | 284.3 → 272.7 | 3.78 → 4.09 | 3.47 → 3.67 | 3.11 → 3.25 | 371 → 326 |
+| 3b. one wraparound for skips only (`pc + 2`) | 298.8 → 293.2 | 282.6 → 275.6 | 3.78 → 3.83 | 3.46 → 3.51 | 3.11 → 3.19 | 372 → 366 |
+
+t20 ranges do not overlap in any row. Details:
+
+1. The new process is always written at the tail (the linear queue has
+   160,032 entries for a tail of at most 160,003) and the tail advances by
+   `tail - head < limit`. Slower in wasm and natively.
+2. With `u8` byte offsets the `<< 1` of each queue access goes away;
+   `execute2()` converts the counters at entry and exit. The only change in
+   this issue that helps natively (+1.6%), and the worst in wasm with item 3:
+   V8's code moves as in #10.
+3. `next` stays unwrapped (`pc + 1`, `+1` for a skip, the jump target) and
+   is wrapped once when queued. That adds a compare on paths that had
+   none: a jump target is already wrapped, and `INC(pc)` was the only wrap
+   on the common path. 3b keeps that path and only replaces
+   `INC(INC(pc))` in the 20 skip cases with one wrap of `pc + 2`; still
+   slower everywhere.
+
+All four built and passed `test/wasm.test.js` and `test/tournament.test.js`.
+None was kept, so no `engine-check` run.
+
 State: bench about 294M/s in WebAssembly, about 413M/s natively; corpus
 pairs 280M/s; t20 3.84 s single thread; t80 3.63 s with 16 jobs and 3.28 s
 with 31 jobs (8th November 2026; the machine ran 2 to 4% slower than on the
@@ -479,8 +513,8 @@ New ideas for our engine, most promising first:
 | Merge instruction words that behave the same into one specialized case | qMars, exhaust, exhaust-ma | Many words execute identically: the modifier does nothing for `DAT`/`SPL`/`JMP`/`NOP`; for the A mode of `DAT`/`NOP` and the B mode of `DAT`/`SPL`/`JMP`/`NOP` the modes `$ # @ *` are the same; `JMZ`/`JMN`/`DJN` .A = .BA, .B = .AB, .F = .X = .I; .F = .I for `ADD` to `MOD` and `SLT`; `CMP` = `SEQ`. Rank classes instead of words and put every member word as a case label on one copy. Words in core stay as they are (`MOV.I` copies them, `CMP.I` compares them) | The `HOT` list has 3 duplicates today (`spl.b $ $`/`spl.b $ #`, `jmp.b $ $`/`jmp.b $ #`, `dat.f $ $`/`dat.f # #`). 0 to 2% on t80 and corpus pairs, less generic code. Cost: `gen-dispatch.mjs` and the specialized-word test | open, #10 |
 | 6-byte cell, or values and words in separate arrays | exhaust, exhaust-ma (6-byte); arrays: our own | 6 bytes per cell makes the core 48 KB; separate arrays give 32 KB of values plus 16 KB of words, and most accesses only touch values | Alternatives to the 4-byte cell of issue #6; scaling by 6 or two loads per fetch cost something. 0 to 5% natively | open, issue #6 |
 | Prefetch the other warrior's next cell | rmars | In the two-warrior loop the other warrior's next PC is at the head of its queue; prefetch that core cell right after the current fetch | Natively a few percent at most on scattered papers. WebAssembly has no prefetch; an early plain load would have to survive V8, unverified. Must not use the loaded value, the current instruction can write that cell | open, native first, #6 |
-| One wraparound for jumps and skips | fmars | Select between the unwrapped candidates (pc + 1, pc + 2, the jump target) and wrap once, instead of wrapping each | Under 1%; check the native disassembly first, clang may already do it | open, low |
-| Branch-free `SPL` push | fmars | Always write the new process at the tail, advance the tail only below the process limit. Needs a spare slot behind the queue (linear queue, or a ring one larger than the limit) | 0 to 1%; the log's `SPL` fast path gave nothing | open, low |
+| One wraparound for jumps and skips | fmars | Select between the unwrapped candidates (pc + 1, pc + 2, the jump target) and wrap once, instead of wrapping each | Under 1%; check the native disassembly first, clang may already do it | rejected, #22: +8.2% (all addresses) and +1.3% (skips only) on t20 |
+| Branch-free `SPL` push | fmars | Always write the new process at the tail, advance the tail only below the process limit. Needs a spare slot behind the queue (linear queue, or a ring one larger than the limit) | 0 to 1%; the log's `SPL` fast path gave nothing | rejected, #22: +1.6% on t20, -2.5% natively |
 | Two fields in one register for `ADD.F`/`SUB.F`/`DJN.F` | fmars (MMX) | Add both 16-bit fields in one 32-bit add, then reduce each lane; no carry crosses lanes up to core size 32,768 | These words are rare in the measured mixes, near 0 | not recommended |
 | Statistical early stopping (changes results) | rmars | Rounds stay a prefix of the normal sequence. From `max(min_rounds, 2)` rounds on, after every round: points 3/1/0 per round, sample mean and variance (n - 1), interval width `2 * z * sqrt(var / n) * 100`; stop when the width is at most `ci_width`, report `rounds_played`. rmars documents a score bias of +0.5 to +0.8 at width 60; zero variance stops right at `min_rounds`; repeated looks are not corrected | Large for screening (evolvers, hill pre-filter), lopsided pairings stop after a few dozen rounds. Only as an explicit opt-in mode | not for the default |
 
