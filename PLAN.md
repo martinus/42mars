@@ -45,7 +45,7 @@ src/ui/app.js ──> renderer.js (WebGL2 cells + bloom)   overlay.js (arcs, tag
 | `tools/bench.mjs` | Simulator speed: `--headless`, `--wasm`, `--wasm-match`. |
 | `tools/bench-pairs.mjs` | WebAssembly speed on 40 random corpus pairs. |
 | `tools/gen-dispatch.mjs` | Generates the specialized instruction cases of `mars.c` (`dispatch.h`), and ranks instruction words by execution count. |
-| `tools/tournament.mjs` | Round-robin tournament over a folder, battles in parallel on worker threads, `--engine js|wasm`, `--pmars` and `--compare` to run the same tournament through pMARS. |
+| `tools/tournament.mjs` | Round-robin tournament over a folder, battles in parallel on worker threads, `--engine js|wasm`, `--pmars` and `--compare` to run the same tournament through pMARS. With few pairings, the rounds of a pairing without `LDP` run in blocks on several workers. |
 | `tools/pmars-diff.mjs` | Differential test against a pMARS binary, see [Validation](#validation). |
 | `tools/expr-fuzz.mjs` | Random expressions against pMARS's expression evaluator built as a filter. |
 | `tools/serve.mjs` | Static file server for development. |
@@ -112,7 +112,7 @@ Where pMARS hangs (lines over 255 characters, a `\` at the end of the file, huge
 
 ### Other checks
 
-1. 250 tests, among them: assembler (35), pMARS quirks with expected values taken from pMARS (21), simulator (19), visualizer bookkeeping and headless equivalence (2), trace buffer (8), reference expressions and sources (147). The fixes and the speed work were checked with deliberate mutations: each test fails when the code it covers is broken.
+1. 252 tests, among them: assembler (35), pMARS quirks with expected values taken from pMARS (21), simulator (19), visualizer bookkeeping and headless equivalence (2), trace buffer (8), reference expressions and sources (147). The fixes and the speed work were checked with deliberate mutations: each test fails when the code it covers is broken.
 2. Corpus check: `node tools/corpus.mjs <dir>`, 565/567.
 3. `validate.red` from the pMARS distribution. It is GPL and not in this repository, the test runs when `PMARS_VALIDATE` points to it.
 

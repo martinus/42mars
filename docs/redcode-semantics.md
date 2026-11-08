@@ -806,8 +806,8 @@ export async function createWasmMars(options) -> engine        // Node and brows
 export function createWasmMarsSync(options, module?) -> engine
 engine: opt, coreSize, load(codes, { seed, positions }), startRound(),
   run(n), step(), endRound(), runMatch(codes, { rounds, seed, positions,
-  earlyTie = true }) -> { warriors: [{ name, wins, losses, ties, score }],
-  results, instructions },
+  earlyTie = true, firstRound = 0 }) -> { warriors: [{ name, wins, losses,
+  ties, score }], results, instructions },
   round, roundOver, roundResult, results, time, cyclesLeft, warriorsLeft,
   current, op, am, bm, av, bv, cell(addr),
   warriors[i]: index, code, name, author, position, tasks, alive, diedAt,
@@ -824,9 +824,22 @@ getters, `score` and `pspace` copies.
 
 A core cell is 8 bytes: A and B value (16 bits each) and a 16-bit word with
 the op byte and both modes. Each warrior has a ring buffer of 16-bit
-addresses whose length is a power of two.
+addresses whose length is a power of two. Two warriors with `maxCycles` up
+to 80000 get linear queues instead, long enough for a whole round: a round
+runs at most `max(2 * maxCycles, 1)` instructions with alternating turns, so
+a warrior's tail stays at most `1 + 2 * (maxCycles + 1)`.
 
-`runMatch` plays all rounds inside wasm. With `earlyTie` (the default) a
+`runMatch` plays all rounds inside wasm. `firstRound` k plays rounds k + 1
+to k + `rounds` of the match: the position generator steps k times first
+(placement does not depend on the core), the first mover is warrior k mod
+the number of warriors, and the round numbers in `results` start at k + 1.
+P-space and the last results start empty, as at the start of a match. Only
+LDP reads them, and opcodes are only copied, so when no warrior's code
+contains LDP every round gives the same result as in the whole match, and
+blocks of rounds can run on several engines (`tools/tournament.mjs` splits
+pairings that way when it has fewer than 4 pairings per job).
+
+With `earlyTie` (the default) a
 round stops as soon as it can only end in a tie: a warrior loses at most one
 process per own turn, and while nobody dies the round runs exactly
 `max(cyclesLeft, 1)` more instructions, of which each living warrior gets at

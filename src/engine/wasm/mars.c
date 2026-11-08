@@ -132,7 +132,7 @@ static i64 seed;
 static u32 round_, roundOver = 1, starter, current, warriorsLeft;
 static i64 timeNow, cyclesLeft;
 static u8 *resultLog;   // runMatch: per round 8 bytes time then nw alive flags
-static u32 logStride, logRounds;
+static u32 logStride, logRounds, logFirst; // logFirst: round_ of the entry before the first
 
 // ---------------------------------------------------------------- setup
 
@@ -184,6 +184,7 @@ i32 *mars_config(u32 coreSize, u32 maxProcesses, u32 cycles, u32 minDistance, u3
   pspaceBase = ps;
   resultLog = 0;
   logRounds = 0;
+  logFirst = 0;
   roundOver = 1;
   return input;
 }
@@ -323,8 +324,8 @@ __attribute__((noinline)) void mars_end_round(void) {
     else if (nw > 1 && survivors == 1) w->wins++;
     else w->ties++;
   }
-  if (logRounds) {
-    u8 *e = resultLog + (usize)(round_ - 1) * logStride;
+  if (round_ - 1 - logFirst < logRounds) { // only the rounds of mars_run_match()
+    u8 *e = resultLog + (usize)(round_ - 1 - logFirst) * logStride;
     double t = (double)timeNow;
     __builtin_memcpy(e, &t, 8);
     for (u32 i = 0; i < nw; i++) e[8 + i] = (u8)war[i].alive;
@@ -875,9 +876,18 @@ static i64 tie_check(void) {
 }
 
 // Plays `rounds` rounds. With earlyTie, rounds that must end in a tie stop
-// early, see tie_check(). Returns the number of instructions executed.
+// early, see tie_check(). firstRound > 0 starts with round firstRound + 1 of
+// the match: the positions and the first mover are those of that round,
+// but p-space and the last results start empty, as at the start of a
+// match. Returns the number of instructions executed.
 EXPORT(mars_run_match)
-double mars_run_match(u32 rounds, u32 earlyTie) {
+double mars_run_match(u32 rounds, u32 earlyTie, u32 firstRound) {
+  // The positions of the skipped rounds: the generator steps exactly as if
+  // they were played (placement does not depend on the core).
+  for (u32 r = 0; r < firstRound; r++) place_warriors();
+  round_ = firstRound;
+  starter = firstRound % nw;
+  logFirst = firstRound;
   u64 total = 0;
   const int skip = earlyTie;
   for (u32 r = 0; r < rounds; r++) {
