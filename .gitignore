@@ -1,2 +1,4 @@
 node_modules/
 /corpus/
+.claude/settings.local.json
+CLAUDE.local.md

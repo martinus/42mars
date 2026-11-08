@@ -1,0 +1,63 @@
+# Core War Theater
+
+Redcode assembler, MARS simulators and a WebGL2 visualizer, MIT licensed, by Martin Leitner-Ankerl.
+
+Goals, in this order when they conflict:
+1. Same results as pMARS 0.9.5, quirks included: instruction count and final core of every round.
+2. The fastest MARS there is, measured on whole tournaments.
+3. A visualizer that is great to watch and gives expert warrior authors real information (see `.claude/rules/ui.md`).
+4. Clean code, written clean-room.
+
+## Clean room
+
+Everything here is MIT and must not derive from GPL Core War code.
+- Never read source code of pMARS, exMARS, exhaust, corewar.dev or any other MARS: no files, archives, diffs, web pages, disassembled wasm.
+- Never look at branch `prototype-before-squash`: it contains GPL-derived code. `main` from `bdc9cbb` on is clean.
+- Allowed: running those engines as programs, the ICWS'94 draft, our own docs, and idea descriptions written by others (e.g. "Ideas from other simulators" in `docs/performance-log.md`).
+- To learn what pMARS does, write a warrior and run `bin/pmars`, or use `tools/pmars-diff.mjs`.
+- `.claude/hooks/clean-room.mjs` blocks the usual paths. It is a safety net with gaps, not the rule.
+
+## Commands
+
+```sh
+npm test                                   # all tests
+node --test test/wasm.test.js              # one file
+PMARS_VALIDATE=$O/validate.red npm test    # + 2 tests that need validate.red (skipped otherwise)
+npm run serve                              # http://127.0.0.1:8000/, no build step
+tools/build-wasm.sh                        # after every change under src/engine/wasm/
+node tools/asm.mjs warriors/dwarf.red      # pMARS-style listing
+node tools/tournament.mjs $O/sets/t20 --rounds 100 --engine wasm --pmars $O/bin/pmars --compare
+```
+
+`O=${COREWAR_ORACLE:-$HOME/.local/share/corewar-theater}`: pMARS binaries, a 568-warrior corpus, tournament sets and corewar.dev timing scripts, outside the repo for license reasons. Its `README.md` lists everything. A missing or broken binary: ask Martin, do not build pMARS (needs its source).
+
+Skills: `engine-check` (correctness gate for engine changes), `perf-experiment` (measure and log a speed idea), `ui-check` (run the app headless and screenshot it).
+
+## Where things are
+
+- `PLAN.md`: status, validation results, speed summary, roadmap (M1 to M4), open decisions. Update it when a roadmap item lands.
+- `docs/redcode-semantics.md`: exact assembler and simulator behavior, pMARS quirks, deviations from pMARS (section 4). The spec: change it together with the code.
+- `docs/performance-log.md`: every speed experiment with numbers and verdict. Read it before trying a speed idea, append every experiment, rejected ones too.
+- `test/fixtures/*.json`: pMARS results for 4031 expressions and 146 snippets, used by `test/golden.test.js`.
+- `README.md`: user-facing summary. Keep its numbers in sync with `PLAN.md`.
+
+## Engines
+
+Three implementations must agree: `src/engine/mars.js` (visualizer, per-cell bookkeeping; `headless: true` skips it), `src/engine/wasm/mars.c` (tournaments, via `src/engine/mars-wasm.js`), and pMARS. A behavior change goes into mars.js, into both wasm loops (`execute`, `execute2`), and into the semantics doc. `test/tournament.test.js` checks JS against wasm, `tools/pmars-diff.mjs` both against pMARS.
+
+## Conventions
+
+- New source files start with `// SPDX-License-Identifier: MIT` and `// Copyright (c) 2026 Martin Leitner-Ankerl`.
+- No dependencies: no npm packages, no bundler, tests on `node:test`. Node 20 or newer. Browser code is plain ES modules.
+- Read warrior files as latin1.
+- Warriors in `warriors/` are written for this repo (plus Dewdney's Imp and Dwarf). Do not add hill warriors: their licenses are unclear.
+- CI (`.github/workflows/test.yml`) runs `npm test` on Node 20 and 22. It has no pMARS: run the pMARS checks locally.
+
+## Gotchas
+
+- `src/engine/wasm/mars.wasm` is committed and the tests load it. Without a rebuild, the tests run the old C code.
+- `Mars.current` is an index, 0 is a valid warrior: test `m.current >= 0`, not `m.current &&`.
+- pMARS never returns on some inputs (semantics doc, section 4). Always call it with a timeout.
+- Timings only count from an idle machine: check `uptime` and running `node`/`clang` processes, including other agents.
+- `pkill -f <pattern>` also matches the shell that runs it. Kill by PID.
+- `tools/pmars-diff.mjs --wasm-match` compares scores only, because early ties leave a different final core. Core hashes need `--wasm --pmars-trace`.
