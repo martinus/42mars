@@ -357,6 +357,12 @@ static __attribute__((noinline)) void warrior_died(u32 w) {
 #ifdef COUNT_INS
 static u64 insCount[1u << 14]; // executions per instruction word
 #endif
+#ifdef TRACE_TIES
+// See tie-ceiling.c: the B target of the last instruction, and a hook after
+// every instruction.
+static u32 traceTarget;
+static void trace_step(const Warrior *W, u32 pc, Cell ir, u32 tasks);
+#endif
 
 static inline u32 ab_of(const Cell *c) { u32 v; __builtin_memcpy(&v, c, 4); return v; }
 static inline void set_ab(Cell *c, u32 v) { __builtin_memcpy(c, &v, 4); }
@@ -476,6 +482,9 @@ a_done:;
   }
 
   Cell *const B = &C[bPtr];
+#ifdef TRACE_TIES
+  traceTarget = bPtr;
+#endif
   // MOV.I, the most frequent instruction, before the dispatch.
   if ((ins & 0xff) == 006) {
     set_cell(B, Acell);
@@ -679,10 +688,17 @@ static inline __attribute__((always_inline)) int step(Cell *const C, const u32 n
   insCount[ins]++; // see bench-native.c
 #endif
 #define EXEC(word) exec_ins(C, n, mask, limit, W, q, head, tail, pc, ir, word)
+#ifdef TRACE_TIES
+  // The generic code only: the specialized cases behave the same.
+  const int died = EXEC(ins);
+  trace_step(W, pc, ir, *tail - *head);
+  return died;
+#else
   switch (ins) {
 #include "dispatch.h"
   }
   return EXEC(ins);
+#endif
 #undef EXEC
 }
 

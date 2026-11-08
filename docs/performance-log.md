@@ -586,6 +586,59 @@ instruction, which bad speculation does not count. Verdict: no experiment,
 nothing in the frontend is worth a change that V8 would also have to
 like.
 
+### Ceiling of exact early ties for warriors in closed loops (8th November 2026, #27)
+
+`tools/tie-ceiling.mjs <native input>` builds `src/engine/wasm/tie-ceiling.c`
+(`mars.c` with `-DTRACE_TIES`: the generic code, a hook after every
+instruction) and plays every round to its end. It notes when today's early
+tie stops the round (`tie_check()` on its own schedule; the total of
+executed instructions equals `bench-native --early-tie` for every input),
+and per tie round and warrior:
+* the instruction after which the warrior has more processes than turns
+  left, the process-count proof for that warrior alone
+* t0: the earliest instruction from which the warrior only executes a set
+  S of cells, none `DAT`, `DIV` or `MOD`, and no cell of S changes until
+  the round ends (a shadow core gives the last change of every cell). An
+  oracle, known afterwards only
+
+A warrior is safe from the earlier of the two, and a proof could stop the
+round once both are. The gain against today, as a share of all
+instructions executed today (with early ties), by the size of S:
+
+| | tie rounds today | \|S\| <= 1 | 4 | 8 | 16 | 32 | 64 | any |
+|---|---|---|---|---|---|---|---|---|
+| t20 | 35.7% | 0.05% | 0.55% | 0.76% | 1.01% | 1.34% | 1.41% | 1.51% |
+| t80 | 47.1% | 0.64% | 2.73% | 3.81% | 4.46% | 4.99% | 5.08% | 5.37% |
+| 400 corpus pairs | 56.2% | 0.64% | 4.89% | 8.32% | 8.90% | 9.90% | 10.25% | 11.48% |
+| t20, `-p 8` | 34.0% | 0.19% | 1.39% | 1.62% | 2.22% | 2.24% | 2.24% | 2.46% |
+| t80, `-p 8` | 51.4% | 1.01% | 5.08% | 6.76% | 7.50% | 7.52% | 7.52% | 7.98% |
+
+(t20, t80: `tournament.mjs --rounds 100 --seed 1 --native-input`, `-p 8`
+with `--processes 8`; pairs: `bench-pairs --pairs 400`, 30 rounds.) The
+count proof checked after every instruction instead of every 4096 would
+gain 0.01%.
+
+At |S| <= 32, by what makes the two warriors safe and how the opponent of
+a looping warrior writes after t0:
+
+| | both loop, opponent writes through pointers or increments | both loop, opponent writes only directly or not | one immortal by count, the other loops |
+|---|---|---|---|
+| t20 | 1.10% | 0.09% | 0.15% |
+| t80 | 4.33% | 0.37% | 0.29% |
+| 400 corpus pairs | 9.03% | 0.49% | 0.37% |
+| t80, `-p 8` | 7.11% | 0.41% | 0.00% |
+
+Verdict: above 3% on t80, but not where #27 expected it. A paper against
+a stone or scanner in a loop is 0.29% of t80, and a cheap proof "the
+opponent writes only through direct operands, or not at all, so never into
+S" decides about 0.5%. Most of the ceiling is two warriors that both run a
+few fixed cells and bomb or decrement the core through pointer cells
+without hitting each other's loop: Big-raidar against CANCER (11.5M
+instructions in 99 rounds), Asi-R against Big-raidar (10.2M), Bullwhip, a
+one-cell loop, against stones and scanners. A proof there has to bound
+where the pointer writes land for the rest of the round; #35 has the
+ideas and the measurement to do first.
+
 State: bench about 294M/s in WebAssembly, about 413M/s natively; corpus
 pairs 280M/s; t20 3.84 s single thread; t80 3.63 s with 16 jobs and 3.28 s
 with 31 jobs (8th November 2026; the machine ran 2 to 4% slower than on the
