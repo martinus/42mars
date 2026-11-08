@@ -218,3 +218,58 @@ used by corewar.dev were studied for ideas; their code is not used.
 | No-killer early tie (corewar.dev fork: DAT count in core) | kept, by scan instead of count |
 | Two-warrior queue caching (corewar.dev fork) | kept |
 | One huge generated switch with a case for every instruction variant (Martin remembered seeing it in an old simulator) | evaluated in the second round: all 8,512 words was much slower; 32 generated cases for the hottest words kept |
+
+### Second pass over other simulators (8th November 2026)
+
+Read by separate sessions that do not write engine code, written down here as
+descriptions only: qMars 1.1, exhaust-ma, exMARS 0.01, exhaust 1.9.2 and
+concurrent-mars (C/C++); fmars 0.0.207 and pyCorewar (C); rmars, dmars,
+corewars, rMARS (Rust); gMARS (Go); AzureMARS (Free Pascal); nMars (C#);
+pMARS 0.9.5. None was built or run. "Value" is a guess unless a number is
+given. All ideas below keep pMARS results exact unless marked.
+
+New ideas for our engine, most promising first:
+
+| Idea | From | Mechanism | Value, cost | Status |
+|---|---|---|---|---|
+| Rounds of one pairing in parallel | dmars, concurrent-mars | Rounds only depend on each other through p-space, and only `LDP` reads it. Opcodes are only copied, so a warrior without `LDP` in its code never executes one. Then step the position generator sequentially up front (one step per round for two warriors), derive the first mover from the round number, run blocks of rounds on several workers and add up the results in round order | Close to linear in workers for one pairing or a few (visualizer "run N rounds", one warrior against a few opponents, splitting the last big pairings of a tournament). Nothing for t80, whose tail is below 3%. dmars claims 500 rounds in 0.78 s on one thread and 0.10 s on all cores of an M3 Pro. Cost: low, `runMatch` needs the first round number of a block | open, #8 |
+| `MOV.I` from one 64-bit snapshot of the A cell | AzureMARS, fmars | Read the whole 8-byte A cell at operand time. `MOV.I` stores it into the B cell with one store, `SEQ.I`/`SNE.I`/`CMP.I` compare its instruction word. Exact because B-operand side effects only change value fields, never a word, and the padding is always zero | `MOV.I` words are about 21 to 25% of executions; saves a load and a store each. 0.5 to 3%. Cost: small, in `exec_ins()` | open, #9 |
+| One queue array for both warriors, one shared head | pyCorewar | With two warriors the turns alternate until the first death ends the round, so both heads move in lockstep. Warrior 0 uses the even slots and warrior 1 the odd slots of one ring, one head walks it and can double as the instruction countdown; each tail steps by 2. A warrior's queue is empty after its pop when its tail equals head + 2 | Five loop-carried counters become three without the pack/unpack cost of the rejected packed counters; aims at the V8 spills. 0 to 5%. Cost: moderate (process listing, `tie_check`, the warrior-1-first pre-step need stride 2) | open, #9 |
+| Linear queue that never wraps | fmars, pyCorewar | Per warrior an array large enough for a whole round, head and tail only move forward: no mask, and with a byte pointer no shift. Bound for two warriors: at most `1 + 2 * (maxCycles + 1)` entries, about 320 KB per warrior at 80,000 cycles | Up to 4 of 66 x86 instructions per simulated instruction, but pushes stream into fresh cache lines. 0 to 4%. Combines with the shared head | open, #9 |
+| Merge instruction words that behave the same into one specialized case | qMars, exhaust, exhaust-ma | Many words execute identically: the modifier does nothing for `DAT`/`SPL`/`JMP`/`NOP`; for the A mode of `DAT`/`NOP` and the B mode of `DAT`/`SPL`/`JMP`/`NOP` the modes `$ # @ *` are the same; `JMZ`/`JMN`/`DJN` .A = .BA, .B = .AB, .F = .X = .I; .F = .I for `ADD` to `MOD` and `SLT`; `CMP` = `SEQ`. Rank classes instead of words and put every member word as a case label on one copy. Words in core stay as they are (`MOV.I` copies them, `CMP.I` compares them) | The `HOT` list has 3 duplicates today (`spl.b $ $`/`spl.b $ #`, `jmp.b $ $`/`jmp.b $ #`, `dat.f $ $`/`dat.f # #`). 0 to 2% on t80 and corpus pairs, less generic code. Cost: `gen-dispatch.mjs` and the specialized-word test | open, #10 |
+| 6-byte cell, or values and words in separate arrays | exhaust, exhaust-ma (6-byte); arrays: our own | 6 bytes per cell makes the core 48 KB; separate arrays give 32 KB of values plus 16 KB of words, and most accesses only touch values | Alternatives to the 4-byte cell of issue #6; scaling by 6 or two loads per fetch cost something. 0 to 5% natively | open, issue #6 |
+| Prefetch the other warrior's next cell | rmars | In the two-warrior loop the other warrior's next PC is at the head of its queue; prefetch that core cell right after the current fetch | Natively a few percent at most on scattered papers. WebAssembly has no prefetch; an early plain load would have to survive V8, unverified. Must not use the loaded value, the current instruction can write that cell | open, native first, #6 |
+| One wraparound for jumps and skips | fmars | Select between the unwrapped candidates (pc + 1, pc + 2, the jump target) and wrap once, instead of wrapping each | Under 1%; check the native disassembly first, clang may already do it | open, low |
+| Branch-free `SPL` push | fmars | Always write the new process at the tail, advance the tail only below the process limit. Needs a spare slot behind the queue (linear queue, or a ring one larger than the limit) | 0 to 1%; the log's `SPL` fast path gave nothing | open, low |
+| Two fields in one register for `ADD.F`/`SUB.F`/`DJN.F` | fmars (MMX) | Add both 16-bit fields in one 32-bit add, then reduce each lane; no carry crosses lanes up to core size 32,768 | These words are rare in the measured mixes, near 0 | not recommended |
+| Statistical early stopping (changes results) | rmars | Rounds stay a prefix of the normal sequence. From `max(min_rounds, 2)` rounds on, after every round: points 3/1/0 per round, sample mean and variance (n - 1), interval width `2 * z * sqrt(var / n) * 100`; stop when the width is at most `ci_width`, report `rounds_played`. rmars documents a score bias of +0.5 to +0.8 at width 60; zero variance stops right at `min_rounds`; repeated looks are not corrected | Large for screening (evolvers, hill pre-filter), lopsided pairings stop after a few dozen rounds. Only as an explicit opt-in mode | not for the default |
+
+Seen in the sources and not useful for us, by measurement or reasoning:
+
+| Idea | From | Why not |
+|---|---|---|
+| Handler address in every cell, each handler ends with its own copy of the dispatch jump | fmars (computed goto), nMars (a delegate per cell) | This is how fmars makes full specialization fast natively: one load and one indirect jump per instruction, and the branch predictor keys on the handler it leaves (our native full switch had one shared jump: 0.14 misses per instruction). WebAssembly cannot express it (`br_table` only targets enclosing blocks, tail calls measured 116.8 vs 277). Native only, and fmars generates handlers just for the words of a hill (about 350) |
+| Code for every word a corpus uses | fmars, nMars | 40, 48 and 64 hot cases were slower than 32 in V8 |
+| A WebAssembly module generated per match for its words | fmars idea, nMars plan | The generic path is only 0.1 to 3.4% of executions; needs a wasm emitter in JS |
+| Dispatch through a table of handlers per opcode and modifier | AzureMARS | the table variants measured 183.8 vs 241.2 |
+| 64-way dispatch on the predecoded mode pair | rmars | measured 116 vs 125 |
+| One turn per loop iteration with swapped locals | rmars | measured 257.3 vs 277.6 |
+| One shared queue buffer for all warriors | pMARS, rmars, exhaust | our power-of-two rings are cheaper; the two-warrior form is the shared-head idea above |
+| Modulo through a lookup table | AzureMARS | 192 KB table, a load where we use a compare and a select |
+| Linked list of processes | AzureMARS | 24-byte nodes and pointer chasing against a 2-byte ring entry |
+| Empty cell as all zero bits, clearing only after warrior 0 | exhaust, exMARS, pMARS, AzureMARS | the whole round start is 0.3 to 0.6% |
+| Positions without repeats, or every position with both first movers | qMars, fmars, AzureMARS, pyCorewar | changes which rounds are played |
+
+Speed claims in the sources (not verified, old hardware): fmars 1.75 to 1.9
+times exMARS and 3 times pMARS and exhaust (author, 2005); exhaust-ma 70% of
+pMARS 0.9.2 time and 1.3 times exhaust; qMars 67% of pMARS time; exMARS 1.5
+times pMARS on a Pentium III; pyCorewar 1.5 times pMARS ('94); AzureMARS
+about 100 to 112M instructions/s on a Ryzen 9 5950X, and +70% from moving
+its state from globals into locals; dmars single thread about pMARS speed.
+The "1,101 opponents x 200 rounds in 3.5 s" claim for rmars is not in its
+repository. None of these simulators has an exact early tie.
+
+Side notes: in pMARS 0.9.6 (rmars) a warrior longer than the instruction
+limit is an assembler error; check against our pMARS 0.9.5 build. qMars
+differs from pMARS for `DJN.F` and the target field of `DIV.BA`/`MOD.BA`,
+so it is no semantics reference.
