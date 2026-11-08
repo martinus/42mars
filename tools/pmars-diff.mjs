@@ -5,7 +5,8 @@
 // Differential test against a pMARS binary (used as an external program only).
 //
 //   node tools/pmars-diff.mjs --pmars path/to/pmars [--corpus dir] [--tmp dir]
-//        [--jobs 16] [--seed 1] [--scale 1] [--only listings,exprs,...] [--headless]
+//        [--jobs 16] [--seed 1] [--scale 1] [--only listings,exprs,...]
+//        [--headless | --wasm | --wasm-match]
 //
 // Sections:
 //   listings   every .red file in --corpus: pMARS listing (pmars -r 0) vs
@@ -17,6 +18,11 @@
 //   fuzz       random warriors on core sizes 80, 800 and 8000
 //   multi      3 and 4 warrior battles (random warriors)
 // --headless runs our simulator without the visualizer bookkeeping.
+// --wasm runs the battles, fuzz and multi sections on the wasm engine
+// (src/engine/mars-wasm.js) instead of mars.js, round by round.
+// --wasm-match plays each battle with one runMatch() call with early tie
+// detection, which leaves the final core of some rounds different, so it
+// compares the scores only and does not go with --pmars-trace.
 // Exit code 1 when anything differs.
 //
 // With --pmars-trace, battles run on a pMARS build that additionally prints
@@ -39,6 +45,7 @@ import { join } from 'node:path';
 import { assemble } from '../src/engine/assembler.js';
 import { Evaluator } from '../src/engine/expr.js';
 import { Mars } from '../src/engine/mars.js';
+import { compileWasmMars, createWasmMarsSync } from '../src/engine/mars-wasm.js';
 import { formatListing } from '../src/engine/opcodes.js';
 
 const args = process.argv.slice(2);
@@ -58,6 +65,12 @@ const JOBS = Number(arg('jobs', Math.max(1, cpus().length - 2)));
 const SCALE = Number(arg('scale', 1));
 const ONLY = arg('only') ? new Set(arg('only').split(',')) : null;
 const HEADLESS = args.includes('--headless');
+const WASM_MATCH = args.includes('--wasm-match');
+const WASM = args.includes('--wasm') || WASM_MATCH ? await compileWasmMars() : null;
+if (WASM_MATCH && TRACE) {
+  console.error('--wasm-match compares scores only; leave out --pmars-trace');
+  process.exit(2);
+}
 const TIMEOUT = Number(arg('timeout', 120)) * 1000;
 mkdirSync(TMP, { recursive: true });
 
@@ -393,10 +406,11 @@ async function compareBattle(files, sources, o, pos, rounds) {
   const want = lines.map((l) => l.trim().split(/\s+/).map(Number));
   const ws = sources.map((s) => assemble(s, { ...o, warriors: files.length, rounds }));
   if (ws.some((w) => !w.ok)) return `${files.join(' ')}: pMARS ran it, we do not assemble it`;
-  const m = new Mars({ ...o, rounds, headless: HEADLESS });
-  m.load(ws, { seed: pos - o.minDistance });
+  const m = WASM ? createWasmMarsSync({ ...o, rounds }, WASM) : new Mars({ ...o, rounds, headless: HEADLESS });
+  if (WASM_MATCH) m.runMatch(ws, { rounds, seed: pos - o.minDistance, earlyTie: true });
+  else m.load(ws, { seed: pos - o.minDistance });
   const roundLines = [];
-  for (let i = 0; i < rounds; i++) {
+  for (let i = 0; i < (WASM_MATCH ? 0 : rounds); i++) {
     m.startRound();
     while (!m.roundOver) m.run(1 << 20);
     roundLines.push(`ROUND ${i + 1} ${m.time} ${coreHash(m)}`);

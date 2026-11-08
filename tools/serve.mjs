@@ -19,6 +19,7 @@ const types = {
   '.json': 'application/json',
   '.svg': 'image/svg+xml',
   '.png': 'image/png',
+  '.wasm': 'application/wasm',
 };
 
 createServer(async (req, res) => {
