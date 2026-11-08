@@ -188,6 +188,37 @@ test('targeted: process limit 1, DIV/MOD by zero, DJN on post-incremented cells'
   compareMatch(o, [a, b], { seed: 5, rounds: 6, steps: true });
 });
 
+// The wasm engine reads the whole A cell once at operand time; MOV.I stores
+// that snapshot and CMP.I, SEQ.I and SNE.I compare its instruction word.
+// Operands of -1 to 2 with increment and decrement modes make A and B hit
+// the same cell, and the A operand hit the cell its own increment changes.
+test('targeted: .I copies and compares when A and B hit the same cell through } > { <', () => {
+  const o = { coreSize: 64, maxCycles: 2000, maxProcesses: 16, minDistance: 16, maxLength: 16 };
+  const field = () => `${pick(['}', '>', '{', '<', '#', '$'])}${rand(4) - 1}`;
+  const src = () => {
+    const lines = ['spl 0, 0'];
+    for (let i = 0; i < 2 + rand(6); i++) lines.push(`${pick(['mov.i', 'mov.i', 'cmp.i', 'seq.i', 'sne.i'])} ${field()}, ${field()}`);
+    lines.push(`jmp ${-lines.length}, 1`, 'dat 1, 0', 'dat 0, 1');
+    return lines.join('\n') + '\n';
+  };
+  for (let k = 0; k < 40; k++) {
+    compareMatch(o, [warrior(src(), { ...o, warriors: 2 }), warrior(src(), { ...o, warriors: 2 })], { seed: rand(2147483646) + 1, rounds: 2, steps: true });
+  }
+});
+
+// Two warriors with maxCycles up to 80000 get linear queues, long enough for
+// the longest round: at most maxCycles + 1 turns each, at most two entries
+// pushed per turn. A block of SPL 0 with more processes allowed than cycles
+// pushes two in nearly every turn. Above 80000 cycles the queues are rings; with 64 processes the
+// ring wraps all the time.
+test('targeted: full queues at the linear queue limit and above', () => {
+  // Nearly every turn of this warrior pushes two entries.
+  const spl = warrior(`${'spl 0\n'.repeat(99)}jmp -99\n`);
+  for (const o of [{ maxCycles: 80000, maxProcesses: 200000 }, { maxCycles: 100000, maxProcesses: 200000 }, { maxCycles: 80001, maxProcesses: 64 }]) {
+    compareMatch(o, [spl, spl], { seed: 11, rounds: 2, steps: false });
+  }
+});
+
 test('targeted: maxCycles 0, a single warrior, empty warriors and fractional run counts', () => {
   const empty = (name) => ({ ok: true, instructions: [], start: 0, pin: null, name, author: 'nobody' });
   compareMatch({ maxCycles: 0 }, [warrior('jmp 0\n'), warrior('jmp 0\n')], { seed: 3, rounds: 2, steps: true });
@@ -325,8 +356,9 @@ test('every specialized instruction word agrees with mars.js', () => {
   const rules = [
     { maxLength: 100, minDistance: 100 }, // 8000 / 8000: execute2_8000()
     { coreSize: 800, maxCycles: 4000, maxProcesses: 800, maxLength: 20, minDistance: 20 },
-    // Queues of 2^17 entries, with enough cycles that the counters pass 2^16.
-    { maxProcesses: 70000, maxLength: 20, minDistance: 100 },
+    // Ring queues of 2^17 entries (more than 80000 cycles: no linear
+    // queues), with enough cycles that the counters pass 2^16.
+    { maxCycles: 80001, maxProcesses: 70000, maxLength: 20, minDistance: 100 },
   ];
   for (const w of words) {
     for (const o of rules) {
