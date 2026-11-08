@@ -187,6 +187,21 @@ with 31 jobs. The WebAssembly layer costs about 32% against native (the
 specialized code gained more natively). Next candidates: the remaining
 Liftoff time of short runs, and V8's spills in the loop.
 
+### Measurements after the second round
+
+Same machine, idle, after the second round was merged. Scripts in
+`$COREWAR_ORACLE/cwbench/` (`benchpairs.mjs`, `split.mjs`).
+
+| Measurement | Result |
+|---|---|
+| Warm-up in the bench: the 3 bench pairs one by one, best of 5 (warmed up), ours `runMatch` without early tie against corewar.dev exMARS | agony/bubbles 307 vs 190M/s (1.62x), bomber/chalk 259 vs 134 (1.93x), army/bananasplit 310 vs 186 (1.67x). `tools/bench.mjs` (281) and `cwbench/single.mjs` (132) time one short run from a fresh process, so their 2.1x includes V8's warm-up, and exMARS warms up slower. Compare engines on tournaments |
+| t20 split by tie rounds, ours vs exMARS, single thread | 37 pairings without tie rounds (same 128M instructions in every engine): ours 416 ms (308M/s), exMARS 667 ms, 1.60x. 153 pairings with 3,218 tie rounds: our early ties cut 1,101M to 983M instructions; ours 3,569 ms, exMARS 5,448 ms (1.53x), against ours without early tie 1.38x: exMARS skips tie work too |
+| Tournament scaling, t80 31 jobs | 101.6 CPU-s in 3.56 s wall (28.5 threads busy), 161M/s per hardware thread, about 320M/s per core: the same as one thread alone. The tournament is bound by single-core speed |
+| Fixed cost of `tools/tournament.mjs`, t80 with `--rounds 1`, 31 jobs | 0.26 s engine time, 5.5 CPU-s: every worker assembles all 80 warriors and compiles the module. About 7% of the full t80 (issue #5) |
+| Load balance, t80 | largest pairing 16M instructions, 605M per worker with 31 workers: the tail is below 3% |
+| Native, bench pairs, 2000 rounds, `perf stat` | per simulated instruction: 44 x86 instructions, 10.8 cycles, 0.13 L1 data cache misses (1.9% of loads), 0.044 branch misses. The 8000-cell core is 64 KB, L1d is 32 KB (issue #6) |
+| Repeated start positions within a pairing | 100 rounds drawn from 7,801 positions repeat about 0.6 times per pairing (0.6% of rounds); p-space and the first mover differ anyway. Not worth caching |
+
 ## Ideas from other simulators
 
 exMARS (Martin Ankerl, 2003, based on exhaust and pMARS) and the exMARS fork

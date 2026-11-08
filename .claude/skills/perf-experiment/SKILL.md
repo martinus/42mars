@@ -12,12 +12,14 @@ Setup: `O=${COREWAR_ORACLE:-$HOME/.local/share/corewar-theater}`.
 4. Measures (report median and range):
    | Name | Command | Runs |
    |---|---|---|
-   | bench | `node tools/bench.mjs $O/corpus --wasm-match` | 7 |
+   | bench | `node tools/bench.mjs $O/corpus --wasm-match` (short, includes V8 warm-up) | 7 |
+   | pairs | `node tools/bench-pairs.mjs $O/corpus` (40 random corpus pairs, broader instruction mix; `--early-tie`) | 7 |
    | native | `node tools/bench-native.mjs $O/corpus --runs 7` | 1 |
    | t20 | `node tools/tournament.mjs $O/sets/t20 --rounds 100 --seed 1 --jobs 1 --engine wasm` (time on stderr: `engine (wasm): N s`) | 7 |
    | t80 | same with `$O/sets/t80`, `--jobs 16` and `--jobs 31` | 5 each |
+   | fixed cost | t80 with `--rounds 1 --jobs 31` (worker start, assembly, compile) | 5 |
    | JS | `node tools/bench.mjs $O/corpus --headless` (only for mars.js changes) | 7 |
-   References, when re-measuring the summary: `node $O/cwbench/single.mjs exmars` (bench, corewar.dev exMARS), `node $O/cwbench/tournament.mjs 31 $O/sets/t80.json`, `node tools/tournament.mjs $O/sets/t80 --rounds 100 --seed 1 --jobs 31 --pmars $O/bin/pmars` (native pMARS), and `node $O/cwbench/perpair.mjs $O/sets/t20.json` from the repo root to find pairings where we lose to exMARS.
+   References, when re-measuring the summary: `node $O/cwbench/benchpairs.mjs` (bench pairs warmed up, ours vs corewar.dev exMARS: the fair single-thread comparison), `node $O/cwbench/split.mjs` (t20 split into pairings with and without tie rounds), `node $O/cwbench/single.mjs exmars` (short run like `tools/bench.mjs`, includes warm-up), `node $O/cwbench/tournament.mjs 31 $O/sets/t80.json`, `node tools/tournament.mjs $O/sets/t80 --rounds 100 --seed 1 --jobs 31 --pmars $O/bin/pmars` (native pMARS), and `node $O/cwbench/perpair.mjs $O/sets/t20.json` from the repo root to find pairings where we lose to exMARS.
 5. Keep only if t20 and bench are faster beyond noise (ranges do not overlap or a clear median shift over 7+7 runs), nothing else gets slower by more than 1%, and the `engine-check` skill passes. Otherwise restore the code and rebuild.
 6. Record, also when rejected: one row in the right table of `docs/performance-log.md`: `| idea and why it should help | measure before → after | kept / rejected (reason) |`. For a kept change update the "State" line, and the speed numbers in `PLAN.md` (section Speed) and `README.md`.
-7. For a profile, build natively like `tools/bench-native.mjs` does (`clang -O3 -march=native` on `mars.c` + `bench-native.c`) and use `perf stat` / `perf record`; the log has the last profile (instructions per simulated instruction, IPC, branch misses).
+7. For a profile, build natively like `tools/bench-native.mjs` does (`clang -O3 -march=native` on `bench-native.c`, which includes `mars.c`; it leaves the binary and its input in `/tmp/mars-native-*`) and use e.g. `perf stat -e instructions,cycles,L1-dcache-loads,L1-dcache-load-misses,branch-misses <binary> <input>` or `perf record`. `tools/bench-native.mjs` only writes the bench pairs; for the tournament mix write the same input format for the t20 or t80 pairs (format in the header of `bench-native.c`, positions as in `tools/tournament.mjs`). `-DCOUNT_INS` prints executions per instruction word. The log has the last profiles.
