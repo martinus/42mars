@@ -3,6 +3,11 @@
 
 // Expression evaluator for Redcode operands, FOR counts and ;assert lines.
 // Signed 64-bit arithmetic on BigInt, 26 single-letter registers.
+//
+// The parser reproduces the evaluation order of pMARS, including its defects:
+// an operator that ends a nested higher-precedence part is handed back to the
+// enclosing level through one variable shared by all levels (`saved`), and a
+// handed-back `==` is dropped. See docs/redcode-semantics.md, section 1.
 
 export const EVAL_OK = 0;
 export const EVAL_OVERFLOW = 1; // result valid, but 64-bit overflow happened
@@ -11,14 +16,16 @@ export const EVAL_DIV_ZERO = -2; // division or modulo by zero
 
 const MAX_INT = (1n << 63n) - 1n;
 
-// Binary operators. The precedence is the second field: higher binds tighter.
-const NONE = 0;
+// Operators. IDENTITY is the pending operator in front of the first operand of
+// an expression: it yields its right operand. BAD_OP stands for a character
+// that is not an operator where one is expected.
+const NONE = -1;
+const IDENTITY = 0;
 const MUL = 1, DIV = 2, MOD = 3, ADD = 4, SUB = 5;
 const EQ = 6, NE = 7, LT = 8, GT = 9, LE = 10, GE = 11, AND = 12, OR = 13;
-const PREC = [0, 5, 5, 5, 4, 4, 3, 3, 3, 3, 3, 3, 2, 1];
-
-// Thrown to abort the evaluation with a syntax error.
-class SyntaxFailure extends Error {}
+const BAD_OP = 14;
+// Precedence, higher binds tighter.
+const PREC = [0, 5, 5, 5, 4, 4, 3, 3, 3, 3, 3, 3, 2, 1, 0];
 
 const isSpace = (c) => c === ' ' || c === '\t' || c === '\r' || c === '\n' || c === '\v' || c === '\f';
 const isDigit = (c) => c >= '0' && c <= '9';
@@ -30,6 +37,7 @@ export class Evaluator {
     this.text = '';
     this.pos = 0;
     this.status = EVAL_OK;
+    this.saved = NONE;
   }
 
   resetRegisters() {
@@ -40,15 +48,8 @@ export class Evaluator {
     this.text = text;
     this.pos = 0;
     this.status = EVAL_OK;
-    let value = 0n;
-    try {
-      value = this.group();
-      this.skipSpace();
-      if (this.pos < this.text.length) throw new SyntaxFailure();
-    } catch (e) {
-      if (!(e instanceof SyntaxFailure)) throw e;
-      return { status: EVAL_BAD, value };
-    }
+    const value = this.expression(-1, 0n, IDENTITY);
+    if (this.pos < this.text.length) this.status = EVAL_BAD;
     return { status: this.status, value };
   }
 
@@ -62,7 +63,15 @@ export class Evaluator {
     return this.text[this.pos + offset] ?? '';
   }
 
-  // ---- arithmetic with overflow tracking
+  // ---- arithmetic with status tracking
+
+  // An error status (bad expression, division by zero) replaces any status,
+  // overflow is only recorded while the status is still OK. So once an error
+  // happened, the evaluation can never succeed.
+  fail(status) {
+    this.status = status;
+    return 0n;
+  }
 
   wrap(x) {
     const w = BigInt.asIntN(64, x);
@@ -72,13 +81,14 @@ export class Evaluator {
 
   apply(op, a, b) {
     switch (op) {
+      case IDENTITY: return b;
       case MUL: return this.wrap(a * b);
       case ADD: return this.wrap(a + b);
       case SUB: return this.wrap(a - b);
       case DIV:
       case MOD:
         // Division by zero yields 0 for this operation and the evaluation goes on.
-        if (b === 0n) { this.status = EVAL_DIV_ZERO; return 0n; }
+        if (b === 0n) return this.fail(EVAL_DIV_ZERO);
         // BigInt division truncates toward zero and % follows the dividend, like C.
         return BigInt.asIntN(64, op === DIV ? a / b : a % b);
       case EQ: return a === b ? 1n : 0n;
@@ -89,103 +99,100 @@ export class Evaluator {
       case GE: return a >= b ? 1n : 0n;
       case AND: return a !== 0n && b !== 0n ? 1n : 0n;
       case OR: return a !== 0n || b !== 0n ? 1n : 0n;
+      default: return this.fail(EVAL_BAD);
     }
-    throw new Error('unknown operator');
   }
 
   // ---- grammar
 
-  // A group: a full expression up to a ')' or the end of the text.
-  group() {
-    const left = this.operand();
-    return this.climb(0, left, this.operator());
-  }
-
-  // Precedence climbing. `left` is the value read so far and `op` the operator
-  // after it. Consumes operators that bind tighter than `minPrec` and stores the
-  // operator that stopped it in this.handedBack.
+  // Continues an expression whose left value is `acc` and whose pending
+  // operator is `op1`: reads the next operand and the operator after it, and
+  // returns the value when the text ends, at ')' or at an operator that binds
+  // no tighter than `minPrec`. That operator is handed back in this.saved.
   //
-  // pMARS quirk: when a nested parse (started because the following operator
-  // binds tighter) is ended by `==`, that operator is lost: the enclosing
-  // levels see no operator and the whole group ends right after the `==`.
-  // The text after it stays unconsumed, which normally ends as a syntax error
-  // (missing ')' or text left over). Inside an assignment see operand().
-  climb(minPrec, left, op) {
-    while (op !== NONE && PREC[op] > minPrec) {
-      let right = this.operand();
-      let next = this.operator();
-      if (next !== NONE && PREC[next] > PREC[op]) {
-        right = this.climb(PREC[op], right, next);
-        next = this.handedBack;
-        if (next === EQ) next = NONE;
-      }
-      left = this.apply(op, left, right);
-      op = next;
+  // pMARS quirks, kept on purpose:
+  // - this.saved is one variable for all levels, and every call (also the ones
+  //   for parentheses and register assignments inside the operand) clears it.
+  //   After a nested call, the value left by the last call anywhere below
+  //   decides how this level continues.
+  // - A handed-back `==` is dropped: the level returns without consuming
+  //   more text, which normally ends as a bad expression.
+  expression(minPrec, acc, op1) {
+    this.saved = NONE;
+    const v = this.operand();
+    this.skipSpace();
+    if (this.pos >= this.text.length || this.peek() === ')') return this.apply(op1, acc, v);
+    const op2 = this.operator();
+    if (PREC[op1] >= PREC[op2]) {
+      // op2 does not bind tighter: finish op1 first.
+      if (PREC[op2] > minPrec) return this.expression(minPrec, this.apply(op1, acc, v), op2);
+      this.saved = op2;
+      return this.apply(op1, acc, v);
     }
-    this.handedBack = op;
-    return left;
+    // op2 binds tighter: its part becomes the right operand of op1.
+    const right = this.expression(PREC[op1], v, op2);
+    const result = this.apply(op1, acc, right);
+    const saved = this.saved;
+    if (saved !== NONE && saved !== EQ && PREC[saved] >= minPrec) return this.expression(minPrec, result, saved);
+    return result;
   }
 
-  // Reads a binary operator, or returns NONE at ')' or the end of the text.
+  // Reads a binary operator. A character that is no operator gives BAD_OP and
+  // is consumed.
   operator() {
-    this.skipSpace();
     const c = this.peek();
     const c2 = this.peek(1);
-    let op, len = 1;
+    const two = (op) => { this.pos += 2; return op; };
+    const one = (op) => { this.pos += 1; return op; };
     switch (c) {
-      case '': case ')': return NONE;
-      case '*': op = MUL; break;
-      case '/': op = DIV; break;
-      case '%': op = MOD; break;
-      case '+': op = ADD; break;
-      case '-': op = SUB; break;
-      case '=': if (c2 !== '=') throw new SyntaxFailure(); op = EQ; len = 2; break;
-      case '!': if (c2 !== '=') throw new SyntaxFailure(); op = NE; len = 2; break;
-      case '<': if (c2 === '=') { op = LE; len = 2; } else op = LT; break;
-      case '>': if (c2 === '=') { op = GE; len = 2; } else op = GT; break;
-      case '&': if (c2 !== '&') throw new SyntaxFailure(); op = AND; len = 2; break;
-      case '|': if (c2 !== '|') throw new SyntaxFailure(); op = OR; len = 2; break;
-      default: throw new SyntaxFailure();
+      case '*': return one(MUL);
+      case '/': return one(DIV);
+      case '%': return one(MOD);
+      case '+': return one(ADD);
+      case '-': return one(SUB);
+      case '<': return c2 === '=' ? two(LE) : one(LT);
+      case '>': return c2 === '=' ? two(GE) : one(GT);
+      case '=': if (c2 === '=') return two(EQ); break;
+      case '!': if (c2 === '=') return two(NE); break;
+      case '&': if (c2 === '&') return two(AND); break;
+      case '|': if (c2 === '|') return two(OR); break;
+      default: break;
     }
-    this.pos += len;
-    return op;
+    return one(BAD_OP);
   }
 
-  // Operand: unary operators, a number, a register (or assignment) or a group.
+  // Operand: unary operators, a number, a register (or assignment) or a
+  // parenthesized expression.
   operand() {
     this.skipSpace();
     const c = this.peek();
-    if (c === '-') { this.pos++; return this.wrap(-this.operand()); }
-    if (c === '+') { this.pos++; return this.operand(); }
-    if (c === '!') { this.pos++; return this.operand() === 0n ? 1n : 0n; }
     if (c === '(') {
       this.pos++;
-      const v = this.group();
-      this.skipSpace();
-      if (this.peek() !== ')') throw new SyntaxFailure();
+      const v = this.expression(-1, 0n, IDENTITY);
+      if (this.peek() !== ')') this.fail(EVAL_BAD);
       this.pos++;
       return v;
     }
-    if (isDigit(c)) return this.number();
+    // Unary minus wraps without setting the overflow status.
+    if (c === '-') { this.pos++; return BigInt.asIntN(64, -this.operand()); }
+    if (c === '!') { this.pos++; return this.operand() === 0n ? 1n : 0n; }
+    if (c === '+') { this.pos++; return this.operand(); }
     if (isLetter(c)) {
-      const reg = (c.toLowerCase().charCodeAt(0) - 97);
+      const reg = c.toLowerCase().charCodeAt(0) - 97;
       this.pos++;
       this.skipSpace();
-      // `x=` (not `x==`) assigns the rest of the current group to the register.
+      // `x=` (not `x==`) assigns a whole new expression, up to the end of the
+      // text or the next unmatched ')', to the register.
       if (this.peek() === '=' && this.peek(1) !== '=') {
         this.pos++;
-        // If the right-hand side stopped early (a lost `==`, see climb), the
-        // parse resumes at the first ')' after the `=`, or the end of the text.
-        let close = this.text.indexOf(')', this.pos);
-        if (close < 0) close = this.text.length;
-        const v = this.group();
-        if (this.pos < close) this.pos = close;
+        const v = this.expression(-1, 0n, IDENTITY);
         this.registers[reg] = v;
         return v;
       }
       return this.registers[reg];
     }
-    throw new SyntaxFailure();
+    if (isDigit(c)) return this.number();
+    return this.fail(EVAL_BAD);
   }
 
   // Up to 20 digits; larger values saturate at 2^63 - 1.

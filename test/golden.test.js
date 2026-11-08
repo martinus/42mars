@@ -4,7 +4,10 @@
 // Reference results for 4031 expressions and 146 small Redcode sources. They
 // pin down pMARS behavior, quirks included, so that refactoring the engine
 // cannot change it unnoticed. Recorded from the first engine of this project;
-// a rewrite under the MIT license reproduces all of them.
+// a rewrite under the MIT license reproduces all of them. Snippets where a
+// differential test showed that pMARS behaves differently were corrected to
+// the pMARS result (metadata whitespace, lone CR, warriors without
+// instructions and the warning counts that follow from that).
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

@@ -187,3 +187,48 @@ test('pMARS validate.red self-ties', { skip: !validate || !existsSync(validate) 
   assert.deepEqual(m.roundResult.survivors, [0]);
   assert.equal(m.time, 80000);
 });
+
+// assemble() of a source without instructions returns such an object.
+const empty = (name) => ({ ok: true, instructions: [], start: 0, pin: null, name, author: 'nobody' });
+
+for (const headless of [false, true]) {
+  test(`a warrior without instructions runs whatever is at its position${headless ? ' (headless)' : ''}`, () => {
+    // Placed onto warrior 0's imp loop: it executes that code and survives.
+    let m = new Mars({ headless });
+    m.load([warrior('jmp 0\n'), empty('ghost')], { positions: [0, 0] });
+    m.startRound();
+    const ghost = m.warriors[1];
+    assert.equal(ghost.execHeat.length, 0);
+    assert.equal(ghost.territory, 0);
+    assert.deepEqual(queue(ghost), [0]);
+    assert.equal(m.run(4), 4);
+    assert.deepEqual(queue(ghost), [0]);
+    assert.equal(ghost.alive, true);
+    if (!headless) {
+      assert.equal(m.warriors[0].execHeat[0], 4); // heat goes to the warrior whose code it is
+      assert.equal(m.execBy[0], 1);
+    }
+    m.run(1e6);
+    assert.deepEqual(m.roundResult.survivors, [0, 1]);
+
+    // In an empty part of the core it executes DAT and dies.
+    m = new Mars({ headless });
+    m.load([warrior('jmp 0\n'), empty('ghost')], { positions: [0, 4000] });
+    m.startRound();
+    m.run(1e6);
+    assert.equal(m.time, 2);
+    assert.deepEqual(m.roundResult.survivors, [0]);
+    assert.equal(m.warriors[1].diedAt, 2);
+
+    // Only empty warriors: two die, then the round ends with the third.
+    m = new Mars({ headless });
+    m.load([empty('a'), empty('b'), empty('c')], { positions: [0, 100, 200] });
+    m.startRound();
+    m.run(1e6);
+    assert.deepEqual(m.roundResult.survivors, [2]);
+    assert.equal(m.time, 2);
+    m.startRound(); // warrior 1 starts
+    m.run(1e6);
+    assert.deepEqual(m.roundResult.survivors, [0]);
+  });
+}
