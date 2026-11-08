@@ -67,6 +67,7 @@ Three implementations must agree: `src/engine/mars.js` (visualizer, per-cell boo
 
 ## Gotchas
 
+- Read large files with the Read tool in parts (`offset`, `limit`), not `cat`: Bash output over the size limit is saved in the session's tool-results folder, and the clean-room hook blocks reading it back.
 - `src/engine/wasm/mars.wasm` is committed and the tests load it. Without a rebuild, the tests run the old C code.
 - `Mars.current` is an index, 0 is a valid warrior: test `m.current >= 0`, not `m.current &&`.
 - pMARS never returns on some inputs (semantics doc, section 4). Always call it with a timeout.
