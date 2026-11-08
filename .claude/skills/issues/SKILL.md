@@ -98,7 +98,7 @@ Grep before adding a rule (`grep -rn <symbol> CLAUDE.md .claude/`): extend the b
 ### 6. Review it when it is worth it
 
 - `/code-review` before a PR that touches the instruction loops, an early-tie proof, the queue or cell layout, or the clean-room hook, or whose diff runs past a few hundred lines.
-- For an exactness argument (e.g. "B-operand side effects never change an instruction word"), an agent asked to find the warrior that breaks it, given only the claim and the diff.
+- For an exactness argument (e.g. "B-operand side effects never change an instruction word"), an agent asked to find the warrior that breaks it, given only the claim and the diff. It shares your worktree: commit your work first (a local WIP commit, squashed before the push), and tell it to build mutants from copies and never run `git checkout` or `git restore` on tracked files.
 - `/simplify` after a pass that added a lot of code.
 
 Fix what they find before the push; say which you ran.
