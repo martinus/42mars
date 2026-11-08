@@ -8,6 +8,7 @@ Setup: `O=${COREWAR_ORACLE:-$HOME/.local/share/corewar-theater}`, `SEED=$(date +
 
 1. Wasm build (if anything under `src/engine/wasm/` or the build script changed):
    `tools/build-wasm.sh && md5sum src/engine/wasm/mars.wasm`, run it again, the sums must match. `git status` shows `mars.wasm` modified exactly when its sources are.
+   The native build too: `node tools/bench-native.mjs $O/corpus 10` must build and run. CI does not build it, and it was broken from #8 to #19.
 2. Tests: `PMARS_VALIDATE=$O/validate.red npm test`. All pass, none skipped.
 3. pMARS differential, each must end with no differences (exit code 0):
    ```sh

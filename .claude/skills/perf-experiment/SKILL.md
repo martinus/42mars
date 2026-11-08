@@ -14,7 +14,7 @@ Setup: `O=${COREWAR_ORACLE:-$HOME/.local/share/corewar-theater}`.
    |---|---|---|
    | bench | `node tools/bench.mjs $O/corpus --wasm-match` (short, includes V8 warm-up) | 7 |
    | pairs | `node tools/bench-pairs.mjs $O/corpus` (40 random corpus pairs, broader instruction mix; `--early-tie`) | 7 |
-   | native | `node tools/bench-native.mjs $O/corpus --runs 7` | 1 |
+   | native | `node tools/bench-native.mjs $O/corpus --runs 7`; two versions of `mars.c` alternately: `node tools/ab-native.mjs <A/mars.c> <B/mars.c> --input t20.in --early-tie` | 1 |
    | t20 | `node tools/tournament.mjs $O/sets/t20 --rounds 100 --seed 1 --jobs 1 --engine wasm` (time on stderr: `engine (wasm): N s`) | 7 |
    | t80 | same with `$O/sets/t80`, `--jobs 16` and `--jobs 31` | 5 each |
    | fixed cost | t80 with `--rounds 1 --jobs 31` (worker start, assembly, compile) | 5 |

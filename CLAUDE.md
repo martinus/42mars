@@ -61,6 +61,7 @@ Three implementations must agree: `src/engine/mars.js` (visualizer, per-cell boo
 
 - New source files start with `// SPDX-License-Identifier: MIT` and `// Copyright (c) 2026 Martin Leitner-Ankerl`.
 - No dependencies: no npm packages, no bundler, tests on `node:test`. Node 20 or newer. Browser code is plain ES modules.
+- A test that makes a temporary folder deletes it in `after()`: two test files left one per `npm test` run in `/tmp`.
 - Read warrior files as latin1.
 - Warriors in `warriors/` are written for this repo (plus Dewdney's Imp and Dwarf). Do not add hill warriors: their licenses are unclear.
 - CI (`.github/workflows/test.yml`) runs `npm test` on Node 20 and 22. It has no pMARS: run the pMARS checks locally.
@@ -68,6 +69,7 @@ Three implementations must agree: `src/engine/mars.js` (visualizer, per-cell boo
 ## Gotchas
 
 - Read large files with the Read tool in parts (`offset`, `limit`), not `cat`: Bash output over the size limit is saved in the session's tool-results folder, and the clean-room hook blocks reading it back.
+- Edit and read our own files with the Edit and Read tools when the command would mention pMARS: the hook refused `sed -i`, `sed -n` and a Python edit of `tools/pmars-diff.mjs`, `PLAN.md` and the semantics doc because their text held `pmars` or `--pmars`.
 - `src/engine/wasm/mars.wasm` is committed and the tests load it. Without a rebuild, the tests run the old C code.
 - `Mars.current` is an index, 0 is a valid warrior: test `m.current >= 0`, not `m.current &&`.
 - pMARS never returns on some inputs (semantics doc, section 4). Always call it with a timeout.
