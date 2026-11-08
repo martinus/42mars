@@ -146,6 +146,17 @@ Round robin of 80 corpus warriors, 3,160 pairings × 100 rounds, `node tools/tou
 
 Ours measured on 8th November 2026, after the third round (`docs/performance-log.md`); the same day before it: 3.98 s and 3.57 s. Every engine gives the same wins, losses and ties in all 3,160 pairings. The machine has 16 cores with 2 hardware threads each; the second thread per core adds about 11% for the WebAssembly engine.
 
+Against [rmars](https://github.com/clrsrc/rmars) (Rust, pMARS 0.9.6-dev semantics, commit 215fadc, release build with fat LTO; "native" adds `target-cpu=native`), through its Python module with its own thread pool. Both engines play the same rounds: rmars's pairings and start positions (pMARS `-f` checksum seeds), 100 rounds, 5 runs each, median:
+
+| Workload | rmars | rmars native | ours | ours without early ties |
+|---|---|---|---|---|
+| first 20 corpus warriors, 1 thread | 6.96 s | 6.72 s | 3.81 s | 4.05 s |
+| first 80 corpus warriors, 16 threads | 6.78 s | 6.47 s | 3.44 s | 3.93 s |
+| first 80 corpus warriors, 31 threads | 5.95 s | 5.64 s | 3.10 s | 3.46 s |
+| first 80 corpus warriors, 32 threads | 5.43 s | 5.11 s | 3.09 s | 3.45 s |
+
+Single thread that is 177M (rmars), 184M (native) and 304M (ours without early ties) simulated instructions per second, so ours is 1.7 times as fast before early ties. rmars has no early ties; with its statistical early stop (interval width 60, at least 20 rounds; results differ from pMARS) the 80-warrior set takes 2.75 s on 31 threads. Results: identical wins, losses and ties in all 190 pairings of the 20-warrior set; in the 80-warrior set rmars differs from ours in 46 pairings, all with `asianflu.red`, and there ours agrees with pMARS 0.9.5 (details in `docs/performance-log.md`).
+
 What made it fast:
 
 - The JavaScript engine: all per-cell arrays of one element type in one buffer (the loop touches 3 typed arrays instead of 15), one inlined loop, flat process queues, specialization on the opcode byte.

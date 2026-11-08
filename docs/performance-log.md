@@ -221,6 +221,153 @@ from the runs themselves.
 | Core layouts with fewer L1 misses (issue #6). Measured first, natively (`tools/bench-native.mjs --keep`, `perf stat`), per simulated instruction: bench pairs with 2000 rounds 43.4 x86 instructions, 10.6 cycles, 0.143 L1 data misses (2.2% of loads), 0.046 branch misses; t20 46.3 / 12.4 / 0.157 / 0.070; 40 corpus pairs 46.4 / 13.0 / 0.166 / 0.080; t80 46.0 / 11.8 / 0.152 / 0.058. Where the misses go (IBS op sampling, `perf record -e ibs_op/cnt_ctl=1/ -d`, data address against `coreMem`/`queueMem`): t20 88% core, 2% queues; t80 79% core, 3% queues, 14% other (stack, warrior records); corpus pairs 91% core; nearly all are L2 hits. Top-down, t20 / corpus pairs: retiring 58% / 56%, frontend bound 20% / 21%, backend bound 14% / 15%, of that memory 12.4% / 12.8% (which includes waiting for L1 hits): the ceiling for any layout. Then three cheap probes, native, 5 runs each alternating, t20 / 40 corpus pairs / bench 2000 rounds against 359 to 363 / 345 to 348 / 423 to 429M/s: prefetch of the other warrior's next cell before each instruction in `execute2()` (`__builtin_prefetch`, no WebAssembly equivalent): 362.2 / 344.4 / 423.7, misses 0.159 → 0.160, cycles 12.35 → 12.54; values and instruction words in separate arrays (32 KB + 16 KB): 359.8 / 351.4 / 429.2, misses up to 0.180 (a fetch touches two lines), 48.3 x86 instructions; 6-byte cell (48 KB, the padding dropped, the snapshot read as 4 + 2 bytes): 352.9 / 339.5 / 412.0, misses 0.147 (−8%), 47.6 x86 instructions, 12.76 cycles. Removing misses gains less than the extra instructions of a denser cell cost, so the 4-byte cell (13-bit fields, word table, shifts and masks on every field access, table dispatch measured slower before) was not built | rejected, not built for wasm |
 | Rounds of one pairing in parallel when no warrior has `LDP` (issue #8): `runMatch({ firstRound })` plays a block of a match's rounds (generator stepped `firstRound` times, first mover `firstRound mod warriors`, p-space empty), and `tools/tournament.mjs` splits each pairing without `LDP` into blocks when it has fewer than 4 pairings per job. Full tournaments are unchanged (t20 with 31 jobs and t80 have enough pairings) | one pairing, `--rounds 1000`, `--jobs 1 / 4 / 16 / 31`: agony/bubbles 0.23 / 0.10 / 0.08 / 0.14 s, army/bananasplit 0.20 / 0.09 / 0.08 / 0.13 s (5 runs, ranges within 0.01; worker start, about 100 ms for 31 workers, is most of it); `--rounds 10000`: agony/bubbles 1.82 / 0.51 / 0.20 / 0.20 s, army/bananasplit 1.51 / 0.43 / 0.17 / 0.18 s, so 3.6 times on 4 workers and 9 times on 16. Same instruction counts as unsplit, `--pmars --compare` SAME | kept |
 
+### Against rmars (8th November 2026)
+
+On Martin's request this session lifted the clean room for rmars only: it
+read rmars's source to find out how to drive it, built it and timed it. It
+wrote no engine code afterwards. rmars: github.com/clrsrc/rmars, commit
+215fadc, GPL-2.0, Rust 1.99.1, release profile (fat LTO, one codegen unit),
+plus a second build with `RUSTFLAGS="-C target-cpu=native"`. Driven through
+its Python module (`fight_matrix`, rayon pool, GIL released, timed around
+the one call, assembly included); ours with `$COREWAR_ORACLE/cwbench/rmars/ours.mjs`
+(worker threads as in `tools/tournament.mjs`, timed incl. worker start and
+compile). Same rounds on both sides: rmars seeds each pairing from the
+warriors' checksum (pMARS `-f`), and ours gets the generator state recovered
+from rmars's first four positions. 100 rounds, 5 alternating runs, median
+(range); load average 0.9 at the start, a few minutes after other runs.
+
+| Workload | rmars | rmars native | ours, early ties | ours, no early ties |
+|---|---|---|---|---|
+| t20 positions of rmars, 1 thread (1,232.8M instructions simulated) | 6.96 (6.84–6.99) | 6.72 (6.68–6.81) | 3.81 (3.77–3.84) | 4.05 (4.04–4.14) |
+| t80, 16 threads (18,718M simulated) | 6.78 (6.72–6.83) | 6.47 (6.45–6.48) | 3.44 (3.44–3.46) | 3.93 (3.86–3.95) |
+| t80, 31 threads | 5.95 (5.93–6.04) | 5.64 (5.34–5.65) | 3.10 (3.08–3.13) | 3.46 (3.45–3.46) |
+| t80, 32 threads | 5.43 (5.42–5.47) | 5.11 (5.10–5.62) | 3.09 (3.09–3.12) | 3.45 (3.44–3.46) |
+| t80, 31 threads, rmars statistical stop (width 60, min 20 rounds; approximate) | | 2.75 (2.65–2.79) | | |
+
+Single thread: rmars 177M, native build 184M, ours without early ties 304M
+simulated instructions per second (1.66 to 1.72 times); with early ties ours
+executes 1,116M of the 1,233M. rmars gains 10% from thread 31 to 32 (rayon),
+ours nothing. What rmars does, from its source, as descriptions: 8-byte cell
+with u16 values, opcode, both modes and a predecoded mode-pair index (a
+64-way dispatch on the mode pair, which our log measured slower for us),
+`MOV.I` as one 8-byte copy, a software prefetch, process queues as in pMARS,
+no early ties of any kind; its `elapsed` per round is pMARS's `cycles2 -
+cycle`, which after a death includes the cycle adjustment, so it is not the
+instruction count.
+
+Results: t20 identical wins, losses and ties in all 190 pairings. t80: 46
+of 3,160 pairings differ, every one with `asianflu.red`. With an explicit
+start position pMARS 0.9.5 and rmars mostly agree (`-F 1234`, `4000`,
+`7000`), but e.g. `pmars -b -k -r 2 -F 1854 aa.red asianflu.red` plays round
+2 (position 7400, asianflu first) as a tie with `aa` keeping 1 process, as
+ours does, while `rmars -r 2 -F 1854` has `aa` die at step 134,308. Not
+traced further: either pMARS 0.9.6-dev changed something that asianflu hits,
+or rmars has a bug. Under `-f`, pMARS 0.9.5 also seeds differently from
+rmars for this warrior (aa vs asianflu: pMARS 24/67/9, rmars 25/59/16).
+
+The shape of the benchmark in the rmars author's blog post
+(dm2tim.de/offtopic/core-war.html: "1101 Gegner à 200 Runden ... 3,5
+Sekunden", hardware not stated, parallel, early stopping mentioned): one
+warrior (`agony.red`) against the 564 other corpus warriors that rmars
+assembles, 200 rounds each, 112,800 rounds, 6,794M instructions simulated
+(`cwbench/rmars/batch.py`, then `ours.mjs` on the same rounds). Identical
+wins, losses and ties in all 564 pairings. 5 alternating runs, median (range):
+
+| | 1 thread | 32 threads |
+|---|---|---|
+| rmars | 34.68 (34.30–34.98) | 2.02 (2.00–2.03) |
+| rmars native | 35.25 (34.94–35.50) | 1.93 (1.92–1.94) |
+| ours, early ties (6,590M executed) | 21.17 (21.09–21.58) | 1.50 (1.49–1.50) |
+| ours, no early ties | 21.84 (21.63–22.06) | 1.53 (1.53–1.54) |
+| rmars native, statistical stop (width 60, min 20; 32,063 rounds played) | | 0.55 (0.54–0.55) |
+
+So about 58,000 rounds per second for rmars without the stop here, which
+puts the blog's 220,200 rounds at about 3.8 s on this machine. Ours is 1.6
+times as fast on one thread, 1.3 times on 32: rmars scales 17 times from 1
+to 32 threads, ours 14 times. Our worker start (about 0.1 s) and the tail
+cost the difference: 564 pairings on 32 workers do not trigger the block
+split of #8, so the last long pairings run alone.
+
+
+### Against fmars (8th November 2026)
+
+fmars 0.0.207 (Michal Janeczek, 2005, GPL): C generated by Scheme code
+with a case for every instruction word it is generated for, a handler
+pointer in every core cell and computed gotos; no p-space. Same session as
+the rmars benchmark, clean room lifted by Martin; the clean-room hook still
+blocked reading fmars's C source, so only its README and configuration file
+were read, and the build output stayed out of the session. Built from the
+unmodified tarball: code generation needs Guile 1.6 era macros (Guile 2.2
+fails), so it ran with Guile 1.8.8 in a Debian 8 container, for the 109
+instruction words of the corpus; the generated C was compiled on the host
+with GCC 16, `-O2` (its Makefile) and `-O3 -march=native` (same speed). Its
+own assembler rejects many corpus warriors, so it gets `pmars -A` output.
+Results: identical wins, losses and ties to ours (`tools/tournament.mjs
+--pmars xfmars --compare`) on all t20 and t80 pairings and on the bench pairs.
+
+Per thread, 3 bench pairs with 2000 rounds each in one process (224.0M
+instructions), 5 runs, median: pMARS 0.9.5 2.53 s (88M/s); fmars 0.66 s
+(340M/s); ours wasm, fresh process with compile and warm-up, 0.69 s
+(327M/s); ours native C (`bench-native`) 0.52 s (432M/s). Per simulated
+instruction (`perf stat`, same run):
+
+| | x86 instructions | cycles | branches | branch misses | L1 loads | L1 misses |
+|---|---|---|---|---|---|---|
+| fmars | 40.0 | 13.3 | 3.1 | 0.10 | 13.7 | 0.32 |
+| ours native | 45.3 | 10.4 | 7.4 | 0.04 | 8.0 | 0.14 |
+| ours wasm (whole process) | 63.6 | 16.0 | 9.5 | 0.07 | 12.1 | 0.18 |
+
+Tournaments, our seed-1 positions, 5 alternating runs, median; fmars as one
+process per pairing through `xargs -P` (`cwbench/fmars/fmx.sh`), "start" =
+the same with 1 round per pairing:
+
+| | ours wasm | fmars | fmars start |
+|---|---|---|---|
+| t20, 1 job | 3.81 (3.79–3.88) | 4.06 (4.04–4.07) | 0.19 |
+| t80, 16 jobs | 3.54 (3.52–3.55) | 3.94 (3.93–3.99) | 0.98 |
+| t80, 31 jobs | 3.19 (3.19–3.21) | 2.88 (2.87–2.90) | 0.95 |
+
+With an in-process driver for fmars (written against `fmars.h`: assemble,
+bind, then per round clear, load, simulate; same positions and first movers),
+5 alternating runs, median: t20 on 1 thread fmars 3.81 (3.77–3.82) against
+ours 3.82 (3.77–3.87); t80 split into 160 shards on `xargs -P` 16 / 31 / 32:
+fmars 3.86 / 2.91 / 2.88 against ours 3.54 / 3.19 / 3.18. So the process
+starts were not the reason; the numbers below hold.
+
+fmars wins t80 on 31 jobs by 10%, although it simulates every tie round to
+the end (ours executes about 13% fewer instructions with early ties): from
+16 to 31 jobs fmars gains 37%, ours 11%. Ours natively (`bench-native` on
+t80 split into 16 and 32 processes, static shards): 3.00 s and 2.47 s, a 22%
+gain and faster than fmars. 31 separate Node processes instead of 31 worker
+threads: 3.33 to 3.41 s against 3.10 to 3.11 s, so the threads are not the
+cause; the WebAssembly code itself leaves less for the second hardware
+thread of a core.
+
+What the source shows (read in this session with Martin's permission, after
+the numbers above; exhaust's files stayed blocked by the hook): a core cell
+is two 16-bit values and a pointer to the handler of its instruction word,
+16 bytes on x86-64 (the 8000-cell core is 128 KB, hence 0.32 L1 misses per
+simulated instruction). The process queue holds pointers to core cells. Each
+of the generated handlers (one per instruction word of the generator input)
+ends with its own copy of the turn: next warrior through a linked list,
+pop, `--cycles`, `goto *ip->i`. There is no loop specialized for two
+warriors, the ring queue checks its end on every push and pop (`infinite
+queue`, our linear queue, exists as an option and is off by default, as is
+`mov i combine`, our 64-bit `MOV.I`), `MOV.I` copies the three fields one by
+one, and there are no early ties. `SEQ.I`, `SNE.I`, `JMZ.F`, `JMN.F` and
+`DJN.F` compute the next address with conditional moves and wrap once
+(options `fold-once`, `cmov`), which is item 3 of #22.
+
+Ideas: fmars's handler pointer per cell gives the fewest x86 instructions
+per simulated instruction (40), but cannot be expressed in WebAssembly (tail
+calls measured 116.8 vs 277 above), and our C natively is faster anyway.
+What fmars shows is the cost of our wasm code: 64 against 45 x86
+instructions per simulated instruction (issue #20) costs once per thread and
+again under SMT. Side finding: `tools/tournament.mjs --pmars` starts its
+processes from Node's event loop at about 1.4 ms each, 4.6 s of the 3,160
+pairings of t80 with 31 jobs, so the parallel pMARS number in `PLAN.md`
+(11.0 s) is mostly process start, not pMARS.
+
 State: bench about 294M/s in WebAssembly, about 413M/s natively; corpus
 pairs 280M/s; t20 3.84 s single thread; t80 3.63 s with 16 jobs and 3.28 s
 with 31 jobs (8th November 2026; the machine ran 2 to 4% slower than on the
