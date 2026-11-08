@@ -34,8 +34,9 @@ const MODES = '#$@<>*{}';
 
 // The most executed instruction words, measured over the t20 and t80
 // tournaments, 400 random corpus pairs and the bench (each weighted
-// equally; --rank, docs/performance-log.md). 32 cases were faster in
-// WebAssembly than 16, 24, 40, 48 and 64.
+// equally; --rank, docs/performance-log.md). Counts with and without early
+// ties give this same list (#23). 32 cases were faster in WebAssembly than
+// 16, 24, 40, 48 and 64.
 const HOT = [
   'spl.b $ <', 'mov.i $ <', 'spl.b $ $', 'mov.i $ $', 'jmp.b $ $', 'jmp.b $ <', 'dat.f < <', 'add.ab # $',
   'dat.f $ $', 'dat.f # #', 'mov.i $ @', 'djn.b $ <', 'djn.b $ $', 'mov.i @ <', 'mov.i < <', 'djn.b $ #',
