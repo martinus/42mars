@@ -1,0 +1,205 @@
+# Simulator performance log
+
+Every speed idea that was tried on the simulators, with how it was measured,
+the result, and whether it was kept. Add new entries at the end of the
+relevant section, also for ideas that did not help: a rejected idea with a
+number saves the next person the experiment.
+
+## How to measure
+
+Machine for all entries so far: AMD Ryzen 9 7950X (16 cores, 2 threads per
+core), Fedora, Node 22.22, clang 22. Numbers from a busy machine are marked.
+
+| Name | Command | What it is |
+|---|---|---|
+| bench | `node tools/bench.mjs <corpus> [--headless\|--wasm\|--wasm-match]` | 3 hill pairs (agony/bubbles, bomber/chalk, army/bananasplit), 200 rounds each, 22,667,265 instructions, single thread. Report median and range of at least 7 fresh processes. |
+| native | `node tools/bench-native.mjs <corpus> --runs 7` | the same battles on `src/engine/wasm/mars.c` built natively with `clang -O3 -march=native` |
+| corpus pairs | `node tools/bench-pairs.mjs <corpus> [--early-tie]` | 40 random corpus pairs (fixed generator, `--seed 1`), 30 rounds each, `runMatch`, single thread, 78,859,469 instructions; broader instruction mix than the bench. Before November 2026 an ad-hoc script with the same shape, so older corpus-pair numbers are relative only |
+| t20 | `node tools/tournament.mjs <first 20 corpus files> --rounds 100 --seed 1 --jobs 1 --engine wasm` | 190 pairings, single thread, includes early ties |
+| t80 | same with the first 80 corpus files, `--jobs 16` and `--jobs 31` | 3,160 pairings, the tournament number |
+
+`<corpus>` is [n1LS/redcode-warriors](https://github.com/n1LS/redcode-warriors).
+Correctness for every kept change: `npm test`, and `tools/pmars-diff.mjs` with
+`--pmars-trace` (instruction count and core hash after every round against a
+pMARS build) plus `--wasm-match` for the early-tie path, on fresh seeds.
+
+Reference points on the bench: pMARS 0.9.5 native about 91M instructions/s;
+the exMARS build of corewar.dev (WebAssembly) about 132M/s.
+
+## JavaScript simulator (`src/engine/mars.js`)
+
+Start: 31.9M instructions/s with visualizer bookkeeping (closures per step,
+one method call per operand).
+
+| Idea | Result | Verdict |
+|---|---|---|
+| One inlined loop, flat process queues (`Int32Array`, `warrior.queue` as a view), kills of non-last processes handled inside the loop (15% of bench instructions are deaths) | 31.9 → 33.1 | kept |
+| `switch` on the whole opcode byte, no modifier decoding at run time | part of the step above; +10% vs a generic-modifier variant after all paths are compiled | kept |
+| All per-cell arrays of one element type as views into one buffer (`u8`, `i8`, `i32`), the loop indexes the buffers at offsets. Reason: V8 pays a map check, length and data-pointer loads per typed array | 33.1 → 39.3 with bookkeeping, 51.4 → 59.7 headless; the largest single step | kept |
+| Trace flags as literals, warrior record at fixed offsets in front of each queue, heat index as `warrior * stride + i` | about +1 each, near noise | kept |
+| Ownership/territory/tWrite updates for one instruction in one place instead of 9 inlined copies | +10% after all paths are compiled | kept |
+| Remove arithmetic in rarely taken branches of the loop prologue/epilogue (one caused 24 deoptimizations at the same spot) | more stable timings | kept |
+| `headless: true` option without visualizer bookkeeping | 40.8 → 60.3 | kept, opt-in |
+| Lazy reads of operand values | 0 to −2% | rejected |
+| `\|0` on index arithmetic | 22 fewer machine instructions per step, same cycles | rejected |
+| Integer heat counters flushed into the `Float32Array` | 0 | rejected |
+| Local copies of module constants | 0 | rejected |
+| `if` fast paths for the `$` mode | 0 | rejected |
+| Compact shared addressing-mode code | −2% | rejected |
+| Shared helper functions to pool type feedback | slower | rejected |
+| Moving warrior record fields onto separate cache lines | 0 | rejected |
+| Warm-up of all paths at module load | +17% on the bench, but 6 to 15 ms per import, hidden work, and a deoptimization loop when a path was missed | rejected |
+
+State after this work: about 40M/s with bookkeeping, 61M/s headless (bench,
+fresh process); 51M/s and 75 to 80M/s after JIT warm-up. Remaining cost:
+about 280 machine operations per simulated instruction headless, mostly V8's
+per-access overhead on typed arrays (bounds checks, data-pointer arithmetic,
+spills).
+
+## WebAssembly simulator (`src/engine/wasm/mars.c`)
+
+Numbers are bench, `runMatch`, M instructions/s (native in parentheses where
+measured).
+
+| Idea | Result | Verdict |
+|---|---|---|
+| First version: 8-byte packed cell, dispatch on the opcode byte, 16-bit ring queues | 125 (native 163) | baseline |
+| One combined dispatch on both modes (64 cases) | 116 (native 137) | rejected |
+| Native profile: about 100 x86 instructions per simulated instruction, IPC 3.7, 0.1 branch misses per instruction, so the limit is work per instruction, not misprediction | | finding |
+| One countdown instead of separate count, time and cycle counters | no change (native 171) | kept |
+| Warrior record padded to 128 bytes: indexing is a shift instead of a multiply by 72, on the loop-carried path `cur -> war[cur].next` | 147 | kept |
+| Following a next-warrior pointer instead of an index | 154 | kept |
+| Modes `$` and `#` tested before the mode switch | 181; +23% on corpus pairs | kept |
+| Mode tests in measured frequency order (A: `$` 80%, `#` 9%, `<` 7%; B: `$` 57%, `<` 29%, `#` 9%) | 184, within noise | kept |
+| `MOV.I` fast path checked first | 187; +8% on corpus pairs | kept |
+| B values read only inside the cases that need them (saved values only for post-increment B modes) | 191 | kept |
+| Two copies of the opcode switch to skip B reads for DAT/SPL/JMP/MOV | −3% | rejected |
+| Renumbering opcodes so that DAT and SPL share a bit test | no gain with a switch on the opcode byte | rejected |
+| Early tie, process-count proof: stop when no warrior can lose its last process in the remaining budget (`ceil(cyclesLeft / warriorsLeft)` turns; off when any warrior has `STP`; at least one more instruction always runs) | +2.6% on the bench, +1% on tie-heavy corpus pairs | kept, `runMatch` only |
+| Branch-free indirect modes | 160 | rejected |
+| SPL fast path | 188 | rejected |
+| 32-bit queue entries | no change | rejected |
+| `-O2` instead of `-O3` | no change | rejected |
+| Early tie, no-killer proof, counted in `MOV.I` (count DAT cells on every opcode write) | same skip, but −5.5% per instruction on the bench, −8% on corpus pairs; t20 unchanged at 6.51 s | rejected |
+| Early tie, no-killer proof, by scan: at each tie check (every 4096 instructions) look for a `DAT`/`DIV`/`MOD`/`STP` cell, starting at the last one found; none in a full circle proves the tie | t20 6.54 → 5.83 s single thread; `acme.red` vs `alpha.red` 50.7 → 13.1 ms; bench unchanged (its battles keep DAT cells) | kept, `runMatch` only |
+| Separate loop for exactly two warriors with both queues' head/tail in locals, unrolled into warrior 0's and warrior 1's turn | bench same, corpus pairs +1 to 3%, t20 −2.7%, native 236 → 253 | kept |
+
+### Second round (November 2026)
+
+Same machine. Load average 0.2 to 3 during single-thread runs (a 1-core
+background compile ran during some of them; marked where it mattered), each
+number the median of 5 or 7 fresh processes with the range in parentheses.
+"bench / pairs / t20" means the bench and corpus pairs in M instructions/s
+(`runMatch` without early tie) and t20 in seconds; wasm unless marked
+native. Variants were built as separate files from the same source and
+copied over `mars.wasm` for the measurement. Instruction frequencies:
+`bench-native.c` built with `-DCOUNT_INS`, over t20, t80, 400 random corpus
+pairs (`bench-pairs` generator, 30 rounds) and the bench, each weighted
+equally (`node tools/gen-dispatch.mjs --rank`).
+
+Before and after, all with the scripts above, 7 runs each (load 0.2 before,
+5.8 falling at the start of the final run):
+
+| Benchmark | Before | After | Change |
+|---|---|---|---|
+| bench, wasm | 190.9 (189.0–191.7) | 281.4 (279.7–282.9) | +47% |
+| bench, native (`bench-native.mjs`, `-O3 -march=native`) | 254.7 (253.4–257.3) | 415.0 (402.1–416.9) | +63% |
+| corpus pairs | 194.8 (190.6–195.7) | 267.6 (264.0–268.6) | +37% |
+| corpus pairs `--early-tie` (effective rate) | 212.4 (211.6–213.0) | 293.5 (290.0–296.2) | +38% |
+| t20, 1 job | 5.83 s (5.80–5.94) | 4.12 s (4.09–4.19) | −29% |
+| t80, 16 jobs | 5.32 s (5.31–5.35) | 3.85 s (3.82–3.88) | −28% |
+| t80, 31 jobs | 4.74 s (4.72–4.76) | 3.45 s (3.44–3.49) | −27% |
+| module size | 24,196 bytes | 50,829 bytes | |
+
+Findings before changing anything:
+
+| Measurement | Result |
+|---|---|
+| Instruction words (opcode, modifier, A mode, B mode) executed | t20: 43 distinct, the top 8 are 74% of all executions, top 32 99.9%; t80: 62, top 32 97.6%; 400 corpus pairs: 94, top 32 96.6%; bench: 26. Top over all four: `spl.b $ <` 15%, `mov.i $ <` 11%, `spl.b $ $` 10%, `mov.i $ $` 10%, `jmp.b $ $` 7.5%, `jmp.b $ <` 4.7%, `dat.f < <` 4.3%, `add.ab # $` 4.1% |
+| Round start (core clear, warrior copy) | 0.27% of native t20 time (`perf`), about 0.6% of wasm samples; the clear already compiles to unrolled 64-bit stores |
+| Tier-up | V8 runs a function in Liftoff (about 109M/s on the bench) until its optimized code is ready. Bench before: 10.5% of the samples in Liftoff code, TurboFan needs 10 ms for `run_some`. `--no-liftoff` made the bench slower (174.8 vs 190.1), `--liftoff-only` 108.9 |
+| V8 code of the instruction loop (`perf` with `--perf-prof`) | a stack check per loop iteration, `head`/`tail`/`left` spilled to the stack, and a dispatch variable tested on every iteration: the jump into the second turn (`goto turn1`) made the loop irreducible |
+| Per simulated instruction, t20, final code | wasm 66 x86 instructions, 17.8 cycles, 0.081 branch misses; native 47, 12.8, 0.069. Top-down, wasm: retiring 61%, backend bound 21% (memory 18%), bad speculation 7%, frontend 11%; native 57 / 15 / 7 / 20 |
+
+Kept, in the order they were added (wasm bench / pairs / t20):
+
+| Idea | Result | Verdict |
+|---|---|---|
+| Hot instruction words specialized: `step()` switches on the instruction word with one case per frequent word, each case calls the generic `exec_ins()` with the word as a constant, so clang compiles a copy without mode and opcode branches; other words run the generic code. Cases generated by `tools/gen-dispatch.mjs` into `dispatch.h` | 16 cases 233.9 / 226.1 / 4.74; 32: 241.2 / 231.9 / 4.73 (native 397 / t20 331); 64: 232.3 / 230.7 / 4.81. Native t20 per simulated instruction: 83 → 52.7 x86 instructions, 18.9 → 13.5 cycles, branch misses 0.074 → 0.071 | kept, 32 cases |
+| Core and the first two queues at fixed addresses (static arrays, queues up to 65536 entries), so the loop addresses them with constant offsets | 246.1 / 232.5 / 4.77; on the final code without it 265.0 / 253.4 / 4.30 against 277.6 / 260.0 / 4.23 | kept |
+| Core size 8000 and 8000 processes as constants in a second instance of the two-warrior loop (`execute2_8000()`) | 239.0 / 240.6 / 4.48, native bench 409, t20 359; the bench lost because the larger function stayed longer in Liftoff (TurboFan 24 ms) | kept with the next row |
+| Each loop instance its own non-inlined function, so V8 optimizes only the one in use | 262.4 / 247.0 / 4.49; TurboFan 8 ms | kept |
+| Single-entry loop: when warrior 1 is to move, `execute(1)` runs that instruction first, then the loop starts with warrior 0 | 276.7 / 256.1 / 4.27. On the old code alone: 198.8 / 200.3 / 5.71 (native 258 / t20 240) | kept |
+| `-Os` instead of `-O3` for the wasm build (native stays `-O3`, where `-Os` is slower: 380 / t20 339 against 417 / 351) | 282.2 / 266.7 / 4.13 against 277.2 / 259.3 / 4.25 in the same session | kept |
+| With `-Os`, 24, 40 and 48 cases instead of 32 | 273.2 / 255.8 / 4.26; 277.1 / 263.0 / 4.24; 272.4 / 261.4 / 4.26 | 32 kept |
+
+Rejected:
+
+| Idea | Result | Verdict |
+|---|---|---|
+| Fully generated switch: one case per opcode, modifier, A mode and B mode (8,512 cases, `gen-dispatch.mjs --full`) | wasm 4.3 MB; TurboFan needs 2.0 s and 574 MB for the loop function, so the bench runs in Liftoff: 34.2, 1000-round bench 44.7, pairs 37.0, t20 6.99 s. Native (1.5 MB binary, 14 to 26 minutes of clang): bench 240, t20 253, pairs 257 against 397 / 331 / 337 for 32 cases; t20 50.5 instructions per simulated instruction but IPC 2.8 and 0.14 branch misses per instruction (one indirect jump for all words); L1 instruction cache misses negligible (70,000 in the whole run) | rejected |
+| Partial switch: one case per opcode, modifier and B mode (1,064 cases, A mode as run-time branches), alone and as fallback behind the 32 hot cases | alone: 2.5 MB, 62.5 / 103.8 / 5.41 (1000-round bench 127; TurboFan 0.5 s); behind the hot cases: 2.5 MB, 72.0 / 111.2 | rejected |
+| Hot words through a table: `u8` index per instruction word (16 KB, filled at run time), then a dense switch | 32 cases 183.8 / 204.5 / 5.46, 64 cases 184.0 / 203.7 / 5.43; native bench 283, t20 279 with 32; native t20 47.5 instructions and 15.8 cycles per simulated instruction, branch misses 0.071 → 0.138 | rejected; the compare tree of the sparse switch is predicted better |
+| The hot cases as an `if` chain in frequency order | clang turns the chain into the same switch (identical module) | no difference |
+| Threaded code with wasm tail calls: a handler per hot word plus a generic one, each ends in `return_call_indirect` through a 16384-entry table (`-mtail-call`, `musttail`), state in 5 parameters (queue counters packed into 64 bits, the instruction budget and the next PC in one) | 41 KB, 116.8 / 112.6 / 9.42; with `--no-liftoff` 119 on a 1000-round bench. V8 checks table bounds and signature, tears down a frame and passes a parameter on the stack per dispatch. Native with `musttail`: 342 / t20 310 / pairs 299, with `preserve_none` 352 / 338 / 315, against 408 / 357 / about 340 for the switch | rejected |
+| Native PGO (`-fprofile-instr-generate`, trained on 400 corpus pairs and t20) | native, old code: bench 254 → 279, t20 236 → 261, pairs 225 → 252; final code: 409 → 438, 350 → 375, 352 → 366 | native only, not used |
+| The native profile applied to the wasm build (`-fprofile-instr-use`, the function hashes match) | 276.1 / 259.3 / 4.22 against 277.6 / 260.0 / 4.23: V8 does its own block layout | rejected |
+| Binaryen `wasm-opt` 125 (npm, build-time only) `-O3` / `-O4` with all features enabled (clang 22 already emits bulk memory) | 50,570 / 50,760 bytes instead of 54,080; 266.5 / 248.9 / 4.40 and 266.9 / 252.6 / 4.38 against 277.9 / 260.2 / 4.21 | rejected |
+| `-msimd128` (vector stores for the core clear) | 276.7 / 260.5 / 4.21 against 277.6 / 260.0 / 4.23 | rejected, no change |
+| `-O2`; `-Oz` | 275.8 / 258.8 / 4.22; 172.9 / 182.6 / 6.55 | rejected |
+| `-flto` | one translation unit, nothing to optimize across | not tried |
+| Queue head and tail packed into one 64-bit counter per warrior (two registers fewer) | 266.0 / 250.5 / 4.46; native t20 361 against 348 | rejected for wasm |
+| Loop unrolled twice (four turns per iteration, to halve stack checks) | 92 KB, 249.5 / 245.5 / 4.43; native 393 / t20 341 | rejected |
+| One turn per iteration, the two warriors' counters swapped (half the code) | 36 KB, 257.3 / 233.0 / 4.63; native 365 / t20 312 | rejected |
+| Generic code in its own non-inlined function, returning the new tail and the death flag | 31.8 KB, 280.9 / 253.4 / 4.38 | rejected |
+| Two independent battles interleaved in one loop (A0 B0 A1 B1), native experiment with per-battle state swapped in and out at round ends; same 1,229,398,600 instructions as the sequential run on t20 without early tie | 290 against 350M/s sequential: +18% instructions, branch misses 0.064 → 0.104 per instruction (the two instruction streams share the predictor's history), IPC 3.79 against 3.89. In wasm the four queues and two cores would also add register pressure | rejected, not built for wasm |
+| Round start with `memory.copy` from a pristine core, or clearing only written cells | not built: the whole round start is 0.3 to 0.6% (findings above), dirty tracking would cost in every write | rejected |
+| Early-tie check interval at most 1024 or 16384 instead of 4096 | t20 4.26 and 4.24 against 4.23 | rejected, no change |
+| Warm-up call at module compile time to reach TurboFan sooner (the final bench still spends 12.6% of its samples in Liftoff code) | hidden work at import, like the rejected JavaScript warm-up; irrelevant for runs of seconds | not done |
+
+Early termination for `runMatch` (idea: more exact tie proofs). Potential,
+measured natively with the old engine:
+
+| Measurement | t20 | t80 |
+|---|---|---|
+| Rounds won / tied | 15,782 / 3,218 | 252,754 / 63,246 |
+| Instructions in won rounds | 714.5M | 8,637.7M |
+| Instructions in tie rounds if simulated fully (all ties run to 160,000 cycles) | 514.9M | 10,119.4M |
+| Executed in tie rounds with the existing proofs | 396.0M (36% of all executed) | 7,696.9M (47%) |
+| Tie rounds the existing proofs never stop | 750 | |
+
+The uncaught tie rounds look like this: a paper with thousands of
+processes against a scanner or stone with 1 to 30 processes in a closed
+loop (`cmp`/`jmp`, `mov`/`djn`), with 4,000 to 7,500 DAT cells left in the
+core; or two warriors with 30 to 3,000 processes each running `mov` loops.
+Exact proofs considered:
+
+| Proof | Result | Verdict |
+|---|---|---|
+| Repeated full state (core, both queues in order, whose turn; then the round is periodic and must tie, and only `cyclesLeft mod period` more instructions would be needed even for an exact final core). Measured offline with an incrementally maintained hash at every instruction | repeats in 295 of 3,218 t20 tie rounds; with ideal, immediate detection it skips 22.2M instructions, 6.5M more than the existing proofs (0.6% of t20). The engine would have to update the hash on every core write and queue operation, and the DAT counter in `MOV.I` alone cost 5 to 8% | rejected |
+| Non-interaction: no process of one warrior can reach the other's code | needs a bound on the cells a warrior can write or execute in the rest of the round; indirect modes take addresses from core data and papers copy themselves anywhere, so there is no cheap exact bound | rejected |
+| No DAT on any future path of the few-process warrior | its control flow depends on core data the other warrior writes; deciding it is simulating it | rejected |
+| Repetition up to a rotation of the core | the other warrior's code does not move, so the states are not equal | rejected |
+
+State: bench about 281M/s in WebAssembly, about 415M/s natively; corpus
+pairs 268M/s; t20 4.12 s single thread; t80 3.85 s with 16 jobs and 3.45 s
+with 31 jobs. The WebAssembly layer costs about 32% against native (the
+specialized code gained more natively). Next candidates: the remaining
+Liftoff time of short runs, and V8's spills in the loop.
+
+## Ideas from other simulators
+
+exMARS (Martin Ankerl, 2003, based on exhaust and pMARS) and the exMARS fork
+used by corewar.dev were studied for ideas; their code is not used.
+
+| Idea | Status |
+|---|---|
+| Packed 16-bit cell fields, one fetch per instruction | in the WebAssembly engine from the start |
+| Wraparound by one compare and subtract instead of modulo | in place |
+| Mode tests ordered by frequency | evaluated, kept (see above) |
+| `MOV.I` fast path | evaluated, kept |
+| DAT and SPL caught by one bit test | evaluated, no gain with an opcode-byte switch |
+| Process-count early tie (exMARS: `nprocs * alive > cycles`; that bound is off by one when the first mover gets one more turn) | kept with the exact bound |
+| No-killer early tie (corewar.dev fork: DAT count in core) | kept, by scan instead of count |
+| Two-warrior queue caching (corewar.dev fork) | kept |
+| One huge generated switch with a case for every instruction variant (Martin remembered seeing it in an old simulator) | evaluated in the second round: all 8,512 words was much slower; 32 generated cases for the hottest words kept |

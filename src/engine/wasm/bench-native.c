@@ -5,7 +5,11 @@
 // tools/bench-native.mjs writes the input and builds and runs this file.
 // Input (text, integers): per match "coreSize maxProcesses maxCycles
 // minDistance pSpaceSize warriors instructions seed rounds", then the load
-// area of mars_config (4 * warriors + 5 * instructions integers).
+// area of mars_config (4 * warriors + 5 * instructions integers). A second
+// argument turns on early tie detection.
+// Built with -DCOUNT_INS it also prints how often each instruction word was
+// executed to stderr, "<word> <count>" per line, the input of
+// tools/gen-dispatch.mjs --rank.
 
 #include <stdio.h>
 #include <time.h>
@@ -30,5 +34,8 @@ int main(int argc, char **argv) {
     seconds += (double)(t1.tv_sec - t0.tv_sec) + 1e-9 * (double)(t1.tv_nsec - t0.tv_nsec);
   }
   printf("%.1fM instructions/s (%.0f instructions in %.0f ms), native\n", total / seconds / 1e6, total, seconds * 1e3);
+#ifdef COUNT_INS
+  for (unsigned w = 0; w < 1u << 14; w++) if (insCount[w]) fprintf(stderr, "%u %llu\n", w, insCount[w]);
+#endif
   return 0;
 }

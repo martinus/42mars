@@ -297,3 +297,46 @@ test('early tie when the core has no DAT, DIV, MOD or STP left', () => {
   assert.deepEqual(y.results[0].survivors, [0, 1]);
   assert.ok(y.instructions < 40000, `executed ${y.instructions}`);
 });
+
+// The instruction words in src/engine/wasm/dispatch.h (tools/gen-dispatch.mjs)
+// run a copy of the instruction compiled for that word. Each of them must
+// agree with mars.js: in the loop for the standard settings (core size and
+// process limit 8000, constants in execute2_8000()), in the general
+// two-warrior loop, with queues longer than the fixed queue buffers, and in
+// the loop for more than two warriors.
+test('every specialized instruction word agrees with mars.js', () => {
+  const text = readFileSync(new URL('../src/engine/wasm/dispatch.h', import.meta.url), 'utf8');
+  const words = [...text.matchAll(/^case (\d+): return EXEC\((\d+)\);/gm)].map((m) => {
+    assert.equal(m[1], m[2], 'a case passes its own word');
+    return Number(m[1]);
+  });
+  assert.ok(words.length >= 16, `only ${words.length} cases`);
+  const MODIFIERS = ['a', 'b', 'ab', 'ba', 'f', 'x', 'i'];
+  // Operands mostly point into the warrior (a copy of an empty cell onto
+  // an empty cell would hide a wrong copy) or close to it.
+  const source = (w, len, coreSize) => {
+    const value = () => String(rand(4) ? rand(2 * len + 7) - len - 3 : rand(coreSize) - (coreSize >> 1));
+    const ins = (x) => `${OPS[(x & 0xff) >> 3]}.${MODIFIERS[x & 7]} ${MODES[(x >> 8) & 7]}${value()}, ${MODES[x >> 11]}${value()}`;
+    const lines = [';redcode-94', `;name w${w}`, ins(w)]; // the word runs first
+    for (let i = 1; i < len; i++) lines.push(rand(3) ? ins(w) : `${pick(['spl', 'jmp', 'mov', 'djn'])} ${pick(MODES)}${value()}, ${pick(MODES)}${value()}`);
+    lines.push(`jmp ${-len}`, 'org 0');
+    return lines.join('\n') + '\n';
+  };
+  const rules = [
+    { maxLength: 100, minDistance: 100 }, // 8000 / 8000: execute2_8000()
+    { coreSize: 800, maxCycles: 4000, maxProcesses: 800, maxLength: 20, minDistance: 20 },
+    // Queues of 2^17 entries, with enough cycles that the counters pass 2^16.
+    { maxProcesses: 70000, maxLength: 20, minDistance: 100 },
+  ];
+  for (const w of words) {
+    for (const o of rules) {
+      const codes = [source(w, 2 + rand(8), o.coreSize ?? 8000), source(w, 2 + rand(8), o.coreSize ?? 8000)].map((s) => warrior(s, { ...o, warriors: 2 }));
+      compareMatch(o, codes, { seed: rand(2147483646) + 1, rounds: 3, steps: true });
+      compareMatch(o, [codes[0], warrior(randomWarrior(1 + rand(8), o.coreSize ?? 8000, { loop: true }), { ...o, warriors: 2 })],
+        { seed: rand(2147483646) + 1, rounds: 2, steps: false });
+    }
+    const o = rules[1];
+    const three = [0, 1, 2].map(() => warrior(source(w, 1 + rand(6), 800), { ...o, warriors: 3 }));
+    compareMatch(o, three, { seed: rand(2147483646) + 1, rounds: 2, steps: false });
+  }
+});
