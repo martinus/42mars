@@ -880,8 +880,15 @@ static i64 tie_check(void) {
 // the match: the positions and the first mover are those of that round,
 // but p-space and the last results start empty, as at the start of a
 // match. Returns the number of instructions executed.
+//
+// stopWidth >= 0 (two warriors only) stops the match early, which changes
+// results against pMARS: warrior 0 gets 3, 1 or 0 points per round, and
+// from round max(stopMin, 2) on, after every round, the match stops when the
+// 95% interval of its points per 100 rounds is at most stopWidth wide. The
+// played rounds are mars_round() - firstRound. Width 0 stops exactly when
+// the first stopMin rounds all ended the same way.
 EXPORT(mars_run_match)
-double mars_run_match(u32 rounds, u32 earlyTie, u32 firstRound) {
+double mars_run_match(u32 rounds, u32 earlyTie, u32 firstRound, double stopWidth, u32 stopMin) {
   // The positions of the skipped rounds: the generator steps exactly as if
   // they were played (placement does not depend on the core).
   for (u32 r = 0; r < firstRound; r++) place_warriors();
@@ -890,6 +897,9 @@ double mars_run_match(u32 rounds, u32 earlyTie, u32 firstRound) {
   logFirst = firstRound;
   u64 total = 0;
   const int skip = earlyTie;
+  const int stop = stopWidth >= 0 && nw == 2;
+  const u32 from = stopMin < 2 ? 2 : stopMin;
+  double sum = 0, squares = 0;
   for (u32 r = 0; r < rounds; r++) {
     mars_start_round();
     while (!roundOver) {
@@ -902,6 +912,21 @@ double mars_run_match(u32 rounds, u32 earlyTie, u32 firstRound) {
         break;
       }
       total += run_some((u64)chunk);
+    }
+    if (stop) {
+      // The same operations in the same order as the JS engine of
+      // tools/tournament.mjs, so both stop after the same round.
+#pragma clang fp contract(off)
+      const double x = war[0].alive ? (war[1].alive ? 1 : 3) : 0;
+      sum += x;
+      squares += x * x;
+      const double k = r + 1;
+      if (r + 1 >= from) {
+        const double m = sum / k;
+        double v = (squares - k * m * m) / (k - 1);
+        if (v < 0) v = 0;
+        if (2 * 1.96 * __builtin_sqrt(v / k) * 100 <= stopWidth) break;
+      }
     }
   }
   return (double)total;

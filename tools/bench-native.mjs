@@ -42,7 +42,7 @@ if (INPUT) {
   writeFileSync(join(tmp, 'input.txt'), text);
 }
 const src = new URL('../src/engine/wasm/bench-native.c', import.meta.url).pathname;
-execFileSync(CC, ['-O3', '-march=native', '-fno-strict-aliasing', ...(COUNT ? ['-DCOUNT_INS'] : []), '-o', join(tmp, 'bench'), src], { stdio: 'inherit' });
+execFileSync(CC, ['-O3', '-march=native', '-fno-strict-aliasing', '-ffp-contract=off', ...(COUNT ? ['-DCOUNT_INS'] : []), '-o', join(tmp, 'bench'), src, '-lm'], { stdio: 'inherit' });
 const args = [join(tmp, 'input.txt'), ...(earlyTie ? ['early-tie'] : [])];
 let counts = '';
 for (let r = 0; r < RUNS; r++) {

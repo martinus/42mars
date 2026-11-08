@@ -1,16 +1,17 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 Martin Leitner-Ankerl
 
-import { test } from 'node:test';
+import { after, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
 const dir = mkdtempSync(join(tmpdir(), 'tournament-test-'));
+after(() => rmSync(dir, { recursive: true, force: true }));
 
 function run(engine, seed, name, warriors = join(root, 'warriors')) {
   const out = join(dir, `${name}.json`);
@@ -132,5 +133,52 @@ test('tournament: --pmars stops on output it cannot read', () => {
       }
     }, name);
     assert.match(err, new RegExp(`pMARS gave "\\d+ ${text}"`), name);
+  }
+});
+
+// --ci-width stops pairings early (issue #19); the js engine has its own
+// copy of the stop rule of runMatch.
+function runArgs(name, args) {
+  const out = join(dir, `${name}.json`);
+  execFileSync(process.execPath, [join(root, 'tools/tournament.mjs'), join(root, 'warriors'), '--rounds', '60', '--jobs', '3', '--seed', '2', ...args, '--json', out], { stdio: 'ignore' });
+  return JSON.parse(readFileSync(out, 'utf8'));
+}
+const withRounds = (t) => t.results.map((r) => [r.a, r.b, r.rounds]);
+
+test('tournament: --ci-width gives the same pairings on the js and wasm engines, --exact-top replays the best', () => {
+  const full = runArgs('ci-full', ['--engine', 'wasm']);
+  assert.ok(full.results.every((r) => r.rounds === 60));
+  for (const [width, minRounds] of [['60', '20'], ['100', '5'], ['0', '10']]) {
+    const args = ['--ci-width', width, '--min-rounds', minRounds];
+    const js = runArgs(`ci-js-${width}`, ['--engine', 'js', ...args]);
+    const wasm = runArgs(`ci-wasm-${width}`, ['--engine', 'wasm', ...args]);
+    assert.deepEqual(withRounds(js), withRounds(wasm), width);
+    assert.ok(wasm.results.some((r) => r.rounds < 60), width);
+    // Scores are scaled to 60 rounds per pairing.
+    const score = wasm.names.map(() => 0);
+    wasm.pairs.forEach((p, k) => {
+      const r = wasm.results[k];
+      score[p.a] += ((3 * r.a[0] + r.a[2]) * 60) / r.rounds;
+      score[p.b] += ((3 * r.b[0] + r.b[2]) * 60) / r.rounds;
+    });
+    for (const row of wasm.ranking) assert.ok(Math.abs(row.score - score[row.i]) < 1e-9, `${width} ${row.name}`);
+    // Played rounds are a prefix of the full match: at most the full wins.
+    wasm.results.forEach((r, k) => {
+      for (let i = 0; i < 3; i++) assert.ok(r.a[i] <= full.results[k].a[i]);
+      assert.equal(r.a[0] + r.a[1] + r.a[2], r.rounds);
+    });
+    const top = runArgs(`ci-top-${width}`, ['--engine', 'wasm', ...args, '--exact-top', '3']);
+    const best = new Set(wasm.ranking.slice(0, 3).map((r) => r.i));
+    const among = wasm.pairs.map((p, k) => k).filter((k) => best.has(wasm.pairs[k].a) && best.has(wasm.pairs[k].b));
+    assert.equal(among.length, 3);
+    assert.deepEqual(top.exact, among.filter((k) => wasm.results[k].rounds < 60));
+    assert.ok(top.exact.length > 0, width);
+    top.results.forEach((r, k) => assert.deepEqual([r.a, r.b, r.rounds], withRounds(top.exact.includes(k) ? full : wasm)[k], `${width} ${k}`));
+  }
+});
+
+test('tournament: --ci-width is refused together with --pmars and --compare', () => {
+  for (const args of [['--ci-width', '60', '--pmars', '/bin/true'], ['--ci-width', '60', '--pmars', '/bin/true', '--compare'], ['--exact-top', '3'], ['--ci-width', '-1'], ['--ci-width', '60', '--native-input', join(dir, 'native.txt')]]) {
+    assert.throws(() => execFileSync(process.execPath, [join(root, 'tools/tournament.mjs'), join(root, 'warriors'), ...args], { stdio: 'ignore' }), (e) => e.status === 2, args.join(' '));
   }
 });
