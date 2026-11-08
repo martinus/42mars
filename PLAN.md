@@ -6,7 +6,7 @@ Core War Theater is a browser visualizer for [Core War](https://corewar.co.uk/) 
 - pMARS's own `validate.red` self-ties for all 80,000 cycles, which it only does on a MARS with ICWS'88 semantics and in-register evaluation.
 - A differential test against a pMARS 0.9.5 binary finds no difference: all 567 corpus listings, thousands of random expressions and sources, and 9,600 battles per run where the instruction count and a hash of the whole core after every round are equal. See [Validation](#validation).
 - 248 tests, `npm test`.
-- A WebAssembly simulator for tournaments runs about 280M instructions/s in a single thread, about 3.1 times pMARS and, warmed up, 1.6 times the exMARS build on [corewar.dev](https://corewar.dev/). A round-robin tournament of 80 hill warriors (3,160 pairings, 100 rounds each) takes 3.44 s on 16 cores, against 5.4 s for corewar.dev's exMARS and 10.9 s for parallel pMARS processes (details under [Speed](#speed)).
+- A WebAssembly simulator for tournaments runs about 280M instructions/s in a single thread, about 3.1 times pMARS and, warmed up, 1.6 times the exMARS build on [corewar.dev](https://corewar.dev/). A round-robin tournament of 80 hill warriors (3,160 pairings, 100 rounds each) takes 3.45 s on 16 cores, against 5.4 s for corewar.dev's exMARS and 10.9 s for parallel pMARS processes (details under [Speed](#speed)).
 - The JavaScript simulator used by the visualizer does about 40M instructions/s with its bookkeeping, 61M/s headless.
 - Thanks to the differential test, a few pMARS quirks are now reproduced too, e.g. a pMARS buffer bug that turns `dat#9` at the end of a line into `dat #90` in one hill warrior.
 
@@ -139,12 +139,12 @@ Round robin of 80 corpus warriors, 3,160 pairings × 100 rounds, `node tools/tou
 
 | Engine | 16 jobs | 31 jobs |
 |---|---|---|
-| ours, WebAssembly (`--engine wasm`) | 3.83 s | 3.44 s |
+| ours, WebAssembly (`--engine wasm`) | 3.90 s | 3.45 s |
 | corewar.dev exMARS, one fighter per worker thread as on the site | 6.0 to 6.5 s | 5.4 s |
 | pMARS 0.9.5, parallel processes (`--pmars`) | 13.1 s | 11.0 s |
 | ours, JavaScript (`--engine js`) | 15.3 s | 13.2 s |
 
-Every engine gives the same wins, losses and ties in all 3,160 pairings. The machine has 16 cores with 2 hardware threads each; the second thread per core adds about 11% for the WebAssembly engine.
+Ours measured on 8th November 2026 (the same day before warriors were assembled once per tournament: 3.98 s and 3.57 s; earlier, on a faster day for the machine, 3.83 s and 3.44 s). Every engine gives the same wins, losses and ties in all 3,160 pairings. The machine has 16 cores with 2 hardware threads each; the second thread per core adds about 11% for the WebAssembly engine.
 
 What made it fast:
 

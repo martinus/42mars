@@ -202,6 +202,18 @@ Same machine, idle, after the second round was merged. Scripts in
 | Native, bench pairs, 2000 rounds, `perf stat` | per simulated instruction: 44 x86 instructions, 10.8 cycles, 0.13 L1 data cache misses (1.9% of loads), 0.044 branch misses. The 8000-cell core is 64 KB, L1d is 32 KB (issue #6) |
 | Repeated start positions within a pairing | 100 rounds drawn from 7,801 positions repeat about 0.6 times per pairing (0.6% of rounds); p-space and the first mover differ anyway. Not worth caching |
 
+### Third round (November 2026)
+
+Same machine, Node 22.22, one experiment per issue. A/B in the same
+session, baseline and variant runs alternating, fresh process per run, median
+and range. Load average 1 to 3 at the start of a series (a desktop browser
+open, no other node or clang process), up to 9 at the end of the t80 series
+from the runs themselves.
+
+| Idea | Result | Verdict |
+|---|---|---|
+| `tools/tournament.mjs`: assemble every warrior once in the main thread (it already did, to skip broken files, and threw the result away) and send the assembled code to the workers; compile `mars.wasm` once and pass the `WebAssembly.Module` in `workerData` (issue #5) | fixed cost (t80, `--rounds 1`, 31 jobs) 0.26 s (0.25–0.27), 5.72 CPU-s → 0.15 s (0.14–0.15), 3.17 CPU-s; t80 16 jobs 3.98 (3.94–3.98) → 3.90 (3.88–3.92); t80 31 jobs 3.57 (3.56–3.58) → 3.45 (3.44–3.46); t20 1 job 4.14 (4.10–4.27) → 4.14 (4.11–4.20). The saving is the assembly (9 to 27 ms per worker for 80 warriors). V8 already shared the compiled code before: its native module cache finds identical module bytes across the workers of one process, and `--trace-wasm-compilation-times` shows the same 4 TurboFan compilations for the whole run with and without the change, so tier-up happens once per process, not per worker. What is left of the fixed cost is mostly worker start: 31 empty workers take about 100 ms | kept |
+
 ## Ideas from other simulators
 
 exMARS (Martin Ankerl, 2003, based on exhaust and pMARS) and the exMARS fork
