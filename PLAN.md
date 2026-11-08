@@ -6,7 +6,8 @@ Core War Theater is a browser visualizer for [Core War](https://corewar.co.uk/) 
 - pMARS's own `validate.red` self-ties for all 80,000 cycles, which it only does on a MARS with ICWS'88 semantics and in-register evaluation.
 - A differential test against a pMARS 0.9.5 binary finds no difference: all 567 corpus listings, thousands of random expressions and sources, and 9,600 battles per run where the instruction count and a hash of the whole core after every round are equal. See [Validation](#validation).
 - 232 tests, `npm test`.
-- About 40M instructions/s with the visualizer bookkeeping, 59M/s headless, in a single thread. pMARS does about 90M/s on the same battles (details under [Speed](#speed)).
+- A WebAssembly simulator for tournaments runs about 190M instructions/s in a single thread, about 2.1 times pMARS and 1.4 times the exMARS build on [corewar.dev](https://corewar.dev/). A round-robin tournament of 80 hill warriors (3,160 pairings, 100 rounds each) takes 4.75 s on 16 cores, against 5.4 s for corewar.dev's exMARS and 11.0 s for parallel pMARS processes (details under [Speed](#speed)).
+- The JavaScript simulator used by the visualizer does about 40M instructions/s with its bookkeeping, 61M/s headless.
 - Thanks to the differential test, a few pMARS quirks are now reproduced too, e.g. a pMARS buffer bug that turns `dat#9` at the end of a line into `dat #90` in one hill warrior.
 
 ## Goals
@@ -35,11 +36,14 @@ src/ui/app.js ──> renderer.js (WebGL2 cells + bloom)   overlay.js (arcs, tag
 | `src/engine/assembler.js` | `readSource` splits lines and reads `;name`, `;assert` etc., `Expander` does pass 1 (labels, `EQU`, `FOR`/`ROF`, asserts), `StatementParser` does pass 2 (operands, modes, modifiers, values). |
 | `src/engine/mars.js` | Simulator. One allocation-free loop specialized on the opcode byte, flat process queues, all per-cell arrays as views into three shared buffers, optional `headless` mode without visualizer bookkeeping. |
 | `src/engine/opcodes.js` | Opcode tables, formatting, pMARS-style listing. |
+| `src/engine/wasm/mars.c`, `mars.wasm` | Headless simulator in C, compiled with clang to a 24 KB WebAssembly module without imports. The `.wasm` is committed, `tools/build-wasm.sh` rebuilds it byte-identically. |
+| `src/engine/mars-wasm.js` | JavaScript glue: `createWasmMars()` with the step API (`load`, `startRound`, `run`) and `runMatch()` for a whole match inside WebAssembly. |
 | `src/ui/*` | Visualizer. No dependencies, no build step, plain ES modules. |
 | `docs/redcode-semantics.md` | The behavior the engine implements, in prose. |
 | `tools/asm.mjs` | `node tools/asm.mjs file.red` prints a pMARS-style listing or the errors. |
 | `tools/corpus.mjs` | Assembles every `.red` file below a directory and lists the failures. |
-| `tools/bench.mjs` | Simulator speed, `--headless` for the mode without bookkeeping. |
+| `tools/bench.mjs` | Simulator speed: `--headless`, `--wasm`, `--wasm-match`. |
+| `tools/tournament.mjs` | Round-robin tournament over a folder, battles in parallel on worker threads, `--engine js|wasm`, `--pmars` and `--compare` to run the same tournament through pMARS. |
 | `tools/pmars-diff.mjs` | Differential test against a pMARS binary, see [Validation](#validation). |
 | `tools/expr-fuzz.mjs` | Random expressions against pMARS's expression evaluator built as a filter. |
 | `tools/serve.mjs` | Static file server for development. |
@@ -112,16 +116,39 @@ Where pMARS hangs (lines over 255 characters, a `\` at the end of the file, huge
 
 ### Speed
 
-`node tools/bench.mjs <corpus>`: 3 hill pairs, 200 rounds each, 22,667,265 instructions, Node 22.22, Ryzen 9 7950X, 7 fresh processes each, median (range):
+Single thread, `node tools/bench.mjs <corpus>`: 3 hill pairs, 200 rounds each, 22,667,265 instructions, Node 22.22, Ryzen 9 7950X, idle machine, 7 fresh processes each, median (range):
 
 | Engine | M instructions/s |
 |---|---|
-| before the speed work | 31.9 (30.8 to 32.2) |
-| now, with visualizer bookkeeping | 40.0 (39.6 to 41.2) |
-| now, `headless: true` | 58.6 (56.6 to 60.0) |
-| pMARS 0.9.5, `-O2`, same battles | about 90 (0.25 s per run) |
+| ours, WebAssembly, `runMatch` | 189.6 (187.0 to 191.3) |
+| ours, WebAssembly, step API (`run()` from JS) | 190.2 (188.9 to 191.3) |
+| same C natively (`clang -O3 -march=native`, `tools/bench-native.mjs`) | about 230 to 250 |
+| [corewar.dev](https://corewar.dev/) exMARS build (WebAssembly) | 132.2 (131.2 to 133.0) |
+| pMARS 0.9.5 native, `-O2` | 90.7 (87.2 to 90.7) |
+| ours, JavaScript, `headless: true` | 61.4 (59.6 to 63.4) |
+| corewar.dev pMARS build (WebAssembly) | 51.6 (45.7 to 52.8) |
+| ours, JavaScript with visualizer bookkeeping | about 40 |
 
-The benchmark is short, about 0.4 to 0.7 s, so JIT warm-up is part of it: after warm-up in the same process the engine reaches about 51M/s with bookkeeping and 75 to 80M/s headless. The largest single gain came from putting all per-cell arrays of one element type into one buffer, so the loop touches 3 typed arrays instead of 15. The rest is profile work by the optimization agent: one inlined loop, flat process queues, specialization on the opcode byte, ownership updates in one place, and removing code that caused repeated deoptimization.
+All engines play the same battles with the same results. The corewar.dev numbers come from driving their published modules (`exmars.mjs`, `engine.mjs`) from Node with the warriors already loaded; that harness is not in this repository because their code is GPL. The JS benchmark is short enough that JIT warm-up is part of it: warmed up, the JS engine reaches about 51M/s with bookkeeping and 75 to 80M/s headless.
+
+Single thread on a tournament mix, all 190 pairings of the first 20 corpus warriors, 100 rounds each: ours 5.74 s, corewar.dev exMARS 6.14 s. On the bench battles the difference is larger because they leave no early ties.
+
+Round robin of 80 corpus warriors, 3,160 pairings × 100 rounds, `node tools/tournament.mjs <dir> --rounds 100 --jobs N`, results compared pairing by pairing:
+
+| Engine | 16 jobs | 31 jobs |
+|---|---|---|
+| ours, WebAssembly (`--engine wasm`) | 5.3 s | 4.75 s |
+| corewar.dev exMARS, one fighter per worker thread as on the site | 5.9 s | 5.37 s |
+| pMARS 0.9.5, parallel processes (`--pmars`) | 13.1 s | 11.0 s |
+| ours, JavaScript (`--engine js`) | 15.3 s | 13.2 s |
+
+Every engine gives the same wins, losses and ties in all 3,160 pairings. The machine has 16 cores with 2 hardware threads each; the second thread per core adds about 11% for the WebAssembly engine.
+
+What made it fast:
+
+- The JavaScript engine: all per-cell arrays of one element type in one buffer (the loop touches 3 typed arrays instead of 15), one inlined loop, flat process queues, specialization on the opcode byte.
+- The WebAssembly engine: an 8-byte packed cell, dispatch on the opcode byte, the common modes `$` and `#` tested first, a fast path for `MOV.I`, B values read only where an instruction needs them, a separate loop for two warriors with both queues in locals.
+- Early ties in `runMatch` (results only, not the final core): a round stops when no warrior can lose its last process in the remaining budget, or when the core holds no `DAT`, `DIV`, `MOD` or `STP` anymore, so nobody can die and p-space cannot change. The second proof matters for imp spirals and papers: e.g. `acme.red` vs `alpha.red` runs in 13 ms instead of 51 ms. Some of these ideas came from Martin's exMARS (2003) and from the exMARS fork used by corewar.dev; they were passed to the implementing agent as descriptions, not as code.
 
 ## Visualization
 
@@ -162,7 +189,7 @@ The aim is that somebody who has never seen Core War can work out what a warrior
 
 - Read/write limits, `-P` permutation, `'88` strict mode, each checked with `tools/pmars-diff.mjs`.
 - A CI job that downloads and builds pMARS and runs `tools/pmars-diff.mjs`, so that every change is compared against pMARS.
-- Use the headless mode for tournaments.
+- A tournament page in the UI, on the WebAssembly engine in web workers.
 - Move the simulator into a Web Worker so that max speed does not cost frame time.
 
 ### M2: see more

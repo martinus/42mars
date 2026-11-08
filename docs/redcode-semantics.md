@@ -765,7 +765,9 @@ The current warrior W takes the process at the head of its queue: PC.
 
 The instruction loop does not allocate: no closures or objects per step,
 typed arrays only. `tools/bench.mjs` measures it, `--headless` for the mode
-without visualizer bookkeeping. In headless mode the core, the queues, the
+without visualizer bookkeeping, `--wasm` and `--wasm-match` for the
+WebAssembly engine (3.7); `tools/bench-native.mjs` runs the same C code
+natively. In headless mode the core, the queues, the
 events, the scores and all round results are the same as with bookkeeping;
 `owner`, `execBy`, `origin`, the timestamps, `territory`, `execHeat` and the
 trace are not updated.
@@ -789,6 +791,64 @@ The entry for the instruction executed at time t is at index
   `SPL` queued a new process there)
 - bit 18: the process died
 - bit 19: a skip happened
+
+### 3.7 WebAssembly engine
+
+`src/engine/wasm/mars.c` is a second, headless implementation of 3.1 to 3.3
+in C, compiled to `src/engine/wasm/mars.wasm` (committed, about 24 KB, no
+imports; `tools/build-wasm.sh` rebuilds it with clang). `mars-wasm.js` wraps
+it:
+
+```js
+export async function compileWasmMars() -> WebAssembly.Module   // cached
+export async function createWasmMars(options) -> engine        // Node and browsers
+export function createWasmMarsSync(options, module?) -> engine
+engine: opt, coreSize, load(codes, { seed, positions }), startRound(),
+  run(n), step(), endRound(), runMatch(codes, { rounds, seed, positions,
+  earlyTie = true }) -> { warriors: [{ name, wins, losses, ties, score }],
+  results, instructions },
+  round, roundOver, roundResult, results, time, cyclesLeft, warriorsLeft,
+  current, op, am, bm, av, bv, cell(addr),
+  warriors[i]: index, code, name, author, position, tasks, alive, diedAt,
+    score, wins, losses, ties, lastResult, pspace, processes()
+```
+
+The core, the queues, the scores, the p-space and the round results are the
+same as `new Mars({ headless: true })` (`test/wasm.test.js`; `pmars-diff.mjs
+--wasm` against pMARS). Differences: the core size is at most 65536, there
+are at most 255 warriors, `seed` must be a non-negative safe integer, no
+events. `op`, `am`, `bm`, `av`, `bv` are snapshots decoded from the wasm
+core, valid until the next call that runs or loads; warrior fields are
+getters, `score` and `pspace` copies.
+
+A core cell is 8 bytes: A and B value (16 bits each) and a 16-bit word with
+the op byte and both modes. Each warrior has a ring buffer of 16-bit
+addresses whose length is a power of two.
+
+`runMatch` plays all rounds inside wasm. With `earlyTie` (the default) a
+round stops as soon as it can only end in a tie: a warrior loses at most one
+process per own turn, and while nobody dies the round runs exactly
+`max(cyclesLeft, 1)` more instructions, of which each living warrior gets at
+most `ceil(max(cyclesLeft, 1) / warriorsLeft)`; when every living warrior
+has more processes than that, nobody can die. The round then ends with
+`time` and `cyclesLeft` as if those instructions had run. Scores, round
+results, last results and later rounds are the same; the final core and
+queues of such a round are not. This test is off when any warrior's code
+contains STP, because skipped STP instructions could change p-space cells
+that later rounds read (no instruction creates an opcode that is not in the
+core yet).
+
+A second test: only DAT, and DIV or MOD with a zero divisor, kill a
+process, and only STP changes the p-space. A core without any cell with one
+of these opcodes stays without (opcodes are only copied), so the round is a
+tie. The empty core is DAT, so this happens after imp spirals or papers
+wrote over the whole core. The check scans from the cell where it found
+such an opcode last time, so the instruction loop has no bookkeeping for it.
+Both tests run at most 4096 instructions apart.
+
+For exactly two warriors the instruction loop keeps both queues' counters
+in local variables and alternates the two warriors without looking up the
+next one (the round ends when one of them dies).
 
 ---------------------------------------------------------------------------
 
