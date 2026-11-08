@@ -467,6 +467,30 @@ t20 ranges do not overlap in any row. Details:
 All four built and passed `test/wasm.test.js` and `test/tournament.test.js`.
 None was kept, so no `engine-check` run.
 
+### The hot words ranked on counts with early ties: the same list, rejected (8th November 2026, #23)
+
+Counts as tournaments run, `bench-native --early-tie --count`, over the
+mixes of the current `HOT` list: t20 and t80 (`tournament.mjs --rounds 100
+--seed 1 --native-input`), 400 corpus pairs (`bench-pairs --pairs 400
+--native-input`, 30 rounds) and the bench. The 32 words of today leave to
+the generic path 1.32% of t20, 3.00% of t80, 4.07% of the pairs and 0.01%
+of the bench.
+
+`gen-dispatch.mjs --rank` with all four weighted equally, as the current
+list was made, gives exactly the current list in the same order: early
+ties change the shares, not the ranking. Other words only come up with
+other weights:
+
+| List | generic t20 / t80 / pairs / bench | bench M/s | pairs M/s | t20 s | t80 16 jobs s | t80 31 jobs s |
+|---|---|---|---|---|---|---|
+| without the bench: `mov.i < $` for `cmp.ab # $` | 1.32 / 2.97 / 3.60 / 0.69% | 297.9 → 297.5 | 286.9 → 283.5 | 3.80 → 3.81 | 3.48 → 3.48 | 3.12 → 3.15 |
+| t80 and pairs only: also `cmp.ab # <` for `slt.ab # $` | 1.66 / 2.73 / 3.64 / 2.01% | 298.4 → 294.3 | 285.0 → 280.4 | 3.79 → 3.79 | 3.46 → 3.50 | 3.11 → 3.09 |
+
+`tools/ab-wasm.mjs`, current list first, 7 runs (t80 5), medians. Within
+noise or slower; 0.3 points less generic code on t80 and pairs are worth
+less than what V8's code moves when the case set changes (#10). Keep the
+list.
+
 State: bench about 294M/s in WebAssembly, about 413M/s natively; corpus
 pairs 280M/s; t20 3.84 s single thread; t80 3.63 s with 16 jobs and 3.28 s
 with 31 jobs (8th November 2026; the machine ran 2 to 4% slower than on the
@@ -524,7 +548,7 @@ Seen in the sources and not useful for us, by measurement or reasoning:
 |---|---|---|
 | Handler address in every cell, each handler ends with its own copy of the dispatch jump | fmars (computed goto), nMars (a delegate per cell) | This is how fmars makes full specialization fast natively: one load and one indirect jump per instruction, and the branch predictor keys on the handler it leaves (our native full switch had one shared jump: 0.14 misses per instruction). WebAssembly cannot express it (`br_table` only targets enclosing blocks, tail calls measured 116.8 vs 277). Native only, and fmars generates handlers just for the words of a hill (about 350) |
 | Code for every word a corpus uses | fmars, nMars | 40, 48 and 64 hot cases were slower than 32 in V8 |
-| A WebAssembly module generated per match for its words | fmars idea, nMars plan | The generic path is only 0.1 to 3.4% of executions; needs a wasm emitter in JS |
+| A WebAssembly module generated per match for its words | fmars idea, nMars plan | The generic path is only 1.3 to 4.1% of executions with early ties (t20, t80, corpus pairs; #23); needs a wasm emitter in JS |
 | Dispatch through a table of handlers per opcode and modifier | AzureMARS | the table variants measured 183.8 vs 241.2 |
 | 64-way dispatch on the predecoded mode pair | rmars | measured 116 vs 125 |
 | One turn per loop iteration with swapped locals | rmars | measured 257.3 vs 277.6 |
