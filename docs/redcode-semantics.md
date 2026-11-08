@@ -7,7 +7,10 @@ of its quirks, because existing warriors depend on them.
 
 The engine was written from this description, without access to pMARS source
 code, and checked against reference outputs: 4031 expressions, 146 small
-sources (`test/fixtures/`), 567 hill warriors and 319 battles with core hashes.
+sources (`test/fixtures/`), 567 hill warriors and 319 battles with core
+hashes. `tools/pmars-diff.mjs` and `tools/expr-fuzz.mjs` compare it with a
+pMARS binary, used as a black box, on corpus warriors and random input.
+Section 4 lists where the engine deliberately differs.
 
 Three modules, plain JavaScript ES modules, no dependencies:
 
@@ -40,12 +43,13 @@ Registers persist across `evaluate` calls of one `Evaluator` instance.
 ### Syntax and semantics
 
 - Integers are signed 64-bit (`BigInt` clamped by wrapping with
-  `BigInt.asIntN(64, x)`). When a `+`, `-` (binary or unary) or `*` result
-  leaves the 64-bit range, the result wraps and the status becomes
-  `EVAL_OVERFLOW`, unless the status already is an error. `/` and `%` truncate
-  toward zero, the sign of `%` follows the dividend (like C). Division or
-  modulo by zero gives `EVAL_DIV_ZERO` and the value 0 for that operation; the
-  evaluation continues.
+  `BigInt.asIntN(64, x)`). When a binary `+`, `-` or `*` result leaves the
+  64-bit range, the result wraps and the status becomes `EVAL_OVERFLOW`,
+  unless the status already is an error. Unary minus wraps without changing
+  the status (`-(-9223372036854775807-1)` is -2^63 with `EVAL_OK`). `/` and
+  `%` truncate toward zero, the sign of `%` follows the dividend (like C).
+  Division or modulo by zero gives `EVAL_DIV_ZERO` and the value 0 for that
+  operation; the evaluation continues.
 - A number literal is a run of up to 20 decimal digits. Values above
   2^63 - 1 saturate to 2^63 - 1 (no overflow status). A digit run longer than
   20 digits leaves the remaining digits unconsumed, which ends as a bad
@@ -56,39 +60,92 @@ Registers persist across `evaluate` calls of one `Evaluator` instance.
 - Parentheses group. A missing `)` is `EVAL_BAD`. Text left over after the
   expression (e.g. an extra `)`, or `1 2`) is `EVAL_BAD`.
 - A single letter `a`..`z` or `A`..`Z` (case-insensitive, same register) is a
-  register. A register followed by `=` (but not `==`) is an assignment: the
-  whole rest of the current group (up to the closing parenthesis of the group
-  or the end) is evaluated, stored in the register, and is the value of the
-  assignment. E.g. `(b=3)+b` is 6 and `a=b=4` sets both to 4.
-- Binary operators, from highest to lowest precedence, all left-associative:
+  register. A register followed by `=` (but not `==`) is an assignment: a new
+  expression starts after the `=` and runs to the end of the text or to the
+  next `)` that it does not open itself; its value is stored in the register
+  and is the value of the assignment. E.g. `(b=3)+b` is 6 and `a=b=4` sets
+  both to 4.
+- Binary operators, from highest to lowest precedence:
   1. `*` `/` `%`
   2. `+` `-`
   3. `==` `!=` `<` `>` `<=` `>=` (one level, result 1 or 0)
   4. `&&` (result 1 or 0, both sides always evaluated)
   5. `||` (result 1 or 0, both sides always evaluated)
-- A single `&`, single `|`, single `=` (outside an assignment) or any other
-  character where an operator is expected makes the expression `EVAL_BAD`.
+
+  The order in which they are applied follows pMARS, see "Evaluation order".
+  For most expressions this is ordinary left-associative precedence.
+- A single `&`, single `|`, single `=` (outside an assignment), a single `!`
+  or any other character where an operator is expected makes the expression
+  `EVAL_BAD` (for the first four pMARS has no defined result, see
+  "Deviations from pMARS").
 - An empty expression is `EVAL_BAD`.
+- Status: `EVAL_BAD` and `EVAL_DIV_ZERO` replace whatever status there was,
+  `EVAL_OVERFLOW` is only set while the status is `EVAL_OK`. So the last
+  error wins, and once an error happened the result is an error. An operand
+  that is missing or invalid (e.g. `1+)`) sets `EVAL_BAD`, counts as 0 and the
+  evaluation goes on; a non-operator where an operator is expected sets
+  `EVAL_BAD` when it is applied and gives 0.
 
-### The `==` quirk
+### Evaluation order
 
-pMARS has a defect that must be reproduced: in some positions an `==` is
-dropped, which leaves the rest of the text unconsumed and makes the
-expression `EVAL_BAD`.
+pMARS evaluates with a precedence-climbing parser that has two defects, and
+the engine reproduces its procedure:
 
-Think of a precedence-climbing parser. It reads an operand, then an operator.
-When the next operator has higher precedence than the one before it, the
-parser starts a nested parse for the right-hand side. That nested parse ends
-when it meets an operator whose precedence is lower than or equal to the
-precedence of the operator that was in front of the nested part. The operator
-that ended the nested parse is handed back to the enclosing level, which
-continues with it. The quirk: if that handed-back operator is `==`, it is
-lost. Only `==` has this problem; `!=`, `<` etc. are handed back correctly.
+- An operator that ends a nested part (a part started because the operator
+  after an operand binds tighter than the one before it) is handed back
+  through one variable shared by all levels of the parser. The level that
+  started the nested part continues with it only if its precedence is at
+  least that level's minimum precedence, otherwise it is handed back further.
+  The comparison is "at least", where correct precedence climbing would use
+  "higher than", so the operator can be applied at a level that is too deep.
+- A handed-back `==` is dropped: the level returns without reading further,
+  so the rest of the text stays unread and the expression normally ends as
+  `EVAL_BAD` (missing `)` or text left over). `!=`, `<` etc. are not dropped.
 
-Examples (all in `test/fixtures/expressions.json`):
+The procedure, with precedences IDENTITY 0, `||` 1, `&&` 2, comparisons 3,
+`+ -` 4, `* / %` 5, where IDENTITY is the operator in front of the first
+operand of an expression and gives its right operand:
+
+```
+evaluate(text):
+  status = OK
+  value = E(-1, 0, IDENTITY)
+  if text is left: status = BAD
+  return status, value
+
+E(minPrec, acc, op1):            # acc op1 <operand> ...
+  saved = NONE                   # one variable for all calls of E
+  v = operand()                  # may call E itself (parentheses, assignment)
+  skip whitespace
+  if at the end of the text or at ')': return apply(op1, acc, v)
+  op2 = read operator
+  if prec(op1) >= prec(op2):
+    if prec(op2) > minPrec: return E(minPrec, apply(op1, acc, v), op2)
+    saved = op2                  # hand op2 back
+    return apply(op1, acc, v)
+  r = E(prec(op1), v, op2)       # op2 binds tighter: nested part
+  result = apply(op1, acc, r)
+  if saved is not NONE and not '==' and prec(saved) >= minPrec:
+    return E(minPrec, result, saved)
+  return result                  # saved stays set for the caller
+
+operand():
+  skip whitespace
+  '(' : v = E(-1, 0, IDENTITY); if not at ')': status = BAD; skip one character
+  '-', '!', '+': unary operator applied to operand()
+  letter: register; with '=' (not '==') after it: register = E(-1, 0, IDENTITY)
+  digits: number
+  else: status = BAD, value 0, nothing consumed
+```
+
+Examples (more in `test/fixtures/expressions.json` and
+`test/pmars-quirks.test.js`):
 
 | expression | result |
 |---|---|
+| `5<7-6/8<8` | 0 (ordinary precedence: 1) |
+| `1>=9+a%6>=8` | 1 (ordinary precedence: 0) |
+| `b=0==2%9==8` | bad |
 | `1+2*3==7` | bad (nested `2*3` under `+`, ended by `==`) |
 | `2*3+4*5==26` | bad |
 | `1==2+3==0` | bad (nested `2+3` under `==`, ended by `==`) |
@@ -98,7 +155,9 @@ Examples (all in `test/fixtures/expressions.json`):
 | `1+2*3!=7` | 0 |
 
 `test/fixtures/expressions.json` has 4031 expressions, including 4000
-random ones, with their expected status and value.
+random ones, with their expected status and value. `tools/expr-fuzz.mjs`
+compares the evaluator with an external reference evaluator on random
+expressions.
 
 ---------------------------------------------------------------------------
 
@@ -149,12 +208,16 @@ reference tests compare `ok` and the number of warnings.
 
 ### 2.1 Reading lines
 
-- The source is split at CRLF, LF or a lone CR.
-- Line continuation: if a physical line, after appending it to the current
-  logical line, makes the logical line end with `\`, and no `;` appeared in any
-  of its physical lines so far, the `\` is removed and the next physical line
-  is appended directly. A `\` at the end of the last physical line of the
-  file stays part of the text.
+- A physical line is the text up to and including the next LF (the last one
+  may have no LF). A final LF does not start another line.
+- The content of a physical line ends at its first CR or LF. Text after a
+  lone CR up to the next LF is ignored: `mov 1, 2\rdat 3\n` is only
+  `mov 1, 2`. A CRLF line end is just the end of the content.
+- Line continuation: if the content of a physical line, after appending it to
+  the current logical line, makes the logical line end with `\`, and no `;`
+  appeared in any of its physical lines so far, the `\` is removed and the
+  content of the next physical line is appended directly. A `\` at the end of
+  the last physical line of the file stays part of the text.
 - The line number of a logical line is the number of its first physical line.
 
 Each logical line is classified by its first non-whitespace character:
@@ -169,11 +232,14 @@ Each logical line is classified by its first non-whitespace character:
     collected so far (metadata already read stays). The second such line ends
     reading: it and everything after it are ignored.
   - `name`, `author`, `date`, `version` (case-insensitive): the value is the
-    rest of the line after the word and following whitespace, with trailing
-    whitespace removed. An empty value resets name to `Unknown`, author to
-    `Anonymous`, date and version to `''`. Later lines overwrite earlier ones.
-  - `strategy`: the rest of the line (same trimming) is appended to the
-    strategy list.
+    rest of the line after the word and the whitespace following it,
+    unchanged, trailing whitespace and any `;` included (`;author Scott
+    Adkins ` gives `"Scott Adkins "`). An empty value resets name to
+    `Unknown`, author to `Anonymous`, date and version to `''`. Later lines
+    overwrite earlier ones.
+  - `strategy`: the rest of the line after the word, without leading and
+    trailing whitespace, is appended to the strategy list (pMARS does not
+    show it).
   - `assert`: the line is kept, in order, among the statement lines, as an
     assert line. Its expression is the text after the word, up to a further
     `;` if there is one.
@@ -250,9 +316,10 @@ At the label position:
 For an opcode line, the statement text is built token by token:
 
 - The opcode word, uppercased, followed by all non-whitespace characters that
-  are glued to it in the source (e.g. `mov.ab` gives `MOV.ab`, `mov.ab#1,2`
-  gives `MOV.ab#1,2`), followed by one space if the next source character is
-  whitespace.
+  are glued to it in the source (e.g. `mov.ab` gives `MOV.ab`, `mov.ab#1,2 `
+  gives `MOV.ab#1,2 `), followed by one space if the next source character is
+  whitespace. When glued characters run to the end of the line, old content
+  of pMARS's scratch buffer follows them (see "The scratch buffer").
 - Then the operand tokens:
   - a defined label: replaced by its value minus the current instruction
     counter, in decimal (e.g. `-3`). For `ORG`, `END` and `PIN` operands: the
@@ -284,9 +351,53 @@ An identifier directly followed by `&` and a letter is a concatenation: the
 identifier after `&` must be an active FOR counter, and its iteration number
 (at least two digits) is appended to the name. Several can follow each other
 (`x&i&j`). This applies everywhere an identifier is read in pass 1 (label
-position and operands). If the name after `&` is not a FOR counter: error.
-The resulting name is then treated like any identifier (new label, defined
-label, EQU name ...).
+position and operands). If the name after `&` is not a FOR counter: error;
+the name read so far is used, further `&` parts are skipped, and the line is
+processed on (its statement still counts as an instruction). The resulting
+name is then treated like any identifier (new label, defined label, EQU name
+...).
+
+#### The scratch buffer
+
+pMARS keeps one character buffer of 256 bytes, all 0 at the start, that
+several steps overwrite with a string followed by a 0 byte. Older bytes
+after that 0 byte stay. This is visible in one case only: an opcode with
+characters glued to it at the end of a line. Corpus warrior `asianflu.red`
+has the line `\tdat#9`, which pMARS assembles as `DAT.F #0, #90`. The engine
+models the buffer for each assembly (class `Scratch` in `assembler.js`).
+
+Writes, in program order:
+
+1. Reading the source: each physical line is stored at the current end of
+   the logical line (position 0 for a new logical line, the position of the
+   removed `\` for a continued one), all its characters including CR and LF,
+   then a 0 byte. Then the CR or LF that ends the content is replaced by a 0
+   byte. Reading stops at the second `;redcode` line. At the end of the file
+   the first byte becomes 0.
+2. Pass 1, every identifier it reads, anywhere: labels, opcodes, keywords,
+   EQU names, operands, FOR counts, assert expressions, lines of EQU and FOR
+   bodies each time they are expanded, and the identifiers passed over while
+   a block with count <= 0 is skipped: the identifier uppercased, then a 0
+   byte. Not written: the `assert` keyword of an `;assert` line, other
+   comment lines, and EQU bodies when they are defined.
+3. Pass 1, a label, FOR counter or `CURLINE` replaced by a number in an
+   operand: the number text, a space if one is added to the statement text,
+   then a 0 byte.
+4. Pass 1, `&` concatenation: for each `&name`, the name as written, then a 0
+   byte; if it is a FOR counter, its two-digit text, then a 0 byte.
+5. After an opcode (stored by step 2): the glued characters right behind it,
+   without a 0 byte; then, if whitespace follows, a space and a 0 byte.
+
+The opcode part of the statement text is the buffer from the start up to its
+first 0 byte. With whitespace after the glued text this is the opcode, the
+glued text and a space, as described above. When the glued text runs to the
+end of the line, older bytes follow. Example, a file whose last line is
+`\tdat#9`: reading leaves `\tdat#9` in the buffer, `DAT` replaces the first
+three bytes and `#9` the next two, the old `9` and the 0 byte after it stay,
+so the statement text is `DAT#99`.
+
+pMARS keeps the buffer between the warriors of one run. The engine starts
+every assembly with a fresh buffer, which is exact for the first warrior.
 
 #### EQU
 
@@ -385,10 +496,14 @@ ORG|END|PIN expr
   are an error. A second `,` is an error.
 - Identifiers that are still in the text:
   - a label: replaced by its value minus the instruction counter. In the
-    operand of `ORG`, `END` and `PIN`: by its value (absolute).
+    operand of `ORG`, `END` and `PIN`: by its value (absolute). The value is
+    kept apart from the text before it, as if a space were there: `2x` with
+    x = 1 is the bad expression `2 1`, not 21. (Pass 1 joins: `dat #2x` with
+    x defined before the line gives `2-1`.)
   - an EQU name (only possible when it was defined after its use): replaced by
     the first line of its body only, parsed in place (it can supply a mode,
-    a modifier or several tokens).
+    a modifier or several tokens). The body is kept apart from the text
+    before it like a label value.
   - a single letter that is not defined: a register, stays in the expression.
   - anything else: error ("undefined symbol").
 - Syntax error: the statement ends while an operand is expected, i.e. right
@@ -426,8 +541,13 @@ ORG|END|PIN expr
 After pass 2:
 
 - More real instructions (counted in pass 1) than `maxLength`: error.
-- No instructions: error.
-- If there is no error and start is not in `0 .. length-1`: warning.
+- No instructions (counted in pass 1): warning ("no instructions"), and pass
+  2 does not run at all, so `ORG`, `END` and `PIN` statements are neither
+  checked nor evaluated (`end 1/0` is fine); start stays 0 and pin null.
+  Errors of pass 1 still reject the warrior. Without errors the result is
+  `ok` with no instructions.
+- If there is no error, there are instructions, and start is not in
+  `0 .. length-1`: warning.
 
 ### 2.5 Line numbers
 
@@ -446,7 +566,9 @@ definition. `instructions[i].line` is that number.
 ```js
 export function rng(seed) -> next seed     // Park-Miller, see below
 export class Mars {
-  constructor(options = {})   // same option names as DEFAULT_OPTIONS
+  constructor(options = {})   // same option names as DEFAULT_OPTIONS, plus
+                              // headless: true to skip the bookkeeping of 3.4,
+                              // the trace (3.6) and execHeat; default false
   opt                // effective options
   coreSize
   op, am, bm         // Uint8Array(coreSize): op = opcode << 3 | modifier; modes 0..7
@@ -642,7 +764,11 @@ The current warrior W takes the process at the head of its queue: PC.
 ### 3.5 Performance
 
 The instruction loop does not allocate: no closures or objects per step,
-typed arrays only. `tools/bench.mjs` measures it.
+typed arrays only. `tools/bench.mjs` measures it, `--headless` for the mode
+without visualizer bookkeeping. In headless mode the core, the queues, the
+events, the scores and all round results are the same as with bookkeeping;
+`owner`, `execBy`, `origin`, the timestamps, `territory`, `execHeat` and the
+trace are not updated.
 
 ### 3.6 Trace ring buffer
 
@@ -663,3 +789,39 @@ The entry for the instruction executed at time t is at index
   `SPL` queued a new process there)
 - bit 18: the process died
 - bit 19: a skip happened
+
+---------------------------------------------------------------------------
+
+## 4. Deviations from pMARS
+
+The engine always produces a result. Where pMARS does not terminate,
+crashes, or has no defined result, it does something reasonable instead.
+The random generators of `tools/pmars-diff.mjs` and `tools/expr-fuzz.mjs`
+leave these inputs out.
+
+- pMARS loops forever on a line whose content is longer than 255 characters.
+  The engine reads it like any other line.
+- pMARS loops forever on a `\` at the end of the last line of the file. The
+  engine keeps the `\` in the text (usually a bad expression).
+- pMARS reduces operand values into the core by repeated steps of the core
+  size, so a value around 2^63 never finishes (`dat #9223372036854775807+1`),
+  and values above about 10^12 already take seconds to hours. The engine
+  takes the value modulo the core size.
+- pMARS crashes on -2^63 divided by -1 and on -2^63 modulo -1. The engine
+  gives -2^63 and 0.
+- A single `!`, `=`, `&` or `|` where an operator is expected (`9!12`,
+  `2=10`, `1&2`, also after a dropped `==` as in `a=1+2*3==!4`) makes pMARS read
+  an uninitialized variable, so its result depends on how it was compiled.
+  The engine treats it as a bad expression.
+- The error kind of a failed expression can differ: after a missing operand
+  pMARS goes on with a value that is apparently uninitialized, which decides
+  whether a later division by it reports division by zero or a bad
+  expression. The engine uses 0. Both are errors, so the assembler result is
+  the same (about 0.05% of random expressions differ in the kind only).
+- pMARS counts logical lines in its messages (a continued line counts once);
+  the engine's `line` is the physical line number.
+- An opcode name in an operand (`div dat 0`) is an error in both. pMARS drops
+  the statement already in pass 1, so it additionally warns that there are
+  no instructions; the engine reports the error in pass 2.
+- pMARS keeps its scratch buffer between the warriors of one run (see "The
+  scratch buffer"); the engine starts each assembly with a fresh one.

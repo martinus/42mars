@@ -4,9 +4,10 @@ A browser visualizer for [Core War](https://corewar.co.uk/), with a Redcode asse
 
 ```sh
 npm run serve          # http://127.0.0.1:8000/
-npm test               # 207 tests, Node 20 or newer, no dependencies
+npm test               # 232 tests, Node 20 or newer, no dependencies
 node tools/asm.mjs warriors/dwarf.red      # pMARS-style listing
 node tools/corpus.mjs path/to/warriors     # assemble a whole folder
+node tools/pmars-diff.mjs --pmars path/to/pmars --corpus path/to/warriors   # compare with pMARS
 ```
 
 New to Core War? Press `?` in the app for a short guide, then press **learn**: every instruction gets explained while it runs. The rules `nano · 80` show the instruction text inside the cells.

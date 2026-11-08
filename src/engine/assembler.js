@@ -92,21 +92,60 @@ const trimStart = (s) => {
   return s.slice(b);
 };
 
-function readSource(source, meta) {
-  const physical = source.split(/\r\n|\n|\r/);
-  // A final newline does not start another line.
-  if (physical.length > 1 && physical[physical.length - 1] === '') physical.pop();
+// pMARS keeps one 256-byte character buffer for reading lines and for the
+// identifiers of pass 1. Each write stores a string, usually followed by a 0
+// byte, and leaves older bytes behind it in place. This matters for one quirk
+// only: an opcode with characters glued to it at the end of a line takes the
+// old bytes after the glued text along (see Expander.opcodeLine). The model
+// here is not limited to 256 bytes.
+class Scratch {
+  constructor() {
+    this.bytes = []; // single characters; a missing entry is a 0 byte
+  }
+
+  // Stores `text` at `at`, followed by a 0 byte unless `terminate` is false.
+  write(text, at = 0, terminate = true) {
+    for (let i = 0; i < text.length; i++) this.bytes[at + i] = text[i];
+    if (terminate) this.bytes[at + text.length] = '\0';
+  }
+
+  // The string at the start of the buffer, up to the first 0 byte.
+  string() {
+    let out = '';
+    for (let i = 0; this.bytes[i] !== undefined && this.bytes[i] !== '\0'; i++) out += this.bytes[i];
+    return out;
+  }
+}
+
+function readSource(source, meta, scratch) {
+  // A physical line ends with LF. A final LF does not start another line.
+  const physical = source.split('\n');
+  const last = physical.length - 1;
+  if (last > 0 && physical[last] === '') physical.pop();
+
+  // Reads physical line i into the scratch buffer at `at`, the way pMARS
+  // does, and returns its content: the text up to the first CR or LF. Text
+  // after a lone CR is ignored.
+  const readPhysical = (i, at) => {
+    const raw = i < last ? `${physical[i]}\n` : physical[i];
+    let end = raw.search(/[\r\n]/);
+    if (end < 0) end = raw.length;
+    scratch.write(raw, at);
+    scratch.write('', at + end); // the CR or LF that ends the content becomes 0
+    return raw.slice(0, end);
+  };
 
   let lines = [];
   let redcodeCount = 0;
   let i = 0;
   while (i < physical.length) {
     const lineNo = i + 1;
-    let text = physical[i++];
+    let text = readPhysical(i++, 0);
     // A trailing backslash joins the next physical line, unless the logical
-    // line already contains a comment.
+    // line already contains a comment. The next line is read over the `\`.
     while (text.endsWith('\\') && !text.includes(';') && i < physical.length) {
-      text = text.slice(0, -1) + physical[i++];
+      text = text.slice(0, -1);
+      text += readPhysical(i++, text.length);
     }
 
     const body = trimStart(text);
@@ -122,18 +161,20 @@ function readSource(source, meta) {
     const word = (m[2] ?? '').toLowerCase();
     const rest = body.slice(m[0].length);
     if (word === 'redcode' && m[1] === '') {
-      // The first ;redcode starts the warrior, the second one ends it.
-      if (++redcodeCount === 2) break;
+      // The first ;redcode starts the warrior, the second one ends it and
+      // stops reading the source.
+      if (++redcodeCount === 2) return lines;
       lines = [];
       continue;
     }
-    const value = trimEnd(trimStart(rest));
+    // pMARS keeps trailing whitespace in the metadata values.
+    const value = trimStart(rest);
     switch (word) {
       case 'name': meta.name = value || 'Unknown'; break;
       case 'author': meta.author = value || 'Anonymous'; break;
       case 'date': meta.date = value; break;
       case 'version': meta.version = value; break;
-      case 'strategy': meta.strategy.push(value); break;
+      case 'strategy': meta.strategy.push(trimEnd(value)); break;
       case 'assert': {
         const semi = rest.indexOf(';');
         lines.push(sourceLine(semi < 0 ? rest : rest.slice(0, semi), lineNo, true));
@@ -142,6 +183,8 @@ function readSource(source, meta) {
       default: break;
     }
   }
+  // At the end of the file, the failed read clears the first byte.
+  scratch.write('', 0);
   return lines;
 }
 
@@ -156,6 +199,7 @@ class Cursor {
     this.pi = 0;
     this.pos = 0;
     this.expander = expander;
+    this.quiet = false;
   }
 
   get part() {
@@ -176,7 +220,6 @@ class Cursor {
   //   { t: 'end' } | { t: 'space' } (a SPACE marker part)
   //   { t: 'ident', name, active, spaceAfter } | { t: 'num', text }
   //   { t: 'char', text } (operators, modes, punctuation, anything else)
-  //   { t: 'error', text }
   next() {
     for (;;) {
       const p = this.part;
@@ -197,18 +240,33 @@ class Cursor {
     }
   }
 
-  // An identifier, with `name&counter` concatenations resolved.
+  // An identifier, with `name&counter` concatenations resolved. Each
+  // identifier read goes into the scratch buffer, uppercased; the name after
+  // `&` as written, then the counter text. A name after `&` that is not a FOR
+  // counter is an error; like pMARS, reading goes on with the name so far and
+  // skips further `&` parts.
   identifier(p) {
     const s = p.text;
+    // A look-ahead cursor (quiet) leaves the buffer alone.
+    const store = (text) => { if (!this.quiet) this.expander.scratch.write(text); };
     let start = this.pos;
     while (isIdentChar(s[this.pos] ?? '')) this.pos++;
     let name = s.slice(start, this.pos);
+    store(name.toUpperCase());
+    let failed = false;
     while (s[this.pos] === '&' && isLetter(s[this.pos + 1] ?? '')) {
       start = ++this.pos;
       while (isIdentChar(s[this.pos] ?? '')) this.pos++;
+      if (failed) continue;
       const counter = s.slice(start, this.pos);
+      store(counter);
       const def = this.expander.lookup(counter);
-      if (!def || def.kind !== 'for') return { t: 'error', text: `'${counter}' after '&' is not a FOR counter` };
+      if (!def || def.kind !== 'for') {
+        if (!this.quiet) this.expander.msg.error(this.lineNo, `'${counter}' after '&' is not a FOR counter`);
+        failed = true;
+        continue;
+      }
+      store(counterText(def.value));
       name += counterText(def.value);
     }
     return { t: 'ident', name, active: p.active, spaceAfter: isSpace(s[this.pos] ?? '') };
@@ -281,13 +339,24 @@ class LineStream {
 // Skip scan used to find the ROF that matches a FOR: +1 for a line that opens
 // a FOR block, -1 for a ROF line, 0 otherwise. Plain identifiers (labels) at
 // the start are passed over; the first keyword or other token decides.
-function blockDelta(line) {
+// While a block is skipped (count <= 0), pass `expander`: the identifiers read
+// then go into the scratch buffer as usual.
+function blockDelta(line, expander = null) {
   if (line.assert) return 0;
   const text = line.parts.map((p) => (p === SPACE ? ' ' : p.text)).join('');
   const re = /[ \t\r\n\v\f]*([A-Za-z_][A-Za-z0-9_]*(?:&[A-Za-z][A-Za-z0-9_]*)*)?/y;
   for (;;) {
     const m = re.exec(text);
     if (!m[1]) return 0;
+    if (expander) {
+      const [first, ...counters] = m[1].split('&');
+      expander.scratch.write(first.toUpperCase());
+      for (const name of counters) {
+        expander.scratch.write(name);
+        const def = expander.lookup(name);
+        if (def?.kind === 'for') expander.scratch.write(counterText(def.value));
+      }
+    }
     const upper = m[1].toUpperCase();
     if (upper === 'FOR') return 1;
     if (upper === 'ROF') return -1;
@@ -296,9 +365,10 @@ function blockDelta(line) {
 }
 
 class Expander {
-  constructor(options, evaluator, messages) {
+  constructor(options, evaluator, messages, scratch) {
     this.evaluator = evaluator;
     this.msg = messages;
+    this.scratch = scratch;
     this.symbols = new Map(); // name -> stack of definitions, the newest last
     this.pending = []; // labels waiting for a statement
     this.ic = 0; // instruction counter
@@ -354,7 +424,6 @@ class Expander {
       const tok = cur.next();
       if (tok.t === 'end') return; // only labels: they stay pending
       if (tok.t === 'space') continue;
-      if (tok.t === 'error') { this.msg.error(cur.lineNo, tok.text); return; }
       if (tok.t !== 'ident') {
         this.msg.error(cur.lineNo, `unexpected '${tok.text}'`);
         // An error inside an EQU body abandons only the body; the rest of the
@@ -424,7 +493,6 @@ class Expander {
       switch (tok.t) {
         case 'end': return out;
         case 'space': out += ' '; continue;
-        case 'error': this.msg.error(cur.lineNo, tok.text); return null;
         case 'num': case 'char': out += tok.text; continue;
         default: break;
       }
@@ -434,21 +502,35 @@ class Expander {
         return null;
       }
       const def = this.lookup(tok.name);
-      if (tok.name === 'CURLINE') out += this.ic;
+      let number = null;
+      if (tok.name === 'CURLINE') number = String(this.ic);
       else if (def?.kind === 'equ') {
         if (!this.expand(cur, tok, def, stream)) return null;
         continue;
-      } else if (def?.kind === 'label') out += absolute ? def.value : def.value - this.ic;
-      else if (def?.kind === 'for') out += counterText(def.value);
-      else out += tok.name; // forward reference or register, resolved in pass 2
-      if (tok.spaceAfter) out += ' ';
+      } else if (def?.kind === 'label') number = String(absolute ? def.value : def.value - this.ic);
+      else if (def?.kind === 'for') number = counterText(def.value);
+      const space = tok.spaceAfter ? ' ' : '';
+      if (number === null) out += tok.name + space; // forward reference or register, resolved in pass 2
+      else {
+        // The replacement text goes through the scratch buffer too.
+        this.scratch.write(number + space);
+        out += number + space;
+      }
     }
   }
 
   opcodeLine(cur, upper, stream) {
     const pseudo = PSEUDO_SET.has(upper);
-    let text = upper + cur.readGlued();
-    if (cur.nextIsSpace()) text += ' ';
+    // The opcode is in the scratch buffer (identifiers go there). Characters
+    // glued to it are stored right behind it, followed by a space and a 0
+    // byte if whitespace follows, else by nothing. The opcode text is read
+    // back up to the first 0 byte. So glued text at the end of a line picks up
+    // older buffer content: pMARS reads `dat#9` on the last line of a file as
+    // `DAT#99`.
+    const glued = cur.readGlued();
+    this.scratch.write(glued, upper.length, false);
+    if (cur.nextIsSpace()) this.scratch.write(' ', upper.length + glued.length);
+    const text = this.scratch.string();
     const operands = this.operandText(cur, stream, pseudo);
     if (operands === null) return;
     for (const name of this.pending) this.define(name, { kind: 'label', value: this.ic });
@@ -467,6 +549,7 @@ class Expander {
     // Directly following `EQU text` lines add more body lines.
     for (let next = stream.peek(); next && !next.assert; next = stream.peek()) {
       const c = new Cursor(next, this);
+      c.quiet = true;
       const tok = c.next();
       if (tok.t !== 'ident' || tok.name.toUpperCase() !== 'EQU') break;
       stream.next();
@@ -491,14 +574,14 @@ class Expander {
     }
 
     // Collect the block up to the matching ROF.
+    let times = r.value > 0n ? Number(r.value % 65536n) : 0;
     const body = [];
     let found = false;
     for (let depth = 1, line = stream.next(); line; line = stream.next()) {
-      depth += blockDelta(line);
+      depth += blockDelta(line, times === 0 ? this : null);
       if (depth === 0) { found = true; break; }
       body.push(line);
     }
-    let times = r.value > 0n ? Number(r.value % 65536n) : 0;
     if (!found) {
       this.msg.warning(cur.lineNo, 'FOR without matching ROF');
       times = Math.min(times, 1);
@@ -569,6 +652,8 @@ class StatementTokens {
         if (def?.kind === 'equ' && !this.raw) {
           if (top.active.has(name)) return { t: 'error', text: `recursive EQU '${name}'`, space };
           this.stack.push({ text: def.body[0].text, pos: 0, active: new Set(top.active).add(name) });
+          // Like a label value, the body stays apart from the text before it.
+          space = true;
           continue;
         }
         return { t: 'ident', text: name, space, def };
@@ -639,7 +724,12 @@ class StatementParser {
         return null;
       }
       if (t.t !== 'ident') { out += t.text; continue; }
-      if (t.def?.kind === 'label') out += absolute ? t.def.value : t.def.value - this.ic;
+      if (t.def?.kind === 'label') {
+        // pMARS keeps a label value apart from the text before it: `2x` with
+        // x = 1 is the bad expression `2 1`, not 21.
+        if (out && !t.space) out += ' ';
+        out += absolute ? t.def.value : t.def.value - this.ic;
+      }
       else if (!t.def && t.text.length === 1) out += t.text; // register
       else { this.msg.error(line, `undefined symbol '${t.text}'`); return null; }
     }
@@ -769,17 +859,20 @@ export function assemble(source, options = {}) {
   const msg = new Messages();
   const evaluator = new Evaluator();
 
-  const lines = readSource(source, meta);
-  const expander = new Expander(opts, evaluator, msg);
+  const scratch = new Scratch();
+  const lines = readSource(source, meta, scratch);
+  const expander = new Expander(opts, evaluator, msg, scratch);
   expander.run(lines);
 
   const parser = new StatementParser(opts, evaluator, expander, msg);
-  for (const stmt of expander.statements) parser.parse(stmt);
+  // pMARS accepts a warrior without instructions with a warning. It skips
+  // pass 2 then, so ORG, END and PIN statements are not even checked.
+  if (expander.ic === 0) msg.warning(null, 'no instructions');
+  else for (const stmt of expander.statements) parser.parse(stmt);
 
   if (expander.ic > opts.maxLength) msg.error(null, `too many instructions (${expander.ic}, limit ${opts.maxLength})`);
-  if (expander.ic === 0) msg.error(null, 'no instructions');
   const ok = !msg.failed;
-  if (ok && (parser.start < 0 || parser.start >= parser.instructions.length)) {
+  if (ok && expander.ic > 0 && (parser.start < 0 || parser.start >= parser.instructions.length)) {
     msg.warning(null, `start ${parser.start} is outside the warrior`);
   }
 

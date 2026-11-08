@@ -160,7 +160,7 @@ test(';redcode needs to follow the semicolon directly', () => {
 
 test('metadata comments', () => {
   const w = assemble(';name  Big Warrior  \n;author Someone\n;strategy line one\n;strategy line two\ndat 0\n');
-  assert.equal(w.name, 'Big Warrior');
+  assert.equal(w.name, 'Big Warrior  ');
   assert.equal(w.author, 'Someone');
   assert.equal(w.strategy, 'line one\nline two');
 });
