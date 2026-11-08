@@ -18,7 +18,9 @@
 //   a cell are one 32-bit load, the whole cell one 64-bit load.
 // - Each warrior has its process queue as a ring buffer of 16-bit addresses
 //   whose length is a power of two, indexed by free-running 32-bit head and
-//   tail counters: the number of processes is tail - head.
+//   tail counters: the number of processes is tail - head. Two warriors with
+//   maxCycles up to LINEAR_CYCLES get linear queues instead, long enough for
+//   a whole round, so that no index needs a mask (see mars_config).
 
 typedef unsigned char u8;
 typedef unsigned short u16;
@@ -115,7 +117,8 @@ static Cell *core;      // coreMem
 // The core and the first two warriors' queues (when they are at most
 // QSTATIC long) are at fixed addresses: execute2_8000() then addresses them
 // with constant offsets instead of base registers (+4% on the bench).
-#define QSTATIC 65536
+#define LINEAR_CYCLES 80000
+#define QSTATIC ((1 + 2 * (LINEAR_CYCLES + 1) + 31) & ~31) // see mars_config
 static _Alignas(64) Cell coreMem[65536];
 static _Alignas(64) u16 queueMem[2][QSTATIC];
 static Warrior *war;
@@ -155,6 +158,15 @@ i32 *mars_config(u32 coreSize, u32 maxProcesses, u32 cycles, u32 minDistance, u3
   u32 qlen = 1;
   while (qlen < maxProcesses && qlen < 1u << 30) qlen <<= 1; // the glue limits maxProcesses
   qmask = qlen - 1;
+  // Linear queues: with two warriors a round runs at most max(2 * maxCycles,
+  // 1) instructions and the turns alternate, so each warrior gets at most
+  // maxCycles + 1 turns and pushes at most two entries per turn. Its tail
+  // stays at most 1 + 2 * (maxCycles + 1), and mars_start_round() resets
+  // the counters. Without wraparound the mask is all ones, which
+  // execute2_8000() leaves out: +6% on the bench, -5% on t20
+  // (docs/performance-log.md).
+  const int linear = nw == 2 && cycles <= LINEAR_CYCLES;
+  if (linear) qmask = ~0u;
   core = coreMem;
   war = alloc((usize)nw * sizeof(Warrior));
   input = alloc((usize)(4 * nw + 5 * instructions) * 4);
@@ -164,7 +176,7 @@ i32 *mars_config(u32 coreSize, u32 maxProcesses, u32 cycles, u32 minDistance, u3
   u32 *scores = alloc((usize)nw * (2 * nw - 1) * 4);
   if (!code || !ps || !scores) return 0;
   for (u32 i = 0; i < nw; i++) {
-    war[i].q = i < 2 && qlen <= QSTATIC ? queueMem[i] : alloc((usize)qlen * 2);
+    war[i].q = i < 2 && (linear || qlen <= QSTATIC) ? queueMem[i] : alloc((usize)qlen * 2);
     if (!war[i].q) return 0;
     war[i].score = scores + (usize)i * (2 * nw - 1);
   }
@@ -347,6 +359,8 @@ static u64 insCount[1u << 14]; // executions per instruction word
 
 static inline u32 ab_of(const Cell *c) { u32 v; __builtin_memcpy(&v, c, 4); return v; }
 static inline void set_ab(Cell *c, u32 v) { __builtin_memcpy(c, &v, 4); }
+static inline u64 cell_of(const Cell *c) { u64 v; __builtin_memcpy(&v, c, 8); return v; }
+static inline void set_cell(Cell *c, u64 v) { __builtin_memcpy(c, &v, 8); }
 
 // Notes on speed, from tools/bench.mjs --wasm-match (M instructions/s in
 // Node 22; first version 125):
@@ -376,6 +390,10 @@ static inline void set_ab(Cell *c, u32 v) { __builtin_memcpy(c, &v, 4); }
 //   handlers ending in tail calls, packed queue counters, an unrolled loop,
 //   one turn per loop iteration, the generic code in its own function, two
 //   battles interleaved in one loop, wasm-opt -O3
+// - third round: MOV.I from one 64-bit snapshot of the A cell and linear
+//   queues for two warriors (mars_config()): 278 -> 294 on the bench, t20
+//   4.16 -> 3.84 s. Slower, not kept: one shared queue head for two
+//   warriors, specialized cases for classes of equal instruction words
 
 // Executes the instruction ir, fetched from pc, of warrior W, whose queue
 // is q with the counters *head and *tail (W's own fields, or local copies of
@@ -392,32 +410,42 @@ static inline __attribute__((always_inline)) int exec_ins(Cell *const C, const u
 #define DEC(x) ((x) == 0 ? n - 1 : (x) - 1)
 #define INC(x) ((x) + 1 == n ? 0 : (x) + 1)
 
-  // A operand: pointer and the A and B values (AA in the low half of Aab).
-// The modes are tested in the order of their measured frequency ($ #
-// first, then a switch); a dispatch on both modes at once and branch-free
-// indirect modes were slower (notes above execute()).
-  u32 aPtr, Aab;
+  // A operand: pointer and a snapshot of the whole A cell, Acell, with the
+// A and B values in its low half (Aab, AA in the low half of that). The
+// modes are tested in the order of their measured frequency ($ # first,
+// then a switch); a dispatch on both modes at once and branch-free indirect
+// modes were slower (notes above execute()).
+  // The instruction word in Acell stays the one in the core until the
+  // instruction writes: the B operand's side effects change value fields
+  // only. So MOV.I stores Acell with one store, and CMP.I, SEQ.I and SNE.I
+  // compare its word.
+  u32 aPtr;
+  u64 Acell;
+#define READ_A(x) (Acell = cell_of(&C[x]))
   const u32 am = (ins >> 8) & 7;
   if (am == 1) {
     aPtr = WRAP(pc + ir.a);
-    Aab = ab_of(&C[aPtr]);
+    READ_A(aPtr);
   } else if (am == 0) {
     aPtr = pc;
-    Aab = ab_of(&ir);
+    __builtin_memcpy(&Acell, &ir, 8);
   } else {
     const u32 p = WRAP(pc + ir.a);
     switch (am) {
       case 1: aPtr = p; break;
       case 2: aPtr = WRAP(p + C[p].b); break;
       case 3: { u32 f = DEC(C[p].b); C[p].b = (u16)f; aPtr = WRAP(p + f); break; }
-      case 4: { u32 f = C[p].b; aPtr = WRAP(p + f); Aab = ab_of(&C[aPtr]); C[p].b = (u16)INC(f); goto a_done; }
+      case 4: { u32 f = C[p].b; aPtr = WRAP(p + f); READ_A(aPtr); C[p].b = (u16)INC(f); goto a_done; }
       case 5: aPtr = WRAP(p + C[p].a); break;
       case 6: { u32 f = DEC(C[p].a); C[p].a = (u16)f; aPtr = WRAP(p + f); break; }
-      default: { u32 f = C[p].a; aPtr = WRAP(p + f); Aab = ab_of(&C[aPtr]); C[p].a = (u16)INC(f); goto a_done; }
+      default: { u32 f = C[p].a; aPtr = WRAP(p + f); READ_A(aPtr); C[p].a = (u16)INC(f); goto a_done; }
     }
-    Aab = ab_of(&C[aPtr]);
+    READ_A(aPtr);
   }
 a_done:;
+#undef READ_A
+  const u32 Aab = (u32)Acell;
+  const u32 Ains = (u32)(Acell >> 32); // instruction word, padding 0
 
   // B operand on the core as the A operand left it; $ < # are the
 // frequent modes here.
@@ -449,8 +477,7 @@ a_done:;
   Cell *const B = &C[bPtr];
   // MOV.I, the most frequent instruction, before the dispatch.
   if ((ins & 0xff) == 006) {
-    B->ins = C[aPtr].ins;
-    set_ab(B, Aab);
+    set_cell(B, Acell);
     q[(*tail)++ & mask] = (u16)INC(pc);
     return 0;
   }
@@ -477,7 +504,7 @@ a_done:;
     case 003: B->a = (u16)AB; break;
     case 004: set_ab(B, Aab); break;
     case 005: set_ab(B, Aab >> 16 | Aab << 16); break;
-    case 006: B->ins = C[aPtr].ins; set_ab(B, Aab); break;
+    case 006: set_cell(B, Acell); break;
 
     // ADD
     case 010: B->a = (u16)WRAP(BA + AA); break;
@@ -562,7 +589,7 @@ a_done:;
     case 0113: case 0163: if (BA == AB) next = INC(next); break;
     case 0114: case 0164: if (BAB == Aab) next = INC(next); break;
     case 0115: case 0165: if (BB == AA && BA == AB) next = INC(next); break;
-    case 0116: case 0166: if (BAB == Aab && B->ins == C[aPtr].ins) next = INC(next); break;
+    case 0116: case 0166: if (BAB == Aab && B->ins == Ains) next = INC(next); break;
 
     // SNE: skip when not equal
     case 0170: if (BA != AA) next = INC(next); break;
@@ -571,7 +598,7 @@ a_done:;
     case 0173: if (BA != AB) next = INC(next); break;
     case 0174: if (BAB != Aab) next = INC(next); break;
     case 0175: if (BB != AA || BA != AB) next = INC(next); break;
-    case 0176: if (BAB != Aab || B->ins != C[aPtr].ins) next = INC(next); break;
+    case 0176: if (BAB != Aab || B->ins != Ains) next = INC(next); break;
 
     // SLT: skip when less
     case 0120: if (AA < BA) next = INC(next); break;
@@ -755,13 +782,13 @@ static inline __attribute__((always_inline)) u64 execute2(u64 count, const u32 n
   return pre + (u64)budget;
 }
 
-// The standard settings (core size 8000, 8000 processes) as constants: the
-// wraparound compares, the queue mask and the queue addresses become
-// immediates, which frees registers. Separate functions, so that V8 compiles
+// The standard settings (core size 8000, 8000 processes, linear queues) as
+// constants: the wraparound compares and the queue addresses become
+// immediates, and the queue mask goes away, which frees registers. Separate functions, so that V8 compiles
 // only the one in use with its optimizing compiler (it tiers up per
 // function, and a smaller function gets there sooner).
 static __attribute__((noinline)) u64 execute2_8000(u64 count) {
-  return execute2(count, 8000, 8191, 8000, queueMem[0], queueMem[1]);
+  return execute2(count, 8000, ~0u, 8000, queueMem[0], queueMem[1]);
 }
 static __attribute__((noinline)) u64 execute2_any(u64 count) {
   return execute2(count, N, qmask, maxProc, war[0].q, war[1].q);
@@ -769,7 +796,7 @@ static __attribute__((noinline)) u64 execute2_any(u64 count) {
 
 static u64 run_some(u64 count) {
   if (nw != 2) return execute(count);
-  return N == 8000 && maxProc == 8000 ? execute2_8000(count) : execute2_any(count);
+  return N == 8000 && maxProc == 8000 && qmask == ~0u ? execute2_8000(count) : execute2_any(count);
 }
 
 // ---------------------------------------------------------------- API
