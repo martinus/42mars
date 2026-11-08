@@ -541,6 +541,51 @@ V8's register allocation by 1 to 8%, most often the wrong way (#10, #22,
 #23 and this one). What is left is in V8's register allocator, not in
 the C code that feeds it.
 
+### Frontend-bound slots in the native build: no single cause (8th November 2026, #21)
+
+Native build of `main` (`bench-native --early-tie --keep`, clang -O3
+-march=native), AMD Ryzen 9 7950X (Zen 4), perf 7.2. Mixes: t20
+(`tournament.mjs --rounds 100 --seed 1 --native-input`, 1,110M simulated
+instructions) and 400 corpus pairs (`bench-pairs --pairs 400
+--native-input`, 654M).
+
+Top-down (`perf stat -M PipelineL1,frontend_bound_group`), share of
+dispatch slots:
+
+| | retiring | frontend bound (bandwidth + latency) | backend bound | bad speculation |
+|---|---|---|---|---|
+| t20 | 59.9% | 17.6% (10.0 + 7.6) | 14.5% | 7.7% |
+| corpus pairs | 56.9% | 19.6% (11.4 + 8.3) | 15.6% | 7.7% |
+
+The 20.4% in #6 was from before the linear queues of #9. Per simulated
+instruction on t20 (raw events, multiplexed and scaled by perf, so about
+±5%): 46.2 x86 instructions, 11.9 cycles, 7.6 branches of which 4.1
+taken, 0.070 mispredicted (0.016 indirect), 0.41 dynamic indirect
+predictions. The op cache serves almost every fetch: 9.69G accesses, 0.16%
+misses. Instruction cache misses 0.006, ITLB misses about 0.00002, L2 BTB
+corrections 0.0007 and decoder redirects 0.0001 per simulated instruction.
+Corpus pairs are the same within a few percent. So the instruction cache,
+the ITLB, the BTB and the decoder are not the cause.
+
+Where the frontend stalls (`perf record -e
+de_no_dispatch_per_slot.no_ops_from_frontend` against `-e cycles`, both
+`-c 100003`, `execute2_8000` has 97.8%), by region of the loop:
+
+| Region | frontend stall samples | cycle samples | x86 instructions |
+|---|---|---|---|
+| turn start: queue pop, cell load, word load | 31.0% | 30.6% | 22 |
+| compare tree on the instruction word | 8.4% | 6.6% | 142 |
+| instruction handlers and queue push | 60.2% | 62.6% | 3,392 |
+
+The stalls follow the cycles, and no region or event stands out. The
+compare tree draws a little more than its share; removing it entirely
+would take at most about 1.5 points off the 17.6%, and tables instead of
+the tree were slower in WebAssembly (rows above). Part of the latency share
+is plausibly the refetch after the 0.070 mispredicts per simulated
+instruction, which bad speculation does not count. Verdict: no experiment,
+nothing in the frontend is worth a change that V8 would also have to
+like.
+
 State: bench about 294M/s in WebAssembly, about 413M/s natively; corpus
 pairs 280M/s; t20 3.84 s single thread; t80 3.63 s with 16 jobs and 3.28 s
 with 31 jobs (8th November 2026; the machine ran 2 to 4% slower than on the
