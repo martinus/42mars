@@ -222,38 +222,20 @@ class WasmMars {
   // reads them, so for warriors without LDP in their code the result of
   // every round is the same as in the whole match, and the rounds can run
   // in blocks on several engines (tools/tournament.mjs does that).
-  //
-  // stop: { width, minRounds = 20 } (default off, two warriors only) stops
-  // the match early, which changes results against pMARS: warrior 0 gets 3,
-  // 1 or 0 points per round, and from round max(minRounds, 2) on, after
-  // every round, the match stops when the 95% interval of its points per
-  // 100 rounds, 2 * 1.96 * sqrt(variance / n) * 100 (sample variance), is at
-  // most `width` wide. `rounds` in the result is the number of rounds
-  // played; their results are exact. Width 0 stops exactly when the first
-  // minRounds rounds all ended the same way.
-  runMatch(codes, { rounds = this.opt.rounds, seed, positions, earlyTie = true, firstRound = 0, stop } = {}) {
+  runMatch(codes, { rounds = this.opt.rounds, seed, positions, earlyTie = true, firstRound = 0 } = {}) {
     if (!isCount(rounds) || !isCount(firstRound) || rounds + firstRound > 0xffffffff) {
       throw new RangeError(`bad rounds or firstRound: ${rounds}, ${firstRound}`);
-    }
-    let width = -1;
-    let minRounds = 0;
-    if (stop != null) {
-      ({ width, minRounds = 20 } = stop);
-      if (codes.length !== 2 || typeof width !== 'number' || !(width >= 0) || !Number.isFinite(width) || !isCount(minRounds)) {
-        throw new RangeError(`bad stop for ${codes.length} warriors: ${JSON.stringify(stop)}`);
-      }
     }
     this.load(codes, { seed, positions });
     const log = this.x.mars_reserve_log(rounds);
     if (!log && rounds > 0) throw new Error('wasm engine: out of memory');
-    const instructions = this.x.mars_run_match(rounds, earlyTie ? 1 : 0, firstRound, width, Math.min(minRounds, 0xffffffff));
+    const instructions = this.x.mars_run_match(rounds, earlyTie ? 1 : 0, firstRound);
     this.version++;
     const u8 = this.bytes();
     const stride = this.x.mars_log_stride();
     const nw = codes.length;
-    const played = this.x.mars_round() - firstRound;
     const results = [];
-    for (let r = 0; r < played; r++) {
+    for (let r = 0; r < rounds; r++) {
       const at = log + r * stride;
       const survivors = [];
       for (let i = 0; i < nw; i++) if (u8[at + 8 + i]) survivors.push(i);
@@ -265,7 +247,6 @@ class WasmMars {
       warriors: this.warriors.map((w) => ({ name: w.name, wins: w.wins, losses: w.losses, ties: w.ties, score: w.score })),
       results,
       instructions,
-      rounds: played,
     };
   }
 

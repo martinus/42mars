@@ -394,9 +394,11 @@ to 12.8 s and 10.8 s. For fmars, whose 100 rounds take a fraction of
 pMARS's, the start cost was most of its tournament time (section above).
 `--compare` gives SAME on t20 and t80.
 
-### Opt-in early stop of a pairing (8th November 2026, #19)
+### Opt-in early stop of a pairing (8th November 2026, #19, removed again)
 
-Kept as an opt-in that changes results against pMARS:
+Removed the same day, see the next section: against a 1,000-round reference
+it is no better than playing fewer rounds. What follows is the state when
+it was added. Kept as an opt-in that changes results against pMARS:
 `runMatch({ stop: { width, minRounds } })` and `tools/tournament.mjs
 --ci-width W [--min-rounds N] [--exact-top N]`, the rule of "Statistical
 early stopping" in the table of rmars ideas below (semantics doc, 3.7 and
@@ -432,6 +434,83 @@ the first pass's top 20 (1,145M instructions, 0.33 s more) and still leaves
 the top 10 order changed on t80: every top-20 score also holds 60
 estimated pairings against the rest. Exact scores for the top 20 would need
 all 1,390 pairings that involve one of them.
+
+### Early stopping against a 1,000-round reference: no better than fewer rounds, removed (8th November 2026)
+
+The question: which way of choosing rounds gets the ranking closest to the
+true one for the fewest executed instructions?
+
+Method. Every pairing of t80 and of v80 (corpus files 81 to 160 by sorted
+name, a holdout; no pairing has `LDP` in either set) played 1,000 rounds,
+each as `runMatch({ rounds: 1, firstRound: r })`, so with its exact
+instruction count; the start distance was recorded too. Positions as
+`tools/tournament.mjs` with seed 1, so rounds 1 to 100 are today's
+tournament (checked against the replay data: identical points and
+instructions). Truth: the score per 100 rounds over all 1,000 rounds; its
+two halves of 500 rounds disagree on 10 (t80) and 6 (v80) of the 3,160
+warrior pairs, so the reference is within a few pairs of the true ranking.
+Every policy ran on 8 shuffles of the rounds of each pairing (pairs of
+rounds kept together, so both warriors move first equally often), offline
+on the recorded rounds. Cost: executed instructions relative to today's
+100-round tournament. Error: warrior pairs ranked in the opposite order,
+mean over the 8 shuffles (spread ±2 to ±8), t80 / v80.
+
+| Policy | cost | wrong pairs |
+|---|---|---|
+| fixed 20 rounds | 20% | 45.6 / 49.4 |
+| fixed 40 rounds | 40% | 30.7 / 30.9 |
+| fixed 60 rounds | 60% | 26.4 / 25.7 |
+| fixed 100 rounds (today) | 100% | 17.7 / 15.6 |
+| fixed 200 rounds | 200% | 12.5 / 10.3 |
+| fixed 400 rounds | 400% | 6.9 / 6.3 |
+| `--ci-width 100` (#19) | 22% | 41.3 / 45.1 |
+| `--ci-width 60` (#19) | 43% | 29.3 / 26.8 |
+| `--ci-width 30` (#19) | 77% | 24.8 / 19.6 |
+| allocation over the tournament, E = 32 | 26 / 32% | 37.1 / 34.5 |
+| allocation over the tournament, E = 24 | 46 / 51% | 25.8 / 25.3 |
+| allocation over the tournament, E = 16 | 100 / 116% | 17.1 / 13.9 |
+| allocation over the tournament, E = 8 | 249 / 282% | 7.9 / 6.1 |
+| allocation over the tournament, E = 4 | 432 / 449% | 3.4 / 3.6 |
+
+The allocation: every pairing plays 6 rounds; then, repeatedly, the 5% of
+the pairings with the largest drop in the expected number of misordered
+warrior pairs (within 3 ranks, normal approximation, outcome counts with
+0.5 pseudo-counts) per expected instruction get 25% more rounds (at least
+4), until that expected number is below E. Its parameters (start rounds,
+block size, share, reach, prior) moved the result by a few pairs only.
+
+Findings:
+* The pairs that today's tournament orders wrongly are nearly equal
+  warriors: their true scores differ by 1.1 points per pairing per 100
+  rounds (median, at most 2.8 / 4.2), against a range of 26 to 233 and a
+  median gap of 1.6 between rank neighbors.
+* Up to today's cost no policy is clearly better than fixed rounds at the
+  same cost; the errors are spread over all close warriors, and each score
+  sums 79 pairings. Only from 2.5 times today's cost does the allocation pay:
+  about half the errors of fixed rounds at 4 times.
+* Against the 100-round result as reference (the first attempt) the
+  allocation looked 20 to 25% cheaper than fixed rounds: it learned to pin
+  down that one sample of rounds, not the true ranking. The 100-round
+  result moves by 28 / 30 wrong pairs with seed 2 instead of 1.
+* No gain either: a per-pairing stop on a posterior with pseudo-counts
+  (so that identical rounds no longer stop a pairing at once); estimates
+  pulled toward the middle for pairings with few rounds; cutting long
+  rounds of a pairing whose earlier long rounds all tied and counting them
+  as ties (worse than fewer rounds: of the rounds still running after
+  80,000 instructions, 32% on t80 end in a kill).
+* Start distances spread evenly over the core instead of pseudo-random,
+  one round per distance stratum: 8 to 15% fewer errors at 20 to 60 rounds
+  (t80 44.8 → 38.8 at 20 rounds), none from 100 rounds on. It would also
+  leave pMARS's position sequence. Not built.
+
+Verdict: `runMatch({ stop })` and `tools/tournament.mjs --ci-width`,
+`--min-rounds`, `--exact-top` removed; `mars.wasm` is byte-identical to
+the build before #19 again. To trade ranking quality for time, play fewer
+rounds (`--rounds N`), which keeps results identical to pMARS for those
+rounds. The offline bench and the recorded rounds were scratch work and
+are not in the repository; the recording is a loop over
+`runMatch({ rounds: 1, firstRound: r })` per pairing, about 35 s for
+1,000 rounds of an 80-warrior set on 31 threads.
 
 ### Three small changes in the two-warrior loop, all rejected (8th November 2026, #22)
 
@@ -707,7 +786,7 @@ New ideas for our engine, most promising first:
 | One wraparound for jumps and skips | fmars | Select between the unwrapped candidates (pc + 1, pc + 2, the jump target) and wrap once, instead of wrapping each | Under 1%; check the native disassembly first, clang may already do it | rejected, #22: +8.2% (all addresses) and +1.3% (skips only) on t20 |
 | Branch-free `SPL` push | fmars | Always write the new process at the tail, advance the tail only below the process limit. Needs a spare slot behind the queue (linear queue, or a ring one larger than the limit) | 0 to 1%; the log's `SPL` fast path gave nothing | rejected, #22: +1.6% on t20, -2.5% natively |
 | Two fields in one register for `ADD.F`/`SUB.F`/`DJN.F` | fmars (MMX) | Add both 16-bit fields in one 32-bit add, then reduce each lane; no carry crosses lanes up to core size 32,768 | These words are rare in the measured mixes, near 0 | not recommended |
-| Statistical early stopping (changes results) | rmars | Rounds stay a prefix of the normal sequence. From `max(min_rounds, 2)` rounds on, after every round: points 3/1/0 per round, sample mean and variance (n - 1), interval width `2 * z * sqrt(var / n) * 100`; stop when the width is at most `ci_width`, report `rounds_played`. rmars documents a score bias of +0.5 to +0.8 at width 60; zero variance stops right at `min_rounds`; repeated looks are not corrected | Large for screening (evolvers, hill pre-filter), lopsided pairings stop after a few dozen rounds. Only as an explicit opt-in mode | not for the default |
+| Statistical early stopping (changes results) | rmars | Rounds stay a prefix of the normal sequence. From `max(min_rounds, 2)` rounds on, after every round: points 3/1/0 per round, sample mean and variance (n - 1), interval width `2 * z * sqrt(var / n) * 100`; stop when the width is at most `ci_width`, report `rounds_played`. rmars documents a score bias of +0.5 to +0.8 at width 60; zero variance stops right at `min_rounds`; repeated looks are not corrected | Large for screening (evolvers, hill pre-filter), lopsided pairings stop after a few dozen rounds. Only as an explicit opt-in mode | built as an opt-in (#19) and removed: against a 1,000-round reference no better than fewer rounds, see "Early stopping against a 1,000-round reference" |
 
 Seen in the sources and not useful for us, by measurement or reasoning:
 
