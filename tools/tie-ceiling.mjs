@@ -96,6 +96,7 @@ function report(text) {
   const save = TH.map(() => 0);
   const helped = TH.map(() => 0);
   const byCase = new Map(); // at |S| <= 32
+  let closedGain = 0;
   for (const l of text.split('\n')) {
     const f = l.split(' ');
     if (f[0] === 'TOTAL') { total += Number(f[1]); rounds += Number(f[2]); continue; }
@@ -119,6 +120,9 @@ function report(text) {
         else if (loops.length === 1) c = 'one immortal by count, the other loops';
         else c = `both loop, opponent writes ${loops.some((i) => w[i][8] & 12) ? 'through pointers or increments' : 'only directly or not'}`;
         byCase.set(c, (byCase.get(c) ?? 0) + gain);
+        // #35: from the stop point on, neither warrior reads a cell the
+        // other changes, so the two run as a closed system.
+        if (f[27] === '1' && f[28] === '1') closedGain += gain;
       }
     });
   }
@@ -130,4 +134,5 @@ function report(text) {
   TH.forEach((t, k) => console.log(`  |S| <= ${t.padEnd(3)} ${pct(save[k], total).padStart(7)}  ${helped[k]} rounds`));
   console.log('at |S| <= 32, by what makes the warriors safe and how the opponent of a looping warrior writes:');
   for (const [c, v] of [...byCase].sort((a, b) => b[1] - a[1])) console.log(`  ${c.padEnd(56)} ${pct(v, total)}`);
+  console.log(`  of all these, neither warrior reads a cell the other changes: ${pct(closedGain, total)}`);
 }

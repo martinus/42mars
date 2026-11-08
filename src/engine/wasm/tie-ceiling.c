@@ -25,7 +25,10 @@
 // proof, not a proof. Opponent writes: bits 1 MOV.I to a direct B operand
 // ($ or #), 2 another write to a direct B operand, 4 a write through an
 // indirect B operand, 8 a pre-/post-increment or decrement, OR over the
-// opponent's instructions in that suffix.
+// opponent's instructions in that suffix. At the end of the line
+// <closed 0> <closed 1>: 1 when, from T = max over both warriors of
+// min(<immortal>, <t0 for 32>) on, the opponent never changes a cell that
+// the warrior reads (its operands' indirection cells and targets) (#35).
 // The last line: TOTAL <instructions executed with early ties> <rounds>.
 
 #define TRACE_TIES 1
@@ -36,7 +39,8 @@
 
 static u8 *execW, *execKind;
 static u16 *execPc;
-static i32 *lastChange;
+static i32 *lastChange, *lastBy[2]; // last change of a cell, and by warrior
+static u16 *execRead;               // 4 cells read per instruction
 static u64 *shadow;
 static u32 traceT, traceL;
 static i64 tImm[2];
@@ -53,11 +57,18 @@ static void trace_step(const Warrior *W, u32 pc, Cell ir, u32 tasks) {
   const u32 incdec = (1u << 3) | (1u << 4) | (1u << 6) | (1u << 7);         // < > { }
   if ((incdec >> am & 1) || (incdec >> bm & 1)) kind |= 8;
   execKind[t] = kind;
+  // Cells it reads: the indirection cells (indirect modes only) and both
+  // targets.
+  u16 *rd = &execRead[4 * (usize)t];
+  rd[0] = (u16)(am >= 2 ? (pc + ir.a) % n : traceSource);
+  rd[1] = (u16)traceSource;
+  rd[2] = (u16)(bm >= 2 ? (pc + ir.b) % n : traceTarget);
+  rd[3] = (u16)traceTarget;
   const u32 cand[3] = {(pc + ir.a) % n, (pc + ir.b) % n, traceTarget};
   for (int k = 0; k < 3; k++) {
     const u32 c = cand[k];
     const u64 v = cell_of(&core[c]);
-    if (v != shadow[c]) { shadow[c] = v; lastChange[c] = (i32)t; }
+    if (v != shadow[c]) { shadow[c] = v; lastChange[c] = (i32)t; if (w < 2) lastBy[w][c] = (i32)t; }
   }
   // After its own turn the other warrior moves next, so w has
   // floor(remaining / 2) turns left.
@@ -73,7 +84,7 @@ static int killer(const Cell *c) {
 static const u32 TH[NTH] = {1, 2, 4, 8, 16, 32, 64, ~0u};
 
 // The closed-loop oracle for warrior w of the round just played.
-static void analyze(u32 w, u8 *inS) {
+static void analyze(u32 w, u8 *inS, i64 *t0of32) {
   const u32 L = traceL;
   i64 t0[NTH];
   for (int k = 0; k < NTH; k++) t0[k] = L;
@@ -101,6 +112,7 @@ static void analyze(u32 w, u8 *inS) {
   }
   for (int k = 0; k < NTH; k++) printf(" %lld", (long long)t0[k]);
   printf(" %u %u", kinds32, kindsAny);
+  *t0of32 = t0[5];
 }
 
 int main(int argc, char **argv) {
@@ -123,16 +135,19 @@ int main(int argc, char **argv) {
       execW = realloc(execW, cap);
       execKind = realloc(execKind, cap);
       execPc = realloc(execPc, cap * sizeof(u16));
+      execRead = realloc(execRead, 4 * (usize)cap * sizeof(u16));
     }
     lastChange = realloc(lastChange, N * sizeof(i32));
+    lastBy[0] = realloc(lastBy[0], N * sizeof(i32));
+    lastBy[1] = realloc(lastBy[1], N * sizeof(i32));
     shadow = realloc(shadow, N * sizeof(u64));
-    if (!execW || !execKind || !execPc || !lastChange || !shadow || !inS) { fprintf(stderr, "out of memory\n"); return 2; }
+    if (!execW || !execKind || !execPc || !execRead || !lastChange || !lastBy[0] || !lastBy[1] || !shadow || !inS) { fprintf(stderr, "out of memory\n"); return 2; }
     for (u32 r = 0; r < cfg[8]; r++) { // as mars_run_match() with firstRound 0
       mars_start_round();
       traceT = 0;
       traceL = (u32)cyclesLeft;
       tImm[0] = tImm[1] = -1;
-      for (u32 c = 0; c < N; c++) { shadow[c] = cell_of(&core[c]); lastChange[c] = -1; }
+      for (u32 c = 0; c < N; c++) { shadow[c] = cell_of(&core[c]); lastChange[c] = lastBy[0][c] = lastBy[1][c] = -1; }
       i64 stopped = -1;
       while (!roundOver) {
         if (stopped < 0) {
@@ -156,9 +171,19 @@ int main(int argc, char **argv) {
       if (tie) {
         if (traceT != traceL) { fprintf(stderr, "tie round of %u instructions, expected %u\n", traceT, traceL); return 1; }
         printf("TIE %u %u %u %lld %lld %lld", match, r, traceL, (long long)(stopped >= 0 ? stopped : traceT), (long long)tImm[0], (long long)tImm[1]);
-        analyze(0, inS);
-        analyze(1, inS);
-        printf("\n");
+        i64 t32[2], s[2];
+        analyze(0, inS, &t32[0]);
+        analyze(1, inS, &t32[1]);
+        // From T on, with |S| <= 32: does warrior w read only cells that the
+        // opponent never changes again? Then both run as a closed system.
+        for (int i = 0; i < 2; i++) s[i] = tImm[i] >= 0 && tImm[i] < t32[i] ? tImm[i] : t32[i];
+        const i64 T = s[0] > s[1] ? s[0] : s[1];
+        int closed[2] = {1, 1};
+        for (i64 t = T; t < traceL; t++) {
+          const u32 w = execW[t];
+          for (int k = 0; k < 4 && closed[w]; k++) if (lastBy[1 - w][execRead[4 * (usize)t + k]] >= T) closed[w] = 0;
+        }
+        printf(" %d %d\n", closed[0], closed[1]);
       }
     }
     match++;

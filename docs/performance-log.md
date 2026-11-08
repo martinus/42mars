@@ -644,6 +644,20 @@ one-cell loop, against stones and scanners. A proof there has to bound
 where the pointer writes land for the rest of the round; #35 has the
 ideas and the measurement to do first.
 
+That measurement (#35): the trace also records the cells each instruction
+reads (the indirection cells of indirect operands, both targets) and which
+warrior changed each cell last. A round counts as a closed system when, from
+the point where the round could stop (|S| <= 32), neither warrior reads a
+cell that the other changes again. Then the future of the round depends
+only on the two queues and the cells the warriors read, and a repeat of
+that small state would prove the tie. Share of all instructions executed
+today that the closed rounds could save: t20 0.61%, t80 3.02% (of the
+4.99%), 400 corpus pairs 5.15%, t80 with `-p 8` 4.35%. On t20 that is about
+what the ideal full-state repeat detection measured above would give
+(0.6%); the small state can repeat long before the whole core stops
+changing. Not built: a new exact early exit needs a design and its proof
+first (#35).
+
 State: bench about 294M/s in WebAssembly, about 413M/s natively; corpus
 pairs 280M/s; t20 3.84 s single thread; t80 3.63 s with 16 jobs and 3.28 s
 with 31 jobs (8th November 2026; the machine ran 2 to 4% slower than on the
