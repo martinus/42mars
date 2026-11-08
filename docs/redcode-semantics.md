@@ -795,8 +795,9 @@ The entry for the instruction executed at time t is at index
 ### 3.7 WebAssembly engine
 
 `src/engine/wasm/mars.c` is a second, headless implementation of 3.1 to 3.3
-in C, compiled to `src/engine/wasm/mars.wasm` (committed, about 24 KB, no
-imports; `tools/build-wasm.sh` rebuilds it with clang). `mars-wasm.js` wraps
+in C, compiled to `src/engine/wasm/mars.wasm` (committed, about 51 KB, no
+imports; `tools/build-wasm.sh` rebuilds it with `tools/gen-dispatch.mjs` and
+clang). `mars-wasm.js` wraps
 it:
 
 ```js
@@ -849,6 +850,15 @@ Both tests run at most 4096 instructions apart.
 For exactly two warriors the instruction loop keeps both queues' counters
 in local variables and alternates the two warriors without looking up the
 next one (the round ends when one of them dies).
+
+The 32 most executed instruction words (opcode, modifier and both modes;
+`HOT` in `tools/gen-dispatch.mjs`, generated into `src/engine/wasm/dispatch.h`)
+each have a copy of the instruction code compiled for that word, without
+run-time mode and opcode tests; all other words run the generic code. With
+the standard settings (core size 8000, 8000 processes) a second copy of the
+two-warrior loop has the core size and the queue mask as constants. The
+core and the first two warriors' queues (up to 65536 entries) are at fixed
+addresses in the linear memory.
 
 ---------------------------------------------------------------------------
 

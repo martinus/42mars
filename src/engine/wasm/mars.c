@@ -111,7 +111,13 @@ static u32 minDist;
 static u32 psize;       // p-space size
 static u32 nw;          // number of warriors
 static u32 qmask;       // queue length - 1
-static Cell *core;
+static Cell *core;      // coreMem
+// The core and the first two warriors' queues (when they are at most
+// QSTATIC long) are at fixed addresses: execute2_8000() then addresses them
+// with constant offsets instead of base registers (+4% on the bench).
+#define QSTATIC 65536
+static _Alignas(64) Cell coreMem[65536];
+static _Alignas(64) u16 queueMem[2][QSTATIC];
 static Warrior *war;
 static i32 *input;      // load area written by the JS glue, see mars_config
 static Cell *codeBase;  // all warriors' instructions
@@ -149,16 +155,16 @@ i32 *mars_config(u32 coreSize, u32 maxProcesses, u32 cycles, u32 minDistance, u3
   u32 qlen = 1;
   while (qlen < maxProcesses && qlen < 1u << 30) qlen <<= 1; // the glue limits maxProcesses
   qmask = qlen - 1;
-  core = alloc((usize)N * sizeof(Cell));
+  core = coreMem;
   war = alloc((usize)nw * sizeof(Warrior));
   input = alloc((usize)(4 * nw + 5 * instructions) * 4);
-  if (!core || !war || !input) return 0;
+  if (!war || !input) return 0;
   Cell *code = alloc((usize)instructions * sizeof(Cell));
   u32 *ps = alloc((usize)nw * (psize ? psize : 1) * 4);
   u32 *scores = alloc((usize)nw * (2 * nw - 1) * 4);
   if (!code || !ps || !scores) return 0;
   for (u32 i = 0; i < nw; i++) {
-    war[i].q = alloc((usize)qlen * 2);
+    war[i].q = i < 2 && qlen <= QSTATIC ? queueMem[i] : alloc((usize)qlen * 2);
     if (!war[i].q) return 0;
     war[i].score = scores + (usize)i * (2 * nw - 1);
   }
@@ -335,6 +341,10 @@ static __attribute__((noinline)) void warrior_died(u32 w) {
 
 // ---------------------------------------------------------------- execution
 
+#ifdef COUNT_INS
+static u64 insCount[1u << 14]; // executions per instruction word
+#endif
+
 static inline u32 ab_of(const Cell *c) { u32 v; __builtin_memcpy(&v, c, 4); return v; }
 static inline void set_ab(Cell *c, u32 v) { __builtin_memcpy(c, &v, 4); }
 
@@ -356,20 +366,31 @@ static inline void set_ab(Cell *c, u32 v) { __builtin_memcpy(c, &v, 4); }
 // - early tie by a count of DAT, DIV, MOD and STP cells kept up to date by
 //   MOV.I cost 5% on the bench and 8% on corpus pairs; tie_check() scans
 //   instead, at no cost to the loop
+// - second round (docs/performance-log.md): a case with a copy of the
+//   instruction for each of the 32 most executed instruction words (step(),
+//   dispatch.h), the standard settings as constants (execute2_8000()), a
+//   loop with a single entry, the core and two queues at fixed addresses,
+//   and -Os: 191 -> 282 on the bench, t20 5.83 -> 4.13 s. Slower, not kept:
+//   one case for every word (8512 cases, 4.3 MB module), one case per
+//   opcode, modifier and B mode, a table of handlers indexed by the word,
+//   handlers ending in tail calls, packed queue counters, an unrolled loop,
+//   one turn per loop iteration, the generic code in its own function, two
+//   battles interleaved in one loop, wasm-opt -O3
 
-// Executes the next instruction of warrior W, whose queue is q with the
-// counters *head and *tail (W's own fields, or local copies of them in
-// execute2()). Returns 1 when the process died, else 0.
-static inline __attribute__((always_inline)) int step(Cell *const C, const u32 n, const u32 mask, const u32 limit,
-                                                      Warrior *const W, u16 *const q, u32 *const head, u32 *const tail) {
+// Executes the instruction ir, fetched from pc, of warrior W, whose queue
+// is q with the counters *head and *tail (W's own fields, or local copies of
+// them in execute2()); the process is already taken off the queue. ins is
+// the instruction word of ir: when the caller passes a constant, clang
+// compiles a copy of this function without mode or opcode branches (see
+// step()). Returns 1 when the process died, else 0.
+static inline __attribute__((always_inline)) int exec_ins(Cell *const C, const u32 n, const u32 mask, const u32 limit,
+                                                          Warrior *const W, u16 *const q, u32 *const head, u32 *const tail,
+                                                          const u32 pc, const Cell ir, const u32 ins) {
 // Address arithmetic: both operands are below n, so one conditional
 // subtraction reduces the sum.
 #define WRAP(x) ({ u32 x_ = (x); x_ >= n ? x_ - n : x_; })
 #define DEC(x) ((x) == 0 ? n - 1 : (x) - 1)
 #define INC(x) ((x) + 1 == n ? 0 : (x) + 1)
-  const u32 pc = q[(*head)++ & mask];
-  const Cell ir = C[pc];
-  const u32 ins = ir.ins;
 
   // A operand: pointer and the A and B values (AA in the low half of Aab).
 // The modes are tested in the order of their measured frequency ($ #
@@ -613,10 +634,34 @@ a_done:;
 #undef SUBM
 }
 
+// Executes the next instruction of warrior W, see exec_ins(). The most
+// executed instruction words (tools/gen-dispatch.mjs, dispatch.h) have a
+// case each that calls exec_ins() with the word as a constant: a copy of the
+// instruction without run-time mode and opcode tests. The others run the
+// generic code. clang compiles the sparse case labels into a tree of
+// compares; that was faster than a table indexed by the word (one indirect
+// jump that is harder to predict), and 32 cases were faster than 16, 24,
+// 40, 48 or 64.
+static inline __attribute__((always_inline)) int step(Cell *const C, const u32 n, const u32 mask, const u32 limit,
+                                                      Warrior *const W, u16 *const q, u32 *const head, u32 *const tail) {
+  const u32 pc = q[(*head)++ & mask];
+  const Cell ir = C[pc];
+  const u32 ins = ir.ins;
+#ifdef COUNT_INS
+  insCount[ins]++; // see bench-native.c
+#endif
+#define EXEC(word) exec_ins(C, n, mask, limit, W, q, head, tail, pc, ir, word)
+  switch (ins) {
+#include "dispatch.h"
+  }
+  return EXEC(ins);
+#undef EXEC
+}
+
 
 // Executes up to `count` instructions (at least one) of the running round
 // and returns how many it executed. Stops early when the round ends.
-static u64 execute(u64 count) {
+static __attribute__((noinline)) u64 execute(u64 count) {
   Cell *const C = core;
   const u32 n = N;
   const u32 mask = qmask;
@@ -664,25 +709,32 @@ static u64 execute(u64 count) {
 // execute() for exactly two warriors: the queue counters of both live in
 // local variables, and the loop body is unrolled into warrior 0's turn and
 // warrior 1's turn. With two warriors the turns alternate until one loses
-// its last process, which ends the round.
-static u64 execute2(u64 count) {
-  Cell *const C = core;
-  const u32 n = N;
-  const u32 mask = qmask;
-  const u32 limit = maxProc;
+// its last process, which ends the round. n, mask and limit are the core
+// size, queue mask and process limit, q0 and q1 the two queues: constants in
+// execute2_8000().
+static inline __attribute__((always_inline)) u64 execute2(u64 count, const u32 n, const u32 mask, const u32 limit,
+                                                          u16 *const q0, u16 *const q1) {
+  // When it is warrior 1's turn, execute() runs that one instruction, so that
+  // the loop has a single entry. A jump into the second half of the loop
+  // made it irreducible, and clang added a dispatch variable that V8 tested
+  // on every iteration.
+  u64 pre = 0;
+  if (current == 1) {
+    pre = execute(1);
+    if (roundOver || pre == count) return pre;
+    count -= pre;
+  }
+  Cell *const C = coreMem;
   Warrior *const W0 = &war[0], *const W1 = &war[1];
-  u16 *const q0 = W0->q, *const q1 = W1->q;
   u32 h0 = W0->head, t0 = W0->tail, h1 = W1->head, t1 = W1->tail;
   i64 budget = cyclesLeft < 1 ? 1 : cyclesLeft; // like execute()
   if (count < (u64)budget) budget = (i64)count;
   i64 left = budget;
-  u32 cur = current; // whose turn is next when the loop stops
-  u32 dead = 2;      // the warrior that lost its last process, 2: none
-  if (cur == 1) goto turn1;
+  u32 cur = 0;  // whose turn is next when the loop stops
+  u32 dead = 2; // the warrior that lost its last process, 2: none
   for (;;) {
     if (UNLIKELY(step(C, n, mask, limit, W0, q0, &h0, &t0)) && t0 == h0) { dead = 0; break; }
     if (UNLIKELY(--left == 0)) { cur = 1; break; }
-  turn1:
     if (UNLIKELY(step(C, n, mask, limit, W1, q1, &h1, &t1)) && t1 == h1) { dead = 1; break; }
     if (UNLIKELY(--left == 0)) { cur = 0; break; }
   }
@@ -694,16 +746,31 @@ static u64 execute2(u64 count) {
     cyclesLeft -= cycled;
     current = dead;
     warrior_died(dead); // ends the round
-    return (u64)cycled + 1;
+    return pre + (u64)cycled + 1;
   }
   timeNow += budget;
   cyclesLeft -= budget;
   current = cur;
   if (cyclesLeft <= 0) mars_end_round();
-  return (u64)budget;
+  return pre + (u64)budget;
 }
 
-static u64 run_some(u64 count) { return nw == 2 ? execute2(count) : execute(count); }
+// The standard settings (core size 8000, 8000 processes) as constants: the
+// wraparound compares, the queue mask and the queue addresses become
+// immediates, which frees registers. Separate functions, so that V8 compiles
+// only the one in use with its optimizing compiler (it tiers up per
+// function, and a smaller function gets there sooner).
+static __attribute__((noinline)) u64 execute2_8000(u64 count) {
+  return execute2(count, 8000, 8191, 8000, queueMem[0], queueMem[1]);
+}
+static __attribute__((noinline)) u64 execute2_any(u64 count) {
+  return execute2(count, N, qmask, maxProc, war[0].q, war[1].q);
+}
+
+static u64 run_some(u64 count) {
+  if (nw != 2) return execute(count);
+  return N == 8000 && maxProc == 8000 ? execute2_8000(count) : execute2_any(count);
+}
 
 // ---------------------------------------------------------------- API
 

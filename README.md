@@ -4,16 +4,16 @@ A browser visualizer for [Core War](https://corewar.co.uk/), with a Redcode asse
 
 ```sh
 npm run serve          # http://127.0.0.1:8000/
-npm test               # 245 tests, Node 20 or newer, no dependencies
+npm test               # 246 tests, Node 20 or newer, no dependencies
 node tools/asm.mjs warriors/dwarf.red      # pMARS-style listing
 node tools/corpus.mjs path/to/warriors     # assemble a whole folder
 node tools/pmars-diff.mjs --pmars path/to/pmars --corpus path/to/warriors   # compare with pMARS
 node tools/tournament.mjs path/to/warriors --rounds 100 --engine wasm   # round robin on all cores
 node tools/bench.mjs path/to/warriors --wasm-match   # simulator speed (see the file for the warriors)
-tools/build-wasm.sh    # rebuild src/engine/wasm/mars.wasm (clang with the wasm32 target)
+tools/build-wasm.sh    # rebuild src/engine/wasm/mars.wasm (Node, clang with the wasm32 target)
 ```
 
-`src/engine/mars-wasm.js` is a headless WebAssembly simulator with the same results as `src/engine/mars.js` and pMARS, for tournaments: about 190M instructions/s in a single thread, against 61M for mars.js headless, 91M for native pMARS and 132M for the exMARS build on corewar.dev. An 80-warrior round robin (3,160 pairings, 100 rounds) takes 4.75 s on 16 cores. Details in [PLAN.md](PLAN.md#speed).
+`src/engine/mars-wasm.js` is a headless WebAssembly simulator with the same results as `src/engine/mars.js` and pMARS, for tournaments: about 280M instructions/s in a single thread, against 61M for mars.js headless, 91M for native pMARS and 132M for the exMARS build on corewar.dev. An 80-warrior round robin (3,160 pairings, 100 rounds) takes 3.44 s on 16 cores. Details in [PLAN.md](PLAN.md#speed).
 
 New to Core War? Press `?` in the app for a short guide, then press **learn**: every instruction gets explained while it runs. The rules `nano · 80` show the instruction text inside the cells.
 
