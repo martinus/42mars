@@ -1,0 +1,189 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Martin Leitner-Ankerl
+
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { readFileSync, existsSync } from 'node:fs';
+import { assemble } from '../src/engine/assembler.js';
+import { Mars, rng } from '../src/engine/mars.js';
+import { formatInstruction } from '../src/engine/opcodes.js';
+
+function warrior(src, opts) {
+  const w = assemble(src, opts);
+  assert.ok(w.ok, JSON.stringify(w.errors));
+  return w;
+}
+
+// Single warrior at address 0.
+function solo(src, opts = {}) {
+  const m = new Mars(opts);
+  m.load([warrior(src, opts)], { positions: [0] });
+  m.startRound();
+  return m;
+}
+
+const cellText = (m, a) => {
+  const c = m.cell(a);
+  return formatInstruction(c.op, c.mod, c.aMode, c.aVal, c.bMode, c.bVal, m.coreSize);
+};
+const queue = (w) => Array.from({ length: w.tasks }, (_, k) => w.queue[(w.head + k) % w.queue.length]);
+
+test('imp copies itself forward', () => {
+  const m = solo('mov.i 0, 1\n');
+  m.run(3);
+  for (let a = 0; a <= 3; a++) assert.equal(cellText(m, a), 'MOV.I $0, $1');
+  assert.equal(cellText(m, 4), 'DAT.F $0, $0');
+  assert.deepEqual(queue(m.warriors[0]), [3]);
+});
+
+test('dwarf bombs every fourth cell', () => {
+  const m = solo('bomb dat #0\ndwarf add #4, bomb\nmov bomb, @bomb\njmp dwarf\nend dwarf\n');
+  m.run(3 * 5);
+  for (const k of [4, 8, 12, 16, 20]) assert.equal(cellText(m, k), `DAT.F #0, #${k}`);
+  assert.equal(cellText(m, 0), 'DAT.F #0, #20');
+});
+
+test('MOV.I uses in-register values: a postincrement does not leak into the copy', () => {
+  const m = solo('mov.i }0, 1\n');
+  m.run(1);
+  assert.equal(cellText(m, 0), 'MOV.I }1, $1');
+  assert.equal(cellText(m, 1), 'MOV.I }0, $1');
+});
+
+test('immediate B operand reads the current core, after the A postincrement', () => {
+  // A: >0 increments cell 0's B field before B (#) is read: pMARS behavior.
+  const m = solo('add.ab >0, #5\n');
+  m.run(1);
+  // AA = A-field of the A target (cell 0) = 0; B target is cell 0 with B already incremented to 6.
+  assert.equal(cellText(m, 0), 'ADD.AB >0, #6');
+});
+
+test('SPL queues the next instruction first, then the new process', () => {
+  const m = solo('spl 2\njmp 0\njmp 0\n');
+  m.run(1);
+  assert.deepEqual(queue(m.warriors[0]), [1, 2]);
+  assert.equal(m.warriors[0].tasks, 2);
+});
+
+test('SPL respects the process limit', () => {
+  const m = solo('spl 0\njmp -1\n', { maxProcesses: 3 });
+  m.run(50);
+  assert.equal(m.warriors[0].tasks, 3);
+});
+
+test('DAT and division by zero kill the process', () => {
+  for (const src of ['dat 0, 0\n', 'div #0, 1\n', 'mod.ab #0, 1\n', 'div.f 1, 2\n']) {
+    const m = solo(src);
+    m.run(1);
+    assert.equal(m.roundOver, true, src);
+    assert.deepEqual(m.roundResult.survivors, [], src);
+  }
+});
+
+test('DIV.F writes the field with a non-zero divisor before the process dies', () => {
+  const m = solo('div.f dv, 1\ndat #3, #10\ndv dat #0, #2\n');
+  m.run(1);
+  assert.equal(cellText(m, 1), 'DAT.F #3, #5');
+  assert.equal(m.roundOver, true);
+});
+
+test('DJN loops until the counter reaches zero', () => {
+  const m = solo('djn 0, #3\ndat 0\n');
+  m.run(3);
+  assert.deepEqual(queue(m.warriors[0]), [1]);
+  assert.equal(m.bv[0], 0);
+});
+
+test('SEQ/SNE/CMP.I compare whole instructions, SLT compares fields', () => {
+  let m = solo('seq.i a, b\ndat 0\njmp 0\na mov 1, 2\nb mov 1, 2\n');
+  m.run(1);
+  assert.deepEqual(queue(m.warriors[0]), [2]);
+  m = solo('seq.i a, b\ndat 0\njmp 0\na mov 1, 2\nb add 1, 2\n');
+  m.run(1);
+  assert.deepEqual(queue(m.warriors[0]), [1]);
+  m = solo('sne.a a, b\ndat 0\njmp 0\na dat 1, 2\nb dat 1, 9\n');
+  m.run(1);
+  assert.deepEqual(queue(m.warriors[0]), [1]);
+  m = solo('slt.ab #3, a\ndat 0\njmp 0\na dat 0, 4\n');
+  m.run(1);
+  assert.deepEqual(queue(m.warriors[0]), [2]);
+});
+
+test('A-field indirect modes', () => {
+  const m = solo('mov.i *p, {p\np dat 2, 3\ndat 7, 7\ndat 8, 8\n');
+  m.run(1);
+  // A: *p -> p + p.a = 3. B: {p predecrements p.a to 1 -> target p + 1 = 2.
+  assert.equal(cellText(m, 2), 'DAT.F $8, $8');
+  assert.equal(cellText(m, 1), 'DAT.F $1, $3');
+});
+
+test('two survivors tie after warriors * MAXCYCLES cycles', () => {
+  const m = new Mars();
+  m.load([warrior('jmp 0\n'), warrior('jmp 0\n')], { seed: 0 });
+  m.startRound();
+  m.run(1e6);
+  assert.equal(m.roundOver, true);
+  assert.equal(m.time, 2 * 80000);
+  assert.deepEqual(m.roundResult.survivors, [0, 1]);
+  assert.equal(m.warriors[0].ties, 1);
+});
+
+test('the last warrior standing wins, and death shortens the cycle budget', () => {
+  const m = new Mars();
+  m.load([warrior('jmp 0\n'), warrior('dat 0\n'), warrior('jmp 0\n')], { seed: 1 });
+  m.startRound();
+  m.run(2); // warrior 0 runs, warrior 1 dies
+  assert.equal(m.warriors[1].alive, false);
+  // pMARS: cycle = cycle - 1 - (cycle - 1) / warriorsLeft, then the loop decrements once more
+  const before = 3 * 80000 - 1;
+  const expected = before - 1 - Math.trunc((before - 1) / 3) - 1;
+  assert.equal(m.cyclesLeft, expected);
+  assert.ok(m.events.some((e) => e.type === 'death' && e.warrior === 1));
+});
+
+test('placement of the second warrior follows pMARS for a given seed', () => {
+  const m = new Mars();
+  m.load([warrior('jmp 0\n'), warrior('jmp 0\n')], { seed: 5 });
+  m.startRound();
+  assert.equal(m.warriors[1].position, 105); // like pmars -F 105
+  m.endRound();
+  m.startRound();
+  assert.equal(m.warriors[1].position, 100 + (rng(5) % 7801));
+});
+
+test('p-space: last result starts at CORESIZE-1 and survives into the next round', () => {
+  const src = 'ldp.ab #0, res\nstp.ab #42, #1\nldp.ab #1, res2\njmp 0\nres dat 0, 0\nres2 dat 0, 0\n';
+  const m = new Mars({ maxCycles: 100 });
+  m.load([warrior(src)], { positions: [0] });
+  m.startRound();
+  m.run(3);
+  assert.equal(m.bv[4], 7999);
+  assert.equal(m.bv[5], 42);
+  m.run(1e6);
+  m.startRound();
+  m.run(1);
+  assert.equal(m.bv[4], 1, 'solo survivor sees 1 as the last result');
+});
+
+test('visualization bookkeeping: owner, origin and territory', () => {
+  const m = new Mars();
+  m.load([warrior('mov.i 0, 1\n'), warrior('jmp 0\n')], { positions: [0, 4000] });
+  m.startRound();
+  m.run(10);
+  assert.equal(m.owner[3], 0);
+  assert.equal(m.origin[3], 0); // copy of warrior 0, instruction 0
+  assert.equal(m.warriors[0].territory, 1 + 5);
+  assert.ok(m.tExec[4000] > 0);
+});
+
+// pMARS ships validate.red (GPL, not in this repository). It loops forever on
+// a compliant MARS and kills itself otherwise. Point PMARS_VALIDATE at it.
+const validate = process.env.PMARS_VALIDATE;
+test('pMARS validate.red self-ties', { skip: !validate || !existsSync(validate) ? 'PMARS_VALIDATE not set' : false }, () => {
+  const m = new Mars();
+  m.load([warrior(readFileSync(validate, 'latin1'), { warriors: 1 })], { positions: [0] });
+  m.startRound();
+  m.run(1e6);
+  assert.deepEqual(m.roundResult.survivors, [0]);
+  assert.equal(m.time, 80000);
+});
