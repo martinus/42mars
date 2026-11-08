@@ -360,7 +360,7 @@ static u64 insCount[1u << 14]; // executions per instruction word
 #ifdef TRACE_TIES
 // See tie-ceiling.c: the B target of the last instruction, and a hook after
 // every instruction.
-static u32 traceTarget;
+static u32 traceTarget, traceSource; // B and A target
 static void trace_step(const Warrior *W, u32 pc, Cell ir, u32 tasks);
 #endif
 
@@ -450,6 +450,9 @@ static inline __attribute__((always_inline)) int exec_ins(Cell *const C, const u
     READ_A(aPtr);
   }
 a_done:;
+#ifdef TRACE_TIES
+  traceSource = aPtr;
+#endif
 #undef READ_A
   const u32 Aab = (u32)Acell;
   const u32 Ains = (u32)(Acell >> 32); // instruction word, padding 0
