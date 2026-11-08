@@ -25,6 +25,12 @@
 // compares the scores only and does not go with --pmars-trace.
 // Exit code 1 when anything differs.
 //
+// Generated warriors and pMARS output go into a new folder pmars-diff-*
+// under the system's temporary directory. It is deleted when nothing
+// differed, also after Ctrl-C, and kept (its path printed) when something
+// did, to reproduce the difference. A folder given with --tmp is never
+// deleted.
+//
 // With --pmars-trace, battles run on a pMARS build that additionally prints
 // one line per round to stderr: "ROUND <round> <instructions executed>
 // <hash>", where <hash> is FNV-1a (32 bit, offset 2166136261, prime
@@ -39,7 +45,7 @@
 // default 120) counts as a difference.
 
 import { execFile } from 'node:child_process';
-import { mkdirSync, readFileSync, readdirSync, writeFileSync, mkdtempSync } from 'node:fs';
+import { mkdirSync, readFileSync, readdirSync, writeFileSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir, cpus } from 'node:os';
 import { join } from 'node:path';
 import { assemble } from '../src/engine/assembler.js';
@@ -60,6 +66,7 @@ if (!PMARS) {
   process.exit(2);
 }
 const CORPUS = arg('corpus');
+const OWN_TMP = !arg('tmp');
 const TMP = arg('tmp') || mkdtempSync(join(tmpdir(), 'pmars-diff-'));
 const JOBS = Number(arg('jobs', Math.max(1, cpus().length - 2)));
 const SCALE = Number(arg('scale', 1));
@@ -111,6 +118,33 @@ function fnv(h, arr) {
 }
 const coreHash = (m) => [m.op, m.am, m.bm, m.av, m.bv].reduce(fnv, 2166136261);
 
+// Every section's list of differences, so that an aborted run knows whether
+// it found any.
+const diffLists = [];
+function diffList() {
+  const d = [];
+  diffLists.push(d);
+  return d;
+}
+const differences = () => diffLists.reduce((a, d) => a + d.length, 0);
+
+// Deletes our own temporary folder when nothing differed; returns the end of
+// the last output line.
+function finishTmp(bad) {
+  if (OWN_TMP && !bad) {
+    rmSync(TMP, { recursive: true, force: true });
+    return '';
+  }
+  return `, tmp files in ${TMP}`;
+}
+for (const sig of ['SIGINT', 'SIGTERM']) {
+  process.on(sig, () => {
+    const bad = differences();
+    console.log(`aborted: ${bad} differences so far${finishTmp(bad)}`);
+    process.exit(130);
+  });
+}
+
 const results = {};
 function report(section, total, diffs) {
   results[section] = { total, diffs: diffs.length };
@@ -155,7 +189,7 @@ async function compareListing(file, source, o = STANDARD) {
 async function listings() {
   if (!CORPUS) return console.log('listings: skipped (no --corpus)');
   const files = readdirSync(CORPUS).filter((f) => /\.red$/i.test(f)).sort();
-  const diffs = [];
+  const diffs = diffList();
   await pool(files, async (f) => {
     const p = join(CORPUS, f);
     const d = await compareListing(p, readFileSync(p, 'latin1'));
@@ -235,7 +269,7 @@ function randomExpr(depth = 0) {
 async function exprs() {
   const n = 1500 * SCALE;
   const cases = Array.from({ length: n }, () => generate(() => `;assert 1\n dat #${randomExpr()}, #${randomExpr()}\n`));
-  const diffs = [];
+  const diffs = diffList();
   await pool(cases, async (src) => {
     const d = await compareListing(tmpFile(src), src);
     if (d) diffs.push(`${d}\n  source: ${JSON.stringify(src)}`);
@@ -388,7 +422,7 @@ function scratchSource() {
 async function sources() {
   const n = 1500 * SCALE;
   const cases = Array.from({ length: n }, (_, i) => generate(i % 2 ? scratchSource : randomSource));
-  const diffs = [];
+  const diffs = diffList();
   await pool(cases, async (src) => {
     const d = await compareListing(tmpFile(src), src);
     if (d) diffs.push(`${d}\n  source: ${JSON.stringify(src)}`);
@@ -441,7 +475,7 @@ async function battles() {
     while (b === a) b = pick(files);
     return { pair: [a, b], pos: 100 + rand(7801), rounds: i % 4 === 0 ? 8 : 1 };
   });
-  const diffs = [];
+  const diffs = diffList();
   await pool(cases, async ({ pair, pos, rounds }) => {
     const paths = pair.map((f) => join(CORPUS, f));
     const d = await compareBattle(paths, paths.map((p) => readFileSync(p, 'latin1')), STANDARD, pos, rounds);
@@ -479,7 +513,7 @@ async function fuzz() {
     const srcs = [0, 1].map(() => randomWarrior(1 + rand(o.maxLength), o.coreSize));
     return { o, srcs, pos: o.minDistance + rand(o.coreSize + 1 - 2 * o.minDistance), rounds: i % 3 === 0 ? 4 : 1 };
   });
-  const diffs = [];
+  const diffs = diffList();
   await pool(cases, async ({ o, srcs, pos, rounds }) => {
     const d = await compareBattle(srcs.map(tmpFile), srcs, o, pos, rounds);
     if (d) diffs.push(d);
@@ -495,7 +529,7 @@ async function multi() {
     const srcs = Array.from({ length: k }, () => randomWarrior(1 + rand(Math.min(10, o.maxLength)), o.coreSize));
     return { o, srcs, pos: o.minDistance + rand(o.coreSize + 1 - 2 * o.minDistance), rounds: 1 + (i % 3) };
   });
-  const diffs = [];
+  const diffs = diffList();
   await pool(cases, async ({ o, srcs, pos, rounds }) => {
     const d = await compareBattle(srcs.map(tmpFile), srcs, o, pos, rounds);
     if (d) diffs.push(d);
@@ -509,5 +543,5 @@ for (const [name, fn] of Object.entries(sections)) {
   if (!ONLY || ONLY.has(name)) await fn();
 }
 const bad = Object.values(results).reduce((a, r) => a + r.diffs, 0);
-console.log(`${bad ? 'DIFFERENT' : 'SAME'}: ${bad} differences, ${((Date.now() - t0) / 1000).toFixed(0)} s, tmp files in ${TMP}`);
+console.log(`${bad ? 'DIFFERENT' : 'SAME'}: ${bad} differences, ${((Date.now() - t0) / 1000).toFixed(0)} s${finishTmp(bad)}`);
 process.exit(bad ? 1 : 0);
