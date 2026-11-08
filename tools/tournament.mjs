@@ -8,7 +8,7 @@
 //   node tools/tournament.mjs <dir or .red files...> [--rounds 100] [--jobs N]
 //        [--seed 1] [--size 8000 --cycles 80000 --processes 8000 --length 100
 //        --distance 100] [--engine js|wasm] [--matrix] [--json out.json]
-//        [--pmars path/to/pmars [--compare]]
+//        [--pmars path/to/pmars [--compare]] [--native-input file]
 //
 // Every pairing plays --rounds rounds. The start position of the second
 // warrior in the first round is derived from --seed and the pairing, later
@@ -20,6 +20,9 @@
 // --pmars runs the same tournament with pMARS processes instead of the
 // engine (for timing), --compare runs both and checks that every pairing has
 // the same wins, losses and ties.
+//
+// --native-input writes every pairing as a match in the input format of
+// src/engine/wasm/bench-native.c and exits, for tools/bench-native.mjs --input.
 
 import { Worker, isMainThread, parentPort, workerData } from 'node:worker_threads';
 import { execFile } from 'node:child_process';
@@ -29,6 +32,7 @@ import { basename, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { assemble } from '../src/engine/assembler.js';
 import { Mars } from '../src/engine/mars.js';
+import { nativeMatch } from './native-input.mjs';
 
 // ------------------------------------------------------------------ worker
 
@@ -87,6 +91,7 @@ function parseArgs(argv) {
     else if (a === '--json') o.json = argv[++i];
     else if (a === '--pmars') o.pmars = argv[++i];
     else if (a === '--compare') o.compare = true;
+    else if (a === '--native-input') o.nativeInput = argv[++i];
     else o.files.push(a);
   }
   return o;
@@ -212,6 +217,11 @@ async function main() {
   const pairs = [];
   for (let a = 0; a < files.length; a++) {
     for (let b = a + 1; b < files.length; b++) pairs.push({ a, b, pos: pairPosition(o.seed, a, b, o) });
+  }
+  if (o.nativeInput) {
+    const rules = { coreSize: o.size, maxProcesses: o.processes, maxCycles: o.cycles, minDistance: o.distance, pSpaceSize: Math.floor(o.size / 16) };
+    writeFileSync(o.nativeInput, pairs.map((p) => nativeMatch([codes[p.a], codes[p.b]], rules, p.pos - o.distance, o.rounds)).join(''));
+    return;
   }
   console.error(`${files.length} warriors, ${pairs.length} pairings, ${o.rounds} rounds each, ${o.jobs} jobs`);
 
