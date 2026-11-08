@@ -1,0 +1,163 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Martin Leitner-Ankerl
+
+// Measures how many instructions of tie rounds a proof of the form "this
+// loop cannot die" could save at most (issue #27). Native only, built by
+// tools/tie-ceiling.mjs from the input format of bench-native.c.
+//
+// Every round runs to its end. The driver notes when the early tie of
+// mars_run_match() would have stopped it (tie_check(), same schedule), and
+// for every instruction which warrior ran which address, and how it writes.
+// It also notes, per core cell, the last instruction that changed it (a
+// shadow core: an instruction changes at most its B target and the
+// indirection cells of its two operands).
+//
+// For each tie round of two warriors it prints one line:
+//   TIE <match> <round> <length> <stopped at> <immortal 0> <immortal 1>
+//       then per warrior: <t0 for |S| <= 1 2 4 8 16 32 64 any> <opponent
+//       writes from t0(32)> <opponent writes from t0(any)>
+// <immortal w>: the first instruction count after which warrior w has more
+// processes than turns left (it can lose only one process per own turn),
+// -1 if never. <t0>: the earliest instruction from which warrior w only
+// executes a set S of at most that many cells, none of them DAT, DIV or
+// MOD, and no cell of S changes until the round ends; the round length if
+// there is none. This is known afterwards only: an upper bound for any
+// proof, not a proof. Opponent writes: bits 1 MOV.I to a direct B operand
+// ($ or #), 2 another write to a direct B operand, 4 a write through an
+// indirect B operand, 8 a pre-/post-increment or decrement, OR over the
+// opponent's instructions in that suffix.
+// The last line: TOTAL <instructions executed with early ties> <rounds>.
+
+#define TRACE_TIES 1
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include "mars.c"
+
+static u8 *execW, *execKind;
+static u16 *execPc;
+static i32 *lastChange;
+static u64 *shadow;
+static u32 traceT, traceL;
+static i64 tImm[2];
+
+static void trace_step(const Warrior *W, u32 pc, Cell ir, u32 tasks) {
+  const u32 w = (u32)(W - war), t = traceT++;
+  const u32 n = N;
+  execW[t] = (u8)w;
+  execPc[t] = (u16)pc;
+  const u32 op = (ir.ins & 0xff) >> 3, mod = ir.ins & 7, am = (ir.ins >> 8) & 7, bm = ir.ins >> 11;
+  u8 kind = 0;
+  if (op <= 5 || op == 8 || op == 17) kind |= bm >= 2 ? 4 : (op == 0 && mod == 6 ? 1 : 2); // MOV to MOD, DJN, LDP
+  const u32 incdec = (1u << 3) | (1u << 4) | (1u << 6) | (1u << 7);         // < > { }
+  if ((incdec >> am & 1) || (incdec >> bm & 1)) kind |= 8;
+  execKind[t] = kind;
+  const u32 cand[3] = {(pc + ir.a) % n, (pc + ir.b) % n, traceTarget};
+  for (int k = 0; k < 3; k++) {
+    const u32 c = cand[k];
+    const u64 v = cell_of(&core[c]);
+    if (v != shadow[c]) { shadow[c] = v; lastChange[c] = (i32)t; }
+  }
+  // After its own turn the other warrior moves next, so w has
+  // floor(remaining / 2) turns left.
+  if (nw == 2 && tImm[w] < 0 && tasks > (traceL - (t + 1)) / 2) tImm[w] = t + 1;
+}
+
+static int killer(const Cell *c) {
+  const u32 op = (c->ins & 0xff) >> 3;
+  return op == 4 || op == 5 || op == 12; // DIV, MOD, DAT
+}
+
+#define NTH 8
+static const u32 TH[NTH] = {1, 2, 4, 8, 16, 32, 64, ~0u};
+
+// The closed-loop oracle for warrior w of the round just played.
+static void analyze(u32 w, u8 *inS) {
+  const u32 L = traceL;
+  i64 t0[NTH];
+  for (int k = 0; k < NTH; k++) t0[k] = L;
+  memset(inS, 0, N);
+  u32 size = 0, killers = 0;
+  i64 M = -1;
+  for (i64 t = (i64)L - 1; t >= 0; t--) {
+    if (execW[t] == w) {
+      const u32 c = execPc[t];
+      if (!inS[c]) {
+        inS[c] = 1;
+        size++;
+        if (lastChange[c] > M) M = lastChange[c];
+        if (killer(&core[c])) killers++;
+      }
+    }
+    if (!(M < t && killers == 0)) break;
+    for (int k = 0; k < NTH; k++) if (size <= TH[k]) t0[k] = t;
+  }
+  u32 kinds32 = 0, kindsAny = 0;
+  for (i64 t = t0[NTH - 1]; t < L; t++) {
+    if (execW[t] == w) continue;
+    kindsAny |= execKind[t];
+    if (t >= t0[5]) kinds32 |= execKind[t];
+  }
+  for (int k = 0; k < NTH; k++) printf(" %lld", (long long)t0[k]);
+  printf(" %u %u", kinds32, kindsAny);
+}
+
+int main(int argc, char **argv) {
+  FILE *f = argc > 1 ? fopen(argv[1], "r") : 0;
+  if (!f) { fprintf(stderr, "usage: tie-ceiling <input>\n"); return 2; }
+  unsigned cfg[9];
+  double total = 0, rounds = 0;
+  u32 match = 0, cap = 0;
+  u8 *inS = malloc(65536);
+  while (fscanf(f, "%u %u %u %u %u %u %u %u %u", &cfg[0], &cfg[1], &cfg[2], &cfg[3], &cfg[4], &cfg[5], &cfg[6], &cfg[7], &cfg[8]) == 9) {
+    i32 *in = mars_config(cfg[0], cfg[1], cfg[2], cfg[3], cfg[4], cfg[5], cfg[6]);
+    for (unsigned k = 0; k < 4 * cfg[5] + 5 * cfg[6]; k++) {
+      if (fscanf(f, "%d", &in[k]) != 1) { fprintf(stderr, "bad input\n"); return 2; }
+    }
+    mars_load(cfg[7], 0);
+    const u32 len = cfg[5] * cfg[2] + 2;
+    if (len > cap) {
+      cap = len;
+      execW = realloc(execW, cap);
+      execKind = realloc(execKind, cap);
+      execPc = realloc(execPc, cap * sizeof(u16));
+    }
+    lastChange = realloc(lastChange, N * sizeof(i32));
+    shadow = realloc(shadow, N * sizeof(u64));
+    if (!execW || !execKind || !execPc || !lastChange || !shadow || !inS) { fprintf(stderr, "out of memory\n"); return 2; }
+    round_ = 0;
+    starter = 0;
+    logFirst = 0;
+    for (u32 r = 0; r < cfg[8]; r++) {
+      mars_start_round();
+      traceT = 0;
+      traceL = (u32)cyclesLeft;
+      tImm[0] = tImm[1] = -1;
+      for (u32 c = 0; c < N; c++) { shadow[c] = cell_of(&core[c]); lastChange[c] = -1; }
+      i64 stopped = -1;
+      while (!roundOver) {
+        if (stopped < 0) {
+          const i64 chunk = tie_check();
+          if (chunk == 0) { stopped = traceT; continue; }
+          run_some((u64)chunk);
+        } else {
+          run_some(~0ull);
+        }
+      }
+      const int tie = nw == 2 && war[0].alive && war[1].alive;
+      if (stopped >= 0 && !tie) { fprintf(stderr, "early tie at %lld but no tie in match %u round %u\n", (long long)stopped, match, r); return 1; }
+      total += stopped >= 0 ? (double)stopped : (double)traceT;
+      rounds++;
+      if (tie) {
+        if (traceT != traceL) { fprintf(stderr, "tie round of %u instructions, expected %u\n", traceT, traceL); return 1; }
+        printf("TIE %u %u %u %lld %lld %lld", match, r, traceL, (long long)(stopped >= 0 ? stopped : traceT), (long long)tImm[0], (long long)tImm[1]);
+        analyze(0, inS);
+        analyze(1, inS);
+        printf("\n");
+      }
+    }
+    match++;
+  }
+  printf("TOTAL %.0f %.0f\n", total, rounds);
+  return 0;
+}
