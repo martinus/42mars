@@ -219,6 +219,42 @@ test('targeted: full queues at the linear queue limit and above', () => {
   }
 });
 
+// runMatch({ firstRound }) plays a block of the match's rounds with empty
+// p-space. Without LDP the blocks give the same rounds as the whole match:
+// tools/tournament.mjs runs such blocks on several workers.
+test('runMatch in blocks with firstRound gives the rounds of the whole match when no warrior has LDP', () => {
+  const noLdp = (src) => src.replace(/^ldp/gm, 'stp');
+  const blocks = [[0, 3], [3, 1], [4, 0], [4, 7]]; // [firstRound, rounds]: 11 rounds
+  for (const o of [RULES[1], RULES[4], RULES[6]]) {
+    for (const nw of [2, 3]) {
+      if (nw * o.minDistance > o.coreSize) continue;
+      const codes = Array.from({ length: nw }, () => warrior(noLdp(randomWarrior(1 + rand(o.maxLength - 1), o.coreSize, { loop: rand(2) === 0 })), { ...o, warriors: nw }));
+      for (const positions of [undefined, codes.map((_, i) => i * o.minDistance)]) {
+        const seed = rand(2147483646) + 1;
+        const whole = createWasmMarsSync(o, module).runMatch(codes, { rounds: 11, seed, positions });
+        const parts = blocks.map(([firstRound, rounds]) => createWasmMarsSync(o, module).runMatch(codes, { rounds, seed, positions, firstRound }));
+        const where = `${JSON.stringify(o)} ${nw} warriors seed ${seed}`;
+        assert.deepEqual(parts.flatMap((p) => p.results), whole.results, where);
+        assert.equal(parts.reduce((s, p) => s + p.instructions, 0), whole.instructions, where);
+        for (let i = 0; i < nw; i++) {
+          for (const k of ['wins', 'losses', 'ties']) assert.equal(parts.reduce((s, p) => s + p.warriors[i][k], 0), whole.warriors[i][k], `${where} ${k}`);
+        }
+      }
+    }
+  }
+  // With LDP the blocks differ: this warrior dies right after a tied round,
+  // and a block starts without that last result.
+  const ldp = warrior('ldp.ab #0, flag\nsub.ab #2, flag\njmz.b die, flag\njmp 0\ndie dat 0, 0\nflag dat 0, 0\n');
+  const codes = [ldp, warrior('jmp 0\n')];
+  const whole = createWasmMarsSync({}, module).runMatch(codes, { rounds: 4, seed: 7 });
+  assert.deepEqual(whole.results.map((r) => r.survivors.length), [2, 1, 2, 1]);
+  const late = createWasmMarsSync({}, module).runMatch(codes, { rounds: 2, seed: 7, firstRound: 2 });
+  assert.deepEqual(late.results.map((r) => [r.round, r.survivors.length]), [[3, 2], [4, 1]]);
+  const odd = createWasmMarsSync({}, module).runMatch(codes, { rounds: 2, seed: 7, firstRound: 1 });
+  assert.deepEqual(odd.results.map((r) => [r.round, r.survivors.length]), [[2, 2], [3, 1]]);
+  assert.throws(() => createWasmMarsSync({}, module).runMatch(codes, { rounds: 2, firstRound: -1 }), RangeError);
+});
+
 test('targeted: maxCycles 0, a single warrior, empty warriors and fractional run counts', () => {
   const empty = (name) => ({ ok: true, instructions: [], start: 0, pin: null, name, author: 'nobody' });
   compareMatch({ maxCycles: 0 }, [warrior('jmp 0\n'), warrior('jmp 0\n')], { seed: 3, rounds: 2, steps: true });

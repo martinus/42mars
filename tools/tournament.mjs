@@ -21,6 +21,11 @@
 // engine (for timing), --compare runs both and checks that every pairing has
 // the same wins, losses and ties.
 //
+// With --engine wasm and fewer than 4 pairings per job, each pairing whose
+// warriors have no LDP is split into blocks of rounds that run on several
+// workers (runMatch's firstRound): rounds depend on each other only through
+// p-space, which only LDP reads, so the results are the same.
+//
 // --native-input writes every pairing as a match in the input format of
 // src/engine/wasm/bench-native.c and exits, for tools/bench-native.mjs --input.
 
@@ -32,6 +37,7 @@ import { basename, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { assemble } from '../src/engine/assembler.js';
 import { Mars } from '../src/engine/mars.js';
+import { OP } from '../src/engine/opcodes.js';
 import { nativeMatch } from './native-input.mjs';
 
 // ------------------------------------------------------------------ worker
@@ -48,18 +54,20 @@ async function workerMain() {
   }
   parentPort.on('message', (task) => {
     if (task === null) return process.exit(0);
-    const { id, a, b, seed } = task;
+    const { id, a, b, seed, firstRound, rounds } = task;
     let wa, wb, instructions;
     if (wasm) {
-      // The whole match runs inside WebAssembly, with early tie detection.
-      const r = wasm.runMatch([codes[a], codes[b]], { rounds: opts.rounds, seed });
+      // The match, or a block of its rounds, runs inside WebAssembly, with
+      // early tie detection.
+      const r = wasm.runMatch([codes[a], codes[b]], { rounds, seed, firstRound });
       [wa, wb] = r.warriors;
       instructions = r.instructions;
     } else {
+      if (firstRound) throw new Error('--engine js plays whole matches only');
       const m = new Mars({ ...opts, headless: true });
       m.load([codes[a], codes[b]], { seed });
       instructions = 0;
-      for (let r = 0; r < opts.rounds; r++) {
+      for (let r = 0; r < rounds; r++) {
         m.startRound();
         while (!m.roundOver) m.run(1 << 22);
         instructions += m.time;
@@ -114,32 +122,53 @@ function pairPosition(seed, a, b, o) {
   return o.distance + (h % (o.size + 1 - 2 * o.distance));
 }
 
+// The tasks for the workers: a pairing each, or blocks of its rounds when
+// there are few pairings (see the header).
+function makeTasks(o, codes, pairs) {
+  const hasLdp = codes.map((c) => c.instructions.some((x) => x.op === OP.LDP));
+  const blocks = o.engine === 'wasm' && pairs.length < 4 * o.jobs ? Math.min(o.rounds, Math.ceil((4 * o.jobs) / pairs.length)) : 1;
+  const tasks = [];
+  pairs.forEach((p, k) => {
+    const n = hasLdp[p.a] || hasLdp[p.b] ? 1 : Math.max(1, blocks);
+    for (let i = 0; i < n; i++) {
+      const firstRound = Math.floor((i * o.rounds) / n);
+      tasks.push({ pairing: k, a: p.a, b: p.b, seed: p.pos - o.distance, firstRound, rounds: Math.floor(((i + 1) * o.rounds) / n) - firstRound });
+    }
+  });
+  return tasks;
+}
+
 async function runEngine(o, codes, pairs) {
   const module = o.engine === 'wasm' ? await (await import('../src/engine/mars-wasm.js')).compileWasmMars() : null;
+  const tasks = makeTasks(o, codes, pairs);
+  if (tasks.length > pairs.length) console.error(`${tasks.length} tasks: pairings without LDP split into blocks of rounds`);
   return new Promise((resolve, reject) => {
     const opts = { coreSize: o.size, maxCycles: o.cycles, maxProcesses: o.processes, maxLength: o.length, minDistance: o.distance, rounds: o.rounds };
-    const results = new Array(pairs.length);
+    // Wins, losses and ties of the blocks of a pairing add up.
+    const results = pairs.map((_, id) => ({ id, a: [0, 0, 0], b: [0, 0, 0], instructions: 0 }));
     let next = 0;
     let done = 0;
     let instructions = 0;
-    const workers = Array.from({ length: Math.min(o.jobs, pairs.length) }, () => new Worker(fileURLToPath(import.meta.url), { workerData: { codes, opts, module } }));
+    const workers = Array.from({ length: Math.min(o.jobs, tasks.length) }, () => new Worker(fileURLToPath(import.meta.url), { workerData: { codes, opts, module } }));
     const feed = (w) => {
-      if (next < pairs.length) {
-        const p = pairs[next];
-        w.postMessage({ id: next++, a: p.a, b: p.b, seed: p.pos - o.distance });
+      if (next < tasks.length) {
+        const t = tasks[next];
+        w.postMessage({ id: next++, a: t.a, b: t.b, seed: t.seed, firstRound: t.firstRound, rounds: t.rounds });
       } else w.postMessage(null);
     };
     for (const w of workers) {
       w.on('message', (r) => {
-        results[r.id] = r;
+        const sum = results[tasks[r.id].pairing];
+        for (let i = 0; i < 3; i++) { sum.a[i] += r.a[i]; sum.b[i] += r.b[i]; }
+        sum.instructions += r.instructions;
         instructions += r.instructions;
-        if (++done === pairs.length) resolve({ results, instructions });
+        if (++done === tasks.length) resolve({ results, instructions });
         feed(w);
       });
       w.on('error', reject);
       feed(w);
     }
-    if (pairs.length === 0) resolve({ results, instructions });
+    if (tasks.length === 0) resolve({ results, instructions });
   });
 }
 

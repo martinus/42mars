@@ -10,6 +10,7 @@
 //   m.load(codes, { seed });            // codes: assemble() results
 //   m.startRound(); while (!m.roundOver) m.run(1e6);
 //   m.runMatch(codes, { rounds: 200, seed })   // whole match inside wasm
+//   m.runMatch(codes, { rounds: 50, seed, firstRound: 150 }) // its last 50 rounds
 //
 // Differences from Mars:
 // - The core size is at most 65536 (cells hold 16-bit values), maxProcesses
@@ -214,11 +215,21 @@ class WasmMars {
   // results (including cycles), p-space and the following rounds are the
   // same; the core and the process queues at the end of such a round are
   // not, so pass false to compare cores.
-  runMatch(codes, { rounds = this.opt.rounds, seed, positions, earlyTie = true } = {}) {
+  //
+  // firstRound (default 0): play rounds firstRound + 1 to firstRound +
+  // rounds of the match, with the positions and first movers of those
+  // rounds, but with p-space and the last results starting empty. Only LDP
+  // reads them, so for warriors without LDP in their code the result of
+  // every round is the same as in the whole match, and the rounds can run
+  // in blocks on several engines (tools/tournament.mjs does that).
+  runMatch(codes, { rounds = this.opt.rounds, seed, positions, earlyTie = true, firstRound = 0 } = {}) {
+    if (!isCount(rounds) || !isCount(firstRound) || rounds + firstRound > 0xffffffff) {
+      throw new RangeError(`bad rounds or firstRound: ${rounds}, ${firstRound}`);
+    }
     this.load(codes, { seed, positions });
     const log = this.x.mars_reserve_log(rounds);
     if (!log && rounds > 0) throw new Error('wasm engine: out of memory');
-    const instructions = this.x.mars_run_match(rounds, earlyTie ? 1 : 0);
+    const instructions = this.x.mars_run_match(rounds, earlyTie ? 1 : 0, firstRound);
     this.version++;
     const u8 = this.bytes();
     const stride = this.x.mars_log_stride();
@@ -228,7 +239,7 @@ class WasmMars {
       const at = log + r * stride;
       const survivors = [];
       for (let i = 0; i < nw; i++) if (u8[at + 8 + i]) survivors.push(i);
-      results.push({ round: r + 1, cycles: this.f64[at >> 3], survivors });
+      results.push({ round: firstRound + r + 1, cycles: this.f64[at >> 3], survivors });
     }
     this.results = results;
     this.roundResult = results.length ? results[results.length - 1] : null;
