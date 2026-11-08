@@ -491,6 +491,56 @@ noise or slower; 0.3 points less generic code on t80 and pairs are worth
 less than what V8's code moves when the case set changes (#10). Keep the
 list.
 
+### What V8 does with the two-warrior loop (8th November 2026, #20)
+
+Node 22.22.2 (V8 12.4), `node --no-liftoff --print-wasm-code` for the code
+and `perf record -e instructions:u` with `--perf-prof` and `perf inject
+--jit` for the profile, t20 single thread (`tournament.mjs --rounds 100
+--seed 1 --jobs 1 --engine wasm`, 1,110M simulated instructions).
+
+* `perf stat`: 70.7G x86 instructions and 17.3G cycles for the whole
+  process, 63.7 instructions and 15.6 cycles per simulated instruction.
+  `execute2_8000()` (wasm function 9, 29.6 KB of x86 code) has 92.5% of
+  the retired instructions, 58.9 per simulated instruction.
+* Stack slots: 9.8% of the retired instructions in that function load
+  (4.5%) or store (5.3%) a `[rbp-x]` slot, about 5.8 per simulated
+  instruction. The hottest slots, by samples: `-0x58` 2.6% (`left`, the
+  countdown), `-0x48` and `-0x30` 1.7% each, `-0x68` 1.1%, `-0x60` 0.9%,
+  `-0x70` 0.7% (the queue heads and values derived from them).
+* What the loop carries, from the code before the loop head: both queue
+  heads as byte addresses (`2 * h0 + 0x90080`, `2 * h1 + 0xde2c0`, the two
+  `queueMem` arrays), so clang already strength-reduced the `u16` index
+  (#22 item 2 did that by hand and lost 8%); `-h0`, `-h1` and `h0 + 1` for
+  the `tail - head` and `tail == head` tests; both tails; `budget` and
+  `left`. The memory base stays in `rcx`, the core is a constant offset
+  (`[rcx + 8 * cell + 0x10040]`). The parameters of the inlined
+  `exec_ins()` and `step()` are constants or these values, so there are no
+  parameters left to drop.
+* Stack check: one `cmpq rsp,[r13-0x60]` with `jna` per loop pass, which
+  is two turns, so 1 x86 instruction per simulated instruction. With
+  `--no-wasm-stack-checks` (testing only), 5 alternating runs: t20 3.78 →
+  3.74 s, bench 297.9 → 299.3M/s. About 1% is all a loop without the
+  check could give; the four-turn loop that halved the checks was slower
+  (row "Loop unrolled twice" above).
+* `--turboshaft-wasm` (off by default in this V8, Chrome's newer V8
+  compiles wasm with Turboshaft): t20 3.77 → 4.01 s, bench 297.8 →
+  282.9M/s.
+
+Two experiments against the live values, `tools/ab-wasm.mjs` (7 runs, t80 5)
+and natively on the t20 mix (5 alternating runs):
+
+| Change in `execute2_8000()` | bench M/s | pairs M/s | t20 s | t80 16 jobs s | t80 31 jobs s | native t20 M/s | verdict |
+|---|---|---|---|---|---|---|---|
+| A. no countdown: the loop ends when a queue head reaches an end value computed from the budget (each turn pops one entry) | 298.1 → 284.0 | 282.6 → 273.5 | 3.77 → 3.97 | 3.46 → 3.63 | 3.12 → 3.35 | 372 → 355 | rejected |
+| B. queue counters in the warrior structs instead of locals | 297.0 → 301.8 | 284.2 → 285.7 | 3.77 → 3.75 | 3.47 → 3.42 | 3.12 → 3.15 | 374 → 357 | rejected: t20 within noise, t80 31 jobs +1.0% (ranges apart), native -4% |
+
+A replaces one live counter with two loop-invariant ends and is slower
+everywhere. B helps the bench and t80 with 16 jobs a little and costs on
+t80 with 31 jobs and natively. So far every change in this loop has moved
+V8's register allocation by 1 to 8%, most often the wrong way (#10, #22,
+#23 and this one). What is left is in V8's register allocator, not in
+the C code that feeds it.
+
 State: bench about 294M/s in WebAssembly, about 413M/s natively; corpus
 pairs 280M/s; t20 3.84 s single thread; t80 3.63 s with 16 jobs and 3.28 s
 with 31 jobs (8th November 2026; the machine ran 2 to 4% slower than on the
