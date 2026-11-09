@@ -1,8 +1,8 @@
 {
-  "name": "corewar-theater",
+  "name": "42mars",
   "version": "0.1.0",
   "private": true,
-  "description": "Core War visualizer with a pMARS-compatible Redcode assembler and MARS simulator",
+  "description": "Fast Core War simulator (MARS) and Redcode assembler with pMARS 0.9.5 results, and the Core War Theater visualizer",
   "type": "module",
   "scripts": {
     "test": "node --test test/*.test.js",

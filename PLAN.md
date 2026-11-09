@@ -1,6 +1,6 @@
-# Core War Theater: plan
+# 42mars: plan
 
-Core War Theater is a browser visualizer for [Core War](https://corewar.co.uk/) battles. It has its own Redcode assembler and MARS simulator, which reproduce pMARS 0.9.x behavior so that warriors assemble and fight like on the hills. Everything is MIT licensed. The prototype in this repository runs today:
+42mars is a [Core War](https://corewar.co.uk/) simulator (MARS) with its own Redcode assembler, and Core War Theater is the browser visualizer built on it. The assembler and the simulator reproduce pMARS 0.9.x behavior so that warriors assemble and fight like on the hills. Everything is MIT licensed. The prototype in this repository runs today:
 
 - 565 of 567 hill warriors from [n1LS/redcode-warriors](https://github.com/n1LS/redcode-warriors) assemble. The 2 failures are real syntax errors (`fail.red` is broken on purpose, `stone.red` has `dat #0 #0` without a comma, which pMARS rejects too).
 - pMARS's own `validate.red` self-ties for all 80,000 cycles, which it only does on a MARS with ICWS'88 semantics and in-register evaluation.

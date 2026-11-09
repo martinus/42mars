@@ -1,6 +1,6 @@
 ;redcode-94
 ;name Lantern
-;author corewar-theater sample
+;author 42mars sample
 ;strategy Stone: drops 800 DAT bombs with a step of 3359, then wipes the
 ;strategy rest of the core with a forward DAT clear that stops before itself.
 ;assert CORESIZE == 8000
