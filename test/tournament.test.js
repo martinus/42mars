@@ -135,3 +135,25 @@ test('tournament: --pmars stops on output it cannot read', () => {
     assert.match(err, new RegExp(`pMARS gave "\\d+ ${text}"`), name);
   }
 });
+
+test('tournament: --bench plays one warrior against each of the set, like its row of the round robin', () => {
+  const tool = join(root, 'tools/tournament.mjs');
+  const seeker = join(root, 'warriors/seeker.red');
+  const opts = ['--rounds', '20', '--jobs', '3', '--seed', '4', '--engine', 'wasm'];
+  const rrFile = join(dir, 'rr.json');
+  const benchFile = join(dir, 'bench.json');
+  execFileSync(process.execPath, [tool, seeker, join(root, 'warriors'), ...opts, '--json', rrFile], { stdio: 'ignore' });
+  const text = execFileSync(process.execPath, [tool, join(root, 'warriors'), '--bench', seeker, ...opts, '--json', benchFile],
+    { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+  const rr = JSON.parse(readFileSync(rrFile, 'utf8'));
+  const bench = JSON.parse(readFileSync(benchFile, 'utf8'));
+  const row = rr.pairs.map((p, k) => [p, rr.results[k]]).filter(([p]) => p.a === 0);
+  assert.equal(bench.pairs.length, 5); // the 5 sample warriors, Seeker included
+  assert.deepEqual(bench.pairs, row.map(([p]) => p));
+  assert.deepEqual(bench.results, row.map(([, r]) => r));
+  const scores = bench.opponents.map((o) => o.score);
+  assert.deepEqual(scores, [...scores].sort((x, y) => x - y), 'worst opponent first');
+  const sum = bench.results.reduce((s, r) => s + 3 * r.a[0] + r.a[2], 0);
+  assert.equal(bench.total.score, sum);
+  assert.match(text, new RegExp(`^total +${((100 * sum) / (20 * 5)).toFixed(1)} `, 'm'));
+});
