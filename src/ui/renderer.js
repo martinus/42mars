@@ -87,16 +87,21 @@ void main() {
     int execBy = int(B.g * 255.0 + 0.5) - 1;
     int proc = int(B.b * 255.0 + 0.5);
     int foot = int(B.a * 255.0 + 0.5);
-    int readBy = (foot & 15) - 1; // footprints of this round, 0 when hidden
-    int bump = foot == 0 ? 0 : (foot >> 4) - 1;
+    int readBy = (foot & 15) - 1; // last reader, -1: not read this round
+    bool showFoot = (foot & 64) != 0; // footprints of this round shown (F)
+    int bump = showFoot ? ((foot >> 4) & 3) - 1 : 0;
     float aa = 2.2 / max(cellPx, 1.0);
     float sd = sdRoundBox(lp, vec2(0.80), 0.38);
     float fill = 1.0 - smoothstep(-aa, aa, sd);
     float rim = 1.0 - smoothstep(0.0, aa * 1.6, abs(sd + 0.10) - 0.07);
 
+    // read this round by a warrior that does not own the cell: a dot in the
+    // reader's color, e.g. the cells a scanner looked at
+    bool seen = showFoot && readBy >= 0 && readBy != owner;
     if (owner < 0) {
       float dotm = 1.0 - smoothstep(0.16 - aa, 0.16 + aa, length(lp));
       col += vec3(0.07, 0.08, 0.12) * dotm;
+      if (seen) col += uPal[readBy] * 0.55 * (1.0 - smoothstep(0.24 - aa, 0.24 + aa, length(lp)));
     } else {
       vec3 wc = uPal[owner];
       if (bump != 0) {
@@ -116,22 +121,13 @@ void main() {
       }
       col += wc * wh * 1.25 * fill + vec3(1.0) * pow(wh, 5.0) * 0.6 * fill;
     }
-    if (readBy >= 0) {
-      // read this round: viewfinder corners in the reader's color, outside
-      // the tile so that they do not hide its owner
-      vec2 d = abs(lp);
-      float t = max(0.15, aa * 1.5);
-      float band = max(d.x, d.y);
-      float vf = (1.0 - smoothstep(-aa, aa, abs(band - (0.985 - t * 0.5)) - t * 0.5))
-               * smoothstep(0.30 - aa, 0.30 + aa, min(d.x, d.y));
-      col = mix(col, uPal[readBy] * 1.3, vf);
+    if (seen && owner >= 0) {
+      // on another warrior's tile: the reader's dot with a dark ring around it
+      float r = length(lp);
+      col = mix(col, vec3(0.0), 0.8 * (1.0 - smoothstep(0.34 - aa, 0.34 + aa, r)));
+      col = mix(col, uPal[readBy], 1.0 - smoothstep(0.22 - aa, 0.22 + aa, r));
     }
-    if (execBy >= 0 && foot != 0 && opc != 12) {
-      // executed this round: a lit core in the executor's color
-      float ec = 1.0 - smoothstep(-aa, aa, sdRoundBox(lp, vec2(0.30), 0.12));
-      col = mix(col, mix(uPal[execBy], vec3(1.0), 0.55), ec * 0.8);
-    }
-    col += vec3(0.35, 0.65, 1.0) * rh * 0.45 * (1.0 - smoothstep(0.0, aa * 2.0, abs(sd)));
+    if (readBy >= 0) col += uPal[readBy] * rh * 0.55 * (1.0 - smoothstep(0.0, aa * 2.0, abs(sd))); // just read, by whom
     if (execBy >= 0) {
       vec3 ec = mix(uPal[execBy], vec3(1.0), 0.45);
       float core = 1.0 - smoothstep(0.0, 0.85, length(lp));

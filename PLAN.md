@@ -175,16 +175,15 @@ The core is drawn by one fragment shader from two small data textures that are r
 | Bright flash fading out | Recent write. Trail length is the `trails` slider. |
 | White-hot center | Recently executed, tinted by the warrior that executed it. |
 | Pulsing dot | A live process sits there. The next process to run gets an outline. |
-| Blue outline | Recently read. |
+| Glowing outline | Recently read, in the color of the reading warrior. |
 | Solid arc | An instruction wrote to that cell. |
 | Dashed arc | A jump, or a new process from `SPL`. |
-| Thin blue line | A compare (`SEQ`, `SNE`, `CMP`, `SLT`) looked at that cell, i.e. a scanner. |
+| Dotted line | A compare (`SEQ`, `SNE`, `CMP`, `SLT`) looked at that cell, i.e. a scanner. |
 | Small ring | A process died there. Big ring: a warrior died. |
-| Corner brackets | Footprint: a warrior read the cell this round, in its color. A scanner leaves a lattice of them. |
+| Colored dot | Footprint: a warrior read a cell it does not own this round, in its color. A scanner leaves a lattice of them. |
 | `+` or `−` instead of a tile | Footprint: the last change was an increment or decrement of a pointer (`>`, `}`, `<`, `{`), not a store. |
-| Lit center | Footprint: executed this round, in the color of the executing warrior. |
 
-The footprints (`F` toggles them) keep for the whole round what the glows show for a moment, from `readBy`, `bump` and `execBy` in `mars.js`. They came from looking at corewar.dev's display, which splits each cell into four quarters for read, write, execute, increment and decrement; ours uses a shape per kind of access instead.
+The footprints (`F` toggles them) keep for the whole round what the glows show for a moment, from `readBy` and `bump` in `mars.js`. They came from looking at corewar.dev's display, which splits each cell into four quarters for read, write, execute, increment and decrement; ours uses a shape per kind of access instead.
 
 ### Learning what is going on
 

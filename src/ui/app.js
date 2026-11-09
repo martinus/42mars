@@ -49,7 +49,7 @@ const state = {
   speedIdx: 11,
   acc: 0,
   layoutKind: LAYOUT_RING,
-  footprints: true, // F: who read, executed, bumped each cell this round
+  footprints: true, // F: cells read by another warrior, or only incremented, this round
   layout: null,
   dpr: 1,
   hover: -1,
@@ -292,7 +292,7 @@ function updateTextures() {
     B[j] = heatR[i] * 255;
     B[j + 1] = m.execBy[i] + 1;
     B[j + 2] = 0;
-    B[j + 3] = state.footprints ? (m.readBy[i] + 1) | ((m.bump[i] + 1) << 4) : 0;
+    B[j + 3] = (m.readBy[i] + 1) | ((m.bump[i] + 1) << 4) | (state.footprints ? 64 : 0);
   }
   for (const w of m.warriors) {
     if (!w.tasks) continue;
@@ -354,7 +354,7 @@ function consumeTrace(now) {
   if (m.time < state.lastTrace) state.lastTrace = 0;
   const from = Math.max(state.lastTrace + 1, m.time - m.traceSize + 1, 1);
   const speed = SPEEDS[state.speedIdx];
-  const slow = speed <= SLOW;
+  const slow = speed <= SLOW || !state.running;
   const life = slow ? 1.8 : speed <= 2500 ? 0.9 : 0.45;
   const arcStart = Math.max(from, m.time - (slow ? 59 : 24));
   for (let t = from; t <= m.time; t++) {
@@ -362,7 +362,7 @@ function consumeTrace(now) {
     state.tracker.add(m, e);
     if (t < arcStart) continue;
     const far = (x) => distance(x, e.pc, m.coreSize) > (slow ? 0 : 1);
-    const arc = (to, kind) => state.arcs.push({ from: e.pc, to, kind, warrior: e.warrior, born: now, life });
+    const arc = (to, kind) => state.arcs.push({ from: e.pc, to, kind, warrior: e.warrior, born: now, life, t });
     if (e.wrote && far(e.b)) arc(e.b, 'write');
     if (e.jumped && far(e.a)) arc(e.a, 'jump');
     if (e.op === OP.CMP || e.op === OP.SEQ || e.op === OP.SNE || e.op === OP.SLT) {
@@ -372,8 +372,11 @@ function consumeTrace(now) {
   }
   state.lastTrace = m.time;
   state.tracker.decay(0.985);
-  state.arcs = state.arcs.filter((a) => now - a.born < a.life * 1000).slice(-260);
+  state.arcs = state.arcs.filter((a) => held(a, m) || now - a.born < a.life * 1000).slice(-260);
 }
+
+// While paused, the lines of the last instruction stay until the next step.
+const held = (a, m) => !state.running && a.t === m.time;
 
 function explaining() {
   const m = state.mars;
@@ -388,7 +391,7 @@ function drawOverlay(now) {
     const col = PALETTE_HEX[e.warrior % 8];
     tags.push({ addr: e.pc, text: 'PC', color: col });
     const ins = m.cell(e.pc);
-    if (ins.aMode !== 0) tags.push({ addr: e.a, text: 'A', color: '#78beff' });
+    if (ins.aMode !== 0) tags.push({ addr: e.a, text: 'A', color: col });
     if (ins.bMode !== 0 || e.b !== e.pc) tags.push({ addr: e.b, text: 'B', color: col });
     if (state.explained !== m.time) {
       state.explained = m.time;
@@ -405,7 +408,7 @@ function drawOverlay(now) {
     $('explainer').hidden = true;
     state.explained = -1;
   }
-  const arcs = state.arcs.map((a) => ({ ...a, age: Math.min(1, (now - a.born) / (a.life * 1000)) }));
+  const arcs = state.arcs.map((a) => ({ ...a, age: held(a, m) ? 0 : Math.min(1, (now - a.born) / (a.life * 1000)) }));
   let focus = null;
   if (state.focus && now - state.focus.born < 2500) focus = { addr: state.focus.addr, phase: (now - state.focus.born) / 1000 };
   overlay.draw({ L: state.layout, m, arcs, tags, colors: PALETTE_CSV, dpr: state.dpr, focus, cellText: true });

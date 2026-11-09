@@ -121,13 +121,8 @@ main {
 .sw.hollow { border: 1.5px solid #8a90a8; }
 .sw.flash { background: #fff; box-shadow: 0 0 6px #fff; }
 .sw.proc { background: radial-gradient(circle, #fff 0 30%, #ffc53d 31% 60%, transparent 61%); }
-.sw.read { border: 1.5px solid #5aa6ff; }
-.sw.seen { background:
-  linear-gradient(#8a90a8, #8a90a8) 0 0 / 4px 1.5px, linear-gradient(#8a90a8, #8a90a8) 0 0 / 1.5px 4px,
-  linear-gradient(#8a90a8, #8a90a8) 100% 0 / 4px 1.5px, linear-gradient(#8a90a8, #8a90a8) 100% 0 / 1.5px 4px,
-  linear-gradient(#8a90a8, #8a90a8) 0 100% / 4px 1.5px, linear-gradient(#8a90a8, #8a90a8) 0 100% / 1.5px 4px,
-  linear-gradient(#8a90a8, #8a90a8) 100% 100% / 4px 1.5px, linear-gradient(#8a90a8, #8a90a8) 100% 100% / 1.5px 4px;
-  background-repeat: no-repeat; border-radius: 0; }
+.sw.read { border: 1.5px solid #8a90a8; box-shadow: 0 0 4px #8a90a8; }
+.sw.seen { background: radial-gradient(circle, #8a90a8 0 35%, transparent 40%); }
 .sw.bump { color: #8a90a8; font: bold 12px/10px monospace; text-align: center; }
 
 .tooltip {
@@ -280,6 +275,7 @@ dialog::backdrop { background: rgba(0, 0, 0, 0.6); backdrop-filter: blur(2px); }
 }
 .sw.arc { width: 16px; height: 0; border-top: 2px solid #c8cde0; border-radius: 0; }
 .sw.arc.dashed { border-top-style: dashed; }
+.sw.arc.dotted { border-top-style: dotted; }
 .sw.ringx { border: 2px solid #ff4f6d; border-radius: 50%; }
 .hint-inline { font-size: 10px; color: var(--muted); }
 
