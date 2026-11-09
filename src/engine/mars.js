@@ -5,7 +5,8 @@
 // bookkeeping the visualizer needs (ownership, timestamps, trace buffer).
 // The constructor option `headless: true` turns that bookkeeping off, for
 // tournaments and tests: then execution does not update owner, execBy,
-// origin, tWrite, tRead, tExec, territory, execHeat and the trace buffer.
+// readBy, bump, origin, tWrite, tRead, tExec, territory, execHeat and the
+// trace buffer.
 
 import { OP, MOD } from './opcodes.js';
 import { DEFAULT_OPTIONS } from './assembler.js';
@@ -139,13 +140,15 @@ export class Mars {
     // touches costs a map check, length and data pointer loads and registers;
     // with three buffers instead of fifteen arrays it ran 15 to 20 % faster.
     this.u8 = new Uint8Array(3 * n); // op, am, bm
-    this.i8 = new Int8Array(2 * n); // owner, execBy
+    this.i8 = new Int8Array(4 * n); // owner, execBy, readBy, bump
     this.i32 = new Int32Array(6 * n + 4 * T); // av, bv, origin, tWrite, tRead, tExec, trace
     this.op = this.u8.subarray(0, n);
     this.am = this.u8.subarray(n, 2 * n);
     this.bm = this.u8.subarray(2 * n, 3 * n);
     this.owner = this.i8.subarray(0, n);
     this.execBy = this.i8.subarray(n, 2 * n);
+    this.readBy = this.i8.subarray(2 * n, 3 * n);
+    this.bump = this.i8.subarray(3 * n, 4 * n);
     this.av = this.i32.subarray(0, n);
     this.bv = this.i32.subarray(n, 2 * n);
     this.origin = this.i32.subarray(2 * n, 3 * n);
@@ -231,6 +234,8 @@ export class Mars {
     this.bv.fill(0);
     this.owner.fill(-1);
     this.execBy.fill(-1);
+    this.readBy.fill(-1);
+    this.bump.fill(0);
     this.origin.fill(-1);
     this.tWrite.fill(NEVER);
     this.tRead.fill(NEVER);
@@ -479,7 +484,7 @@ export class Mars {
     // Buffers and the offsets of the arrays in them (see the constructor).
     const U = this.u8, S = this.i8, I = this.i32, Q = this.wq, heat = this.heatAll, territory = this.territory;
     const OP = 0, AM = n, BM = 2 * n; // in U
-    const EXECBY = n; // in S, after owner
+    const EXECBY = n, READBY = 2 * n, BUMP = 3 * n; // in S, after owner
     const AV = 0, BV = n, ORIGIN = 2 * n, TWRITE = 3 * n, TREAD = 4 * n, TEXEC = 5 * n; // in I
     const TRACE = 6 * n; // in I: tracePc, traceA, traceB, traceMeta, each TRACE_SIZE long
     const heatStride = this.heatStride;
@@ -591,7 +596,7 @@ export class Mars {
             break;
           }
         }
-        if (track) I[TREAD + aPtr] = time;
+        if (track) { I[TREAD + aPtr] = time; S[READBY + aPtr] = w; }
       }
 
       // B operand, the same on the core as the A operand left it.
@@ -796,16 +801,18 @@ export class Mars {
           break;
       }
       if (cmp !== 0) {
-        if (track) I[TREAD + bPtr] = time;
+        if (track) { I[TREAD + bPtr] = time; S[READBY + bPtr] = w; }
         if (cmp === 2) { next = next + 1 === n ? 0 : next + 1; flags = SKIPPED; }
       }
 
       if (track) {
         // All stores of one instruction are by the same warrior at the
         // same time, so their order does not matter here.
-        if (claimA >= 0) claim(S, I, territory, TWRITE, claimA, w, time);
-        if (claimB >= 0) claim(S, I, territory, TWRITE, claimB, w, time);
-        if (flags & STORED) claim(S, I, territory, TWRITE, bPtr, w, time);
+        // bump: +1 for the increments of > and }, -1 for the decrements of
+        // < and {, 0 for a store of step 4, the last one wins.
+        if (claimA >= 0) { claim(S, I, territory, TWRITE, claimA, w, time); S[BUMP + claimA] = aMode === 3 || aMode === 6 ? -1 : 1; }
+        if (claimB >= 0) { claim(S, I, territory, TWRITE, claimB, w, time); S[BUMP + claimB] = bMode === 3 || bMode === 6 ? -1 : 1; }
+        if (flags & STORED) { claim(S, I, territory, TWRITE, bPtr, w, time); S[BUMP + bPtr] = 0; }
         const slot = TRACE + (time & (TRACE_SIZE - 1));
         I[slot] = pc;
         I[slot + TRACE_SIZE] = aPtr;

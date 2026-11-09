@@ -86,6 +86,9 @@ void main() {
     float rh = B.r;
     int execBy = int(B.g * 255.0 + 0.5) - 1;
     int proc = int(B.b * 255.0 + 0.5);
+    int foot = int(B.a * 255.0 + 0.5);
+    int readBy = (foot & 15) - 1; // footprints of this round, 0 when hidden
+    int bump = foot == 0 ? 0 : (foot >> 4) - 1;
     float aa = 2.2 / max(cellPx, 1.0);
     float sd = sdRoundBox(lp, vec2(0.80), 0.38);
     float fill = 1.0 - smoothstep(-aa, aa, sd);
@@ -96,7 +99,14 @@ void main() {
       col += vec3(0.07, 0.08, 0.12) * dotm;
     } else {
       vec3 wc = uPal[owner];
-      if (opc == 12) {
+      if (bump != 0) {
+        // only an increment or decrement: a plus or minus sign, not a tile
+        float hb = max(abs(lp.x) - 0.55, abs(lp.y) - 0.12);
+        float vb = max(abs(lp.x) - 0.12, abs(lp.y) - 0.55);
+        float g = 1.0 - smoothstep(-aa, aa, bump > 0 ? min(hb, vb) : hb);
+        col = mix(col, wc * 0.10, fill);
+        col = mix(col, wc * 0.95, g);
+      } else if (opc == 12) {
         col = mix(col, wc * 0.16, fill);
         col += wc * 0.30 * rim;
       } else {
@@ -105,6 +115,21 @@ void main() {
         if (opc == 11) col += wc * 0.6 * (1.0 - smoothstep(0.22 - aa, 0.22 + aa, length(lp)));
       }
       col += wc * wh * 1.25 * fill + vec3(1.0) * pow(wh, 5.0) * 0.6 * fill;
+    }
+    if (readBy >= 0) {
+      // read this round: viewfinder corners in the reader's color, outside
+      // the tile so that they do not hide its owner
+      vec2 d = abs(lp);
+      float t = max(0.15, aa * 1.5);
+      float band = max(d.x, d.y);
+      float vf = (1.0 - smoothstep(-aa, aa, abs(band - (0.985 - t * 0.5)) - t * 0.5))
+               * smoothstep(0.30 - aa, 0.30 + aa, min(d.x, d.y));
+      col = mix(col, uPal[readBy] * 1.3, vf);
+    }
+    if (execBy >= 0 && foot != 0 && opc != 12) {
+      // executed this round: a lit core in the executor's color
+      float ec = 1.0 - smoothstep(-aa, aa, sdRoundBox(lp, vec2(0.30), 0.12));
+      col = mix(col, mix(uPal[execBy], vec3(1.0), 0.55), ec * 0.8);
     }
     col += vec3(0.35, 0.65, 1.0) * rh * 0.45 * (1.0 - smoothstep(0.0, aa * 2.0, abs(sd)));
     if (execBy >= 0) {
