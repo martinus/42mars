@@ -17,7 +17,7 @@ tools/build-wasm.sh    # rebuild src/engine/wasm/mars.wasm (Node, clang with the
 
 New to Core War? Press `?` in the app for a short guide, then press **learn**: every instruction gets explained while it runs. The rules `nano · 80` show the instruction text inside the cells.
 
-Drop `.red` files onto the page to load them. Keys: `Space` play/pause, `→` step (`Shift+→` 100 steps), `N` next round, `R` restart, `L` switch ring/grid, `F` footprints (who read, incremented or executed each cell this round), `[` `]` speed, `?` guide.
+Drop `.red` files onto the page to load them. Keys: `Space` play/pause, `→` step (`Shift+→` 100 steps), `N` next round, `R` restart, `L` switch ring/grid, `F` footprints (which cells a warrior looked at or only incremented this round), `[` `]` speed, `?` guide.
 
 URL parameters: `?cast=lantern,origami,seeker` picks sample warriors, `preset=nano`, `layout=grid`, `speed=0..16`, `steps=N` (run N instructions and pause), `rounds=N`, `paused`, `noguide`.
 

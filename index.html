@@ -34,10 +34,11 @@
         <span><i class="sw flash"></i>fresh write</span>
         <span><i class="sw proc"></i>process</span>
         <span><i class="sw read"></i>read</span>
-        <span><i class="sw seen"></i>read this round</span>
+        <span><i class="sw seen"></i>looked at</span>
         <span><i class="sw bump">+</i>incremented / decremented</span>
         <span><i class="sw arc"></i>write</span>
         <span><i class="sw arc dashed"></i>jump / split</span>
+        <span><i class="sw arc dotted"></i>compare</span>
       </div>
     </section>
 
@@ -109,8 +110,8 @@
         <div><i class="sw fill"></i><span><b>Filled tile</b>: code. <b>Hollow tile</b>: <code>DAT</code>, usually a bomb.</span></div>
         <div><i class="sw flash"></i><span><b>Flash</b>: just written. <b>White glow</b>: just executed.</span></div>
         <div><i class="sw proc"></i><span><b>Pulsing dot</b>: a process sits here. The one that runs next has a white outline.</span></div>
-        <div><i class="sw seen"></i><span><b>Footprints</b> of this round (<kbd>F</kbd> hides them). <b>Corner brackets</b>: a warrior read the cell, in its color; a scanner leaves a lattice of them. <b>+</b> or <b>−</b> instead of a tile: the last change was only an increment or decrement of a pointer, not a bomb. <b>Lit center</b>: the cell was executed this round.</span></div>
-        <div><i class="sw arc"></i><span><b>Solid arc</b>: an instruction wrote to that cell. <b>Dashed arc</b>: a jump or a new process. <b>Blue line</b>: a scanner compared those cells.</span></div>
+        <div><i class="sw seen"></i><span><b>Footprints</b> of this round (<kbd>F</kbd> hides them). <b>Colored dot</b>: a warrior read a cell that is not its own, e.g. the cells a scanner looked at. <b>+</b> or <b>−</b> instead of a tile: the last change was only an increment or decrement of a pointer, not a bomb.</span></div>
+        <div><i class="sw arc"></i><span><b>Solid arc</b>: an instruction wrote to that cell. <b>Dashed arc</b>: a jump or a new process. <b>Dotted line</b>: a scanner compared those cells. Reads, like everything else, are drawn in the color of the warrior that made them.</span></div>
         <div><i class="sw ringx"></i><span><b>Small ring</b>: a process died. <b>Big ring</b>: a warrior is out.</span></div>
       </div>
       <p><b>Common strategies.</b> A <i>stone</i> or bomber throws <code>DAT</code> bombs across the core and hopes to hit. A <i>paper</i> copies itself to new places and runs many processes, so single hits do not kill it. A <i>scanner</i> compares cells to find enemy code before it attacks. An <i>imp</i> is <code>MOV 0, 1</code>: it copies itself one cell ahead, forever. A <i>clear</i> wipes the core cell by cell. The cards on the right guess what each warrior is doing right now.</p>

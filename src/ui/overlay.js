@@ -45,10 +45,10 @@ export class Overlay {
       const c = this.curve(L, p, q);
       const fade = (1 - a.age) ** 1.5;
       if (fade <= 0.01) continue;
-      const col = a.kind === 'read' ? '120,190,255' : colors[a.warrior % colors.length];
+      const col = colors[a.warrior % colors.length];
       g.strokeStyle = `rgba(${col},${(a.kind === 'read' ? 0.45 : 0.75) * fade})`;
-      g.lineWidth = (a.kind === 'write' ? 1.6 : 1.1) * dpr;
-      g.setLineDash(a.kind === 'jump' ? [4 * dpr, 4 * dpr] : []);
+      g.lineWidth = (a.kind === 'write' ? 1.6 : a.kind === 'read' ? 1.8 : 1.1) * dpr;
+      g.setLineDash(a.kind === 'jump' ? [4 * dpr, 4 * dpr] : a.kind === 'read' ? [0.1, 3.5 * dpr] : []);
       g.beginPath();
       g.moveTo(p.x, p.y);
       g.quadraticCurveTo(c.x, c.y, q.x, q.y);
