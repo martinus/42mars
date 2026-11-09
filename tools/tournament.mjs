@@ -9,6 +9,11 @@
 //        [--seed 1] [--size 8000 --cycles 80000 --processes 8000 --length 100
 //        --distance 100] [--engine js|wasm] [--matrix] [--json out.json]
 //        [--pmars path/to/pmars [--compare]] [--native-input file]
+//        [--bench warrior.red]
+//
+// --bench plays one warrior against every warrior of the set instead of a
+// round robin, on the wasm engine unless --engine says otherwise, and lists
+// the opponents from the worst result to the best.
 //
 // Every pairing plays --rounds rounds. The start position of the second
 // warrior in the first round is derived from --seed and the pairing, later
@@ -101,8 +106,10 @@ function parseArgs(argv) {
     else if (a === '--pmars') o.pmars = argv[++i];
     else if (a === '--compare') o.compare = true;
     else if (a === '--native-input') o.nativeInput = argv[++i];
+    else if (a === '--bench') o.bench = argv[++i];
     else o.files.push(a);
   }
+  if (o.bench && !argv.includes('--engine')) o.engine = 'wasm';
   return o;
 }
 
@@ -251,11 +258,29 @@ function table(o, names, pairs, results) {
   return { text: lines.join('\n'), rows, matrix };
 }
 
+// --bench: the score of warrior 0 against each opponent, worst first.
+function benchTable(o, names, pairs, results) {
+  const rows = pairs.map((p, k) => {
+    const [w, l, t] = results[k].a;
+    return { name: names[p.b], w, l, t, score: 3 * w + t };
+  }).sort((x, y) => x.score - y.score || x.name.localeCompare(y.name));
+  const sum = rows.reduce((s, r) => ({ w: s.w + r.w, l: s.l + r.l, t: s.t + r.t, score: s.score + r.score }), { w: 0, l: 0, t: 0, score: 0 });
+  const width = Math.min(40, Math.max(...rows.map((r) => r.name.length), 8));
+  const per100 = (score, n) => ((100 * score) / (o.rounds * n)).toFixed(1).padStart(8);
+  const line = (name, r, n) => `${name.slice(0, width).padEnd(width)} ${per100(r.score, n)} ${String(r.w).padStart(6)} ${String(r.t).padStart(6)} ${String(r.l).padStart(6)}`;
+  const lines = [`${names[0]} against ${rows.length} warriors, ${o.rounds} rounds each`, '',
+    `${'opponent'.padEnd(width)} ${'per 100'.padStart(8)} ${'wins'.padStart(6)} ${'ties'.padStart(6)} ${'losses'.padStart(6)}`];
+  for (const r of rows) lines.push(line(r.name, r, 1));
+  lines.push('', line('total', sum, rows.length));
+  return { text: lines.join('\n'), rows, total: { ...sum, per100: (100 * sum.score) / (o.rounds * rows.length) } };
+}
+
 async function main() {
   const o = parseArgs(process.argv.slice(2));
   const all = collectFiles(o.files);
+  if (o.bench) all.unshift(o.bench);
   if (all.length < 2) {
-    console.error('usage: node tools/tournament.mjs <dir or .red files...> [--rounds N] [--jobs N] [--engine js|wasm] [--pmars path [--compare]] [--matrix] [--json file]');
+    console.error('usage: node tools/tournament.mjs <dir or .red files...> [--rounds N] [--jobs N] [--engine js|wasm] [--pmars path [--compare]] [--matrix] [--json file] [--bench warrior.red]');
     process.exit(2);
   }
   const files = [];
@@ -265,7 +290,9 @@ async function main() {
     const src = readFileSync(f, 'latin1');
     const w = assemble(src, { coreSize: o.size, maxLength: o.length, minDistance: o.distance, maxProcesses: o.processes, maxCycles: o.cycles, rounds: o.rounds, warriors: 2 });
     if (!w.ok || w.instructions.length === 0) {
-      console.error(`skipped ${f}: ${w.ok ? 'no instructions' : w.errors[0].text}`);
+      const why = w.ok ? 'no instructions' : w.errors[0].text;
+      if (o.bench && files.length === 0) { console.error(`${f}: ${why}`); process.exit(2); }
+      console.error(`skipped ${f}: ${why}`);
       continue;
     }
     files.push(f);
@@ -273,7 +300,7 @@ async function main() {
     names.push(`${w.name} (${basename(f)})`);
   }
   const pairs = [];
-  for (let a = 0; a < files.length; a++) {
+  for (let a = 0; a < (o.bench ? 1 : files.length); a++) {
     for (let b = a + 1; b < files.length; b++) pairs.push({ a, b, pos: pairPosition(o.seed, a, b, o) });
   }
   if (o.nativeInput) {
@@ -288,16 +315,18 @@ async function main() {
     const t0 = performance.now();
     const { results, instructions } = await runEngine(o, codes, pairs);
     const s = (performance.now() - t0) / 1000;
-    const t = table(o, names, pairs, results);
+    const t = o.bench ? benchTable(o, names, pairs, results) : table(o, names, pairs, results);
     console.log(t.text);
     console.error(`engine (${o.engine}): ${s.toFixed(2)} s, ${(instructions / 1e6).toFixed(0)}M instructions executed, ${(instructions / s / 1e6).toFixed(0)}M instructions/s`);
-    report = { engine: o.engine, seconds: s, instructions, ranking: t.rows, matrix: t.matrix, results };
+    report = o.bench
+      ? { engine: o.engine, seconds: s, instructions, opponents: t.rows, total: t.total, results }
+      : { engine: o.engine, seconds: s, instructions, ranking: t.rows, matrix: t.matrix, results };
   }
   if (o.pmars) {
     const t0 = performance.now();
     const { results } = await runPmars(o, files, pairs);
     const s = (performance.now() - t0) / 1000;
-    if (!o.compare) console.log(table(o, names, pairs, results).text);
+    if (!o.compare) console.log((o.bench ? benchTable : table)(o, names, pairs, results).text);
     console.error(`pMARS: ${s.toFixed(2)} s`);
     if (o.compare) {
       const bad = pairs.filter((p, k) => JSON.stringify(results[k].a) !== JSON.stringify(report.results[k].a));

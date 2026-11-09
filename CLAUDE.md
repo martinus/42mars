@@ -29,6 +29,7 @@ npm run serve                              # http://127.0.0.1:8000/, no build st
 tools/build-wasm.sh                        # after every change under src/engine/wasm/
 node tools/asm.mjs warriors/dwarf.red      # pMARS-style listing
 node tools/tournament.mjs $O/sets/t20 --rounds 100 --engine wasm --pmars $O/bin/pmars --compare
+node tools/tournament.mjs $O/corpus --bench warriors/seeker.red   # one warrior against a folder
 ```
 
 `O=${COREWAR_ORACLE:-$HOME/.local/share/corewar-theater}`: pMARS binaries, a 568-warrior corpus, tournament sets and corewar.dev timing scripts, outside the repo for license reasons. Its `README.md` lists everything. A missing or broken binary: ask Martin, do not build pMARS (needs its source).
