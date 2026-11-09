@@ -1,6 +1,6 @@
-# Core War Theater
+# 42mars
 
-A browser visualizer for [Core War](https://corewar.co.uk/), with a Redcode assembler and MARS simulator that reproduce pMARS 0.9.x behavior.
+A fast [Core War](https://corewar.co.uk/) simulator (MARS) with a Redcode assembler, both reproducing pMARS 0.9.x behavior, and Core War Theater, a browser visualizer built on them. MIT licensed.
 
 ```sh
 npm run serve          # http://127.0.0.1:8000/

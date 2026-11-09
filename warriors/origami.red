@@ -1,6 +1,6 @@
 ;redcode-94
 ;name Origami
-;author corewar-theater sample
+;author 42mars sample
 ;strategy Paper: eight processes copy the two-line body to a new place, split
 ;strategy into the copy and start over there. Each copy bombs while it works.
 ;assert CORESIZE == 8000

@@ -1,6 +1,6 @@
-# Core War Theater
+# 42mars
 
-Redcode assembler, MARS simulators and a WebGL2 visualizer, MIT licensed, by Martin Leitner-Ankerl.
+Redcode assembler, MARS simulators and Core War Theater, a WebGL2 visualizer, MIT licensed, by Martin Leitner-Ankerl. The GitHub repository was called `corewar-theater` until November 2026; the local data folder `$O` still has that name.
 
 Goals, in this order when they conflict:
 1. Same results as pMARS 0.9.5, quirks included: instruction count and final core of every round.

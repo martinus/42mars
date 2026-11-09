@@ -1,6 +1,6 @@
 ;redcode-94
 ;name Seeker
-;author corewar-theater sample
+;author 42mars sample
 ;strategy Scanner: compares two cells 4000 apart, stepping by 12. Where the
 ;strategy core is not empty it bombs both cells, then keeps looking. After a
 ;strategy full lap it clears the core, stopping short of itself.

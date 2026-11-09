@@ -1,7 +1,7 @@
 # The pull request loop
 
 The `gh` calls that take a change from a branch to a merged pull request and
-back onto `main`, in order. Repository: `martinus/corewar-theater`.
+back onto `main`, in order. Repository: `martinus/42mars`.
 
 1. **Branch and commit**: one branch per PR from `origin/main` (`git fetch origin main && git switch -c issue-<n>-<slug> origin/main`). Commit message `area: what changed`, then why and the numbers (see `git log`); no Claude attribution.
 2. **Push and create**: before the first push, compare the test count of `npm test` with `PLAN.md` and `README.md`. After a push, fix things in a new commit: the session may not force-push. `git push -u origin <branch>`, then `gh pr create --base main --head <branch> --title ... --body-file <file>`. Write the body to a file in the scratchpad first: the clean-room hook reads command text, and a body that names a blocked path or branch gets the command refused. The body lists the checks you ran with their results (pMARS checks, numbers before and after).
