@@ -5,8 +5,10 @@ Redcode assembler, MARS simulators and Core War Theater, a WebGL2 visualizer, MI
 Goals, in this order when they conflict:
 1. Same results as pMARS 0.9.5, quirks included: instruction count and final core of every round.
 2. The fastest MARS there is, measured on whole tournaments.
-3. A visualizer that is great to watch and gives expert warrior authors real information (see `.claude/rules/ui.md`).
+3. 42mars as a C library that others embed easily: C only, one public header, no global state, no hidden allocation, callable from any language. The public interface may break until 1.0.0. Roadmap: `PLAN.md`, "L: the 42mars library".
 4. Clean code, written clean-room.
+
+The visualizer is kept working and correct but not extended for now; it is meant to become the battle view of an evolver UI later (see `.claude/rules/ui.md`).
 
 ## Clean room
 

@@ -15,6 +15,7 @@
 1. Parse every warrior that pMARS 0.9.x parses, with the same instructions, start offset and errors.
 2. Run battles with the same result as pMARS for the same start positions.
 3. Show what happens in the core well enough that a newcomer can see the strategy: bombing, scanning, replication, clears, imps. And it should look good while doing it.
+4. Make the simulator and the assembler a C library, 42mars, that other projects embed easily: evolvers, optimizers, hill servers, other visualizers.
 
 ## Architecture
 
@@ -202,6 +203,19 @@ The aim is that somebody who has never seen Core War can work out what a warrior
 
 ## Roadmap
 
+The current focus is the library (L). M1 stays, because a library has to score exactly like the hills. M2 to M4 are parked: the visualizer is kept working, and it is meant to come back as the battle view of an evolver UI.
+
+### L: the 42mars library
+
+A C library, a pMARS-compatible command line program and an npm package. C only (C11, no C++), so that every language can call it and the WebAssembly build needs no standard library. The public interface may break until 1.0.0.
+
+- L1 (#53), measure first: the cost of a context object instead of global state (core, queues and warriors at fixed addresses were a measured win in wasm), natively and in wasm, with `tools/ab-native.mjs` and `tools/ab-wasm.mjs`.
+- L2 (#54), assembler in C: a port of `expr.js` and `assembler.js` with every pMARS quirk, checked against `test/fixtures` (4031 expressions, 146 snippets), against `tools/asm.mjs` listings of the corpus, and with `tools/pmars-diff.mjs`.
+- L3 (#55), the public header `42mars.h`: rules, `m42_assemble`, `m42_match`, `m42_bench` (one warrior against many, for evolvers), a step interface for visualizers and debuggers, p-space kept by the caller between calls (#48), error codes with line numbers, `m42_version`. Binding-friendly: opaque handles, fixed-width fields, no callbacks in the hot path, no varargs, memory from the caller.
+- L4 (#56), the `42mars` command line program with pMARS's flags and output (`-b -k -r -F -s -c -p -l -d`), so that tools that call pMARS can call it, and `tools/pmars-diff.mjs` can compare the two directly.
+- L5 (#57), packaging: a `Makefile` (and CMake if asked), release archives, the npm package with `mars.wasm` and the JS interface.
+- Later: a Python binding once the interface is close to 1.0.0, other languages on request. Then an evolver on top of `m42_bench`, with a UI that reuses the visualizer.
+
 ### M1: engine parity
 
 - Read/write limits, `-P` permutation, `'88` strict mode, each checked with `tools/pmars-diff.mjs`.
@@ -243,5 +257,7 @@ Information that pMARS's display does not give, with exact numbers:
 - Color-blind safe palette option, reduced motion option, better phone layout.
 
 ## Open decisions
+
+- The evolver's name, once work on it starts.
 
 - The sample warriors in `warriors/` are written for this repository, except Imp and Dwarf, which are the classic examples from Dewdney's 1984 article. Hill warriors are not included because their licenses are unclear. The UI loads them by drag and drop.
