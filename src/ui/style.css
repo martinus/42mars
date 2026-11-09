@@ -122,6 +122,13 @@ main {
 .sw.flash { background: #fff; box-shadow: 0 0 6px #fff; }
 .sw.proc { background: radial-gradient(circle, #fff 0 30%, #ffc53d 31% 60%, transparent 61%); }
 .sw.read { border: 1.5px solid #5aa6ff; }
+.sw.seen { background:
+  linear-gradient(#8a90a8, #8a90a8) 0 0 / 4px 1.5px, linear-gradient(#8a90a8, #8a90a8) 0 0 / 1.5px 4px,
+  linear-gradient(#8a90a8, #8a90a8) 100% 0 / 4px 1.5px, linear-gradient(#8a90a8, #8a90a8) 100% 0 / 1.5px 4px,
+  linear-gradient(#8a90a8, #8a90a8) 0 100% / 4px 1.5px, linear-gradient(#8a90a8, #8a90a8) 0 100% / 1.5px 4px,
+  linear-gradient(#8a90a8, #8a90a8) 100% 100% / 4px 1.5px, linear-gradient(#8a90a8, #8a90a8) 100% 100% / 1.5px 4px;
+  background-repeat: no-repeat; border-radius: 0; }
+.sw.bump { color: #8a90a8; font: bold 12px/10px monospace; text-align: center; }
 
 .tooltip {
   position: absolute;

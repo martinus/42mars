@@ -49,6 +49,7 @@ const state = {
   speedIdx: 11,
   acc: 0,
   layoutKind: LAYOUT_RING,
+  footprints: true, // F: who read, executed, bumped each cell this round
   layout: null,
   dpr: 1,
   hover: -1,
@@ -291,6 +292,7 @@ function updateTextures() {
     B[j] = heatR[i] * 255;
     B[j + 1] = m.execBy[i] + 1;
     B[j + 2] = 0;
+    B[j + 3] = state.footprints ? (m.readBy[i] + 1) | ((m.bump[i] + 1) << 4) : 0;
   }
   for (const w of m.warriors) {
     if (!w.tasks) continue;
@@ -819,6 +821,7 @@ function wire() {
     else if (e.key === 'l' || e.key === 'L') { state.layoutKind = 1 - state.layoutKind; relayout(); }
     else if (e.key === ']' || e.key === '+') setSpeed(state.speedIdx + 1);
     else if (e.key === '[' || e.key === '-') setSpeed(state.speedIdx - 1);
+    else if (e.key === 'f' || e.key === 'F') state.footprints = !state.footprints;
     else if (e.key === '?') $('guide').showModal();
   });
 
@@ -849,6 +852,7 @@ async function main() {
   const cast = (params.get('cast') || DEFAULT_CAST.join(',')).split(',').filter((k) => state.library.has(k));
   (cast.length ? cast : DEFAULT_CAST).forEach((k, i) => setSlot(i, k));
   if (params.get('layout') === 'grid') state.layoutKind = LAYOUT_GRID;
+  if (params.get('footprints') === '0') state.footprints = false;
   if (params.has('speed')) setSpeed(Number(params.get('speed')));
   if (params.has('rounds')) { state.rounds = Number(params.get('rounds')) || 10; $('rounds').value = state.rounds; }
   if (params.get('preset') in PRESETS) { state.preset = params.get('preset'); $('preset').value = state.preset; }

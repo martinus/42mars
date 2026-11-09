@@ -759,7 +759,12 @@ The current warrior W takes the process at the head of its queue: PC.
 - `MOV.I` copies `origin` from the A pointer cell to the B pointer cell.
   No other instruction changes `origin`.
 - `tRead` is set for the A pointer when the A mode is not `#`, and for the B
-  pointer for `CMP`, `SEQ`, `SNE`, `SLT`.
+  pointer for `CMP`, `SEQ`, `SNE`, `SLT`; `readBy` of that cell becomes W.
+- `bump` holds the kind of the last store into a cell: +1 for the increment
+  of a `>` or `}` operand, -1 for the decrement of a `<` or `{` operand, 0
+  for a store of step 4 (including `DJN` decrements). Within one instruction
+  the A operand's change comes first, then the B operand's, then step 4.
+- `readBy` is -1 and `bump` 0 for every cell at round start.
 
 ### 3.5 Performance
 
@@ -769,8 +774,8 @@ without visualizer bookkeeping, `--wasm` and `--wasm-match` for the
 WebAssembly engine (3.7); `tools/bench-native.mjs` runs the same C code
 natively. In headless mode the core, the queues, the
 events, the scores and all round results are the same as with bookkeeping;
-`owner`, `execBy`, `origin`, the timestamps, `territory`, `execHeat` and the
-trace are not updated.
+`owner`, `execBy`, `readBy`, `bump`, `origin`, the timestamps, `territory`,
+`execHeat` and the trace are not updated.
 
 ### 3.6 Trace ring buffer
 
