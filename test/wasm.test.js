@@ -10,7 +10,7 @@ import assert from 'node:assert/strict';
 import { readFileSync, existsSync } from 'node:fs';
 import { assemble } from '../src/engine/assembler.js';
 import { Mars, rng } from '../src/engine/mars.js';
-import { compileWasmMars, createWasmMars, createWasmMarsSync } from '../src/engine/mars-wasm.js';
+import { compileWasmMars, createWasmMars, createWasmMarsSync, packWarrior } from '../src/engine/mars-wasm.js';
 
 const module = await compileWasmMars();
 
@@ -253,6 +253,35 @@ test('runMatch in blocks with firstRound gives the rounds of the whole match whe
   const odd = createWasmMarsSync({}, module).runMatch(codes, { rounds: 2, seed: 7, firstRound: 1 });
   assert.deepEqual(odd.results.map((r) => [r.round, r.survivors.length]), [[2, 2], [3, 1]]);
   assert.throws(() => createWasmMarsSync({}, module).runMatch(codes, { rounds: 2, firstRound: -1 }), RangeError);
+});
+
+// packWarrior() prepares a warrior once; the engine copies it in one block.
+// tools/tournament.mjs keeps the packed warriors of all threads in one
+// SharedArrayBuffer.
+test('packed warriors play like the warriors they were packed from', () => {
+  for (const o of [RULES[1], RULES[4], RULES[6]]) {
+    for (const nw of [1, 2, 3]) {
+      if (nw * o.minDistance > o.coreSize) continue;
+      const codes = Array.from({ length: nw }, () => warrior(randomWarrior(1 + rand(o.maxLength - 1), o.coreSize, { loop: rand(2) === 0 }), { ...o, warriors: nw }));
+      codes[0].pin = 7; // a shared p-space when there is a second warrior with it
+      if (nw > 1) codes[nw - 1].pin = 7;
+      const shared = new Int32Array(new SharedArrayBuffer(4 * 5 * o.maxLength * nw));
+      let at = 0;
+      const packed = codes.map((c, i) => {
+        if (i === 0) return packWarrior(c);
+        const p = packWarrior(c, shared.subarray(at, at + 5 * c.instructions.length));
+        at += p.packed.length;
+        return p;
+      });
+      const seed = rand(2147483646) + 1;
+      const plain = createWasmMarsSync(o, module).runMatch(codes, { rounds: 5, seed, earlyTie: false });
+      const m = createWasmMarsSync(o, module);
+      assert.deepEqual(m.runMatch(packed, { rounds: 5, seed, earlyTie: false }), plain, `${JSON.stringify(o)} ${nw} warriors seed ${seed}`);
+      assert.deepEqual(m.warriors.map((w) => [...w.pspace]), (() => { const q = createWasmMarsSync(o, module); q.runMatch(codes, { rounds: 5, seed, earlyTie: false }); return q.warriors.map((w) => [...w.pspace]); })());
+    }
+  }
+  const long = packWarrior(warrior('jmp 0\n'.repeat(5)));
+  assert.throws(() => createWasmMarsSync({ maxLength: 4 }, module).runMatch([long, long], { rounds: 1 }), /longer than 4/);
 });
 
 test('targeted: maxCycles 0, a single warrior, empty warriors and fractional run counts', () => {

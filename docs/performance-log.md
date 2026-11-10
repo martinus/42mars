@@ -1102,6 +1102,117 @@ army/bananasplit 347 vs 188 (1.84x to 1.86x); `main` on the same day ran
 without tie rounds 374 vs 671 ms (1.79x to 1.81x), with tie rounds 3,157
 vs 5,484 ms (1.73x to 1.74x).
 
+### Fifth round: the tournament scheduler, and four engine ideas that did not pay (10th November 2026)
+
+Same machine, Node 22.22.2, clang 22.1.8. The machine ran about 15% faster
+in this session than in the fourth round's on the same day (bench 359
+instead of 310M/s for the same `mars.wasm`, t20 3.03 instead of 3.60 s), for
+an unknown reason. So every number here is an A/B inside this session, and
+the "State" lines above stay as they are. Load average 1 to 5 from the
+runs themselves.
+
+#### `tools/tournament.mjs`: one shared task list, kept
+
+Measured first, with a timer in a copy of the tool:
+
+| Measurement | Result |
+|---|---|
+| Worker start in the old tool, one warrior against the corpus (`--bench`, 565 warriors, 200 rounds) | 220 ms for 32 workers and 115 ms for 16 before the first task was sent: every `new Worker` cloned all warriors (`workerData`). t80 (80 warriors): 40 ms |
+| Node's own worker start, empty workers | the 31 constructors take 10 ms together, all 31 run after 82 to 111 ms; 15 after 53 ms, 4 after 31 ms |
+| First result per worker, old tool | 27 to 122 ms after the last constructor |
+| Tail, t80 with 32 jobs | the first worker ran out of tasks 77 ms before the end of 2,814 ms; longest task 171 ms |
+| Second hardware thread per core, t80 | 16 jobs 48.3 CPU-s in 3.12 s, 32 jobs 85.2 CPU-s in 2.81 s: 76% more CPU time for 11% more throughput |
+| One `runMatch` call without rounds | 1.3 us; with `firstRound` 990 (the generator steps 990 times) 6.6 us. 8 rounds take about 1,100 us |
+
+The new scheduler: the tasks, the results and the warriors (packed, see
+below) are in one `SharedArrayBuffer`. Every thread takes the next task
+with `Atomics.add` and writes its result into the buffer, so no thread
+waits for a message. The main thread takes tasks too and is one of the
+`--jobs` (default now all hardware threads instead of all but one). The
+run ends when the last task is done; workers that have not started by
+then are terminated. `--jobs 31` used to mean 31 workers next to a waiting
+main thread and now means 31 threads in all. With the wasm engine every pairing without `LDP` is
+split into blocks of about 8 rounds, always, not only with few pairings
+per job: the blocks cost 1.3 us each and the tail shrinks to one block.
+Pairings with `LDP` stay whole and come first.
+
+`packWarrior()` in `mars-wasm.js` turns a warrior into the 5 integers per
+instruction that `mars_config()`'s load area takes, and `load()` copies a
+packed warrior with one `set()`. The tournament keeps all packed warriors
+in the shared buffer.
+
+Old tool against new, alternating, fresh process per run, 5 runs (7 for the
+two short ones), engine time as the tool prints it, median (range), seconds:
+
+| Workload | old | new | change |
+|---|---|---|---|
+| t80, 16 jobs | 3.15 (3.11–3.18) | 3.09 (3.07–3.12) | -1.9% |
+| t80, 32 jobs | 2.86 (2.85–2.88) | 2.84 (2.83–2.85) | -0.7% |
+| `agony.red` against the corpus, 200 rounds, 32 jobs | 1.36 (1.36–1.37) | 1.21 (1.20–1.21) | -11.0% |
+| the same, 16 jobs | 1.32 (1.31–1.33) | 1.23 (1.22–1.24) | -6.8% |
+| t20, 1 job (no worker anymore) | 3.08 (3.04–3.09) | 3.00 (2.99–3.02) | -2.6% |
+| t20, 32 jobs | 0.30 (0.30–0.31) | 0.26 (0.25–0.26) | -13% |
+| t80, `--rounds 1`, 32 jobs | 0.13 (0.12–0.14) | 0.11 (0.11–0.13) | -15% |
+| `agony.red` against `bubbles.red`, 1,000 rounds, 32 jobs | 0.12 (0.12–0.13) | 0.07 (0.07–0.09) | -42% |
+| t20, `--engine js`, 32 jobs | 1.61 (1.53–1.70) | 1.67 (1.62–1.70) | +3.7%, ranges overlap, 9 runs |
+| t20, `--engine js`, 8 jobs | 2.00 (1.99–2.02) | 1.99 (1.97–2.02) | -0.5% |
+
+The wall time of the whole process is 90 to 120 ms more in every row
+(Node start, assembly, output) and did not change. The JS engine plays
+whole pairings only, so 190 tasks on 32 threads end unevenly, with or
+without the change. Results: the tables of every row are byte-identical to
+the old tool's, and `--pmars --compare` gives SAME on t20 (seed 4711), t80
+and `agony.red` against the corpus (565 pairings, 50 rounds).
+
+What is left of the fixed cost is Node's worker start, about 100 ms for 31
+workers. A caller that runs many short tournaments in one process (an
+evolver) needs a pool that stays alive; the tool starts its workers anew
+on every run.
+
+#### Engine ideas, all rejected
+
+| Idea | Result | Verdict |
+|---|---|---|
+| Short linear queues: `run_some()` runs chunks of 8,192 pairs of turns and moves the live queue entries back to the start between chunks, so a round touches about 32 KB of queue memory instead of up to 640 KB. The aim was the second hardware thread: two engines on one core share the 1 MB L2 cache | `tools/ab-wasm.mjs`, 5 runs: bench 359.0 → 350.6 (-2.3%), pairs 354.5 → 347.5 (-2.0%), t20 3.04 → 3.12 (+2.6%), t80 16 jobs 3.10 → 3.16 (+1.9%), 31 jobs 2.85 → 2.89 (+1.4%). Module 49,573 bytes | rejected. The queues are not what limits the second thread; the wasm code runs at 4.1 instructions per cycle on one thread already (61.3 / 14.9) |
+| Exact early tie for two warriors in closed loops (#35), built and measured. A traced loop (`loop_run()`, the generic `exec_ins()` plus a hook) notes per warrior the cells it reads and writes and what a cell held at its first read. A warrior repeats when its queue and all cells it read are as at the start of the attempt. Both repeat and neither wrote a cell the other read: tie. It gives up before a `DAT`, `DIV`, `MOD` or `STP`, at more than 32 read cells, and when one writes what the other read. Attempts only when both have at most 8 processes, 24,000 instructions each, the wait doubles after a failure | Share of the instructions it saves: t80 0.71% (first attempt after 50,000 instructions) to 0.88% (after 12,000, no growing wait), 400 corpus pairs 1.56% to 2.1%, t20 0.08%, against ceilings of 3.02%, 5.15% and 0.61% (#35). It traces 0.2 to 1.0 instructions per saved one. Reasons to give up on t80 (first attempt at 12,000, 76,925 attempts): 20,658 a `DAT` ahead, 15,568 too many cells read, 19,243 a cell read after its own write, 15,555 a write into a cell the other read (64.7M of the 121M traced instructions), 3,609 a read of a cell the other wrote, 1,023 window over, 1,269 proven. Native (`bench-native --early-tie`, alternating): first attempt at 50,000: pairs 1,592 → 1,582 ms (-0.6%, 5 runs), t80 37.02 → 36.87 s (-0.4%, 3 runs). wasm, first attempt at 12,000 (`ab-wasm.mjs`): t80 16 jobs 3.03 → 3.07 (+1.3%), 31 jobs 2.80 → 2.83 (+1.1%), 7 runs, ranges apart; pairs with `--early-tie` 1,907 → 1,886 ms (-1.1%, 5 runs, ranges overlap); bench, pairs and t20 unchanged. Module 55,341 bytes instead of 49,171 | rejected: a traced instruction costs about 3.5 normal ones in V8, so the 0.7% of t80 it saves are gone, and natively 0.5% do not pay for 130 lines with a proof to maintain. The share is what such a proof gets in practice: most closed rounds of the ceiling do not repeat a small state in time. The patch is not in the repository |
+| The same idea with a copy of the whole core per attempt instead of the content at the first read | 72 KB copied and cleared per attempt, 92,400 attempts on t80; in wasm the pairs with `--early-tie` showed no gain at all (1,871 to 1,889 ms without, 1,873 to 1,903 ms with it) | replaced by the row above |
+| More specialized instruction words natively: 48, 64 and 96 cases instead of 32, ranked on t20, t80, 400 corpus pairs and the bench with early ties (96 cases cover 99.7% of the executions) | native, 3 alternating runs, M/s: t20 430.0 → 429.6 (48), 422.0 (64), 400.6 (96); pairs 411.3 → 411.6, 404.7, 388.1 | rejected: as in wasm, the larger loop costs more than the generic path |
+
+Two things learned on the way:
+
+* A new function or static in front of the hot loops changes them: the
+  first detector build moved function indices and data addresses, and the
+  bench, which never runs the detector, lost 1.1% (pairs 1.6%, t20 1.7%).
+  With the new code and its statics behind everything else, `execute()`,
+  `execute2_8000()` and `execute2_any()` differed from `main` in one byte
+  (a call index), and bench, pairs and t20 were back within noise. To
+  check, compare the bodies of the code section of both modules function
+  by function.
+* The first two native runs of the detector looked 1.3% and 2.9% faster.
+  That was the build with the statistics counters; the clean build gains
+  0.4% and 0.6%.
+
+#### A context object instead of globals, first numbers for #53
+
+Not a decision, the numbers for L1. A script turned every global of
+`mars.c` (rules, counters, `war`, the core and both queues) into a field of
+one struct and gave every function `Mars *const m = <context>` as its first
+line; `execute2()` reads `m` once per call. Native, `clang -O3
+-march=native`, 5 alternating runs with early ties, median M/s:
+
+| Input | globals (`main`) | context through a pointer | the struct at a fixed address |
+|---|---|---|---|
+| t20 | 432.7 | 408.3 (-5.6%) | 429.1 (-0.8%) |
+| 400 corpus pairs | 410.8 | 385.2 (-6.2%) | 405.9 (-1.2%) |
+| bench, 2000 rounds | 508.8 | 481.3 (-5.4%) | 501.8 (-1.4%) |
+
+Per simulated instruction on t20 (`perf stat`): globals 45.23 x86
+instructions, 12.29 cycles, 7.09 branches, 8.14 loads; pointer 46.64,
+12.95, 7.47, 8.68; fixed address 46.03, 12.46, 7.23, 8.53. The pointer
+build runs 0.4 more branches per simulated instruction, so clang compiles
+the loop differently, not only with one more base register. Why was not
+looked up in the code. Not measured in wasm.
+
 ## Ideas from other simulators
 
 exMARS (Martin Ankerl, 2003, based on exhaust and pMARS) and the exMARS fork
