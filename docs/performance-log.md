@@ -1211,7 +1211,74 @@ instructions, 12.29 cycles, 7.09 branches, 8.14 loads; pointer 46.64,
 12.95, 7.47, 8.68; fixed address 46.03, 12.46, 7.23, 8.53. The pointer
 build runs 0.4 more branches per simulated instruction, so clang compiles
 the loop differently, not only with one more base register. Why was not
-looked up in the code. Not measured in wasm.
+looked up in the code. Not measured in wasm. The measurement with the code
+that is kept follows in the next section.
+
+### A context object: one per module at a fixed address, no loss (10th November 2026, #53)
+
+`mars.c` now keeps all state in one `struct Mars`, and every function takes
+`Mars *const m` as its first parameter. The exports call them with `CTX`.
+Two builds of the same file:
+
+* **fixed address** (the default, and the only wasm build): one `static Mars
+  theMars`, `CTX` is `&theMars`. The core and the two static queues stay
+  separate static arrays outside the struct, reached through `CORE(m)` and
+  `QUEUES(m)`. clang propagates the constant context into every static
+  function, so the hot loops address everything with constant offsets, as
+  with the globals before.
+* **pointer** (`-DMARS_CONTEXT_POINTER`, measurement only): the context is at
+  the start of the heap and its address comes from a `volatile`, so clang
+  cannot know it, as for a library whose caller passes the context in. The
+  core and the queues are in the struct. `execute()` and `execute2()` load
+  core, queues, core size, mask and limit into locals at entry, as before.
+
+Wasm, `tools/ab-wasm.mjs` against `main` (`b7c421a`), median and range,
+bench and pairs in M/s, tournaments in s:
+
+| Measure | `main` | pointer | `main` | fixed address |
+|---|---|---|---|---|
+| bench (n=7, 11) | 362.6 (353.9–368.9) | 340.9 (329.5–348.7), -6.0% | 364.4 (351.7–373.0) | 367.6 (355.2–375.7), +0.9% |
+| pairs (n=7, 11) | 356.3 (352.5–362.8) | 340.9 (337.8–346.2), -4.3% | 359.2 (357.8–364.0) | 356.0 (349.9–360.8), -0.9% |
+| t20 (n=7, 11) | 2.99 (2.96–2.99) | 3.16 (3.11–3.20), +5.7% | 2.97 (2.96–3.01) | 2.98 (2.95–3.02), +0.3% |
+| t80, 16 jobs (n=5) | 2.94 (2.94–2.96) | 3.10 (3.09–3.12), +5.4% | 2.94 (2.92–2.95) | 2.95 (2.93–2.95), +0.3% |
+| t80, 31 jobs (n=5) | 2.72 (2.70–2.76) | 2.84 (2.83–2.86), +4.4% | 2.71 (2.69–2.72) | 2.70 (2.69–2.72), -0.4% |
+
+Native, `tools/ab-native.mjs`, `clang -O3 -march=native`, 5 alternating
+runs, M/s; t20 and t80 with early ties from `--native-input`:
+
+| Input | `main` | fixed address | `main` | pointer |
+|---|---|---|---|---|
+| bench | 501.4 (496.8–504.5) | 514.4 (507.7–518.3), +2.6% | 511.4 (483.3–513.9) | 493.8 (484.1–499.0), -3.4% |
+| t20 | 439.4 (436.9–442.1) | 442.8 (441.2–443.5), +0.8% | 439.2 (434.7–441.9) | 432.8 (431.5–435.3), -1.5% |
+| t80 | 445.6 (443.9–449.6) | 451.6 (450.9–453.3), +1.3% | 446.6 (446.1–447.3) | 442.9 (436.5–445.3), -0.8% |
+
+The pointer costs 4 to 6% in wasm. Every core and queue access then needs an
+`i32.add` of the base, wasm has no base plus scaled index addressing.
+Natively it costs 1 to 3%, less than the 5 to 6% of the first try above.
+That try had the core in front of the queues in the struct, and two layout
+details decided most of the difference:
+
+* **Queues in front of the core.** With the core first, clang addressed
+  warrior 0's queue from warrior 1's with a negative offset, which wasm
+  cannot fold into the load: one more `i32.add` per pop in
+  `execute2_8000()`. With the queues first that add is gone.
+* **Core and queues outside the struct in the fixed build.** With all three
+  arrays in the static struct, bench and pairs were equal to `main`, but t20
+  was +2.0% (n=7) and +1.4% (n=15): clang ordered loads and stores in
+  `execute2_8000()` differently, about 140 instructions moved. With
+  separate arrays `execute2_8000()` differs from `main` in one load, the
+  order of the local declarations and `roundOver` read as a byte. The
+  numbers above are for this build.
+
+Also tried, pointer build: `restrict` on the core and queue pointers of
+`execute2()`, bench +1.0%, t20 +0.4% against the pointer build, within the
+ranges of the runs. Rejected.
+
+Decision: the wasm module keeps one context at a fixed address, which is how
+the workers use it anyway, one module per worker. The native build and
+`bench-native.c` use the same. A native library with several contexts in
+one process needs the pointer form and pays 1 to 3% for it, measured here;
+whether L3 (`42mars.h`) takes that or offers both forms is decided there.
 
 ## Ideas from other simulators
 
