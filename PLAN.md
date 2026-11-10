@@ -6,7 +6,7 @@
 - pMARS's own `validate.red` self-ties for all 80,000 cycles, which it only does on a MARS with ICWS'88 semantics and in-register evaluation.
 - A differential test against a pMARS 0.9.5 binary finds no difference: all 567 corpus listings, thousands of random expressions and sources, and 9,600 battles per run where the instruction count and a hash of the whole core after every round are equal. See [Validation](#validation).
 - 263 tests, `npm test`.
-- A WebAssembly simulator for tournaments runs about 295M instructions/s in a single thread, about 3.2 times pMARS and, warmed up, 1.7 times the exMARS build on [corewar.dev](https://corewar.dev/). A round-robin tournament of 80 hill warriors (3,160 pairings, 100 rounds each) takes 3.28 s on 16 cores, against 5.4 s for corewar.dev's exMARS and 10.8 s for parallel pMARS processes (details under [Speed](#speed)).
+- A WebAssembly simulator for tournaments runs about 310M instructions/s in a single thread, about 3.4 times pMARS and, warmed up, 1.8 times the exMARS build on [corewar.dev](https://corewar.dev/). A round-robin tournament of 80 hill warriors (3,160 pairings, 100 rounds each) takes 2.96 s on 16 cores, against 5.4 s for corewar.dev's exMARS and 10.8 s for parallel pMARS processes (details under [Speed](#speed)).
 - The JavaScript simulator used by the visualizer does about 40M instructions/s with its bookkeeping, 61M/s headless.
 - Thanks to the differential test, a few pMARS quirks are now reproduced too, e.g. a pMARS buffer bug that turns `dat#9` at the end of a line into `dat #90` in one hill warrior.
 
@@ -37,7 +37,7 @@ src/ui/app.js ──> renderer.js (WebGL2 cells + bloom)   overlay.js (arcs, tag
 | `src/engine/assembler.js` | `readSource` splits lines and reads `;name`, `;assert` etc., `Expander` does pass 1 (labels, `EQU`, `FOR`/`ROF`, asserts), `StatementParser` does pass 2 (operands, modes, modifiers, values). |
 | `src/engine/mars.js` | Simulator. One allocation-free loop specialized on the opcode byte, flat process queues, all per-cell arrays as views into three shared buffers, optional `headless` mode without visualizer bookkeeping. |
 | `src/engine/opcodes.js` | Opcode tables, formatting, pMARS-style listing. |
-| `src/engine/wasm/mars.c`, `mars.wasm` | Headless simulator in C, compiled with clang to a 51 KB WebAssembly module without imports. The `.wasm` is committed, `tools/build-wasm.sh` rebuilds it byte-identically (it first regenerates `dispatch.h` with `tools/gen-dispatch.mjs`). |
+| `src/engine/wasm/mars.c`, `mars.wasm` | Headless simulator in C, compiled with clang to a 49 KB WebAssembly module without imports. The `.wasm` is committed, `tools/build-wasm.sh` rebuilds it byte-identically (it first regenerates `dispatch.h` with `tools/gen-dispatch.mjs`). |
 | `src/engine/mars-wasm.js` | JavaScript glue: `createWasmMars()` with the step API (`load`, `startRound`, `run`) and `runMatch()` for a whole match inside WebAssembly. |
 | `src/ui/*` | Visualizer. No dependencies, no build step, plain ES modules. |
 | `docs/redcode-semantics.md` | The behavior the engine implements, in prose. |
@@ -123,29 +123,29 @@ Single thread, `node tools/bench.mjs <corpus>`: 3 hill pairs, 200 rounds each, 2
 
 | Engine | M instructions/s |
 |---|---|
-| ours, WebAssembly, `runMatch` | 296.2 (286.3 to 299.2) |
-| ours, WebAssembly, step API (`run()` from JS) | 297.3 (291.7 to 298.3) |
-| same C natively (`clang -O3 -march=native`, `tools/bench-native.mjs`) | about 400 to 416 |
+| ours, WebAssembly, `runMatch` | 310.1 (309.3 to 311.7) |
+| ours, WebAssembly, step API (`run()` from JS) | 309.7 (308.0 to 311.8) |
+| same C natively (`clang -O3 -march=native`, `tools/bench-native.mjs`) | about 420 |
 | [corewar.dev](https://corewar.dev/) exMARS build (WebAssembly) | 132.3 (131.4 to 132.8); warmed up 186 to 190 |
 | pMARS 0.9.5 native, `-O2` | 90.7 (87.2 to 90.7) |
 | ours, JavaScript, `headless: true` | 61.4 (59.6 to 63.4) |
 | corewar.dev pMARS build (WebAssembly) | 51.6 (45.7 to 52.8) |
 | ours, JavaScript with visualizer bookkeeping | about 40 |
 
-All engines play the same battles with the same results. The corewar.dev numbers come from driving their published modules (`exmars.mjs`, `engine.mjs`) from Node with the warriors already loaded; that harness is not in this repository because their code is GPL. The JS benchmark is short enough that JIT warm-up is part of it: warmed up, the JS engine reaches about 51M/s with bookkeeping and 75 to 80M/s headless. The same holds for the WebAssembly engines: each run takes 80 to 170 ms and includes V8's tier-up. Warmed up (each bench pair timed alone, best of 5) ours runs 311 to 334M/s and exMARS 144 to 195M/s, 1.7 to 2.2 times; on the tournament warriors the warmed-up ratio is 1.7 (`docs/performance-log.md`, "Measurements after the second round").
+All engines play the same battles with the same results. The corewar.dev numbers come from driving their published modules (`exmars.mjs`, `engine.mjs`) from Node with the warriors already loaded; that harness is not in this repository because their code is GPL. The JS benchmark is short enough that JIT warm-up is part of it: warmed up, the JS engine reaches about 51M/s with bookkeeping and 75 to 80M/s headless. The same holds for the WebAssembly engines: each run takes 80 to 170 ms and includes V8's tier-up. Warmed up (each bench pair timed alone, best of 5) ours runs 323 to 347M/s and exMARS 143 to 192M/s, 1.8 to 2.3 times; on the tournament warriors the warmed-up ratio is 1.7 to 1.8 (`docs/performance-log.md`, the state at the end of the fourth round). The two WebAssembly rows and these warmed-up numbers are from 10th November 2026, after the fourth round; the other rows are older. The fourth round made the native build 2 to 3% slower (436 before it on the same day).
 
-Single thread on a tournament mix, all 190 pairings of the first 20 corpus warriors, 100 rounds each: ours 3.84 s, corewar.dev exMARS 6.14 s (exMARS measured before the third round; ours 4.13 s then, faster in every one of the 190 pairings by at least 20%).
+Single thread on a tournament mix, all 190 pairings of the first 20 corpus warriors, 100 rounds each: ours 3.60 s, corewar.dev exMARS 6.14 s (exMARS measured before the third round; ours 4.13 s then, faster in every one of the 190 pairings by at least 20%).
 
 Round robin of 80 corpus warriors, 3,160 pairings × 100 rounds, `node tools/tournament.mjs <dir> --rounds 100 --jobs N`, results compared pairing by pairing:
 
 | Engine | 16 jobs | 31 jobs |
 |---|---|---|
-| ours, WebAssembly (`--engine wasm`) | 3.63 s | 3.28 s |
+| ours, WebAssembly (`--engine wasm`) | 3.31 s | 2.96 s |
 | corewar.dev exMARS, one fighter per worker thread as on the site | 6.0 to 6.5 s | 5.4 s |
 | pMARS 0.9.5, parallel processes (`--pmars`) | 12.8 s | 10.8 s |
 | ours, JavaScript (`--engine js`) | 15.3 s | 13.2 s |
 
-Ours measured on 8th November 2026, after the third round (`docs/performance-log.md`); the same day before it: 3.98 s and 3.57 s. Every engine gives the same wins, losses and ties in all 3,160 pairings. The machine has 16 cores with 2 hardware threads each; the second thread per core adds about 11% for the WebAssembly engine.
+Ours measured on 10th November 2026, after the fourth round (`docs/performance-log.md`); the same day before it: 3.46 s and 3.11 s. The other engines were measured earlier. Every engine gives the same wins, losses and ties in all 3,160 pairings. The machine has 16 cores with 2 hardware threads each; the second thread per core adds about 11% for the WebAssembly engine.
 
 Against [rmars](https://github.com/clrsrc/rmars) (Rust, pMARS 0.9.6-dev semantics, commit 215fadc, release build with fat LTO; "native" adds `target-cpu=native`), through its Python module with its own thread pool. Both engines play the same rounds: rmars's pairings and start positions (pMARS `-f` checksum seeds), 100 rounds, 5 runs each, median:
 
@@ -161,7 +161,7 @@ Single thread that is 177M (rmars), 184M (native) and 304M (ours without early t
 What made it fast:
 
 - The JavaScript engine: all per-cell arrays of one element type in one buffer (the loop touches 3 typed arrays instead of 15), one inlined loop, flat process queues, specialization on the opcode byte.
-- The WebAssembly engine: an 8-byte packed cell, dispatch on the opcode byte, the common modes `$` and `#` tested first, a fast path for `MOV.I`, B values read only where an instruction needs them, a separate loop for two warriors with both queues in locals, a copy of the instruction code for each of the 32 most executed instruction words (generated, `tools/gen-dispatch.mjs`), the standard core size and process limit as constants, the core and queues at fixed addresses, `-Os`, `MOV.I` as one 64-bit copy of the A cell read at operand time, and for two warriors queues long enough for a whole round, so no index needs a wraparound mask. `docs/performance-log.md` has every idea that was tried, with numbers, including the ones that did not help: one generated case for every one of the 8,512 instruction words was 8 times slower in WebAssembly and 40% slower natively.
+- The WebAssembly engine: an 8-byte packed cell, dispatch on the opcode byte, the common modes `$` and `#` tested first, a fast path for `MOV.I`, B values read only where an instruction needs them, a separate loop for two warriors with both queues in locals, a copy of the instruction code for each of the 32 most executed instruction words (generated, `tools/gen-dispatch.mjs`), the standard core size and process limit as constants, the core and queues at fixed addresses, `-Os`, `MOV.I` as one 64-bit copy of the A cell read at operand time, and for two warriors queues long enough for a whole round, so no index needs a wraparound mask, with one head for both queues: the loop runs a pair of turns per pass and carries 3 counters instead of 5. `docs/performance-log.md` has every idea that was tried, with numbers, including the ones that did not help: one generated case for every one of the 8,512 instruction words was 8 times slower in WebAssembly and 40% slower natively.
 - Early ties in `runMatch` (results only, not the final core): a round stops when no warrior can lose its last process in the remaining budget, or when the core holds no `DAT`, `DIV`, `MOD` or `STP` anymore, so nobody can die and p-space cannot change. The second proof matters for imp spirals and papers: e.g. `acme.red` vs `alpha.red` runs in 13 ms instead of 51 ms. Some of these ideas came from Martin's exMARS (2003) and from the exMARS fork used by corewar.dev; they were passed to the implementing agent as descriptions, not as code.
 
 ## Visualization

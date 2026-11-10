@@ -745,6 +745,362 @@ day of the second round's numbers). Warmed up against corewar.dev's exMARS
 311 vs 144 (2.16x), army/bananasplit 334 vs 189 (1.77x); t20 split
 (`cwbench/split.mjs`): pairings without tie rounds 392 vs 675 ms (1.72x),
 with tie rounds 3,347 vs 5,545 ms (1.66x).
+That was the state after the third round. The current state is at the end
+of the fourth round's section.
+
+### Three LLVM pass options for the wasm build: measured, not used (9th November 2026)
+
+Three hidden LLVM options make the wasm build of the third-round `mars.c`
+3 to 5% faster. They are measured here and not used: Martin decided against
+compiler options (10th November 2026), and the fourth round below gets the
+same gain from a change of the source. `tools/build-wasm.sh` is unchanged.
+The options were not measured on top of the fourth round's code.
+
+```
+-mllvm -disable-lsr -mllvm -simplifycfg-sink-common=false -mllvm -simplifycfg-hoist-common=false
+```
+
+clang 22.1.8, Node 22.22.2 (V8 12.4). The module grows from 50,179 to
+53,547 bytes. `tools/ab-wasm.mjs`, 7 runs (t80 5), median (range), load
+below 1 before the A/B:
+
+| Build | bench M/s | pairs M/s | t20 s | t80 16 jobs s | t80 31 jobs s |
+|---|---|---|---|---|---|
+| `-Os` | 296.7 (287.6–299.6) | 289.7 (279.3–290.6) | 3.80 (3.77–3.83) | 3.45 (3.44–3.46) | 3.11 (3.11–3.12) |
+| `-Os` and the three options | 309.3 (308.2–311.4) | 295.2 (291.1–298.4) | 3.67 (3.62–3.87) | 3.34 (3.33–3.36) | 2.96 (2.95–2.97) |
+| change | +4.2% | +1.9% | -3.4% | -3.2% | -4.8% |
+
+The t20 ranges overlap because of one run at 3.87 s. A few t20 runs took
+3.87 to 3.92 s on this day, with the options and with variants of them: 5
+of the twelve 7-run series of this section have one as their maximum. The
+other series with the options end at 3.72 or below. The 3-run screen below
+has 3.82 (3.77–3.83) → 3.67 (3.62–3.67).
+
+Where the time goes, `perf stat` of the t20 tournament process (1,110M
+simulated instructions):
+
+| | x86 instructions | cycles | L1 loads | branches | branch misses |
+|---|---|---|---|---|---|
+| `-Os` | 70.78G | 17.37G | 12.45G | 10.25G | 79.1M |
+| the three options | 63.73G | 16.81G | 10.97G | 10.22G | 78.9M |
+| per simulated instruction | 63.7 → 57.4 | 15.6 → 15.1 | 11.2 → 9.9 | 9.2 → 9.2 | 0.071 → 0.071 |
+
+V8's code runs 10% fewer instructions and 12% fewer loads for the same
+branches. An explanation that fits, not checked in V8's code: the #20
+section found that the loop carries rewritten copies of the queue counters
+(`2 * h0 + 0x90080`, `-h0`, `h0 + 1`), which is what loop strength
+reduction makes. SimplifyCFG moves instructions that several specialized
+cases have in common into one block, and their operands then join there as
+extra wasm locals. Without both, V8 has fewer live values around the loop
+and spills less. The earlier changes to this loop (#10, #20, #22, #23)
+moved V8's code by 1 to 8%, most often the wrong way.
+
+Other V8 versions and the other loops, old build → three options:
+
+| What | Result |
+|---|---|
+| Node 20.11.0 (V8 11.3), 5 runs | bench 286.2 → 295.2 (+3.1%), pairs 274.6 → 292.3 (+6.4%), t20 3.83 (3.80–3.85) → 3.70 (3.67–3.76) s (-3.4%) |
+| Chrome 158.0.8127.18 beta, headless, the 190 t20 pairings × 100 rounds in a page, 4 alternating runs, 1,106,106,513 instructions in each | 3.982, 3.973, 3.941, 3.976 → 3.866, 3.820, 3.770, 3.862 s (-3.3%) |
+| `execute()`, 8 warriors of t20 in one core, 3,000 rounds, 822,368,735 instructions | 250.1 (250.1–252.0) → 283.6 (282.6–284.1) M/s (+13%) |
+| `execute2_any()`, t20 with `--size 8192` | 2.93 (2.91–2.94) → 2.79 (2.78–2.80) s (-4.8%) |
+| native, `clang -O3 -march=native` plus the three options, t20 mix, alternating | 372.9 (368.2–373.7) → 383.3 (382.3–390.3) M/s (+2.8%) |
+| native, corpus pairs (input from `bench-pairs.mjs --native-input`), 5 runs | 358.9 (357.9–360.0) → 370.9 (369.2–374.0) M/s (+3.3%) |
+
+Natively, one screen (3 runs, t20 mix, base
+370.8): `-disable-lsr` 380.7, sink off 377.4, hoist off 355.8, sink and
+hoist off 374.8, all three 383.8.
+
+#### The screen
+
+The candidates are hidden LLVM options (`clang -mllvm --help-hidden` lists
+2,960 lines of them): the ones that change which values live across the
+loop or how code of the cases is merged.
+3 alternating runs of t20 and pairs per row (`tools/ab-wasm.mjs --only
+t20,pairs --runs 3`), median. With 3 runs, changes below about 1.5% are
+noise.
+
+Against the old build (`-Os`):
+
+| Options | bytes | t20 s | pairs M/s | verdict |
+|---|---|---|---|---|
+| `-disable-lsr` | 49,985 | 3.80 → 3.74 (-1.6%) | 279.7 → 282.6 (+1.0%) | part of the set of three |
+| `-simplifycfg-sink-common=false` | 53,301 | 3.82 → 3.76 (-1.6%) | 288.1 → 288.7 (+0.2%) | part of the set of three |
+| `-simplifycfg-hoist-common=false` | 50,657 | 3.79 → 3.77 (-0.5%) | 279.8 → 285.1 (+1.9%) | part of the set of three |
+| lsr and sink | 53,060 | 3.81 → 3.76 (-1.3%) | 289.3 → 291.4 (+0.7%) | |
+| lsr and hoist | 50,472 | 3.81 → 3.77 (-1.0%) | 280.4 → 282.0 (+0.6%) | |
+| sink and hoist | 53,779 | 3.79 → 3.73 (-1.6%) | 280.2 → 286.5 (+2.2%) | |
+| all three | 53,547 | 3.82 (3.77–3.83) → 3.67 (3.62–3.67) (-3.9%) | 281.2 → 296.6 (+5.5%) | the set measured above |
+| `-optsize-jump-table-density=10` | 50,239 | 3.82 → 3.93 (+2.9%) | 284.1 → 278.9 (-1.8%) | rejected |
+| `-fno-jump-tables` | 54,566 | 3.80 → 3.80 | 285.6 → 280.2 (-1.9%) | rejected |
+| `-enable-gvn-hoist` | 50,281 | 3.80 → 3.84 (+1.1%) | 282.3 → 286.5 (+1.5%) | rejected |
+| `-enable-gvn-sink` | 49,520 | 3.82 → 3.90 (+2.1%) | 280.6 → 277.7 (-1.0%) | rejected |
+| `-disable-cgp` | 51,485 | 3.79 → 3.92 (+3.4%) | 288.5 → 273.3 (-5.3%) | rejected |
+| `-phi-node-folding-threshold=1` and `=4` | identical module | | | no difference |
+
+Each option alone and each pair of them gives at most 1.6% on t20. All
+three together give 3.9%.
+
+On top of the three options (A is the build with the three options):
+
+| Extra option | bytes | t20 s | pairs M/s | verdict |
+|---|---|---|---|---|
+| `-O2` instead of `-Os` | 56,084 | 3.66 → 3.84 (+4.9%) | 295.7 → 285.5 (-3.4%) | rejected |
+| `-O3` instead of `-Os` | 56,380 | 3.67 → 3.76 (+2.5%) | 294.5 → 286.5 (-2.7%) | rejected |
+| `-enable-pre=false` | 53,559 | 3.62 → 3.69 (+1.9%) | 296.5 → 293.4 (-1.0%) | rejected |
+| `-enable-load-pre=false` | 53,272 | 3.70 → 3.68 (-0.5%) | 293.2 → 291.9 (-0.4%) | rejected, noise |
+| `-instcombine-code-sinking=false` | 53,509 | 3.71 → 3.69 (-0.5%) | 298.6 → 297.9 (-0.2%) | rejected, noise |
+| `-disable-machine-sink` | 53,338 | 3.67 → 3.73 (+1.6%) | 290.7 → 291.5 (+0.3%) | rejected |
+| `-jump-threading-threshold=0` | 55,848 | 3.72 → 3.74 (+0.5%) | 294.2 → 285.9 (-2.8%) | rejected |
+| `-disable-machine-licm` | 53,618 | 3.71 → 3.70 | 294.0 → 294.1 | rejected, noise |
+| `-disable-tail-duplicate` | 53,580 | 3.62 → 3.74 (+3.3%) | 294.2 → 293.3 | rejected |
+| `-two-entry-phi-node-folding-threshold=0` | 53,438 | 3.67 → 3.67 | 297.2 → 296.2 | rejected, noise |
+| `-simplifycfg-branch-fold-threshold=0` | 53,557 | 3.67 → 3.66 | 295.4 → 295.2 | rejected, noise |
+| `-enable-newgvn` | 53,489 | 3.66 → 3.71 (+1.4%) | 293.0 → 294.8 | rejected |
+| `-disable-phi-elim-edge-splitting` | 52,816 | 3.73 → 3.73 | 294.0 → 291.5 (-0.9%) | rejected, noise |
+| `-enable-tail-merge=false` | 53,653 | 3.70 → 3.65 (-1.4%) | 293.8 → 293.1 (-0.2%) | 7 runs: bench 309.2 → 307.5, t20 3.68 → 3.68, pairs 293.6 → 293.8; rejected |
+| `-disable-licm-promotion` | 53,557 | 3.67 → 3.63 (-1.1%) | 293.8 → 294.3 | 7 runs: bench 309.0 → 306.9, t20 3.68 → 3.66, pairs 294.4 → 295.2; rejected, noise |
+| `-disable-machine-cse` | 53,728 | 3.68 → 3.67 | 291.9 → 296.5 (+1.6%) | 7 runs: bench 308.7 → 307.6, t20 3.69 → 3.66, pairs 295.0 → 295.8; rejected, noise |
+| `-disable-branch-fold` | 54,099 | 3.64 → 3.65 | 293.3 → 297.0 (+1.3%) | 7 runs: bench 309.1 → 309.8, t20 3.63 → 3.68, pairs 295.9 → 297.2; rejected, noise |
+| `-simplifycfg-merge-cond-stores=false`, `-simplifycfg-hoist-cond-stores=false`, `-disable-early-taildup`, `-disable-block-placement`, `-disable-peephole`, `-speculate-one-expensive-inst=false` | identical module | | | no difference |
+
+The number of specialized cases, again with the three options (change of
+bench / pairs / t20 time against 32 cases, 3 runs): 16 cases (42,835 bytes)
+-6.7% / -8.0% / +3.8%; 24 (48,821) -0.3% / +0.5% / -2.4%; 28 (51,301)
+-1.1% / +0.4% / -0.8%; 36 (57,290) -3.4% / -2.3% / +3.0%; 40 (60,997)
+-4.4% / -3.3% / +3.5%; 48 (67,410) -4.3% / +0.4% / +5.5%. 24 and 28 are
+within the noise of 3 runs. 24 cases again with `ab-wasm.mjs` (7 runs, t80
+5): bench 307.3 → 306.8, pairs 295.2 → 295.4, t20 3.66 → 3.66, t80 16 jobs
+3.34 (3.33–3.35) → 3.40 (3.39–3.41), t80 31 jobs 2.96 (2.95–2.97) → 2.99
+(2.98–3.00). The 4.7 KB smaller module loses 1 to 1.8% on t80. 32 stays.
+
+#### Source changes on top of the three options, all rejected
+
+| Idea | Result | Verdict |
+|---|---|---|
+| Pair countdown in `execute2()`: one decrement of the budget per two turns, an odd last instruction through `execute()` | 53,597 bytes; 3 runs: bench 309.4 → 308.9, pairs 292.9 → 298.6 (+1.9%), t20 3.68 → 3.70. With the old flags: bench 297.8 → 299.6, pairs 290.8 → 283.9, t20 3.86 → 3.77 | rejected: noise in both directions, more code |
+| Generic code in its own non-inlined function, returning the new tail and the death flag (rejected in the second round; tried again because the options changed what V8 gets) | 33,305 bytes instead of 53,547; `ab-wasm.mjs` 7 runs: bench 309.4 → 324.0 (+4.7%), pairs 295.9 → 287.8 (-2.7%), t20 3.69 → 3.71, t80 16 jobs 3.34 → 3.41 (+2.1%), t80 31 jobs 2.95 → 3.01 (+2.0%). With 40 cases (40,741 bytes): bench -0.6%, pairs -1.4%, t20 +3.9%, t80 31 jobs +2.4%. With 48 cases (47,154 bytes): bench -1.6%, pairs +0.2%, t20 +0.5%, t80 31 jobs 0.0% | rejected: faster on the bench only, slower on pairs and on both t80 runs |
+| Fixed cost of a tournament run (t80, `--rounds 1`) | 31 jobs: engine 0.13 to 0.14 s, wall 0.28 s, 3.0 CPU-seconds; 16 jobs 0.12 s; 1 job 0.62 s. 31 empty Node workers alone take 87 to 90 ms to start | nothing changed: most of what is left is Node's worker start |
+
+### Fourth round: one queue head for both warriors, 4 to 7% faster in WebAssembly (10th November 2026)
+
+Two changes in `mars.c`, both in the code for two warriors. The build
+script did not change. clang 22.1.8, Node 22.22.2 (V8 12.4). The module
+shrinks from 50,179 to 49,171 bytes. `tools/ab-wasm.mjs`, 7 runs (t80 5),
+median (range), load below 1 before the A/B:
+
+| Build | bench M/s | pairs M/s | t20 s | t80 16 jobs s | t80 31 jobs s |
+|---|---|---|---|---|---|
+| third round (`main`) | 298.5 (297.8–299.7) | 283.5 (275.1–292.0) | 3.80 (3.76–3.82) | 3.46 (3.45–3.47) | 3.11 (3.10–3.14) |
+| both changes | 310.1 (309.3–311.7) | 302.6 (299.2–303.4) | 3.60 (3.56–3.62) | 3.31 (3.29–3.31) | 2.96 (2.95–2.97) |
+| change | +3.9% | +6.7% | -5.3% | -4.3% | -4.8% |
+
+All ranges are apart. The native build does not gain: with the flags of
+`tools/bench-native.mjs` it is 1.7 to 3.1% slower, see "The native build"
+below.
+
+#### One head for both linear queues
+
+With two warriors the turns alternate and every turn pops one entry, so
+both heads advance by one per pair of turns. The linear queues of the third
+round started both at 0, so the heads differed by one whenever warrior 1
+had moved first. Now `mars_start_round()` starts warrior 0's queue at
+index 1 in that case, and both heads are equal whenever warrior 0 is to
+move. `execute2()` loops over pairs of turns with one head `h` and the two
+tails. `h` also counts the pairs (`++h == end`). That is 3 counters carried
+around the loop instead of 5 (`h0`, `t0`, `h1`, `t1` and the countdown
+`left`). The last instruction of an odd budget goes through `execute(1)`.
+A tail now stays at most `2 + 2 * (maxCycles + 1)`, 160,004 entries at
+80,000 cycles; the arrays hold 160,032.
+
+The third round rejected "one queue ring for both warriors with one shared
+head": even and odd positions of one ring, a step of 2, death tests against
+`h + 2` and `h + 3`. Here the two arrays and the step of 1 stay, and a
+queue is empty when its tail equals its head, as before. The pair loop
+without the shared head (two heads, one decrement of the budget per pair)
+gave no clear result in 3 runs: bench 297.8 → 299.6, pairs 290.8 → 283.9,
+t20 3.86 → 3.77.
+
+This change alone against `main`, 3 runs: bench 298.8 → 309.2 (+3.5%),
+pairs 282.6 → 297.8 (+5.4%), t20 3.82 (3.81–4.00) → 3.63 (3.62–3.63)
+(-5.0%). Module 50,269 bytes.
+
+#### `ADD`, `SUB` and `MUL` of both values with one load and one store
+
+With .F, .X and .I the old code stored the first result with a 16-bit
+store and then read the second value with a 32-bit load of the same cell
+(`BB` is `ab_of(B) >> 16`). A load that is wider than the store before it
+cannot take its data from the store buffer and waits until the store is in
+the cache: 21 cycles instead of 9 on this CPU (microbenchmark below). The
+new code reads both values with one 32-bit load and writes both with one
+`set_ab()`. `SUB.F` and `ADD.F` are 1.64% and 0.71% of the t20
+instructions.
+
+Against the first change, 7 runs: t20 3.62 (3.60–3.64) → 3.59 (3.57–3.59)
+(-0.8%, ranges apart), pairs 298.7 → 300.2 (+0.5%), bench 309.2 → 309.7.
+The module shrinks by 1,098 bytes. Kept for the t20 time and the smaller
+module; on bench and pairs it is inside the noise.
+
+#### Where the time goes
+
+`perf stat` of the t20 tournament process (Node, 1,110M simulated
+instructions), per simulated instruction, 2 runs each where two values are
+given. "Failed forwards" is the event `ls_bad_status2.stli_other`; it
+counts too much, see the forwarding study below.
+
+| Build | bytes | x86 instructions | cycles | loads | failed forwards | branch misses |
+|---|---|---|---|---|---|---|
+| third round (`main`) | 50,179 | 63.75, 63.79 | 15.70, 15.64 | 10.69, 10.71 | 0.196, 0.190 | 0.0715 |
+| one head | 50,269 | 61.41, 61.40 | 15.22, 15.06 | 8.63, 8.60 | 0.161, 0.159 | 0.0711 |
+| one head and the arithmetic (kept) | 49,171 | 61.28, 61.26 | 14.86, 14.99 | 8.75 | 0.137, 0.138 | 0.0704, 0.0699 |
+| one head, queue counters as byte offsets | 50,055 | 58.33 | 15.64, 15.67 | 8.60 | 0.178 | 0.0711 |
+| one head, exit arithmetic in 32 bits | 50,233 | 59.59, 59.64 | 15.82, 15.80 | 8.22 | 0.222, 0.208 | 0.0714 |
+| one head, every core store writes the whole cell | 52,352 | 65.63 | 16.72, 16.76 | 10.52 | 0.358, 0.360 | 0.0707 |
+| kept build, instruction fetched with three 16-bit loads | 48,696 | 62.87, 62.83 | 15.09, 15.10 | 9.91 | 0.170 | 0.0700 |
+
+The kept build runs 3.9% fewer x86 instructions, about 5% fewer cycles and
+18% fewer loads than `main`. Two of the rejected variants run still fewer
+instructions and need as many cycles as `main`: the instruction count does
+not predict the time here.
+
+Other V8 versions and the other loops, `main` → kept build:
+
+| What | Result |
+|---|---|
+| Node 22.22.2, a second A/B, 5 runs | bench 297.1 (296.4–297.4) → 310.9 (308.6–311.8) (+4.6%), pairs 285.0 (280.7–288.3) → 301.2 (294.5–301.9) (+5.7%), t20 3.79 (3.76–3.81) → 3.59 (3.57–3.64) s (-5.3%) |
+| Node 20.11.0 (V8 11.3), 5 runs | bench 287.1 (284.4–288.3) → 304.0 (302.0–305.6) (+5.9%), pairs 274.9 (272.9–280.3) → 297.5 (295.0–300.8) (+8.2%), t20 3.84 (3.80–3.86) → 3.61 (3.60–3.64) s (-6.0%) |
+| Chrome 158 beta, headless, the 190 t20 pairings × 100 rounds in a page, 4 alternating runs, 1,106,106,513 instructions in each | 4.001, 3.967, 3.970, 4.004 → 3.764, 3.753, 3.801, 3.759 s (-5.6%) |
+| step API (`node tools/bench.mjs <corpus> --wasm`, `run(1e6)` from JS), 7 alternating runs | 297.9 (294.2–299.0) → 309.7 (308.0–311.8) M/s (+4.0%) |
+| `execute2_any()`, t20 with `--size 8192`, 3 alternating runs | 2.93, 2.94, 2.92 → 2.73, 2.73, 2.76 s (-6.8%) |
+| `execute()`, 8 warriors of t20 in one core, 822,368,735 instructions, 3 alternating runs | 251.6, 245.2, 251.4 → 251.1, 253.0, 246.5 M/s: unchanged |
+| fixed cost, t80 with `--rounds 1 --jobs 31`, 5 alternating runs | engine 0.13 to 0.15 s, wall 300 ms (284–312) → engine 0.13 to 0.14 s, wall 291 ms (288–297): unchanged |
+
+#### The native build
+
+`tools/ab-native.mjs` (`clang -O3 -march=native`), `main` → kept build,
+median (range), M/s:
+
+| Input | runs | `main` | kept build | change |
+|---|---|---|---|---|
+| bench | 7 | 436.1 (432.3–441.9) | 422.5 (416.4–424.3) | -3.1% |
+| t20, early ties | 5 | 368.3 (364.3–373.1) | 362.2 (361.7–367.4) | -1.7% |
+| corpus pairs, early ties | 5 | 358.8 (357.5–362.1) | 350.3 (348.0–350.9) | -2.4% |
+
+The native code runs fewer instructions too and still needs more cycles.
+Per simulated instruction on the t20 input (`perf stat`): `main` 46.26 to
+46.29 x86 instructions and 11.84 to 12.23 cycles, one head 44.74 to 44.76
+and 12.16 to 12.24, kept build 45.22 to 45.23 and 12.12 to 12.28. Branches
+7.58 → 7.09, branch misses 0.0699 → 0.0675, failed forwards 0.168 → 0.133.
+No counter explains the cycles: op-cache misses 0.003 to 0.005, ops from
+the decoder 0.026 to 0.041, `bp_l2_btb_correct` 0.0002 and `bp_de_redirect`
+0 for both.
+
+Other compilers and code layouts, x86 instructions / cycles per simulated
+instruction on the t20 input:
+
+| Build | `main` | kept build |
+|---|---|---|
+| clang 22.1.8 `-O3 -march=native` | 46.26 / 11.91 | 45.22 / 12.18 |
+| clang `-O2` | 46.50 / 12.12 | 45.26 / 12.41 |
+| clang `-Os` | 50.77 / 12.36 | 48.64 / 12.74 |
+| gcc 16.2.1 `-O3` | 51.68 / 12.89 | 48.45 / 12.82 |
+| gcc `-O2` | 51.68 / 12.85 | 48.45 / 12.68 |
+
+clang `-O3 -march=native` plus one layout option, `perf stat -r 5`, cycles
+per simulated instruction:
+
+| Option | `main` | kept build |
+|---|---|---|
+| none (from the table above) | 11.91 | 12.18 |
+| `-falign-jumps=16` (clang ignores it with a warning, so this is the row above again) | 12.01 | 12.21 |
+| `-falign-loops=32` | 11.92 | 11.88 |
+| `-falign-loops=64` | 11.98 | 11.86 |
+| `-falign-functions=64` | 12.19 | 12.01 |
+| `-falign-loops=64 -falign-functions=64` | 11.84 | 11.87 |
+| `-falign-loops=16 -falign-functions=32` | 12.00 | 12.16 |
+| `-mbranches-within-32B-boundaries` | 12.20 | 12.29 |
+| `-mtune=generic` | 11.83 | 11.94 |
+| `-fno-jump-tables` | 11.88 | 12.11 |
+
+So natively the change is between 1.5% faster and 3.1% slower, depending on
+the compiler and on where the code lands. The cause was not found. That it
+is code layout is an assumption: the alignment options move the result as
+far as the change does. This breaks the rule that nothing else gets slower
+by more than 1%. The change is kept all the same, because the engine that
+runs tournaments is the WebAssembly build. For the native library
+(`PLAN.md`, L) this loop needs a new measurement with the library's
+compiler and flags.
+
+#### Rejected changes of this round
+
+Against the build named in the row, `tools/ab-wasm.mjs`, median:
+
+| Idea | Result | Verdict |
+|---|---|---|
+| Queue counters as byte offsets, to save the shift in every queue access (on top of one head) | 50,055 bytes; 3 runs: bench 306.6 → 296.2 (-3.4%), pairs 297.5 → 285.3 (-4.1%), t20 3.63 (3.59–3.64) → 3.81 (3.78–3.81) (+5.0%). 58.3 x86 instructions per simulated instruction instead of 61.4, 15.65 cycles instead of 15.1 | rejected |
+| The arithmetic at the loop exit in 32 bits: `pairs = h - start` once, instead of `2 * (i64)(h - start)` twice (on top of one head) | 50,233 bytes; 3 runs: bench 309.4 → 300.6 (-2.8%), pairs 300.0 → 285.6 (-4.8%), t20 3.65 (3.60–3.66) → 3.82 (3.79–3.84) (+4.7%) | rejected. A change outside the loop loses the whole gain; why was not looked up in V8's code |
+| Every store into the core writes the whole 64-bit cell, so that every later load can forward from it (on top of one head) | 52,352 bytes; 3 runs: pairs 298.3 → 273.9 (-8.2%), t20 3.66 → 4.06 (+10.9%); native 48.4 x86 instructions and 12.5 cycles per simulated instruction | rejected: 4.2 more x86 instructions and 1.9 more loads per simulated instruction in V8's code |
+| `BA` and `BB` as 16-bit loads of one field instead of a 32-bit load and a mask (on top of the kept build) | 50,579 bytes; 7 runs: bench 309.5 → 311.2 (+0.5%), pairs 301.0 → 302.2 (+0.4%), t20 3.60 (3.59–3.61) → 3.59 (3.58–3.64) | rejected: noise, 1.4 KB more |
+| `DJN.A`/`.B`/`.AB`/`.BA`: test and decrement from one 16-bit load (on top of the kept build) | 49,078 bytes; 7 runs: bench 309.4 (290.6–311.4) → 312.6 (308.3–313.9) (+1.0%), pairs 300.0 → 301.5 (+0.5%), t20 3.59 (3.57–3.64) → 3.58 (3.57–3.62) | rejected: inside the noise |
+| The row above and `DJN.F`/`.X`/`.I` with one 32-bit load and one `set_ab()` | 48,931 bytes; 7 runs against the kept build: bench 309.7 (308.9–313.5) → 305.7 (287.1–306.9) (-1.3%), pairs 301.5 → 299.2 (-0.8%), t20 3.61 → 3.63 (+0.6%) | rejected |
+| The instruction fetched with three 16-bit loads instead of one 64-bit load, so that the fetch forwards from a 16-bit store into the cell (on top of the kept build) | 48,696 bytes; 3 runs: pairs 303.1 → 294.2 (-2.9%), t20 3.59 → 3.68 (+2.5%). With the `DJN` row as well (48,225 bytes): pairs -1.8%, t20 +1.7% | rejected |
+
+#### Store-to-load forwarding: what it costs and where
+
+A microbenchmark on this CPU (Zen 4), cycles per round of a store and a
+load that depends on it:
+
+| Store, then load | cycles |
+|---|---|
+| same size, same address | 3 to 4 (memory renaming) or 9 |
+| load inside a wider store at an offset above 0 (8 bytes at 0 then 2 at 2 or at 4, 8 at 0 then 4 at 4, 4 at 0 then 2 at 2) | 9 |
+| load wider than the store (2 at 2 then 4 at 0 or 8 at 0, 4 at 0 then 8 at 0) | 21 |
+
+The second row is forwarded and still counts 1.1 to 1.6
+`ls_bad_status2.stli_other` events per round, so that counter is an upper
+bound. AMD IBS samples carry no forwarding bit on this CPU.
+
+To find the loads that really fail, the native build got a shadow model:
+for every byte of the core the simulated instruction and the size of the
+last store, checked at every load in the source. Loads wider than a store
+at most 3 / at most 7 simulated instructions before, per simulated
+instruction on t20:
+
+| Load | at most 3 | at most 7 |
+|---|---|---|
+| instruction fetch (64 bits) | 0.033 | 0.061 |
+| A cell of a direct A operand (64 bits; the model counts it also where the compiler narrows or drops the load) | 0.026 | 0.041 |
+| `DJN.B`: 32-bit load after its own 16-bit store one loop pass earlier | 0.0045 | 0.028 |
+| `ADD.F`, `SUB.F`: second value after the first store | 0.0235 | 0.040 |
+| `ADD.AB` | 0.004 | |
+
+The sum at 7 instructions is about 0.18; the counter says 0.17 for the
+native build of `main`.
+The t20 mix, for the weights: `SPL.B` 29.83%, `MOV.I` 29.83%, `DAT.F`
+14.20%, `JMP.B` 9.30%, `DJN.B` 7.23%, `CMP.I` 3.61%, `SUB.F` 1.64%, `JMN.B`
+1.53%, `MOV.AB` 0.82%, `ADD.F` 0.71%, `ADD.AB` 0.60%, `SLT.AB` 0.34%,
+`SUB.AB` 0.34%.
+
+Only the `ADD.F`/`SUB.F` row was worth a change: it fails on every
+execution, and the fix makes the code smaller. The fetch and the A cell
+fail after a 16-bit store of another instruction, and both ways around
+that (whole-cell stores, 16-bit loads) cost more than they save.
+
+Noted, not built: `WRAP` as an unsigned minimum, the chunk of
+`tie_check()` rounded to an even number so that the pair loop never ends
+on an odd budget, a dense dispatch index in the padding of the cell.
+
+State: bench about 310M/s in WebAssembly (`runMatch` and the step API),
+about 422M/s natively (436M/s for the third-round code on the same day);
+corpus pairs 302M/s; t20 3.60 s single thread; t80 3.31 s with 16 jobs and
+2.96 s with 31 jobs (10th November 2026; `main` measured 298.5M/s,
+283.5M/s, 3.80 s, 3.46 s and 3.11 s on the same day). Warmed up against
+corewar.dev's exMARS
+(`cwbench/benchpairs.mjs`, median of 3 runs): agony/bubbles 345 vs 192M/s
+(1.78x to 1.81x), bomber/chalk 323 vs 143 (2.24x to 2.26x),
+army/bananasplit 347 vs 188 (1.84x to 1.86x); `main` on the same day ran
+327, 311 and 330M/s. t20 split (`cwbench/split.mjs`, 3 runs): pairings
+without tie rounds 374 vs 671 ms (1.79x to 1.81x), with tie rounds 3,157
+vs 5,484 ms (1.73x to 1.74x).
 
 ## Ideas from other simulators
 
@@ -778,8 +1134,8 @@ New ideas for our engine, most promising first:
 |---|---|---|---|---|
 | Rounds of one pairing in parallel | dmars, concurrent-mars | Rounds only depend on each other through p-space, and only `LDP` reads it. Opcodes are only copied, so a warrior without `LDP` in its code never executes one. Then step the position generator sequentially up front (one step per round for two warriors), derive the first mover from the round number, run blocks of rounds on several workers and add up the results in round order | Close to linear in workers for one pairing or a few (visualizer "run N rounds", one warrior against a few opponents, splitting the last big pairings of a tournament). Nothing for t80, whose tail is below 3%. dmars claims 500 rounds in 0.78 s on one thread and 0.10 s on all cores of an M3 Pro. Cost: low, `runMatch` needs the first round number of a block | open, #8 |
 | `MOV.I` from one 64-bit snapshot of the A cell | AzureMARS, fmars | Read the whole 8-byte A cell at operand time. `MOV.I` stores it into the B cell with one store, `SEQ.I`/`SNE.I`/`CMP.I` compare its instruction word. Exact because B-operand side effects only change value fields, never a word, and the padding is always zero | `MOV.I` words are about 21 to 25% of executions; saves a load and a store each. 0.5 to 3%. Cost: small, in `exec_ins()` | open, #9 |
-| One queue array for both warriors, one shared head | pyCorewar | With two warriors the turns alternate until the first death ends the round, so both heads move in lockstep. Warrior 0 uses the even slots and warrior 1 the odd slots of one ring, one head walks it and can double as the instruction countdown; each tail steps by 2. A warrior's queue is empty after its pop when its tail equals head + 2 | Five loop-carried counters become three without the pack/unpack cost of the rejected packed counters; aims at the V8 spills. 0 to 5%. Cost: moderate (process listing, `tie_check`, the warrior-1-first pre-step need stride 2) | open, #9 |
-| Linear queue that never wraps | fmars, pyCorewar | Per warrior an array large enough for a whole round, head and tail only move forward: no mask, and with a byte pointer no shift. Bound for two warriors: at most `1 + 2 * (maxCycles + 1)` entries, about 320 KB per warrior at 80,000 cycles | Up to 4 of 66 x86 instructions per simulated instruction, but pushes stream into fresh cache lines. 0 to 4%. Combines with the shared head | open, #9 |
+| One queue array for both warriors, one shared head | pyCorewar | With two warriors the turns alternate until the first death ends the round, so both heads move in lockstep. Warrior 0 uses the even slots and warrior 1 the odd slots of one ring, one head walks it and can double as the instruction countdown; each tail steps by 2. A warrior's queue is empty after its pop when its tail equals head + 2 | Five loop-carried counters become three without the pack/unpack cost of the rejected packed counters; aims at the V8 spills. 0 to 5%. Cost: moderate (process listing, `tie_check`, the warrior-1-first pre-step need stride 2) | the ring: rejected (third round, #9). One head for two linear queues: kept (fourth round) |
+| Linear queue that never wraps | fmars, pyCorewar | Per warrior an array large enough for a whole round, head and tail only move forward: no mask, and with a byte pointer no shift. Bound for two warriors: at most `1 + 2 * (maxCycles + 1)` entries, about 320 KB per warrior at 80,000 cycles | Up to 4 of 66 x86 instructions per simulated instruction, but pushes stream into fresh cache lines. 0 to 4%. Combines with the shared head | kept (third round, #9); with the shared head of the fourth round the bound is `2 + 2 * (maxCycles + 1)`. The byte pointer: rejected (fourth round) |
 | Merge instruction words that behave the same into one specialized case | qMars, exhaust, exhaust-ma | Many words execute identically: the modifier does nothing for `DAT`/`SPL`/`JMP`/`NOP`; for the A mode of `DAT`/`NOP` and the B mode of `DAT`/`SPL`/`JMP`/`NOP` the modes `$ # @ *` are the same; `JMZ`/`JMN`/`DJN` .A = .BA, .B = .AB, .F = .X = .I; .F = .I for `ADD` to `MOD` and `SLT`; `CMP` = `SEQ`. Rank classes instead of words and put every member word as a case label on one copy. Words in core stay as they are (`MOV.I` copies them, `CMP.I` compares them) | The `HOT` list has 3 duplicates today (`spl.b $ $`/`spl.b $ #`, `jmp.b $ $`/`jmp.b $ #`, `dat.f $ $`/`dat.f # #`). 0 to 2% on t80 and corpus pairs, less generic code. Cost: `gen-dispatch.mjs` and the specialized-word test | open, #10 |
 | 6-byte cell, or values and words in separate arrays | exhaust, exhaust-ma (6-byte); arrays: our own | 6 bytes per cell makes the core 48 KB; separate arrays give 32 KB of values plus 16 KB of words, and most accesses only touch values | Alternatives to the 4-byte cell of issue #6; scaling by 6 or two loads per fetch cost something. 0 to 5% natively | open, issue #6 |
 | Prefetch the other warrior's next cell | rmars | In the two-warrior loop the other warrior's next PC is at the head of its queue; prefetch that core cell right after the current fetch | Natively a few percent at most on scattered papers. WebAssembly has no prefetch; an early plain load would have to survive V8, unverified. Must not use the loaded value, the current instruction can write that cell | open, native first, #6 |
