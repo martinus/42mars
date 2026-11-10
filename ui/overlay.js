@@ -6,7 +6,7 @@
 // instruction text inside cells once they are large enough to read.
 
 import { LAYOUT_RING, cellCenter } from './layout.js';
-import { OPCODES, MODE_SYMBOLS, denormalize } from '../engine/opcodes.js';
+import { OPCODES, MODE_SYMBOLS, denormalize } from '../js/opcodes.js';
 
 export class Overlay {
   constructor(canvas) {

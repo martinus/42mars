@@ -28,8 +28,8 @@ const url = (rel) => pathToFileURL(join(root, rel)).href;
 // we were right about everything.
 const agrees = script('agrees.mjs', `#!/usr/bin/env node
 import { readFileSync } from 'node:fs';
-import { assemble } from ${JSON.stringify(url('src/engine/assembler.js'))};
-import { formatListing } from ${JSON.stringify(url('src/engine/opcodes.js'))};
+import { assemble } from ${JSON.stringify(url('js/assembler.js'))};
+import { formatListing } from ${JSON.stringify(url('js/opcodes.js'))};
 const w = assemble(readFileSync(process.argv.at(-1), 'latin1'), { warriors: 1, rounds: 0 });
 if (w.ok) process.stdout.write(formatListing(w, 8000));
 `);

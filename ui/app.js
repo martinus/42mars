@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 Martin Leitner-Ankerl
 
-import { assemble } from '../engine/assembler.js';
-import { Mars } from '../engine/mars.js';
-import { formatInstruction, formatListing, OP, OPCODES } from '../engine/opcodes.js';
+import { assemble } from '../js/assembler.js';
+import { Mars } from '../js/mars.js';
+import { formatInstruction, formatListing, OP, OPCODES } from '../js/opcodes.js';
 import { Renderer, TEX_W } from './renderer.js';
 import { computeLayout, addressAt, cellCenter, LAYOUT_GRID, LAYOUT_RING } from './layout.js';
 import { Timeline } from './timeline.js';
@@ -93,7 +93,7 @@ const overlay = new Overlay($('overlay'));
 
 async function loadSamples() {
   await Promise.all(SAMPLES.map(async (key) => {
-    const res = await fetch(`warriors/${key}.red`);
+    const res = await fetch(`../warriors/${key}.red`);
     const source = await res.text();
     state.library.set(key, { name: assemble(source).name, source });
   }));

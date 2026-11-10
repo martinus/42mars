@@ -20,26 +20,26 @@
 ## Architecture
 
 ```
-warriors/*.red ──> src/engine/assembler.js ──> { instructions, start, pin, source line per instruction }
+warriors/*.red ──> js/assembler.js ──> { instructions, start, pin, source line per instruction }
                          │ uses expr.js                 │
                          v                              v
-                   src/engine/mars.js: core arrays, per-cell last read/write/exec time, last writer,
+                   js/mars.js: core arrays, per-cell last read/write/exec time, last writer,
                          │             origin of copied code, trace ring buffer of the last 4096 instructions
                          │ read once per animation frame
                          v
-src/ui/app.js ──> renderer.js (WebGL2 cells + bloom)   overlay.js (arcs, tags, cell text)   explain.js (what is happening)
+ui/app.js ──> renderer.js (WebGL2 cells + bloom)   overlay.js (arcs, tags, cell text)   explain.js (what is happening)
                   timeline.js (processes, core share)   warrior cards (activity, source heat)
 ```
 
 | File | What it does |
 |---|---|
-| `src/engine/expr.js` | Expression evaluator. 64-bit integers, registers `a`..`z`, precedence climbing in the pMARS evaluation order (shared hand-back operator, dropped `==`). |
-| `src/engine/assembler.js` | `readSource` splits lines and reads `;name`, `;assert` etc., `Expander` does pass 1 (labels, `EQU`, `FOR`/`ROF`, asserts), `StatementParser` does pass 2 (operands, modes, modifiers, values). |
-| `src/engine/mars.js` | Simulator. One allocation-free loop specialized on the opcode byte, flat process queues, all per-cell arrays as views into three shared buffers, optional `headless` mode without visualizer bookkeeping. |
-| `src/engine/opcodes.js` | Opcode tables, formatting, pMARS-style listing. |
-| `src/engine/wasm/mars.c`, `mars.wasm` | Headless simulator in C, compiled with clang to a 49 KB WebAssembly module without imports. The `.wasm` is committed, `tools/build-wasm.sh` rebuilds it byte-identically (it first regenerates `dispatch.h` with `tools/gen-dispatch.mjs`). |
-| `src/engine/mars-wasm.js` | JavaScript glue: `createWasmMars()` with the step API (`load`, `startRound`, `run`), `runMatch()` for a whole match inside WebAssembly, and `packWarrior()` for warriors that are loaded with one copy and shared between threads. |
-| `src/ui/*` | Visualizer. No dependencies, no build step, plain ES modules. |
+| `js/expr.js` | Expression evaluator. 64-bit integers, registers `a`..`z`, precedence climbing in the pMARS evaluation order (shared hand-back operator, dropped `==`). |
+| `js/assembler.js` | `readSource` splits lines and reads `;name`, `;assert` etc., `Expander` does pass 1 (labels, `EQU`, `FOR`/`ROF`, asserts), `StatementParser` does pass 2 (operands, modes, modifiers, values). |
+| `js/mars.js` | Simulator. One allocation-free loop specialized on the opcode byte, flat process queues, all per-cell arrays as views into three shared buffers, optional `headless` mode without visualizer bookkeeping. |
+| `js/opcodes.js` | Opcode tables, formatting, pMARS-style listing. |
+| `lib/src/mars.c`, `wasm/42mars.wasm` | Headless simulator in C, compiled with clang to a 49 KB WebAssembly module without imports. The `.wasm` is committed, `wasm/build.sh` rebuilds it byte-identically (it first regenerates `dispatch.h` with `tools/gen-dispatch.mjs`). |
+| `wasm/42mars.js` | JavaScript glue: `createWasmMars()` with the step API (`load`, `startRound`, `run`), `runMatch()` for a whole match inside WebAssembly, and `packWarrior()` for warriors that are loaded with one copy and shared between threads. |
+| `ui/*` | Visualizer. No dependencies, no build step, plain ES modules. |
 | `docs/redcode-semantics.md` | The behavior the engine implements, in prose. |
 | `tools/asm.mjs` | `node tools/asm.mjs file.red` prints a pMARS-style listing or the errors. |
 | `tools/corpus.mjs` | Assembles every `.red` file below a directory and lists the failures. |
@@ -212,10 +212,11 @@ The current focus is the library (L). M1 stays, because a library has to score e
 A C library, a pMARS-compatible command line program and an npm package. C only (C11, no C++), so that every language can call it and the WebAssembly build needs no standard library. The public interface may break until 1.0.0.
 
 - L1 (#53), done: `mars.c` keeps all state in `struct Mars` and every function takes it. The wasm module and the native benchmark use one context at a fixed address, with no loss against the globals (wasm within noise, native 1 to 3% faster). A context through a pointer (`-DMARS_CONTEXT_POINTER`) costs 4 to 6% in wasm and 1 to 3% natively (`docs/performance-log.md`, "A context object"); L3 decides whether the native library takes that.
-- L2 (#54), assembler in C: a port of `expr.js` and `assembler.js` with every pMARS quirk, checked against `test/fixtures` (4031 expressions, 146 snippets), against `tools/asm.mjs` listings of the corpus, and with `tools/pmars-diff.mjs`.
-- L3 (#55), the public header `42mars.h`: rules, `m42_assemble`, `m42_match`, `m42_bench` (one warrior against many, for evolvers), a step interface for visualizers and debuggers, p-space kept by the caller between calls (#48), error codes with line numbers, `m42_version`. Binding-friendly: opaque handles, fixed-width fields, no callbacks in the hot path, no varargs, memory from the caller.
+- Layout, done: `lib/` the C library, `wasm/` its WebAssembly build and JS interface, `ui/` the visualizer, `js/` the JS assembler and simulator until the library replaces them (decided 10th November 2026: one implementation, in C; pMARS stays the oracle).
+- L2 (#54), assembler in C: a port of `expr.js` and `assembler.js` with every pMARS quirk, checked against `test/fixtures` (4031 expressions, 146 snippets), against `tools/asm.mjs` listings of the corpus, and with `tools/pmars-diff.mjs`. Then the tools, the tests and the visualizer assemble through wasm, and `js/expr.js` and `js/assembler.js` are removed.
+- L3 (#55), the public header `42mars.h`: rules, `m42_assemble`, `m42_match`, `m42_bench` (one warrior against many, for evolvers), a step interface for visualizers and debuggers, p-space kept by the caller between calls (#48), error codes with line numbers, `m42_version`. Binding-friendly: opaque handles, fixed-width fields, no callbacks in the hot path, no varargs, memory from the caller. The step interface carries the per-cell bookkeeping of `js/mars.js` and the trace buffer (semantics doc, sections 3.4 and 3.6), so that the visualizer runs on the library and `js/mars.js` is removed.
 - L4 (#56), the `42mars` command line program with pMARS's flags and output (`-b -k -r -F -s -c -p -l -d`), so that tools that call pMARS can call it, and `tools/pmars-diff.mjs` can compare the two directly.
-- L5 (#57), packaging: a `Makefile` (and CMake if asked), release archives, the npm package with `mars.wasm` and the JS interface.
+- L5 (#57), packaging: a `Makefile` (and CMake if asked), release archives, the npm package with `42mars.wasm` and the JS interface.
 - Later: a Python binding once the interface is close to 1.0.0, other languages on request. Then an evolver on top of `m42_bench`, with a UI that reuses the visualizer.
 
 ### M1: engine parity

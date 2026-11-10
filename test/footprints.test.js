@@ -7,8 +7,8 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { assemble } from '../src/engine/assembler.js';
-import { Mars } from '../src/engine/mars.js';
+import { assemble } from '../js/assembler.js';
+import { Mars } from '../js/mars.js';
 
 function warrior(src) {
   const w = assemble(src);

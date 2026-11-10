@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 Martin Leitner-Ankerl
 
-// Headless simulator in WebAssembly (src/engine/wasm/mars.c), with a subset
+// Headless simulator in WebAssembly (lib/src/mars.c), with a subset
 // of the Mars API of mars.js. Same results as `new Mars({ headless: true })`:
 // core, process queues, scores and round results. No visualizer
 // bookkeeping, no events, no trace.
@@ -27,16 +27,16 @@
 //   to run first.
 // - runMatch() stops tie rounds early by default, see there.
 
-import { DEFAULT_OPTIONS } from './assembler.js';
-import { rng } from './mars.js';
+import { DEFAULT_OPTIONS } from '../js/assembler.js';
+import { rng } from '../js/mars.js';
 
-const WASM_URL = new URL('./wasm/mars.wasm', import.meta.url);
+const WASM_URL = new URL('./42mars.wasm', import.meta.url);
 const MAX_CORE = 65536;
 const isNode = typeof process !== 'undefined' && Boolean(process.versions?.node);
 
 let compiled = null; // WebAssembly.Module once compiled
 
-// Compiles mars.wasm once (fetch in browsers, the file system in Node) and
+// Compiles 42mars.wasm once (fetch in browsers, the file system in Node) and
 // returns the WebAssembly.Module.
 export async function compileWasmMars() {
   if (compiled) return compiled;

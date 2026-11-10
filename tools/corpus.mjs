@@ -5,7 +5,7 @@
 // Usage: node tools/corpus.mjs <dir> [--verbose]
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
-import { assemble } from '../src/engine/assembler.js';
+import { assemble } from '../js/assembler.js';
 
 const dir = process.argv[2];
 const verbose = process.argv.includes('--verbose');

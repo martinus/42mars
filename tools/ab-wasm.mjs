@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 Martin Leitner-Ankerl
 //
-// A/B timing of two builds of src/engine/wasm/mars.wasm, as the
+// A/B timing of two builds of wasm/42mars.wasm, as the
 // perf-experiment skill asks for: the measures run alternately on A and B,
 // each in a fresh process, and the result is the median and range per
 // measure and build.
@@ -16,7 +16,7 @@
 //   t20     tools/tournament.mjs $O/sets/t20 --jobs 1        seconds
 //   t80j16, t80j31  the same on $O/sets/t80 with 16 and 31 jobs, --t80-runs times
 //
-// Each build is copied over src/engine/wasm/mars.wasm before its run; the
+// Each build is copied over wasm/42mars.wasm before its run; the
 // original file is put back at the end, also after Ctrl-C. Check that the
 // machine is idle first (uptime, no other node or clang).
 import { readFileSync, writeFileSync } from 'node:fs';
@@ -38,9 +38,9 @@ if (!A || !B) {
   process.exit(2);
 }
 
-const WASM = join(root, 'src/engine/wasm/mars.wasm');
+const WASM = join(root, 'wasm/42mars.wasm');
 const original = readFileSync(WASM);
-// Read both builds first: either may be the live mars.wasm itself.
+// Read both builds first: either may be the live 42mars.wasm itself.
 const builds = [['A', readFileSync(A)], ['B', readFileSync(B)]];
 const restore = () => writeFileSync(WASM, original);
 process.on('SIGINT', () => { restore(); process.exit(130); });

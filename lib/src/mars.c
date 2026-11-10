@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 Martin Leitner-Ankerl
 
-// Headless MARS simulator, compiled to WebAssembly (see tools/build-wasm.sh)
-// and driven by src/engine/mars-wasm.js. It implements section 3 of
+// Headless MARS simulator, compiled to WebAssembly (see wasm/build.sh)
+// and driven by wasm/42mars.js. It implements section 3 of
 // docs/redcode-semantics.md without the visualizer bookkeeping of 3.4 and
 // 3.6, and gives the same core, queues, scores and round results as
-// src/engine/mars.js with `headless: true`.
+// js/mars.js with `headless: true`.
 //
 // No libc: memory comes from a bump allocator on top of the linear memory.
 // The same file builds natively (for benchmarks) with a static arena.

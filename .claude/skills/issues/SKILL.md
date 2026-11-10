@@ -79,7 +79,7 @@ Decide everything else yourself and say what you decided.
 
 ### 4. Build it
 
-Read the rule files the change touches first (`.claude/rules/engine.md`, `wasm.md`, `ui.md` load when you open matching files). Every new test is proven by the smallest mutation that brings the defect back (`~/gra/CLAUDE.md`, "Making a change"); for C, check that the mutant built (`md5sum` of `mars.wasm` changed) before reading the result.
+Read the rule files the change touches first (`.claude/rules/engine.md`, `wasm.md`, `ui.md` load when you open matching files). Every new test is proven by the smallest mutation that brings the defect back (`~/gra/CLAUDE.md`, "Making a change"); for C, check that the mutant built (`md5sum` of `42mars.wasm` changed) before reading the result.
 
 If you hand an issue to an agent, its prompt gets the issue's "Done when", and you check the result against it. The agent's report covers what it did, not what it left out.
 

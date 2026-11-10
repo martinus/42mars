@@ -13,7 +13,7 @@
 
 #include <stdio.h>
 #include <time.h>
-#include "mars.c"
+#include "mars.c" // lib/src, see tools/bench-native.mjs (-I)
 
 int main(int argc, char **argv) {
   FILE *f = argc > 1 ? fopen(argv[1], "r") : 0;

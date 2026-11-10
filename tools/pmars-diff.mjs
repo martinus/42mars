@@ -19,7 +19,7 @@
 //   multi      3 and 4 warrior battles (random warriors)
 // --headless runs our simulator without the visualizer bookkeeping.
 // --wasm runs the battles, fuzz and multi sections on the wasm engine
-// (src/engine/mars-wasm.js) instead of mars.js, round by round.
+// (wasm/42mars.js) instead of mars.js, round by round.
 // --wasm-match plays each battle with one runMatch() call with early tie
 // detection, which leaves the final core of some rounds different, so it
 // compares the scores only and does not go with --pmars-trace.
@@ -48,11 +48,11 @@ import { execFile } from 'node:child_process';
 import { mkdirSync, readFileSync, readdirSync, writeFileSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir, cpus } from 'node:os';
 import { join } from 'node:path';
-import { assemble } from '../src/engine/assembler.js';
-import { Evaluator } from '../src/engine/expr.js';
-import { Mars } from '../src/engine/mars.js';
-import { compileWasmMars, createWasmMarsSync } from '../src/engine/mars-wasm.js';
-import { formatListing } from '../src/engine/opcodes.js';
+import { assemble } from '../js/assembler.js';
+import { Evaluator } from '../js/expr.js';
+import { Mars } from '../js/mars.js';
+import { compileWasmMars, createWasmMarsSync } from '../wasm/42mars.js';
+import { formatListing } from '../js/opcodes.js';
 
 const args = process.argv.slice(2);
 const arg = (name, dflt) => {

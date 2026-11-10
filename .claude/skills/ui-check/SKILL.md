@@ -1,6 +1,6 @@
 ---
 name: ui-check
-description: Run the Core War Theater visualizer headless and take screenshots, to verify a UI change visually or reproduce a UI bug. Use after any change to src/ui/** or index.html, before calling it done.
+description: Run the Core War Theater visualizer headless and take screenshots, to verify a UI change visually or reproduce a UI bug. Use after any change to ui/**, before calling it done.
 ---
 # UI check
 
@@ -11,7 +11,7 @@ description: Run the Core War Theater visualizer headless and take screenshots, 
    google-chrome --headless=new --no-sandbox --user-data-dir=$S/prof \
      --use-angle=swiftshader --enable-unsafe-swiftshader --window-size=1600,1000 \
      --virtual-time-budget=6000 --enable-logging=stderr --v=0 \
-     --screenshot=$S/shot.png 'http://127.0.0.1:8123/?cast=lantern,origami&steps=3000&paused&noguide' 2>&1 | grep -i 'console\|error'
+     --screenshot=$S/shot.png 'http://127.0.0.1:8123/ui/?cast=lantern,origami&steps=3000&paused&noguide' 2>&1 | grep -i 'console\|error'
    ```
    Then open `$S/shot.png` with the Read tool and look at it. Console errors in the output are failures. Add `--force-device-scale-factor=2` for a screenshot a person will see.
 3. Cover what changed: `layout=grid` and `layout=ring`; `preset=nano` (instruction text in cells); `speed=16` without `paused` for the running look; `steps=N` to stop at an interesting moment (deterministic for a given cast and preset); with and without `noguide`.

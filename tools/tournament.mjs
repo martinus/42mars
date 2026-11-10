@@ -36,7 +36,7 @@
 // one of its warriors is one task.
 //
 // --native-input writes every pairing as a match in the input format of
-// src/engine/wasm/bench-native.c and exits, for tools/bench-native.mjs --input.
+// lib/tools/bench-native.c and exits, for tools/bench-native.mjs --input.
 
 import { Worker, isMainThread, workerData } from 'node:worker_threads';
 import { spawn } from 'node:child_process';
@@ -44,10 +44,10 @@ import { readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { availableParallelism } from 'node:os';
 import { basename, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { assemble } from '../src/engine/assembler.js';
-import { Mars } from '../src/engine/mars.js';
-import { OP } from '../src/engine/opcodes.js';
-import { compileWasmMars, createWasmMarsSync, packWarrior } from '../src/engine/mars-wasm.js';
+import { assemble } from '../js/assembler.js';
+import { Mars } from '../js/mars.js';
+import { OP } from '../js/opcodes.js';
+import { compileWasmMars, createWasmMarsSync, packWarrior } from '../wasm/42mars.js';
 import { nativeMatch } from './native-input.mjs';
 
 // ------------------------------------------------------------------ tasks

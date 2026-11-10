@@ -1,6 +1,6 @@
 ---
 name: perf-experiment
-description: Measure a simulator speed idea against the current engine and record it in docs/performance-log.md, kept or rejected. Use for any change made to make mars.c, mars-wasm.js, mars.js or tools/tournament.mjs faster, and for re-measuring the speed numbers in PLAN.md and README.md.
+description: Measure a simulator speed idea against the current engine and record it in docs/performance-log.md, kept or rejected. Use for any change made to make mars.c, 42mars.js, mars.js or tools/tournament.mjs faster, and for re-measuring the speed numbers in PLAN.md and README.md.
 ---
 # Speed experiment
 
@@ -8,7 +8,7 @@ Setup: `O=${COREWAR_ORACLE:-$HOME/.local/share/corewar-theater}`.
 
 1. Read `docs/performance-log.md` first. Skip ideas already rejected there unless something they depended on changed; say what changed.
 2. Idle machine: `uptime` load below 1 and `pgrep -a 'node|clang|pmars|chrome'` empty apart from yourself. Do not time while builds, tests or other agents run; ask first if another session may be benchmarking.
-3. A/B in the same session: keep the baseline build (e.g. `cp src/engine/wasm/mars.wasm $TMP/base.wasm`), build the variant, and alternate baseline and variant runs (ABAB...), swapping `mars.wasm`, so drift hits both. Fresh process per run. `node tools/ab-wasm.mjs $TMP/base.wasm $TMP/variant.wasm` does that for bench, pairs, t20 and t80 and prints median, range and change; it restores `mars.wasm` afterwards. A change to a tool (e.g. `tools/tournament.mjs`) instead: `git show HEAD:tools/tournament.mjs > tools/zz-base-tournament.mjs` (its imports are relative), then `node tools/ab-tool.mjs tools/zz-base-tournament.mjs tools/tournament.mjs 5 <arguments>` alternates the two; delete the copy afterwards. For a change to `mars.c` that adds code outside the hot loops, run `node tools/wasm-functions.mjs $TMP/base.wasm src/engine/wasm/mars.wasm` first: when `execute`, `execute2_8000` and `execute2_any` (the three largest functions) differ in more than a call index, move the new code and its statics behind them before timing anything.
+3. A/B in the same session: keep the baseline build (e.g. `cp wasm/42mars.wasm $TMP/base.wasm`), build the variant, and alternate baseline and variant runs (ABAB...), swapping `42mars.wasm`, so drift hits both. Fresh process per run. `node tools/ab-wasm.mjs $TMP/base.wasm $TMP/variant.wasm` does that for bench, pairs, t20 and t80 and prints median, range and change; it restores `42mars.wasm` afterwards. A change to a tool (e.g. `tools/tournament.mjs`) instead: `git show HEAD:tools/tournament.mjs > tools/zz-base-tournament.mjs` (its imports are relative), then `node tools/ab-tool.mjs tools/zz-base-tournament.mjs tools/tournament.mjs 5 <arguments>` alternates the two; delete the copy afterwards. For a change to `mars.c` that adds code outside the hot loops, run `node tools/wasm-functions.mjs $TMP/base.wasm wasm/42mars.wasm` first: when `execute`, `execute2_8000` and `execute2_any` (the three largest functions) differ in more than a call index, move the new code and its statics behind them before timing anything.
 4. Measures (report median and range):
    | Name | Command | Runs |
    |---|---|---|
