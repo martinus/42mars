@@ -11,6 +11,7 @@
 //   m.startRound(); while (!m.roundOver) m.run(1e6);
 //   m.runMatch(codes, { rounds: 200, seed })   // whole match inside wasm
 //   m.runMatch(codes, { rounds: 50, seed, firstRound: 150 }) // its last 50 rounds
+//   m.runMatch(codes.map((c) => packWarrior(c)), ...)        // prepared warriors
 //
 // Differences from Mars:
 // - The core size is at most 65536 (cells hold 16-bit values), maxProcesses
@@ -71,6 +72,26 @@ export function createWasmMarsSync(options = {}, module = undefined) {
   return new WasmMars(new WebAssembly.Instance(module ?? compileSync()), options);
 }
 
+// A warrior in the form the engine loads: 5 integers per instruction (op
+// byte, A mode, A value, B mode, B value) in `packed`, an Int32Array. load()
+// and runMatch() copy `packed` into the engine with one block copy; a warrior
+// from assemble() is converted on every load. The array may be a view into a
+// SharedArrayBuffer, so that worker threads share one copy of all warriors
+// (tools/tournament.mjs).
+export function packWarrior(code, packed = new Int32Array(5 * code.instructions.length)) {
+  let k = 0;
+  for (const ins of code.instructions) {
+    packed[k++] = (ins.op << 3) | ins.mod;
+    packed[k++] = ins.aMode;
+    packed[k++] = ins.aVal;
+    packed[k++] = ins.bMode;
+    packed[k++] = ins.bVal;
+  }
+  return { ok: code.ok, name: code.name, author: code.author, start: code.start, pin: code.pin, packed };
+}
+
+const lengthOf = (code) => (code.packed ? code.packed.length / 5 : code.instructions.length);
+
 function effectiveOptions(options) {
   const o = { ...DEFAULT_OPTIONS, ...options };
   if (!o.pSpaceSize) o.pSpaceSize = Math.floor(o.coreSize / 16);
@@ -122,7 +143,7 @@ class WasmMars {
     const o = this.opt;
     for (const c of codes) {
       if (!c.ok) throw new Error(`warrior '${c.name}' did not assemble`);
-      if (c.instructions.length > o.maxLength) throw new Error(`warrior '${c.name}' is longer than ${o.maxLength}`);
+      if (lengthOf(c) > o.maxLength) throw new Error(`warrior '${c.name}' is longer than ${o.maxLength}`);
     }
     if (codes.length * o.minDistance > o.coreSize) throw new Error('too many warriors for the core size and minimum distance');
     if (codes.length < 1 || codes.length > 255) throw new RangeError('the wasm engine supports 1 to 255 warriors');
@@ -132,7 +153,7 @@ class WasmMars {
     }
 
     const nw = codes.length;
-    const total = codes.reduce((s, c) => s + c.instructions.length, 0);
+    const total = codes.reduce((s, c) => s + lengthOf(c), 0);
     const input = this.x.mars_config(o.coreSize, o.maxProcesses, o.maxCycles, o.minDistance, o.pSpaceSize, nw, total);
     if (!input) throw new Error('wasm engine: out of memory');
     this.bytes();
@@ -146,12 +167,17 @@ class WasmMars {
         if (groups.has(code.pin)) group = groups.get(code.pin);
         else groups.set(code.pin, i);
       }
-      i32[k++] = code.instructions.length;
+      i32[k++] = lengthOf(code);
       i32[k++] = code.start;
       i32[k++] = group;
       i32[k++] = positions ? positions[i] : 0;
     });
     for (const code of codes) {
+      if (code.packed) {
+        i32.set(code.packed, k);
+        k += code.packed.length;
+        continue;
+      }
       for (const ins of code.instructions) {
         i32[k++] = (ins.op << 3) | ins.mod;
         i32[k++] = ins.aMode;

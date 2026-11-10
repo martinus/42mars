@@ -27,51 +27,88 @@
 // the same wins, losses and ties. Each job is a /bin/sh that starts the pMARS
 // processes.
 //
-// With --engine wasm and fewer than 4 pairings per job, each pairing whose
-// warriors have no LDP is split into blocks of rounds that run on several
-// workers (runMatch's firstRound): rounds depend on each other only through
-// p-space, which only LDP reads, so the results are the same.
+// --jobs is the number of threads, the main thread included (default: all
+// hardware threads). They take tasks from one shared list until it is empty.
+// With --engine wasm a task is a block of about 8 rounds of a pairing
+// (runMatch's firstRound), so the threads stay busy to the end with few
+// pairings and with many: rounds depend on each other only through p-space,
+// which only LDP reads, so the results are the same. A pairing with LDP in
+// one of its warriors is one task.
 //
 // --native-input writes every pairing as a match in the input format of
 // src/engine/wasm/bench-native.c and exits, for tools/bench-native.mjs --input.
 
-import { Worker, isMainThread, parentPort, workerData } from 'node:worker_threads';
+import { Worker, isMainThread, workerData } from 'node:worker_threads';
 import { spawn } from 'node:child_process';
 import { readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
-import { cpus } from 'node:os';
+import { availableParallelism } from 'node:os';
 import { basename, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { assemble } from '../src/engine/assembler.js';
 import { Mars } from '../src/engine/mars.js';
 import { OP } from '../src/engine/opcodes.js';
+import { compileWasmMars, createWasmMarsSync, packWarrior } from '../src/engine/mars-wasm.js';
 import { nativeMatch } from './native-input.mjs';
 
-// ------------------------------------------------------------------ worker
+// ------------------------------------------------------------------ tasks
+//
+// Main thread and workers share the task list and the results in one
+// SharedArrayBuffer and take tasks with an atomic counter, so no thread
+// waits for another: the main thread works too, and a run is over when the
+// last task is, also when some workers have not started yet. The warriors
+// are in the buffer as well: a worker gets no copy of them.
 
-async function workerMain() {
-  // The main thread assembled the warriors and compiled the module once; a
-  // WebAssembly.Module sent to a worker shares its compiled code.
-  const { codes, opts, module } = workerData;
-  // One engine per worker, reused for every pairing.
-  let wasm = null;
-  if (module) {
-    const { createWasmMarsSync } = await import('../src/engine/mars-wasm.js');
-    wasm = createWasmMarsSync(opts, module);
-  }
-  parentPort.on('message', (task) => {
-    if (task === null) return process.exit(0);
-    const { id, a, b, seed, firstRound, rounds } = task;
+const CTL = 4;            // i32: next task, tasks done
+const TASK = 6;           // i32 per task: a, b, seed, firstRound, rounds, pairing
+const RESULT = 7;         // f64 per task: wins, losses, ties of a, of b, instructions
+
+function shareTasks(codes, tasks) {
+  const instructions = codes.reduce((n, c) => n + c.instructions.length, 0);
+  const ints = CTL + TASK * tasks.length + 5 * instructions;
+  const sab = new SharedArrayBuffer(Math.ceil(ints / 2) * 8 + 8 * RESULT * tasks.length);
+  const i32 = new Int32Array(sab, 0, ints);
+  let k = CTL;
+  for (const t of tasks) { i32.set([t.a, t.b, t.seed, t.firstRound, t.rounds, t.pairing], k); k += TASK; }
+  // The warriors as packWarrior() makes them, the instructions in the buffer.
+  const warriors = codes.map((c) => {
+    const w = packWarrior({ ...c, name: '' }, i32.subarray(k, k + 5 * c.instructions.length));
+    k += w.packed.length;
+    return w;
+  });
+  return { sab, tasks: tasks.length, warriors };
+}
+
+// Takes tasks until none is left. One engine per thread, reused for every task.
+function drain(shared, opts, module) {
+  const { sab, tasks, warriors } = shared;
+  const i32 = new Int32Array(sab, 0, CTL + TASK * tasks);
+  const res = new Float64Array(sab, sab.byteLength - 8 * RESULT * tasks, RESULT * tasks);
+  // The JS engine reads instruction objects: unpacked on first use.
+  const unpacked = new Array(warriors.length);
+  const code = (w) => {
+    if (module) return warriors[w];
+    if (unpacked[w]) return unpacked[w];
+    const p = warriors[w].packed;
+    const instructions = [];
+    for (let k = 0; k < p.length; k += 5) instructions.push({ op: p[k] >> 3, mod: p[k] & 7, aMode: p[k + 1], aVal: p[k + 2], bMode: p[k + 3], bVal: p[k + 4] });
+    return (unpacked[w] = { ...warriors[w], instructions });
+  };
+  const wasm = module ? createWasmMarsSync(opts, module) : null;
+  for (;;) {
+    const id = Atomics.add(i32, 0, 1);
+    if (id >= tasks) return;
+    const [a, b, seed, firstRound, rounds] = i32.subarray(CTL + TASK * id, CTL + TASK * (id + 1));
     let wa, wb, instructions;
     if (wasm) {
       // The match, or a block of its rounds, runs inside WebAssembly, with
       // early tie detection.
-      const r = wasm.runMatch([codes[a], codes[b]], { rounds, seed, firstRound });
+      const r = wasm.runMatch([code(a), code(b)], { rounds, seed, firstRound });
       [wa, wb] = r.warriors;
       instructions = r.instructions;
     } else {
       if (firstRound) throw new Error('--engine js plays whole matches only');
       const m = new Mars({ ...opts, headless: true });
-      m.load([codes[a], codes[b]], { seed });
+      m.load([code(a), code(b)], { seed });
       instructions = 0;
       for (let r = 0; r < rounds; r++) {
         m.startRound();
@@ -80,14 +117,22 @@ async function workerMain() {
       }
       [wa, wb] = m.warriors;
     }
-    parentPort.postMessage({ id, a: [wa.wins, wa.losses, wa.ties], b: [wb.wins, wb.losses, wb.ties], instructions });
-  });
+    res.set([wa.wins, wa.losses, wa.ties, wb.wins, wb.losses, wb.ties, instructions], RESULT * id);
+    Atomics.add(i32, 1, 1);
+    Atomics.notify(i32, 1);
+  }
+}
+
+function workerMain() {
+  // A WebAssembly.Module sent to a worker shares its compiled code.
+  const { shared, opts, module } = workerData;
+  drain(shared, opts, module);
 }
 
 // ------------------------------------------------------------------ main
 
 function parseArgs(argv) {
-  const o = { files: [], rounds: 100, jobs: Math.max(1, cpus().length - 1), seed: 1, engine: 'js',
+  const o = { files: [], rounds: 100, jobs: availableParallelism(), seed: 1, engine: 'js',
     size: 8000, cycles: 80000, processes: 8000, length: 100, distance: 100, matrix: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -130,54 +175,55 @@ function pairPosition(seed, a, b, o) {
   return o.distance + (h % (o.size + 1 - 2 * o.distance));
 }
 
-// The tasks for the workers: a pairing each, or blocks of its rounds when
-// there are few pairings (see the header).
+// The tasks: with the wasm engine a pairing whose warriors have no LDP is
+// split into blocks of about BLOCK rounds (see the header), so that all
+// threads stay busy to the end whatever the number of pairings. A call of
+// runMatch costs about 1 microsecond on top of its rounds. Whole pairings
+// come first: they are the longest tasks.
+const BLOCK = 8;
 function makeTasks(o, codes, pairs) {
   const hasLdp = codes.map((c) => c.instructions.some((x) => x.op === OP.LDP));
-  const blocks = o.engine === 'wasm' && pairs.length < 4 * o.jobs ? Math.min(o.rounds, Math.ceil((4 * o.jobs) / pairs.length)) : 1;
-  const tasks = [];
+  const blocks = o.engine === 'wasm' ? Math.ceil(o.rounds / BLOCK) : 1;
+  const whole = [];
+  const split = [];
   pairs.forEach((p, k) => {
     const n = hasLdp[p.a] || hasLdp[p.b] ? 1 : Math.max(1, blocks);
     for (let i = 0; i < n; i++) {
       const firstRound = Math.floor((i * o.rounds) / n);
-      tasks.push({ pairing: k, a: p.a, b: p.b, seed: p.pos - o.distance, firstRound, rounds: Math.floor(((i + 1) * o.rounds) / n) - firstRound });
+      (n === 1 ? whole : split).push({ pairing: k, a: p.a, b: p.b, seed: p.pos - o.distance, firstRound, rounds: Math.floor(((i + 1) * o.rounds) / n) - firstRound });
     }
   });
-  return tasks;
+  return [...whole, ...split];
 }
 
 async function runEngine(o, codes, pairs) {
-  const module = o.engine === 'wasm' ? await (await import('../src/engine/mars-wasm.js')).compileWasmMars() : null;
+  const module = o.engine === 'wasm' ? await compileWasmMars() : null;
   const tasks = makeTasks(o, codes, pairs);
-  if (tasks.length > pairs.length) console.error(`${tasks.length} tasks: pairings without LDP split into blocks of rounds`);
-  return new Promise((resolve, reject) => {
-    const opts = { coreSize: o.size, maxCycles: o.cycles, maxProcesses: o.processes, maxLength: o.length, minDistance: o.distance, rounds: o.rounds };
-    // Wins, losses and ties of the blocks of a pairing add up.
-    const results = pairs.map((_, id) => ({ id, a: [0, 0, 0], b: [0, 0, 0], instructions: 0 }));
-    let next = 0;
-    let done = 0;
-    let instructions = 0;
-    const workers = Array.from({ length: Math.min(o.jobs, tasks.length) }, () => new Worker(fileURLToPath(import.meta.url), { workerData: { codes, opts, module } }));
-    const feed = (w) => {
-      if (next < tasks.length) {
-        const t = tasks[next];
-        w.postMessage({ id: next++, a: t.a, b: t.b, seed: t.seed, firstRound: t.firstRound, rounds: t.rounds });
-      } else w.postMessage(null);
-    };
-    for (const w of workers) {
-      w.on('message', (r) => {
-        const sum = results[tasks[r.id].pairing];
-        for (let i = 0; i < 3; i++) { sum.a[i] += r.a[i]; sum.b[i] += r.b[i]; }
-        sum.instructions += r.instructions;
-        instructions += r.instructions;
-        if (++done === tasks.length) resolve({ results, instructions });
-        feed(w);
-      });
-      w.on('error', reject);
-      feed(w);
-    }
-    if (tasks.length === 0) resolve({ results, instructions });
+  const opts = { coreSize: o.size, maxCycles: o.cycles, maxProcesses: o.processes, maxLength: o.length, minDistance: o.distance, rounds: o.rounds };
+  const shared = shareTasks(codes, tasks);
+  const ctl = new Int32Array(shared.sab, 0, CTL);
+  // The main thread is one of the jobs.
+  const workers = Array.from({ length: Math.max(0, Math.min(o.jobs, tasks.length) - 1) }, () => new Worker(fileURLToPath(import.meta.url), { workerData: { shared, opts, module } }));
+  const failure = new Promise((_, reject) => { for (const w of workers) w.on('error', reject); });
+  failure.catch(() => {});
+  try {
+    drain(shared, opts, module);
+    for (let done; (done = Atomics.load(ctl, 1)) < tasks.length;) await Promise.race([Atomics.waitAsync(ctl, 1, done).value, failure]);
+  } finally {
+    for (const w of workers) w.terminate(); // the ones that started too late for a task, too
+  }
+  // Wins, losses and ties of the blocks of a pairing add up.
+  const res = new Float64Array(shared.sab, shared.sab.byteLength - 8 * RESULT * tasks.length, RESULT * tasks.length);
+  const results = pairs.map((_, id) => ({ id, a: [0, 0, 0], b: [0, 0, 0], instructions: 0 }));
+  let instructions = 0;
+  tasks.forEach((t, id) => {
+    const sum = results[t.pairing];
+    const r = res.subarray(RESULT * id, RESULT * (id + 1));
+    for (let i = 0; i < 3; i++) { sum.a[i] += r[i]; sum.b[i] += r[3 + i]; }
+    sum.instructions += r[6];
+    instructions += r[6];
   });
+  return { results, instructions };
 }
 
 // Reads lines "<id>\t<pos>\t<file a>\t<file b>" and answers each with one
@@ -342,4 +388,4 @@ async function main() {
 }
 
 if (isMainThread) await main();
-else await workerMain();
+else workerMain();

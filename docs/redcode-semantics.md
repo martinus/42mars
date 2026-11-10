@@ -841,8 +841,14 @@ the number of warriors, and the round numbers in `results` start at k + 1.
 P-space and the last results start empty, as at the start of a match. Only
 LDP reads them, and opcodes are only copied, so when no warrior's code
 contains LDP every round gives the same result as in the whole match, and
-blocks of rounds can run on several engines (`tools/tournament.mjs` splits
-pairings that way when it has fewer than 4 pairings per job).
+blocks of rounds can run on several engines (`tools/tournament.mjs` plays
+every pairing without LDP as blocks of about 8 rounds).
+
+`packWarrior(code)` returns the warrior with its instructions as an
+`Int32Array` `packed`, 5 integers per instruction (op byte, A mode, A
+value, B mode, B value). `load` and `runMatch` take packed warriors in
+place of `assemble()` results and copy `packed` in one piece; the array may
+be a view into a `SharedArrayBuffer` that several threads read.
 
 With `earlyTie` (the default) a
 round stops as soon as it can only end in a tie: a warrior loses at most one

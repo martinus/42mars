@@ -44,11 +44,10 @@ test('tournament: the same seed gives the same results, another seed other posit
   assert.notDeepEqual(a.pairs.map((p) => p.pos), c.pairs.map((p) => p.pos));
 });
 
-// With few pairings per job the wasm engine splits each pairing without LDP
-// into blocks of rounds on several workers (10 and 3 pairings with 3 jobs
-// here, so the tests above split too). A warrior with LDP sees the last
-// result of the round before, so its pairings must stay whole: this one
-// dies right after a tied round.
+// The wasm engine plays each pairing without LDP as blocks of rounds that
+// any thread takes (so the tests above run in blocks too). A warrior with
+// LDP sees the last result of the round before, so its pairings must stay
+// whole: this one dies right after a tied round.
 test('tournament: pairings with LDP are not split into blocks of rounds', () => {
   const warriors = join(dir, 'ldp');
   mkdirSync(warriors);
