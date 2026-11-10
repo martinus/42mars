@@ -118,7 +118,7 @@ static Cell *core;      // coreMem
 // QSTATIC long) are at fixed addresses: execute2_8000() then addresses them
 // with constant offsets instead of base registers (+4% on the bench).
 #define LINEAR_CYCLES 80000
-#define QSTATIC ((1 + 2 * (LINEAR_CYCLES + 1) + 31) & ~31) // see mars_config
+#define QSTATIC ((2 + 2 * (LINEAR_CYCLES + 1) + 31) & ~31) // see mars_config
 static _Alignas(64) Cell coreMem[65536];
 static _Alignas(64) u16 queueMem[2][QSTATIC];
 static Warrior *war;
@@ -160,11 +160,11 @@ i32 *mars_config(u32 coreSize, u32 maxProcesses, u32 cycles, u32 minDistance, u3
   qmask = qlen - 1;
   // Linear queues: with two warriors a round runs at most max(2 * maxCycles,
   // 1) instructions and the turns alternate, so each warrior gets at most
-  // maxCycles + 1 turns and pushes at most two entries per turn. Its tail
-  // stays at most 1 + 2 * (maxCycles + 1), and mars_start_round() resets
-  // the counters. Without wraparound the mask is all ones, which
-  // execute2_8000() leaves out: +6% on the bench, -5% on t20
-  // (docs/performance-log.md).
+  // maxCycles + 1 turns and pushes at most two entries per turn. A queue
+  // starts at index 0 or 1 (mars_start_round()), so its tail stays at most
+  // 2 + 2 * (maxCycles + 1), and mars_start_round() resets the counters.
+  // Without wraparound the mask is all ones, which execute2_8000() leaves
+  // out: +6% on the bench, -5% on t20 (docs/performance-log.md).
   const int linear = nw == 2 && cycles <= LINEAR_CYCLES;
   if (linear) qmask = ~0u;
   core = coreMem;
@@ -294,9 +294,12 @@ void mars_start_round(void) {
     for (u32 k = 0; k < w->len; k++) core[(w->position + k) % N] = w->code[k];
     w->next = (i + 1) % nw;
     w->nextW = &war[w->next];
-    w->head = 0;
-    w->tail = 1;
-    w->q[0] = (u16)((w->position + w->start) % N);
+    // Two warriors: both queue heads are equal whenever warrior 0 is to
+    // move, see execute2(). So warrior 0's queue starts one entry later when
+    // warrior 1 moves first.
+    w->head = nw == 2 && i == 0 && starter == 1;
+    w->tail = w->head + 1;
+    w->q[w->head & qmask] = (u16)((w->position + w->start) % N);
     w->alive = 1;
     w->diedAt = -1;
   }
@@ -399,8 +402,13 @@ static inline void set_cell(Cell *c, u64 v) { __builtin_memcpy(c, &v, 8); }
 //   battles interleaved in one loop, wasm-opt -O3
 // - third round: MOV.I from one 64-bit snapshot of the A cell and linear
 //   queues for two warriors (mars_config()): 278 -> 294 on the bench, t20
-//   4.16 -> 3.84 s. Slower, not kept: one shared queue head for two
-//   warriors, specialized cases for classes of equal instruction words
+//   4.16 -> 3.84 s. Slower, not kept: one queue ring for both warriors
+//   with one head, specialized cases for classes of equal instruction words
+// - fourth round: one head for both linear queues and a loop over pairs of
+//   turns (execute2()), ADD, SUB and MUL of both values with one load and
+//   one store: 298 -> 310 on the bench, t20 3.80 -> 3.60 s. Slower, not
+//   kept: every core store as a store of the whole cell, the instruction
+//   fetched with three 16-bit loads, queue counters as byte offsets
 
 // Executes the instruction ir, fetched from pc, of warrior W, whose queue
 // is q with the counters *head and *tail (W's own fields, or local copies of
@@ -519,13 +527,15 @@ a_done:;
     case 005: set_ab(B, Aab >> 16 | Aab << 16); break;
     case 006: set_cell(B, Acell); break;
 
-    // ADD
+    // ADD. With .F, .X and .I both values are one load and one store: after
+    // a 16-bit store of one value, the 32-bit load for the other one has to
+    // wait until the store is in the cache (no store-to-load forwarding).
     case 010: B->a = (u16)WRAP(BA + AA); break;
     case 011: B->b = (u16)WRAP(BB + AB); break;
     case 012: B->b = (u16)WRAP(BB + AA); break;
     case 013: B->a = (u16)WRAP(BA + AB); break;
-    case 014: case 016: B->a = (u16)WRAP(BA + AA); B->b = (u16)WRAP(BB + AB); break;
-    case 015: B->a = (u16)WRAP(BA + AB); B->b = (u16)WRAP(BB + AA); break;
+    case 014: case 016: r = BAB; set_ab(B, WRAP((r & 0xffff) + AA) | WRAP((r >> 16) + AB) << 16); break;
+    case 015: r = BAB; set_ab(B, WRAP((r & 0xffff) + AB) | WRAP((r >> 16) + AA) << 16); break;
 
     // SUB: target minus source
 #define SUBM(t, s) ((t) >= (s) ? (t) - (s) : (t) + n - (s))
@@ -533,16 +543,16 @@ a_done:;
     case 021: B->b = (u16)SUBM(BB, AB); break;
     case 022: B->b = (u16)SUBM(BB, AA); break;
     case 023: B->a = (u16)SUBM(BA, AB); break;
-    case 024: case 026: B->a = (u16)SUBM(BA, AA); B->b = (u16)SUBM(BB, AB); break;
-    case 025: B->a = (u16)SUBM(BA, AB); B->b = (u16)SUBM(BB, AA); break;
+    case 024: case 026: r = BAB; set_ab(B, SUBM(r & 0xffff, AA) | SUBM(r >> 16, AB) << 16); break;
+    case 025: r = BAB; set_ab(B, SUBM(r & 0xffff, AB) | SUBM(r >> 16, AA) << 16); break;
 
     // MUL
     case 030: B->a = (u16)(BA * AA % n); break;
     case 031: B->b = (u16)(BB * AB % n); break;
     case 032: B->b = (u16)(BB * AA % n); break;
     case 033: B->a = (u16)(BA * AB % n); break;
-    case 034: case 036: B->a = (u16)(BA * AA % n); B->b = (u16)(BB * AB % n); break;
-    case 035: B->a = (u16)(BA * AB % n); B->b = (u16)(BB * AA % n); break;
+    case 034: case 036: r = BAB; set_ab(B, (r & 0xffff) * AA % n | (r >> 16) * AB % n << 16); break;
+    case 035: r = BAB; set_ab(B, (r & 0xffff) * AB % n | (r >> 16) * AA % n << 16); break;
 
     // DIV and MOD store each pair with a non-zero divisor, then the
     // process dies if a divisor was zero.
@@ -756,8 +766,13 @@ static __attribute__((noinline)) u64 execute(u64 count) {
 // execute() for exactly two warriors: the queue counters of both live in
 // local variables, and the loop body is unrolled into warrior 0's turn and
 // warrior 1's turn. With two warriors the turns alternate until one loses
-// its last process, which ends the round. n, mask and limit are the core
-// size, queue mask and process limit, q0 and q1 the two queues: constants in
+// its last process, which ends the round. Every turn pops one entry, and
+// mars_start_round() starts warrior 0's queue one entry later when warrior
+// 1 moves first: both heads are equal whenever warrior 0 is to move. So the
+// loop runs pairs of turns with one head for both queues, which also counts
+// the pairs: 3 loop-carried counters (head, two tails) instead of 5 (two
+// heads, two tails, countdown). n, mask and limit are the core size, queue
+// mask and process limit, q0 and q1 the two queues: constants in
 // execute2_8000().
 static inline __attribute__((always_inline)) u64 execute2(u64 count, const u32 n, const u32 mask, const u32 limit,
                                                           u16 *const q0, u16 *const q1) {
@@ -773,33 +788,41 @@ static inline __attribute__((always_inline)) u64 execute2(u64 count, const u32 n
   }
   Cell *const C = coreMem;
   Warrior *const W0 = &war[0], *const W1 = &war[1];
-  u32 h0 = W0->head, t0 = W0->tail, h1 = W1->head, t1 = W1->tail;
   i64 budget = cyclesLeft < 1 ? 1 : cyclesLeft; // like execute()
   if (count < (u64)budget) budget = (i64)count;
-  i64 left = budget;
-  u32 cur = 0;  // whose turn is next when the loop stops
+  // Both heads are equal here. h runs up to `end`; an odd budget's last
+  // instruction goes through execute() below.
+  const u32 start = W0->head, end = start + (u32)(budget >> 1);
+  u32 h = start, t0 = W0->tail, t1 = W1->tail;
   u32 dead = 2; // the warrior that lost its last process, 2: none
-  for (;;) {
-    if (UNLIKELY(step(C, n, mask, limit, W0, q0, &h0, &t0)) && t0 == h0) { dead = 0; break; }
-    if (UNLIKELY(--left == 0)) { cur = 1; break; }
-    if (UNLIKELY(step(C, n, mask, limit, W1, q1, &h1, &t1)) && t1 == h1) { dead = 1; break; }
-    if (UNLIKELY(--left == 0)) { cur = 0; break; }
+  if (h != end) {
+    for (;;) {
+      u32 h0 = h, h1 = h;
+      if (UNLIKELY(step(C, n, mask, limit, W0, q0, &h0, &t0)) && t0 == h0) { dead = 0; break; }
+      if (UNLIKELY(step(C, n, mask, limit, W1, q1, &h1, &t1)) && t1 == h1) { dead = 1; break; }
+      if (UNLIKELY(++h == end)) break;
+    }
   }
-  W0->head = h0; W0->tail = t0;
-  W1->head = h1; W1->tail = t1;
+  W0->tail = t0;
+  W1->tail = t1;
   if (dead < 2) {
-    const i64 cycled = budget - left; // the fatal instruction uses no cycle
+    W0->head = h + 1;
+    W1->head = h + dead;
+    const i64 cycled = 2 * (i64)(h - start) + dead; // the fatal instruction uses no cycle
     timeNow += cycled + 1;
     cyclesLeft -= cycled;
     current = dead;
     warrior_died(dead); // ends the round
     return pre + (u64)cycled + 1;
   }
-  timeNow += budget;
-  cyclesLeft -= budget;
-  current = cur;
+  W0->head = W1->head = h;
+  const i64 done = 2 * (i64)(h - start);
+  timeNow += done;
+  cyclesLeft -= done;
+  current = 0;
+  if (done < budget) return pre + (u64)done + execute(1); // an odd budget: its last instruction
   if (cyclesLeft <= 0) mars_end_round();
-  return pre + (u64)budget;
+  return pre + (u64)done;
 }
 
 // The standard settings (core size 8000, 8000 processes, linear queues) as
