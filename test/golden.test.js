@@ -12,8 +12,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { Evaluator } from '../src/engine/expr.js';
-import { assemble } from '../src/engine/assembler.js';
+import { Evaluator } from '../js/expr.js';
+import { assemble } from '../js/assembler.js';
 
 const load = (f) => JSON.parse(readFileSync(new URL(`./fixtures/${f}`, import.meta.url), 'utf8'));
 

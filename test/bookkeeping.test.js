@@ -10,7 +10,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { Mars } from '../src/engine/mars.js';
+import { Mars } from '../js/mars.js';
 
 // BEGIN fingerprints
 function fingerprints(MarsClass, options = {}) {

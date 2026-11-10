@@ -4,7 +4,7 @@
 //
 // Differential fuzzer for the expression evaluator. Feeds random expressions
 // through an external evaluator program (used as a black box) and compares
-// with src/engine/expr.js.
+// with js/expr.js.
 //
 //   node tools/expr-fuzz.mjs --eval path/to/evaluator [--n 500000] [--seed 1]
 //        [--jobs 16] [--show 20]
@@ -19,7 +19,7 @@
 
 import { spawn } from 'node:child_process';
 import { cpus } from 'node:os';
-import { Evaluator } from '../src/engine/expr.js';
+import { Evaluator } from '../js/expr.js';
 
 const args = process.argv.slice(2);
 const arg = (name, dflt) => {

@@ -3,7 +3,7 @@
 // Copyright (c) 2026 Martin Leitner-Ankerl
 //
 // Upper bound for exact early ties of the form "this loop cannot die"
-// (issue #27): builds src/engine/wasm/tie-ceiling.c natively, runs it on a
+// (issue #27): builds lib/tools/tie-ceiling.c natively, runs it on a
 // bench-native input split into --jobs shards, and adds up its lines.
 //
 //   node tools/tie-ceiling.mjs <input> [--jobs 31] [--cc clang] [--raw file]
@@ -60,8 +60,8 @@ async function run(file) {
   const children = [];
   try {
     const bin = join(tmp, 'tie-ceiling');
-    const src = fileURLToPath(new URL('../src/engine/wasm/tie-ceiling.c', import.meta.url));
-    execFileSync(CC, ['-O2', '-march=native', '-fno-strict-aliasing', '-ffp-contract=off', '-o', bin, src, '-lm'], { stdio: 'inherit' });
+    const src = fileURLToPath(new URL('../lib/tools/tie-ceiling.c', import.meta.url));
+    execFileSync(CC, ['-O2', '-march=native', '-fno-strict-aliasing', '-ffp-contract=off', '-I', fileURLToPath(new URL('../lib/src/', import.meta.url)), '-o', bin, src, '-lm'], { stdio: 'inherit' });
     const shards = Math.min(JOBS, matches.length);
     const outputs = await Promise.all(Array.from({ length: shards }, (_, s) => {
       const part = join(tmp, `in${s}.txt`);

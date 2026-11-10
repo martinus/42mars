@@ -6,9 +6,9 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { assemble } from '../src/engine/assembler.js';
-import { Evaluator, EVAL_OK, EVAL_BAD } from '../src/engine/expr.js';
-import { formatInstruction } from '../src/engine/opcodes.js';
+import { assemble } from '../js/assembler.js';
+import { Evaluator, EVAL_OK, EVAL_BAD } from '../js/expr.js';
+import { formatInstruction } from '../js/opcodes.js';
 
 function asm(src) {
   const w = assemble(src);

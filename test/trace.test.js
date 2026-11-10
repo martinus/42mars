@@ -3,9 +3,9 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { assemble } from '../src/engine/assembler.js';
-import { Mars } from '../src/engine/mars.js';
-import { OP, MOD } from '../src/engine/opcodes.js';
+import { assemble } from '../js/assembler.js';
+import { Mars } from '../js/mars.js';
+import { OP, MOD } from '../js/opcodes.js';
 
 const STORED = 1 << 16;
 const NEW_PROCESS = 1 << 17;

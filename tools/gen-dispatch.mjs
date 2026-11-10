@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 Martin Leitner-Ankerl
 //
-// Generates the dispatch cases of src/engine/wasm/mars.c: case labels on the
+// Generates the dispatch cases of lib/src/mars.c: case labels on the
 // instruction word (op byte | A mode << 8 | B mode << 11), each calling
 // exec_ins() with a constant word, so that clang compiles a copy of the
 // instruction without mode or opcode branches. Words without a case run
@@ -12,7 +12,7 @@
 //   node tools/gen-dispatch.mjs --rank [--top 32] <count files...>
 //
 //   --hot      (default) one case per entry of HOT below: what
-//              tools/build-wasm.sh uses, written to src/engine/wasm/dispatch.h
+//              wasm/build.sh uses, written to lib/src/dispatch.h
 //   --full     one case per combination of opcode, modifier, A mode and B
 //              mode (19 * 7 * 8 * 8 = 8512); slower and much larger, see
 //              docs/performance-log.md
@@ -23,7 +23,7 @@
 //              with -DCOUNT_INS; every file gets the same weight. Prints a
 //              HOT list.
 //
-// The output is deterministic: tools/build-wasm.sh regenerates dispatch.h
+// The output is deterministic: wasm/build.sh regenerates dispatch.h
 // and the committed file must not change.
 
 import { readFileSync, writeFileSync } from 'node:fs';

@@ -23,7 +23,12 @@ const types = {
 };
 
 createServer(async (req, res) => {
-  const path = decodeURIComponent(new URL(req.url, 'http://x').pathname);
+  const url = new URL(req.url, 'http://x');
+  const path = decodeURIComponent(url.pathname);
+  if (path === '/') { // the visualizer lives in ui/
+    res.writeHead(302, { location: `/ui/${url.search}` }).end();
+    return;
+  }
   const file = normalize(join(root, path.endsWith('/') ? `${path}index.html` : path));
   if (!file.startsWith(root)) {
     res.writeHead(403).end();

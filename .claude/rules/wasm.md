@@ -1,21 +1,20 @@
 ---
 paths:
-  - "src/engine/wasm/**"
-  - "src/engine/mars-wasm.js"
-  - "tools/build-wasm.sh"
+  - "lib/**"
+  - "wasm/**"
   - "tools/bench*.mjs"
   - "docs/performance-log.md"
 ---
 # WebAssembly engine rules
 
-- Build only with `tools/build-wasm.sh` (clang 22, `--target=wasm32 -Os -nostdlib`, no emscripten, no libc, no imports). It first regenerates `dispatch.h` from the `HOT` list in `tools/gen-dispatch.mjs`; both outputs are committed and two builds must be byte-identical (`md5sum`).
-- Commit `mars.wasm` together with the C change it was built from.
+- Build only with `wasm/build.sh` (clang 22, `--target=wasm32 -Os -nostdlib`, no emscripten, no libc, no imports). It first regenerates `dispatch.h` from the `HOT` list in `tools/gen-dispatch.mjs`; both outputs are committed and two builds must be byte-identical (`md5sum`).
+- Commit `42mars.wasm` together with the C change it was built from.
 - The same `mars.c` builds natively for `tools/bench-native.mjs` (`bench-native.c`, static arena). Keep it building: the native profile (`perf stat`, `perf record`) is the main tool for finding where time goes.
 - Instruction code lives in `exec_ins()`. `step()` switches on the 14-bit instruction word: the 32 hottest words call `exec_ins()` with a constant word (specialized copies), the rest run it generically. Loops: `execute` (any number of warriors) and `execute2` (exactly two, a loop over pairs of turns with one queue head for both warriors and the two tails in locals), instantiated as `execute2_8000` (core 8000, 8000 processes as constants) and `execute2_any`. A semantics change in `exec_ins()` reaches all of them; the test "every specialized instruction word agrees with mars.js" covers each specialized word in each loop.
 - To re-rank the hot words for a new instruction mix: `node tools/bench-native.mjs --input <file> --early-tie --count <counts>` per mix (inputs from `--native-input` of `tools/tournament.mjs` and `tools/bench-pairs.mjs`), then `node tools/gen-dispatch.mjs --rank <count files>` prints a new `HOT` list. Changes to the set of cases move V8's code by a few percent either way, also where the native build does not move (issue #10): measure in wasm, not natively.
 - Two warriors with `maxCycles` up to 80000 run on linear queues without a mask (`mars_config()`): a queue starts at index 0 or 1 and each tail stays at most `2 + 2 * (maxCycles + 1)` because a round runs at most `max(2 * maxCycles, 1)` instructions and a turn pushes at most two entries. Anything that lets a round run longer or a turn push more breaks that bound; the test "full queues at the linear queue limit and above" fills the queues. `execute2` relies on both heads being equal whenever warrior 0 is to move: `mars_start_round()` starts warrior 0's queue at index 1 when warrior 1 moves first, and every path out of `execute2` has to leave the heads that way.
 - `runMatch({ firstRound })` plays a block of a match with empty p-space; blocks equal the whole match only when no warrior's code has `LDP` (`tools/tournament.mjs` checks that; it plays every other pairing as blocks of 8 rounds). Anything new that carries state from one round to the next breaks the split.
-- `runMatch` early ties (process-count proof, no-killer scan, both at most 4096 instructions apart) must be exact: same scores and round results as without them. Any new early exit needs that proof written in the semantics doc, section 3.7. Before building one, measure its ceiling with `tools/tie-ceiling.mjs` (closed-loop oracle per tie round, #27); `src/engine/wasm/tie-ceiling.c` builds `mars.c` with `-DTRACE_TIES`, which must stay out of the wasm build.
+- `runMatch` early ties (process-count proof, no-killer scan, both at most 4096 instructions apart) must be exact: same scores and round results as without them. Any new early exit needs that proof written in the semantics doc, section 3.7. Before building one, measure its ceiling with `tools/tie-ceiling.mjs` (closed-loop oracle per tie round, #27); `lib/tools/tie-ceiling.c` builds `mars.c` with `-DTRACE_TIES`, which must stay out of the wasm build.
 - All state is in `struct Mars`; every function takes `Mars *const m`, exports pass `CTX`. The build has one context at a fixed address (`theMars`), and the core and the two static queues are separate static arrays reached through `CORE(m)` and `QUEUES(m)`: with them inside the struct t20 was 1.4% slower, because clang ordered the loop's loads and stores differently (#53). New state goes into the struct, not into a static. `-DMARS_CONTEXT_POINTER` builds the form a native library would need (context address unknown to the compiler); keep it building, it is how the cost of a pointer is measured (log, "A context object").
 - New code that the hot loops do not call goes behind them in `mars.c`, statics included: a function or static in front moved call indices and data addresses and cost the bench 1.1% without running (fifth round). Check that `execute`, `execute2_8000` and `execute2_any` are byte-identical apart from call indices with `node tools/wasm-functions.mjs <old.wasm> <new.wasm>`.
 - Time an idea with a clean build: a build with statistics counters looked 1.3% and 2.9% faster natively than the same code without them (fifth round).

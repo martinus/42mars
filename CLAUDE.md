@@ -28,11 +28,11 @@ npm test                                   # all tests
 node --test test/wasm.test.js              # one file
 PMARS_VALIDATE=$O/validate.red npm test    # + 2 tests that need validate.red (skipped otherwise)
 npm run serve                              # http://127.0.0.1:8000/, no build step
-tools/build-wasm.sh                        # after every change under src/engine/wasm/
+wasm/build.sh                              # after every change under lib/src/
 node tools/asm.mjs warriors/dwarf.red      # pMARS-style listing
 node tools/tournament.mjs $O/sets/t20 --rounds 100 --engine wasm --pmars $O/bin/pmars --compare
 node tools/tournament.mjs $O/corpus --bench warriors/seeker.red   # one warrior against a folder
-node tools/wasm-functions.mjs old.wasm src/engine/wasm/mars.wasm  # which functions of the module changed
+node tools/wasm-functions.mjs old.wasm wasm/42mars.wasm  # which functions of the module changed
 ```
 
 `tools/tournament.mjs --jobs N` is N threads with the main thread as one of them (default: all hardware threads). Results do not depend on N.
@@ -63,6 +63,7 @@ Read this before proposing a speed idea; `docs/performance-log.md` has the numbe
 
 ## Where things are
 
+- Layout, library first: `lib/` the C library (`lib/src/mars.c`; `lib/tools/` native drivers built by `tools/bench-native.mjs` and `tools/tie-ceiling.mjs`), `wasm/` its WebAssembly build (`build.sh`, `42mars.wasm`) and JS interface (`42mars.js`), `ui/` the visualizer, `js/` the JS assembler and simulator. `js/` is transitional: the JS assembler goes once the C assembler passes the fixtures (L2), `mars.js` once the visualizer runs on the library's step interface (L3). New engine work goes into `lib/`.
 - `tools/ab-wasm.mjs`, `tools/ab-native.mjs`, `tools/ab-tool.mjs`: alternating A/B runs of two wasm builds, two `mars.c` versions natively, two versions of a tool. Use them instead of timing by hand.
 - `PLAN.md`: status, validation results, speed summary, roadmap (M1 to M4), open decisions. Update it when a roadmap item lands.
 - `docs/redcode-semantics.md`: exact assembler and simulator behavior, pMARS quirks, deviations from pMARS (section 4). The spec: change it together with the code.
@@ -72,7 +73,7 @@ Read this before proposing a speed idea; `docs/performance-log.md` has the numbe
 
 ## Engines
 
-Three implementations must agree: `src/engine/mars.js` (visualizer, per-cell bookkeeping; `headless: true` skips it), `src/engine/wasm/mars.c` (tournaments, via `src/engine/mars-wasm.js`), and pMARS. A behavior change goes into mars.js, into both wasm loops (`execute`, `execute2`), and into the semantics doc. `test/tournament.test.js` checks JS against wasm, `tools/pmars-diff.mjs` both against pMARS.
+Three implementations must agree: `js/mars.js` (visualizer, per-cell bookkeeping; `headless: true` skips it), `lib/src/mars.c` (tournaments, via `wasm/42mars.js`), and pMARS. A behavior change goes into mars.js, into both wasm loops (`execute`, `execute2`), and into the semantics doc. `test/tournament.test.js` checks JS against wasm, `tools/pmars-diff.mjs` both against pMARS.
 
 ## Conventions
 
@@ -87,11 +88,11 @@ Three implementations must agree: `src/engine/mars.js` (visualizer, per-cell boo
 
 - Read large files with the Read tool in parts (`offset`, `limit`), not `cat`: Bash output over the size limit is saved in the session's tool-results folder, and the clean-room hook blocks reading it back. The same for a background command: the hook blocks its `tasks/*.output` file, so redirect its output into a file in the scratchpad.
 - Edit and read our own files with the Edit and Read tools when the command would mention pMARS: the hook refused `sed -i`, `sed -n` and a Python edit of `tools/pmars-diff.mjs`, `PLAN.md` and the semantics doc because their text held `pmars` or `--pmars`.
-- `src/engine/wasm/mars.wasm` is committed and the tests load it. Without a rebuild, the tests run the old C code.
+- `wasm/42mars.wasm` is committed and the tests load it. Without a rebuild, the tests run the old C code.
 - `Mars.current` is an index, 0 is a valid warrior: test `m.current >= 0`, not `m.current &&`.
 - pMARS never returns on some inputs (semantics doc, section 4). Always call it with a timeout.
 - Timings only count from an idle machine: check `uptime` and running `node`/`clang` processes, including other agents.
-- Never compare a timing with a number from the log or from another session: the same `mars.wasm` ran the bench at 310M/s in one session and at 359M/s in the next on the same day (10th November 2026). Measure the baseline again and alternate, every time.
+- Never compare a timing with a number from the log or from another session: the same `42mars.wasm` ran the bench at 310M/s in one session and at 359M/s in the next on the same day (10th November 2026). Measure the baseline again and alternate, every time.
 - The first run of a native binary and a build with extra counters (`-DLOOP_STATS`-style) are not timings: one such build looked 1.3 to 2.9% faster than the clean code, which gained 0.5%. Time the clean build, alternating, 3 runs or more.
 - `tools/ab-wasm.mjs` runs the corpus pairs without early ties. A change to tie detection needs `node tools/bench-pairs.mjs $O/corpus --pairs 400 --early-tie` on both builds, and it prints the executed instructions too.
 - Instruction counts are exact and do not need an idle machine: sweep parameters with many native builds in parallel (`taskset -c <core>` each) and read the counts; time only the one or two candidates that are left.

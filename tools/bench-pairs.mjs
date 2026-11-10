@@ -16,8 +16,8 @@
 // the wasm module.
 import { readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { assemble } from '../src/engine/assembler.js';
-import { compileWasmMars, createWasmMarsSync } from '../src/engine/mars-wasm.js';
+import { assemble } from '../js/assembler.js';
+import { compileWasmMars, createWasmMarsSync } from '../wasm/42mars.js';
 import { nativeMatch } from './native-input.mjs';
 
 const argv = process.argv.slice(2);

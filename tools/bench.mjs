@@ -16,9 +16,9 @@
 // the wasm module.
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { assemble } from '../src/engine/assembler.js';
-import { Mars } from '../src/engine/mars.js';
-import { compileWasmMars, createWasmMarsSync } from '../src/engine/mars-wasm.js';
+import { assemble } from '../js/assembler.js';
+import { Mars } from '../js/mars.js';
+import { compileWasmMars, createWasmMarsSync } from '../wasm/42mars.js';
 
 const flags = ['--headless', '--wasm', '--wasm-match'];
 const earlyTie = process.argv.includes('--early-tie');

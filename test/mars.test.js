@@ -4,9 +4,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, existsSync } from 'node:fs';
-import { assemble } from '../src/engine/assembler.js';
-import { Mars, rng } from '../src/engine/mars.js';
-import { formatInstruction } from '../src/engine/opcodes.js';
+import { assemble } from '../js/assembler.js';
+import { Mars, rng } from '../js/mars.js';
+import { formatInstruction } from '../js/opcodes.js';
 
 function warrior(src, opts) {
   const w = assemble(src, opts);

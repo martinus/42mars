@@ -1,7 +1,8 @@
 # Redcode and MARS semantics
 
-This document describes the observable behavior of the engine in
-`src/engine/`: the expression evaluator, the assembler and the simulator. The
+This document describes the observable behavior of the engine: the
+expression evaluator and the assembler in `js/`, the simulator in `js/` and
+`lib/src/` (C, built to `wasm/42mars.wasm`). The
 behavior matches pMARS 0.9.x, the reference Core War simulator, including some
 of its quirks, because existing warriors depend on them.
 
@@ -799,10 +800,10 @@ The entry for the instruction executed at time t is at index
 
 ### 3.7 WebAssembly engine
 
-`src/engine/wasm/mars.c` is a second, headless implementation of 3.1 to 3.3
-in C, compiled to `src/engine/wasm/mars.wasm` (committed, about 51 KB, no
-imports; `tools/build-wasm.sh` rebuilds it with `tools/gen-dispatch.mjs` and
-clang). `mars-wasm.js` wraps
+`lib/src/mars.c` is a second, headless implementation of 3.1 to 3.3
+in C, compiled to `wasm/42mars.wasm` (committed, about 51 KB, no
+imports; `wasm/build.sh` rebuilds it with `tools/gen-dispatch.mjs` and
+clang). `42mars.js` wraps
 it:
 
 ```js
@@ -876,7 +877,7 @@ in local variables and alternates the two warriors without looking up the
 next one (the round ends when one of them dies).
 
 The 32 most executed instruction words (opcode, modifier and both modes;
-`HOT` in `tools/gen-dispatch.mjs`, generated into `src/engine/wasm/dispatch.h`)
+`HOT` in `tools/gen-dispatch.mjs`, generated into `lib/src/dispatch.h`)
 each have a copy of the instruction code compiled for that word, without
 run-time mode and opcode tests; all other words run the generic code. With
 the standard settings (core size 8000, 8000 processes) a second copy of the

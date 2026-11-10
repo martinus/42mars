@@ -1,13 +1,13 @@
 ---
 name: engine-check
-description: Correctness gate for any change to the assembler, expression evaluator or simulators (src/engine/**, tools/build-wasm.sh). Runs the tests, the differential runs against pMARS, the tournament comparison and the wasm rebuild check, and proves new tests by mutation. Use before calling an engine change done or keeping a speed change.
+description: Correctness gate for any change to the assembler, expression evaluator or simulators (js/**, lib/**, wasm/**). Runs the tests, the differential runs against pMARS, the tournament comparison and the wasm rebuild check, and proves new tests by mutation. Use before calling an engine change done or keeping a speed change.
 ---
 # Engine check
 
 Setup: `O=${COREWAR_ORACLE:-$HOME/.local/share/corewar-theater}`, `SEED=$(date +%s)` (a fresh seed every time; report it).
 
-1. Wasm build (if anything under `src/engine/wasm/` or the build script changed):
-   `tools/build-wasm.sh && md5sum src/engine/wasm/mars.wasm`, run it again, the sums must match. `git status` shows `mars.wasm` modified exactly when its sources are.
+1. Wasm build (if anything under `lib/` or the build script changed):
+   `wasm/build.sh && md5sum wasm/42mars.wasm`, run it again, the sums must match. `git status` shows `42mars.wasm` modified exactly when its sources are.
    The native build too: `node tools/bench-native.mjs $O/corpus 10` must build and run. CI does not build it, and it was broken from #8 to #19.
 2. Tests: `PMARS_VALIDATE=$O/validate.red npm test`. All pass, none skipped.
 3. pMARS differential, each must end with no differences (exit code 0):
@@ -22,7 +22,7 @@ Setup: `O=${COREWAR_ORACLE:-$HOME/.local/share/corewar-theater}`, `SEED=$(date +
 4. Expression evaluator changed: `node tools/expr-fuzz.mjs --eval $O/bin/evalh --seed $SEED` (0 differences).
 5. Tournament against pMARS, prints `SAME`:
    `node tools/tournament.mjs $O/sets/t20 --rounds 100 --seed $SEED --engine wasm --pmars $O/bin/pmars --compare`
-6. Mutation proof for each new regression test: make the smallest change that brings the defect back, check that the mutant built (for C: rebuild, `md5sum` of `mars.wasm` changed), see the test fail for the expected reason, restore, rebuild, check that `md5sum` is back to the original. No mutant may stay behind.
+6. Mutation proof for each new regression test: make the smallest change that brings the defect back, check that the mutant built (for C: rebuild, `md5sum` of `42mars.wasm` changed), see the test fail for the expected reason, restore, rebuild, check that `md5sum` is back to the original. No mutant may stay behind.
 7. Docs: behavior change → `docs/redcode-semantics.md`; speed change → `docs/performance-log.md` (`perf-experiment` skill).
 
 Report every command with its result line, the seed, each mutation with the observed failure, and every step skipped with the reason.

@@ -4,8 +4,8 @@
 // Assembles Redcode files and prints a pMARS-style listing, errors and warnings.
 // Usage: node tools/asm.mjs [--coresize N] [--maxlength N] file.red...
 import { readFileSync } from 'node:fs';
-import { assemble } from '../src/engine/assembler.js';
-import { formatListing } from '../src/engine/opcodes.js';
+import { assemble } from '../js/assembler.js';
+import { formatListing } from '../js/opcodes.js';
 
 const args = process.argv.slice(2);
 const options = {};

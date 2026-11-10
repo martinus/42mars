@@ -35,7 +35,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include "mars.c"
+#include "mars.c" // lib/src, see tools/tie-ceiling.mjs (-I)
 
 static u8 *execW, *execKind;
 static u16 *execPc;

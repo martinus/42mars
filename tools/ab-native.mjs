@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 Martin Leitner-Ankerl
 //
-// A/B timing of two versions of src/engine/wasm/mars.c in the native build,
+// A/B timing of two versions of lib/src/mars.c in the native build,
 // the native counterpart of tools/ab-wasm.mjs: builds both once with
 // tools/bench-native.mjs --src (a dispatch.h next to a version is used for
 // it), then runs them alternately on one input and prints median and range.

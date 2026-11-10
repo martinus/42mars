@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 Martin Leitner-Ankerl
 //
-// One match in the input format of src/engine/wasm/bench-native.c: the
+// One match in the input format of lib/tools/bench-native.c: the
 // header line "coreSize maxProcesses maxCycles minDistance pSpaceSize
 // warriors instructions seed rounds", then the load area of mars_config().
 // Used by tools/bench-native.mjs, and by tools/tournament.mjs and

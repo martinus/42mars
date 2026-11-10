@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 Martin Leitner-Ankerl
-// The battles of tools/bench.mjs on a native build of src/engine/wasm/mars.c
+// The battles of tools/bench.mjs on a native build of lib/src/mars.c
 // (clang -O3 -march=native), to measure what the wasm layer costs.
 // Usage: node tools/bench-native.mjs <warrior dir> [rounds] [--cc clang] [--runs 1]
 //        node tools/bench-native.mjs --input <file> [--early-tie] [--count <file>] [--keep <dir>] [--src <mars.c>]
@@ -19,7 +19,8 @@ import { readFileSync, writeFileSync, mkdtempSync, mkdirSync, copyFileSync, exis
 import { execFileSync, spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { assemble } from '../src/engine/assembler.js';
+import { fileURLToPath } from 'node:url';
+import { assemble } from '../js/assembler.js';
 import { nativeMatch } from './native-input.mjs';
 
 const argv = process.argv.slice(2);
@@ -44,19 +45,19 @@ if (INPUT) {
   for (const pair of pairs) text += nativeMatch(pair.map((f) => assemble(readFileSync(join(dir, f), 'latin1'))), o, 1234, rounds);
   writeFileSync(join(tmp, 'input.txt'), text);
 }
-let src = new URL('../src/engine/wasm/bench-native.c', import.meta.url).pathname;
+let src = new URL('../lib/tools/bench-native.c', import.meta.url).pathname;
 if (SRC) {
   // Another mars.c: build it next to copies of bench-native.c and dispatch.h
   // (a dispatch.h next to it wins), so the repository's file stays as it is.
-  const wasmDir = new URL('../src/engine/wasm/', import.meta.url).pathname;
-  const dispatch = existsSync(join(dirname(SRC), 'dispatch.h')) ? join(dirname(SRC), 'dispatch.h') : join(wasmDir, 'dispatch.h');
+  const libSrc = new URL('../lib/src/', import.meta.url).pathname;
+  const dispatch = existsSync(join(dirname(SRC), 'dispatch.h')) ? join(dirname(SRC), 'dispatch.h') : join(libSrc, 'dispatch.h');
   mkdirSync(join(tmp, 'src'), { recursive: true });
   copyFileSync(SRC, join(tmp, 'src', 'mars.c'));
   copyFileSync(dispatch, join(tmp, 'src', 'dispatch.h'));
   copyFileSync(src, join(tmp, 'src', 'bench-native.c'));
   src = join(tmp, 'src', 'bench-native.c');
 }
-execFileSync(CC, ['-O3', '-march=native', '-fno-strict-aliasing', '-ffp-contract=off', ...(COUNT ? ['-DCOUNT_INS'] : []), '-o', join(tmp, 'bench'), src, '-lm'], { stdio: 'inherit' });
+execFileSync(CC, ['-O3', '-march=native', '-fno-strict-aliasing', '-ffp-contract=off', ...(COUNT ? ['-DCOUNT_INS'] : []), '-I', fileURLToPath(new URL('../lib/src/', import.meta.url)), '-o', join(tmp, 'bench'), src, '-lm'], { stdio: 'inherit' });
 const args = [join(tmp, 'input.txt'), ...(earlyTie ? ['early-tie'] : [])];
 let counts = '';
 for (let r = 0; r < RUNS; r++) {

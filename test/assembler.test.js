@@ -3,8 +3,8 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { assemble } from '../src/engine/assembler.js';
-import { formatInstruction, formatListing } from '../src/engine/opcodes.js';
+import { assemble } from '../js/assembler.js';
+import { formatInstruction, formatListing } from '../js/opcodes.js';
 
 const N = 8000;
 // Assembles and returns the instructions as compact strings, e.g. "MOV.I $0, $1".

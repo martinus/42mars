@@ -1,16 +1,16 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 Martin Leitner-Ankerl
 
-// The wasm engine (src/engine/mars-wasm.js) against mars.js headless: random
+// The wasm engine (wasm/42mars.js) against mars.js headless: random
 // battles compared after every round and at random points inside rounds,
 // plus targeted cases.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, existsSync } from 'node:fs';
-import { assemble } from '../src/engine/assembler.js';
-import { Mars, rng } from '../src/engine/mars.js';
-import { compileWasmMars, createWasmMars, createWasmMarsSync, packWarrior } from '../src/engine/mars-wasm.js';
+import { assemble } from '../js/assembler.js';
+import { Mars, rng } from '../js/mars.js';
+import { compileWasmMars, createWasmMars, createWasmMarsSync, packWarrior } from '../wasm/42mars.js';
 
 const module = await compileWasmMars();
 
@@ -394,14 +394,14 @@ test('early tie when the core has no DAT, DIV, MOD or STP left', () => {
   assert.ok(y.instructions < 40000, `executed ${y.instructions}`);
 });
 
-// The instruction words in src/engine/wasm/dispatch.h (tools/gen-dispatch.mjs)
+// The instruction words in lib/src/dispatch.h (tools/gen-dispatch.mjs)
 // run a copy of the instruction compiled for that word. Each of them must
 // agree with mars.js: in the loop for the standard settings (core size and
 // process limit 8000, constants in execute2_8000()), in the general
 // two-warrior loop, with queues longer than the fixed queue buffers, and in
 // the loop for more than two warriors.
 test('every specialized instruction word agrees with mars.js', () => {
-  const text = readFileSync(new URL('../src/engine/wasm/dispatch.h', import.meta.url), 'utf8');
+  const text = readFileSync(new URL('../lib/src/dispatch.h', import.meta.url), 'utf8');
   const words = [...text.matchAll(/^case (\d+): return EXEC\((\d+)\);/gm)].map((m) => {
     assert.equal(m[1], m[2], 'a case passes its own word');
     return Number(m[1]);
