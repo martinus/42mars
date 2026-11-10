@@ -39,45 +39,6 @@ typedef unsigned long usize;
 #define LIKELY(x) __builtin_expect(!!(x), 1)
 #define UNLIKELY(x) __builtin_expect(!!(x), 0)
 
-// ---------------------------------------------------------------- memory
-
-#ifdef __wasm__
-extern u8 __heap_base;
-#define HEAP_START (&__heap_base)
-static usize heap_limit; // end of the linear memory in bytes
-#else
-// Native build: a static arena; the pages are only mapped when touched.
-static _Alignas(64) u8 arena[1u << 28];
-#define HEAP_START arena
-#endif
-static u8 *heap_top;
-
-// Bump allocation, 64-byte aligned, zero filled. Returns 0 when out of memory.
-static void *alloc(usize bytes) {
-  u8 *p = (u8 *)(((usize)heap_top + 63) & ~(usize)63);
-  if (bytes > (usize)-1 - (usize)p) return 0;
-  usize end = (usize)p + bytes;
-#ifdef __wasm__
-  if (end > heap_limit) {
-    usize pages = (end - heap_limit + 65535) >> 16;
-    if (__builtin_wasm_memory_grow(0, pages) == (usize)-1) return 0;
-    heap_limit += pages << 16;
-  }
-#else
-  if (end > (usize)arena + sizeof arena) return 0;
-#endif
-  heap_top = (u8 *)end;
-  for (u8 *q = p; q < (u8 *)end; q++) *q = 0;
-  return p;
-}
-
-static void reset_heap(void) {
-#ifdef __wasm__
-  if (!heap_limit) heap_limit = __builtin_wasm_memory_size(0) << 16;
-#endif
-  heap_top = HEAP_START;
-}
-
 // ---------------------------------------------------------------- state
 
 typedef struct {
@@ -106,33 +67,107 @@ typedef struct Warrior {
   Cell *code;     // the warrior's instructions
 } __attribute__((aligned(128))) Warrior; // a power of two: indexing is a shift
 
-static u32 N;           // core size
-static u32 maxProc;     // process limit per warrior
-static u32 maxCycles;
-static u32 minDist;
-static u32 psize;       // p-space size
-static u32 nw;          // number of warriors
-static u32 qmask;       // queue length - 1
-static Cell *core;      // coreMem
-// The core and the first two warriors' queues (when they are at most
-// QSTATIC long) are at fixed addresses: execute2_8000() then addresses them
-// with constant offsets instead of base registers (+4% on the bench).
 #define LINEAR_CYCLES 80000
 #define QSTATIC ((2 + 2 * (LINEAR_CYCLES + 1) + 31) & ~31) // see mars_config
+
+// All state of one simulator. The core and the first two warriors' queues
+// (when they are at most QSTATIC long) are at fixed addresses, outside the
+// struct, when there is one context per module (see CTX): the loops then
+// address them with constant offsets instead of base registers (+4% on the
+// bench), and clang keeps them apart from each other and from the struct.
+// The pointer build has them in the struct; CORE() and QUEUES() reach them.
+typedef struct Mars {
+#ifdef MARS_CONTEXT_POINTER
+  // The queues before the core: the other order made clang address
+  // warrior 0's queue from warrior 1's with a negative offset, one more
+  // add per instruction in execute2_8000().
+  _Alignas(64) u16 queueMem[2][QSTATIC];
+  _Alignas(64) Cell core[65536];
+#endif
+  u32 N;              // core size
+  u32 maxProc;        // process limit per warrior
+  u32 maxCycles;
+  u32 minDist;
+  u32 psize;          // p-space size
+  u32 nw;             // number of warriors
+  u32 qmask;          // queue length - 1
+  u32 fixedPositions;
+  u32 hasStp;         // some warrior's code contains STP
+  u32 blockerAt;      // where core_has_blocker() found one last time
+  u32 round_, starter, current, warriorsLeft;
+  u32 logStride, logRounds, logFirst; // logFirst: round_ of the entry before the first
+  u8 roundOver;
+  i64 seed;
+  i64 timeNow, cyclesLeft;
+  Warrior *war;
+  i32 *input;         // load area written by the JS glue, see mars_config
+  Cell *codeBase;     // all warriors' instructions
+  u32 *pspaceBase;    // nw p-spaces, one per p-space group
+  u8 *resultLog;      // runMatch: per round 8 bytes time then nw alive flags
+  u8 *heap_top;       // bump allocator, see alloc()
+} Mars;
+
+// ---------------------------------------------------------------- memory
+
+#ifdef __wasm__
+extern u8 __heap_base;
+#define HEAP_START (&__heap_base)
+static usize heap_limit; // end of the linear memory in bytes
+#else
+// Native build: a static arena; the pages are only mapped when touched.
+static _Alignas(64) u8 arena[1u << 28];
+#define HEAP_START arena
+#endif
+
+// The context. MARS_CONTEXT_POINTER (an experiment, #53) puts it at the
+// start of the heap and reads its address from a volatile, so that the
+// compiler cannot see that it is a constant, as for a library whose caller
+// passes the context in. Otherwise there is one at a fixed address.
+#ifdef MARS_CONTEXT_POINTER
+static Mars *volatile ctx;
+#define CTX ctx
+#define CORE(m) ((m)->core)
+#define QUEUES(m) ((m)->queueMem)
+#define HEAP_FIRST ((u8 *)(ctx + 1))
+#else
 static _Alignas(64) Cell coreMem[65536];
 static _Alignas(64) u16 queueMem[2][QSTATIC];
-static Warrior *war;
-static i32 *input;      // load area written by the JS glue, see mars_config
-static Cell *codeBase;  // all warriors' instructions
-static u32 *pspaceBase; // nw p-spaces, one per p-space group
-static u32 fixedPositions;
-static u32 hasStp;      // some warrior's code contains STP
-static u32 blockerAt;   // where core_has_blocker() found one last time
-static i64 seed;
-static u32 round_, roundOver = 1, starter, current, warriorsLeft;
-static i64 timeNow, cyclesLeft;
-static u8 *resultLog;   // runMatch: per round 8 bytes time then nw alive flags
-static u32 logStride, logRounds, logFirst; // logFirst: round_ of the entry before the first
+static Mars theMars = {.roundOver = 1};
+#define CTX (&theMars)
+#define CORE(m) ((void)(m), coreMem)
+#define QUEUES(m) ((void)(m), queueMem)
+#define HEAP_FIRST HEAP_START
+#endif
+
+// Makes the linear memory reach `end`. Returns 0 when it cannot grow.
+static int reserve(usize end) {
+#ifdef __wasm__
+  if (!heap_limit) heap_limit = __builtin_wasm_memory_size(0) << 16;
+  if (end > heap_limit) {
+    usize pages = (end - heap_limit + 65535) >> 16;
+    if (__builtin_wasm_memory_grow(0, pages) == (usize)-1) return 0;
+    heap_limit += pages << 16;
+  }
+  return 1;
+#else
+  return end <= (usize)arena + sizeof arena;
+#endif
+}
+
+// Bump allocation, 64-byte aligned, zero filled. Returns 0 when out of memory.
+static void *alloc(Mars *const m, usize bytes) {
+  u8 *p = (u8 *)(((usize)m->heap_top + 63) & ~(usize)63);
+  if (bytes > (usize)-1 - (usize)p) return 0;
+  usize end = (usize)p + bytes;
+  if (!reserve(end)) return 0;
+  m->heap_top = (u8 *)end;
+  for (u8 *q = p; q < (u8 *)end; q++) *q = 0;
+  return p;
+}
+
+static void reset_heap(Mars *const m) {
+  m->heap_top = HEAP_FIRST;
+}
 
 // ---------------------------------------------------------------- setup
 
@@ -148,16 +183,24 @@ static i64 rng(i64 s) {
 // are numbered 0 .. nw-1. Returns 0 when the memory cannot grow.
 EXPORT(mars_config)
 i32 *mars_config(u32 coreSize, u32 maxProcesses, u32 cycles, u32 minDistance, u32 pSpaceSize, u32 warriors, u32 instructions) {
-  reset_heap();
-  N = coreSize;
-  maxProc = maxProcesses;
-  maxCycles = cycles;
-  minDist = minDistance;
-  psize = pSpaceSize;
-  nw = warriors;
+#ifdef MARS_CONTEXT_POINTER
+  if (!ctx) {
+    Mars *c = (Mars *)(((usize)HEAP_START + 63) & ~(usize)63);
+    if (!reserve((usize)(c + 1))) return 0;
+    ctx = c;
+  }
+#endif
+  Mars *const m = CTX;
+  reset_heap(m);
+  m->N = coreSize;
+  m->maxProc = maxProcesses;
+  m->maxCycles = cycles;
+  m->minDist = minDistance;
+  m->psize = pSpaceSize;
+  m->nw = warriors;
   u32 qlen = 1;
   while (qlen < maxProcesses && qlen < 1u << 30) qlen <<= 1; // the glue limits maxProcesses
-  qmask = qlen - 1;
+  m->qmask = qlen - 1;
   // Linear queues: with two warriors a round runs at most max(2 * maxCycles,
   // 1) instructions and the turns alternate, so each warrior gets at most
   // maxCycles + 1 turns and pushes at most two entries per turn. A queue
@@ -165,80 +208,80 @@ i32 *mars_config(u32 coreSize, u32 maxProcesses, u32 cycles, u32 minDistance, u3
   // 2 + 2 * (maxCycles + 1), and mars_start_round() resets the counters.
   // Without wraparound the mask is all ones, which execute2_8000() leaves
   // out: +6% on the bench, -5% on t20 (docs/performance-log.md).
-  const int linear = nw == 2 && cycles <= LINEAR_CYCLES;
-  if (linear) qmask = ~0u;
-  core = coreMem;
-  war = alloc((usize)nw * sizeof(Warrior));
-  input = alloc((usize)(4 * nw + 5 * instructions) * 4);
-  if (!war || !input) return 0;
-  Cell *code = alloc((usize)instructions * sizeof(Cell));
-  u32 *ps = alloc((usize)nw * (psize ? psize : 1) * 4);
-  u32 *scores = alloc((usize)nw * (2 * nw - 1) * 4);
+  const int linear = m->nw == 2 && cycles <= LINEAR_CYCLES;
+  if (linear) m->qmask = ~0u;
+  m->war = alloc(m, (usize)m->nw * sizeof(Warrior));
+  m->input = alloc(m, (usize)(4 * m->nw + 5 * instructions) * 4);
+  if (!m->war || !m->input) return 0;
+  Cell *code = alloc(m, (usize)instructions * sizeof(Cell));
+  u32 *ps = alloc(m, (usize)m->nw * (m->psize ? m->psize : 1) * 4);
+  u32 *scores = alloc(m, (usize)m->nw * (2 * m->nw - 1) * 4);
   if (!code || !ps || !scores) return 0;
-  for (u32 i = 0; i < nw; i++) {
-    war[i].q = i < 2 && (linear || qlen <= QSTATIC) ? queueMem[i] : alloc((usize)qlen * 2);
-    if (!war[i].q) return 0;
-    war[i].score = scores + (usize)i * (2 * nw - 1);
+  for (u32 i = 0; i < m->nw; i++) {
+    m->war[i].q = i < 2 && (linear || qlen <= QSTATIC) ? QUEUES(m)[i] : alloc(m, (usize)qlen * 2);
+    if (!m->war[i].q) return 0;
+    m->war[i].score = scores + (usize)i * (2 * m->nw - 1);
   }
-  codeBase = code;
-  pspaceBase = ps;
-  resultLog = 0;
-  logRounds = 0;
-  logFirst = 0;
-  roundOver = 1;
-  return input;
+  m->codeBase = code;
+  m->pspaceBase = ps;
+  m->resultLog = 0;
+  m->logRounds = 0;
+  m->logFirst = 0;
+  m->roundOver = 1;
+  return m->input;
 }
 
 // Starts the match after the glue filled the load area. seed: the generator
 // state (a non-negative integer); fixed: use the positions of the load area.
 EXPORT(mars_load)
 void mars_load(double seedValue, u32 fixed) {
-  i32 *in = input;
-  Cell *code = codeBase;
-  for (u32 i = 0; i < nw; i++) {
-    Warrior *w = &war[i];
+  Mars *const m = CTX;
+  i32 *in = m->input;
+  Cell *code = m->codeBase;
+  for (u32 i = 0; i < m->nw; i++) {
+    Warrior *w = &m->war[i];
     w->len = (u32)in[4 * i];
     w->start = (u32)in[4 * i + 1];
-    w->pspace = pspaceBase + (usize)(u32)in[4 * i + 2] * psize;
+    w->pspace = m->pspaceBase + (usize)(u32)in[4 * i + 2] * m->psize;
     w->position = (u32)in[4 * i + 3];
     w->code = code;
     code += w->len;
-    w->lastResult = N - 1;
+    w->lastResult = m->N - 1;
     w->wins = w->losses = w->ties = 0;
     w->alive = 0;
     w->diedAt = -1;
     w->head = w->tail = 0;
-    for (u32 k = 0; k < 2 * nw - 1; k++) w->score[k] = 0;
+    for (u32 k = 0; k < 2 * m->nw - 1; k++) w->score[k] = 0;
   }
-  for (usize k = 0; k < (usize)nw * psize; k++) pspaceBase[k] = 0;
-  const i32 *ins = in + 4 * nw;
-  for (Cell *c = codeBase; c < code; c++, ins += 5) {
+  for (usize k = 0; k < (usize)m->nw * m->psize; k++) m->pspaceBase[k] = 0;
+  const i32 *ins = in + 4 * m->nw;
+  for (Cell *c = m->codeBase; c < code; c++, ins += 5) {
     c->ins = (u16)(ins[0] | ins[1] << 8 | ins[3] << 11);
     c->a = (u16)ins[2];
     c->b = (u16)ins[4];
     c->pad = 0;
   }
-  hasStp = 0;
-  for (Cell *c = codeBase; c < code; c++) hasStp |= (c->ins & 0xf8) == 0220;
-  fixedPositions = fixed;
-  seed = (i64)seedValue;
-  round_ = 0;
-  roundOver = 1;
-  starter = 0;
+  m->hasStp = 0;
+  for (Cell *c = m->codeBase; c < code; c++) m->hasStp |= (c->ins & 0xf8) == 0220;
+  m->fixedPositions = fixed;
+  m->seed = (i64)seedValue;
+  m->round_ = 0;
+  m->roundOver = 1;
+  m->starter = 0;
 }
 
 // Placement method A: random positions, retried while too close to an
 // earlier one. Returns 0 when it gives up.
-static int place_random(u32 *pos) {
-  u32 range = N - 2 * minDist + 1;
+static int place_random(Mars *const m, u32 *pos) {
+  u32 range = m->N - 2 * m->minDist + 1;
   int retries = 20, backtracks = 4;
-  for (u32 i = 1; i < nw;) {
-    seed = rng(seed);
-    pos[i] = (u32)(seed % range) + minDist;
+  for (u32 i = 1; i < m->nw;) {
+    m->seed = rng(m->seed);
+    pos[i] = (u32)(m->seed % range) + m->minDist;
     u32 conflict = 0;
     for (u32 j = 1; j < i; j++) {
       u32 d = pos[i] > pos[j] ? pos[i] - pos[j] : pos[j] - pos[i];
-      if (d < minDist) { conflict = j; break; }
+      if (d < m->minDist) { conflict = j; break; }
     }
     if (!conflict) { i++; retries = 20; continue; }
     if (retries-- > 0) continue;
@@ -250,109 +293,111 @@ static int place_random(u32 *pos) {
 }
 
 // Placement method B: sorted random gaps, then shuffled.
-static void place_spread(u32 *pos) {
-  u32 room = N - minDist * nw + 1;
-  for (u32 i = 1; i < nw; i++) {
-    seed = rng(seed);
-    u32 t = (u32)(seed % room);
+static void place_spread(Mars *const m, u32 *pos) {
+  u32 room = m->N - m->minDist * m->nw + 1;
+  for (u32 i = 1; i < m->nw; i++) {
+    m->seed = rng(m->seed);
+    u32 t = (u32)(m->seed % room);
     u32 j = i - 1;
     while (j >= 1 && !(t > pos[j])) { pos[j + 1] = pos[j]; j--; }
     pos[j + 1] = t;
   }
-  for (u32 i = 1; i < nw; i++) pos[i] += minDist * i;
-  for (u32 i = 1; i < nw; i++) {
-    seed = rng(seed);
-    u32 j = (u32)(seed % (nw - i)) + i;
+  for (u32 i = 1; i < m->nw; i++) pos[i] += m->minDist * i;
+  for (u32 i = 1; i < m->nw; i++) {
+    m->seed = rng(m->seed);
+    u32 j = (u32)(m->seed % (m->nw - i)) + i;
     u32 t = pos[i]; pos[i] = pos[j]; pos[j] = t;
   }
 }
 
-static void place_warriors(void) {
-  if (fixedPositions) return; // positions stay as loaded
-  u32 pos[nw];
-  for (u32 i = 0; i < nw; i++) pos[i] = 0;
-  if (nw == 2) {
-    pos[1] = minDist + (u32)(seed % (N + 1 - 2 * minDist));
-    seed = rng(seed);
-  } else if (nw > 2 && !place_random(pos)) {
-    place_spread(pos);
+static void place_warriors(Mars *const m) {
+  if (m->fixedPositions) return; // positions stay as loaded
+  u32 pos[m->nw];
+  for (u32 i = 0; i < m->nw; i++) pos[i] = 0;
+  if (m->nw == 2) {
+    pos[1] = m->minDist + (u32)(m->seed % (m->N + 1 - 2 * m->minDist));
+    m->seed = rng(m->seed);
+  } else if (m->nw > 2 && !place_random(m, pos)) {
+    place_spread(m, pos);
   }
-  for (u32 i = 0; i < nw; i++) war[i].position = pos[i];
+  for (u32 i = 0; i < m->nw; i++) m->war[i].position = pos[i];
 }
 
-EXPORT(mars_start_round)
-void mars_start_round(void) {
-  round_++;
-  place_warriors();
-  for (u32 a = 0; a < N; a++) core[a] = (Cell){0, 0, EMPTY_INS, 0};
-  timeNow = 0;
-  roundOver = 0;
-  cyclesLeft = (i64)nw * maxCycles;
-  warriorsLeft = nw;
-  for (u32 i = 0; i < nw; i++) {
-    Warrior *w = &war[i];
-    for (u32 k = 0; k < w->len; k++) core[(w->position + k) % N] = w->code[k];
-    w->next = (i + 1) % nw;
-    w->nextW = &war[w->next];
+static void start_round(Mars *const m) {
+  m->round_++;
+  place_warriors(m);
+  for (u32 a = 0; a < m->N; a++) CORE(m)[a] = (Cell){0, 0, EMPTY_INS, 0};
+  m->timeNow = 0;
+  m->roundOver = 0;
+  m->cyclesLeft = (i64)m->nw * m->maxCycles;
+  m->warriorsLeft = m->nw;
+  for (u32 i = 0; i < m->nw; i++) {
+    Warrior *w = &m->war[i];
+    for (u32 k = 0; k < w->len; k++) CORE(m)[(w->position + k) % m->N] = w->code[k];
+    w->next = (i + 1) % m->nw;
+    w->nextW = &m->war[w->next];
     // Two warriors: both queue heads are equal whenever warrior 0 is to
     // move, see execute2(). So warrior 0's queue starts one entry later when
     // warrior 1 moves first.
-    w->head = nw == 2 && i == 0 && starter == 1;
+    w->head = m->nw == 2 && i == 0 && m->starter == 1;
     w->tail = w->head + 1;
-    w->q[w->head & qmask] = (u16)((w->position + w->start) % N);
+    w->q[w->head & m->qmask] = (u16)((w->position + w->start) % m->N);
     w->alive = 1;
     w->diedAt = -1;
   }
-  current = starter;
-  blockerAt = 0;
+  m->current = m->starter;
+  m->blockerAt = 0;
 }
 
-EXPORT(mars_end_round)
-__attribute__((noinline)) void mars_end_round(void) {
-  if (roundOver) return;
+EXPORT(mars_start_round) void mars_start_round(void) { start_round(CTX); }
+
+static __attribute__((noinline)) void end_round(Mars *const m) {
+  if (m->roundOver) return;
   u32 survivors = 0;
-  for (u32 i = 0; i < nw; i++) {
-    Warrior *w = &war[i];
+  for (u32 i = 0; i < m->nw; i++) {
+    Warrior *w = &m->war[i];
     if (w->alive) {
-      w->score[warriorsLeft - 1]++;
-      w->lastResult = warriorsLeft;
+      w->score[m->warriorsLeft - 1]++;
+      w->lastResult = m->warriorsLeft;
       survivors++;
     } else {
       w->lastResult = 0;
     }
   }
-  for (u32 i = 0; i < nw; i++) {
-    Warrior *w = &war[i];
+  for (u32 i = 0; i < m->nw; i++) {
+    Warrior *w = &m->war[i];
     if (!w->alive) w->losses++;
-    else if (nw > 1 && survivors == 1) w->wins++;
+    else if (m->nw > 1 && survivors == 1) w->wins++;
     else w->ties++;
   }
-  if (round_ - 1 - logFirst < logRounds) { // only the rounds of mars_run_match()
-    u8 *e = resultLog + (usize)(round_ - 1 - logFirst) * logStride;
-    double t = (double)timeNow;
+  if (m->round_ - 1 - m->logFirst < m->logRounds) { // only the rounds of mars_run_match()
+    u8 *e = m->resultLog + (usize)(m->round_ - 1 - m->logFirst) * m->logStride;
+    double t = (double)m->timeNow;
     __builtin_memcpy(e, &t, 8);
-    for (u32 i = 0; i < nw; i++) e[8 + i] = (u8)war[i].alive;
+    for (u32 i = 0; i < m->nw; i++) e[8 + i] = (u8)m->war[i].alive;
   }
-  starter = (starter + 1) % nw;
-  roundOver = 1;
+  m->starter = (m->starter + 1) % m->nw;
+  m->roundOver = 1;
 }
+
+EXPORT(mars_end_round) void mars_end_round(void) { end_round(CTX); }
 
 // Warrior w lost its last process. cyclesLeft does not count the instruction
 // that killed it.
-static __attribute__((noinline)) void warrior_died(u32 w) {
-  Warrior *W = &war[w];
+static __attribute__((noinline)) void warrior_died(Mars *const m, u32 w) {
+  Warrior *W = &m->war[w];
   W->alive = 0;
-  W->diedAt = timeNow;
-  W->score[warriorsLeft + nw - 2]++;
-  cyclesLeft = cyclesLeft - 1 - (cyclesLeft - 1) / warriorsLeft;
-  warriorsLeft--;
-  if (warriorsLeft < 2) { mars_end_round(); return; }
+  W->diedAt = m->timeNow;
+  W->score[m->warriorsLeft + m->nw - 2]++;
+  m->cyclesLeft = m->cyclesLeft - 1 - (m->cyclesLeft - 1) / m->warriorsLeft;
+  m->warriorsLeft--;
+  if (m->warriorsLeft < 2) { end_round(m); return; }
   u32 prev = w;
-  while (war[prev].next != w) prev = war[prev].next;
-  war[prev].next = W->next;
-  war[prev].nextW = W->nextW;
-  current = W->next;
-  if (--cyclesLeft <= 0) mars_end_round();
+  while (m->war[prev].next != w) prev = m->war[prev].next;
+  m->war[prev].next = W->next;
+  m->war[prev].nextW = W->nextW;
+  m->current = W->next;
+  if (--m->cyclesLeft <= 0) end_round(m);
 }
 
 // ---------------------------------------------------------------- execution
@@ -364,7 +409,7 @@ static u64 insCount[1u << 14]; // executions per instruction word
 // See tie-ceiling.c: the B target of the last instruction, and a hook after
 // every instruction.
 static u32 traceTarget, traceSource; // B and A target
-static void trace_step(const Warrior *W, u32 pc, Cell ir, u32 tasks);
+static void trace_step(const Mars *m, const Warrior *W, u32 pc, Cell ir, u32 tasks);
 #endif
 
 static inline u32 ab_of(const Cell *c) { u32 v; __builtin_memcpy(&v, c, 4); return v; }
@@ -388,7 +433,7 @@ static inline void set_cell(Cell *c, u64 v) { __builtin_memcpy(c, &v, 8); }
 //   the two turns (execute2()): 191 on the bench, +3% on random corpus
 //   pairs, +7% native; the module grows from 13.5 to 24 KB
 // - early tie by a count of DAT, DIV, MOD and STP cells kept up to date by
-//   MOV.I cost 5% on the bench and 8% on corpus pairs; tie_check() scans
+//   MOV.I cost 5% on the bench and 8% on corpus pairs; tie_check(m) scans
 //   instead, at no cost to the loop
 // - second round (docs/performance-log.md): a case with a copy of the
 //   instruction for each of the 32 most executed instruction words (step(),
@@ -416,7 +461,7 @@ static inline void set_cell(Cell *c, u64 v) { __builtin_memcpy(c, &v, 8); }
 // the instruction word of ir: when the caller passes a constant, clang
 // compiles a copy of this function without mode or opcode branches (see
 // step()). Returns 1 when the process died, else 0.
-static inline __attribute__((always_inline)) int exec_ins(Cell *const C, const u32 n, const u32 mask, const u32 limit,
+static inline __attribute__((always_inline)) int exec_ins(Mars *const m, Cell *const C, const u32 n, const u32 mask, const u32 limit,
                                                           Warrior *const W, u16 *const q, u32 *const head, u32 *const tail,
                                                           const u32 pc, const Cell ir, const u32 ins) {
 // Address arithmetic: both operands are below n, so one conditional
@@ -661,10 +706,10 @@ a_done:;
       const u32 src = mod == 0 ? AA : mod == 2 ? AA : AB;
       if ((ins & 0xf8) == 0210) {
         u32 v = 0; // pSpaceSize 0: mars.js stores undefined, which is 0
-        if (psize) { u32 i = src % psize; v = i == 0 ? W->lastResult : W->pspace[i]; }
+        if (m->psize) { u32 i = src % m->psize; v = i == 0 ? W->lastResult : W->pspace[i]; }
         if (onA) B->a = (u16)v; else B->b = (u16)v;
-      } else if (psize) {
-        u32 i = (onA ? BA : BB) % psize;
+      } else if (m->psize) {
+        u32 i = (onA ? BA : BB) % m->psize;
         if (i == 0) W->lastResult = src; else W->pspace[i] = src;
       }
       break;
@@ -692,7 +737,7 @@ a_done:;
 // compares; that was faster than a table indexed by the word (one indirect
 // jump that is harder to predict), and 32 cases were faster than 16, 24,
 // 40, 48 or 64.
-static inline __attribute__((always_inline)) int step(Cell *const C, const u32 n, const u32 mask, const u32 limit,
+static inline __attribute__((always_inline)) int step(Mars *const m, Cell *const C, const u32 n, const u32 mask, const u32 limit,
                                                       Warrior *const W, u16 *const q, u32 *const head, u32 *const tail) {
   const u32 pc = q[(*head)++ & mask];
   const Cell ir = C[pc];
@@ -700,11 +745,11 @@ static inline __attribute__((always_inline)) int step(Cell *const C, const u32 n
 #ifdef COUNT_INS
   insCount[ins]++; // see bench-native.c
 #endif
-#define EXEC(word) exec_ins(C, n, mask, limit, W, q, head, tail, pc, ir, word)
+#define EXEC(word) exec_ins(m, C, n, mask, limit, W, q, head, tail, pc, ir, word)
 #ifdef TRACE_TIES
   // The generic code only: the specialized cases behave the same.
   const int died = EXEC(ins);
-  trace_step(W, pc, ir, *tail - *head);
+  trace_step(m, W, pc, ir, *tail - *head);
   return died;
 #else
   switch (ins) {
@@ -718,12 +763,12 @@ static inline __attribute__((always_inline)) int step(Cell *const C, const u32 n
 
 // Executes up to `count` instructions (at least one) of the running round
 // and returns how many it executed. Stops early when the round ends.
-static __attribute__((noinline)) u64 execute(u64 count) {
-  Cell *const C = core;
-  const u32 n = N;
-  const u32 mask = qmask;
-  const u32 limit = maxProc;
-  Warrior *W = &war[current];
+static __attribute__((noinline)) u64 execute(Mars *const m, u64 count) {
+  Cell *const C = CORE(m);
+  const u32 n = m->N;
+  const u32 mask = m->qmask;
+  const u32 limit = m->maxProc;
+  Warrior *W = &m->war[m->current];
   u64 total = 0;
 
   // One counter serves the instruction count, the time and the cycle
@@ -732,21 +777,21 @@ static __attribute__((noinline)) u64 execute(u64 count) {
   // counts down from `budget`; when it reaches 0 either `count` is done or
   // the cycle budget is used up (or both).
   for (;;) {
-    i64 budget = cyclesLeft < 1 ? 1 : cyclesLeft; // like mars.js: at least one instruction
+    i64 budget = m->cyclesLeft < 1 ? 1 : m->cyclesLeft; // like mars.js: at least one instruction
     if (count - total < (u64)budget) budget = (i64)(count - total);
     i64 left = budget;
     for (;;) {
-      if (UNLIKELY(step(C, n, mask, limit, W, W->q, &W->head, &W->tail)) && W->tail == W->head) {
+      if (UNLIKELY(step(m, C, n, mask, limit, W, W->q, &W->head, &W->tail)) && W->tail == W->head) {
         // The warrior lost its last process. This instruction counts as
         // executed but uses up no cycle.
         const i64 cycled = budget - left;
         total += (u64)cycled + 1;
-        timeNow += cycled + 1;
-        cyclesLeft -= cycled;
-        current = (u32)(W - war);
-        warrior_died(current);
-        if (roundOver || total >= count) return total;
-        W = &war[current];
+        m->timeNow += cycled + 1;
+        m->cyclesLeft -= cycled;
+        m->current = (u32)(W - m->war);
+        warrior_died(m, m->current);
+        if (m->roundOver || total >= count) return total;
+        W = &m->war[m->current];
         goto next_budget;
       }
       W = W->nextW;
@@ -754,10 +799,10 @@ static __attribute__((noinline)) u64 execute(u64 count) {
     }
     // The inner loop used up its budget.
     total += (u64)budget;
-    timeNow += budget;
-    cyclesLeft -= budget;
-    current = (u32)(W - war);
-    if (cyclesLeft <= 0) mars_end_round();
+    m->timeNow += budget;
+    m->cyclesLeft -= budget;
+    m->current = (u32)(W - m->war);
+    if (m->cyclesLeft <= 0) end_round(m);
     return total;
     next_budget:;
   }
@@ -774,21 +819,21 @@ static __attribute__((noinline)) u64 execute(u64 count) {
 // heads, two tails, countdown). n, mask and limit are the core size, queue
 // mask and process limit, q0 and q1 the two queues: constants in
 // execute2_8000().
-static inline __attribute__((always_inline)) u64 execute2(u64 count, const u32 n, const u32 mask, const u32 limit,
+static inline __attribute__((always_inline)) u64 execute2(Mars *const m, u64 count, const u32 n, const u32 mask, const u32 limit,
                                                           u16 *const q0, u16 *const q1) {
   // When it is warrior 1's turn, execute() runs that one instruction, so that
   // the loop has a single entry. A jump into the second half of the loop
   // made it irreducible, and clang added a dispatch variable that V8 tested
   // on every iteration.
   u64 pre = 0;
-  if (current == 1) {
-    pre = execute(1);
-    if (roundOver || pre == count) return pre;
+  if (m->current == 1) {
+    pre = execute(m, 1);
+    if (m->roundOver || pre == count) return pre;
     count -= pre;
   }
-  Cell *const C = coreMem;
-  Warrior *const W0 = &war[0], *const W1 = &war[1];
-  i64 budget = cyclesLeft < 1 ? 1 : cyclesLeft; // like execute()
+  Cell *const C = CORE(m);
+  Warrior *const W0 = &m->war[0], *const W1 = &m->war[1];
+  i64 budget = m->cyclesLeft < 1 ? 1 : m->cyclesLeft; // like execute()
   if (count < (u64)budget) budget = (i64)count;
   // Both heads are equal here. h runs up to `end`; an odd budget's last
   // instruction goes through execute() below.
@@ -798,8 +843,8 @@ static inline __attribute__((always_inline)) u64 execute2(u64 count, const u32 n
   if (h != end) {
     for (;;) {
       u32 h0 = h, h1 = h;
-      if (UNLIKELY(step(C, n, mask, limit, W0, q0, &h0, &t0)) && t0 == h0) { dead = 0; break; }
-      if (UNLIKELY(step(C, n, mask, limit, W1, q1, &h1, &t1)) && t1 == h1) { dead = 1; break; }
+      if (UNLIKELY(step(m, C, n, mask, limit, W0, q0, &h0, &t0)) && t0 == h0) { dead = 0; break; }
+      if (UNLIKELY(step(m, C, n, mask, limit, W1, q1, &h1, &t1)) && t1 == h1) { dead = 1; break; }
       if (UNLIKELY(++h == end)) break;
     }
   }
@@ -809,19 +854,19 @@ static inline __attribute__((always_inline)) u64 execute2(u64 count, const u32 n
     W0->head = h + 1;
     W1->head = h + dead;
     const i64 cycled = 2 * (i64)(h - start) + dead; // the fatal instruction uses no cycle
-    timeNow += cycled + 1;
-    cyclesLeft -= cycled;
-    current = dead;
-    warrior_died(dead); // ends the round
+    m->timeNow += cycled + 1;
+    m->cyclesLeft -= cycled;
+    m->current = dead;
+    warrior_died(m, dead); // ends the round
     return pre + (u64)cycled + 1;
   }
   W0->head = W1->head = h;
   const i64 done = 2 * (i64)(h - start);
-  timeNow += done;
-  cyclesLeft -= done;
-  current = 0;
-  if (done < budget) return pre + (u64)done + execute(1); // an odd budget: its last instruction
-  if (cyclesLeft <= 0) mars_end_round();
+  m->timeNow += done;
+  m->cyclesLeft -= done;
+  m->current = 0;
+  if (done < budget) return pre + (u64)done + execute(m, 1); // an odd budget: its last instruction
+  if (m->cyclesLeft <= 0) end_round(m);
   return pre + (u64)done;
 }
 
@@ -830,16 +875,16 @@ static inline __attribute__((always_inline)) u64 execute2(u64 count, const u32 n
 // immediates, and the queue mask goes away, which frees registers. Separate functions, so that V8 compiles
 // only the one in use with its optimizing compiler (it tiers up per
 // function, and a smaller function gets there sooner).
-static __attribute__((noinline)) u64 execute2_8000(u64 count) {
-  return execute2(count, 8000, ~0u, 8000, queueMem[0], queueMem[1]);
+static __attribute__((noinline)) u64 execute2_8000(Mars *const m, u64 count) {
+  return execute2(m, count, 8000, ~0u, 8000, QUEUES(m)[0], QUEUES(m)[1]);
 }
-static __attribute__((noinline)) u64 execute2_any(u64 count) {
-  return execute2(count, N, qmask, maxProc, war[0].q, war[1].q);
+static __attribute__((noinline)) u64 execute2_any(Mars *const m, u64 count) {
+  return execute2(m, count, m->N, m->qmask, m->maxProc, m->war[0].q, m->war[1].q);
 }
 
-static u64 run_some(u64 count) {
-  if (nw != 2) return execute(count);
-  return N == 8000 && maxProc == 8000 && qmask == ~0u ? execute2_8000(count) : execute2_any(count);
+static u64 run_some(Mars *const m, u64 count) {
+  if (m->nw != 2) return execute(m, count);
+  return m->N == 8000 && m->maxProc == 8000 && m->qmask == ~0u ? execute2_8000(m, count) : execute2_any(m, count);
 }
 
 // ---------------------------------------------------------------- API
@@ -848,10 +893,11 @@ static u64 run_some(u64 count) {
 // Returns the number executed.
 EXPORT(mars_run)
 double mars_run(double count) {
-  if (roundOver || !(count > 0)) return 0;
+  Mars *const m = CTX;
+  if (m->roundOver || !(count > 0)) return 0;
   u64 c = count >= 1.8e19 ? ~0ull : (u64)count;
   if ((double)c < count) c++; // a fraction rounds up, like mars.js
-  return (double)run_some(c);
+  return (double)run_some(m, c);
 }
 
 // Reserves the result log for `rounds` rounds of mars_run_match. Returns its
@@ -859,14 +905,15 @@ double mars_run(double count) {
 // count as a double, then one alive flag per warrior.
 EXPORT(mars_reserve_log)
 u8 *mars_reserve_log(u32 rounds) {
-  logStride = (8 + nw + 7) & ~7u;
-  resultLog = alloc((usize)rounds * logStride);
-  logRounds = resultLog ? rounds : 0;
-  return resultLog;
+  Mars *const m = CTX;
+  m->logStride = (8 + m->nw + 7) & ~7u;
+  m->resultLog = alloc(m, (usize)rounds * m->logStride);
+  m->logRounds = m->resultLog ? rounds : 0;
+  return m->resultLog;
 }
 
 EXPORT(mars_log_stride)
-u32 mars_log_stride(void) { return logStride; }
+u32 mars_log_stride(void) { Mars *const m = CTX; return m->logStride; }
 
 // 1 for the opcodes that can kill a process (DAT, DIV and MOD with a zero
 // divisor) or change the p-space (STP), from an instruction word.
@@ -875,9 +922,9 @@ u32 mars_log_stride(void) { return logStride; }
 // Whether the core has a cell with DAT, DIV, MOD or STP. Starts at the cell
 // where it found one last time: usually that one still is, or the next one
 // is near, so the hot loop needs no bookkeeping for this.
-static int core_has_blocker(void) {
-  for (u32 k = 0, a = blockerAt; k < N; k++, a = a + 1 == N ? 0 : a + 1) {
-    if (BLOCKER(core[a].ins)) { blockerAt = a; return 1; }
+static int core_has_blocker(Mars *const m) {
+  for (u32 k = 0, a = m->blockerAt; k < m->N; k++, a = a + 1 == m->N ? 0 : a + 1) {
+    if (BLOCKER(CORE(m)[a].ins)) { m->blockerAt = a; return 1; }
   }
   return 0;
 }
@@ -903,71 +950,72 @@ static int core_has_blocker(void) {
 // Returns how many instructions to run before checking again (0: the round
 // is a tie now): the margin until the test could pass if no process died,
 // but at most 4096, because processes are added all the time.
-static i64 tie_check(void) {
-  if (!core_has_blocker()) return 0;
-  if (hasStp) return 4096;
+static i64 tie_check(Mars *const m) {
+  if (!core_has_blocker(m)) return 0;
+  if (m->hasStp) return 4096;
   u32 minTasks = ~0u;
-  for (u32 i = 0; i < nw; i++) {
-    if (war[i].alive && war[i].tail - war[i].head < minTasks) minTasks = war[i].tail - war[i].head;
+  for (u32 i = 0; i < m->nw; i++) {
+    if (m->war[i].alive && m->war[i].tail - m->war[i].head < minTasks) minTasks = m->war[i].tail - m->war[i].head;
   }
   // c <= warriorsLeft * (minTasks - 1) <=> ceil(c / warriorsLeft) < minTasks
-  const i64 c = cyclesLeft < 1 ? 1 : cyclesLeft;
-  i64 margin = c - (i64)warriorsLeft * (minTasks - 1);
+  const i64 c = m->cyclesLeft < 1 ? 1 : m->cyclesLeft;
+  i64 margin = c - (i64)m->warriorsLeft * (minTasks - 1);
   if (margin <= 0) return 0;
   return margin < 256 ? 256 : margin > 4096 ? 4096 : margin;
 }
 
 // Plays `rounds` rounds. With earlyTie, rounds that must end in a tie stop
-// early, see tie_check(). firstRound > 0 starts with round firstRound + 1 of
+// early, see tie_check(m). firstRound > 0 starts with round firstRound + 1 of
 // the match: the positions and the first mover are those of that round,
 // but p-space and the last results start empty, as at the start of a
 // match. Returns the number of instructions executed.
 EXPORT(mars_run_match)
 double mars_run_match(u32 rounds, u32 earlyTie, u32 firstRound) {
+  Mars *const m = CTX;
   // The positions of the skipped rounds: the generator steps exactly as if
   // they were played (placement does not depend on the core).
-  for (u32 r = 0; r < firstRound; r++) place_warriors();
-  round_ = firstRound;
-  starter = firstRound % nw;
-  logFirst = firstRound;
+  for (u32 r = 0; r < firstRound; r++) place_warriors(m);
+  m->round_ = firstRound;
+  m->starter = firstRound % m->nw;
+  m->logFirst = firstRound;
   u64 total = 0;
   const int skip = earlyTie;
   for (u32 r = 0; r < rounds; r++) {
-    mars_start_round();
-    while (!roundOver) {
-      if (!skip) { total += run_some(~0ull); continue; }
-      i64 chunk = tie_check();
+    start_round(m);
+    while (!m->roundOver) {
+      if (!skip) { total += run_some(m, ~0ull); continue; }
+      i64 chunk = tie_check(m);
       if (chunk == 0) {
-        timeNow += cyclesLeft < 1 ? 1 : cyclesLeft;
-        cyclesLeft = cyclesLeft < 1 ? cyclesLeft - 1 : 0; // as if executed
-        mars_end_round();
+        m->timeNow += m->cyclesLeft < 1 ? 1 : m->cyclesLeft;
+        m->cyclesLeft = m->cyclesLeft < 1 ? m->cyclesLeft - 1 : 0; // as if executed
+        end_round(m);
         break;
       }
-      total += run_some((u64)chunk);
+      total += run_some(m, (u64)chunk);
     }
   }
   return (double)total;
 }
 
 // Read access for the glue.
-EXPORT(mars_core) Cell *mars_core(void) { return core; }
-EXPORT(mars_round) u32 mars_round(void) { return round_; }
-EXPORT(mars_round_over) u32 mars_round_over(void) { return roundOver; }
-EXPORT(mars_time) double mars_time(void) { return (double)timeNow; }
-EXPORT(mars_cycles_left) double mars_cycles_left(void) { return (double)cyclesLeft; }
-EXPORT(mars_warriors_left) u32 mars_warriors_left(void) { return warriorsLeft; }
-EXPORT(mars_current) u32 mars_current(void) { return current; }
-EXPORT(mars_starter) u32 mars_starter(void) { return starter; }
-EXPORT(mars_seed) double mars_seed(void) { return (double)seed; }
-EXPORT(mars_w_position) u32 mars_w_position(u32 i) { return war[i].position; }
-EXPORT(mars_w_tasks) u32 mars_w_tasks(u32 i) { return war[i].tail - war[i].head; }
-EXPORT(mars_w_alive) u32 mars_w_alive(u32 i) { return war[i].alive; }
-EXPORT(mars_w_died_at) double mars_w_died_at(u32 i) { return (double)war[i].diedAt; }
-EXPORT(mars_w_wins) u32 mars_w_wins(u32 i) { return war[i].wins; }
-EXPORT(mars_w_losses) u32 mars_w_losses(u32 i) { return war[i].losses; }
-EXPORT(mars_w_ties) u32 mars_w_ties(u32 i) { return war[i].ties; }
-EXPORT(mars_w_last_result) u32 mars_w_last_result(u32 i) { return war[i].lastResult; }
-EXPORT(mars_w_score) u32 *mars_w_score(u32 i) { return war[i].score; }
-EXPORT(mars_w_pspace) u32 *mars_w_pspace(u32 i) { return war[i].pspace; }
+EXPORT(mars_core) Cell *mars_core(void) { Mars *const m = CTX; return CORE(m); }
+EXPORT(mars_round) u32 mars_round(void) { Mars *const m = CTX; return m->round_; }
+EXPORT(mars_round_over) u32 mars_round_over(void) { Mars *const m = CTX; return m->roundOver; }
+EXPORT(mars_time) double mars_time(void) { Mars *const m = CTX; return (double)m->timeNow; }
+EXPORT(mars_cycles_left) double mars_cycles_left(void) { Mars *const m = CTX; return (double)m->cyclesLeft; }
+EXPORT(mars_warriors_left) u32 mars_warriors_left(void) { Mars *const m = CTX; return m->warriorsLeft; }
+EXPORT(mars_current) u32 mars_current(void) { Mars *const m = CTX; return m->current; }
+EXPORT(mars_starter) u32 mars_starter(void) { Mars *const m = CTX; return m->starter; }
+EXPORT(mars_seed) double mars_seed(void) { Mars *const m = CTX; return (double)m->seed; }
+EXPORT(mars_w_position) u32 mars_w_position(u32 i) { Mars *const m = CTX; return m->war[i].position; }
+EXPORT(mars_w_tasks) u32 mars_w_tasks(u32 i) { Mars *const m = CTX; return m->war[i].tail - m->war[i].head; }
+EXPORT(mars_w_alive) u32 mars_w_alive(u32 i) { Mars *const m = CTX; return m->war[i].alive; }
+EXPORT(mars_w_died_at) double mars_w_died_at(u32 i) { Mars *const m = CTX; return (double)m->war[i].diedAt; }
+EXPORT(mars_w_wins) u32 mars_w_wins(u32 i) { Mars *const m = CTX; return m->war[i].wins; }
+EXPORT(mars_w_losses) u32 mars_w_losses(u32 i) { Mars *const m = CTX; return m->war[i].losses; }
+EXPORT(mars_w_ties) u32 mars_w_ties(u32 i) { Mars *const m = CTX; return m->war[i].ties; }
+EXPORT(mars_w_last_result) u32 mars_w_last_result(u32 i) { Mars *const m = CTX; return m->war[i].lastResult; }
+EXPORT(mars_w_score) u32 *mars_w_score(u32 i) { Mars *const m = CTX; return m->war[i].score; }
+EXPORT(mars_w_pspace) u32 *mars_w_pspace(u32 i) { Mars *const m = CTX; return m->war[i].pspace; }
 // Address of the k-th process of warrior i (0: the next to run).
-EXPORT(mars_w_process) u32 mars_w_process(u32 i, u32 k) { return war[i].q[(war[i].head + k) & qmask]; }
+EXPORT(mars_w_process) u32 mars_w_process(u32 i, u32 k) { Mars *const m = CTX; return m->war[i].q[(m->war[i].head + k) & m->qmask]; }

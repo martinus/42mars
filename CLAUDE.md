@@ -59,7 +59,7 @@ Read this before proposing a speed idea; `docs/performance-log.md` has the numbe
 - Exact early ties are done: the two proofs in `tie_check()` stay, the closed-loop proof of #35 was built and saves 0.7% of t80, less than its traced loop costs in V8. A new proof needs a measured ceiling above 5% first (`tools/tie-ceiling.mjs`).
 - More specialized instruction words, short or ring queues, a denser core, prefetch, tail calls, table dispatch: all measured and rejected, in wasm and natively.
 - The second hardware thread of a core adds 11% in wasm (22% natively). The code already runs 4.1 instructions per cycle on one thread, so this is not a bug to fix.
-- Open, in the order of expected gain: a worker pool that stays alive for callers with many short runs (worker start is 100 ms for 31 workers, the whole fixed cost of `tools/tournament.mjs`); the cause of the 5 to 6% that a context pointer costs natively (#53, the struct at a fixed address costs 1%); a native driver with threads once #53 is decided (native shards ran t80 in 2.47 s against 2.85 s in Node).
+- Open, in the order of expected gain: a worker pool that stays alive for callers with many short runs (worker start is 100 ms for 31 workers, the whole fixed cost of `tools/tournament.mjs`); a native driver with threads (contexts: #53 measured a pointer at 1 to 3% natively, 4 to 6% in wasm, so wasm keeps one context per module at a fixed address) (native shards ran t80 in 2.47 s against 2.85 s in Node).
 
 ## Where things are
 
@@ -85,7 +85,7 @@ Three implementations must agree: `src/engine/mars.js` (visualizer, per-cell boo
 
 ## Gotchas
 
-- Read large files with the Read tool in parts (`offset`, `limit`), not `cat`: Bash output over the size limit is saved in the session's tool-results folder, and the clean-room hook blocks reading it back.
+- Read large files with the Read tool in parts (`offset`, `limit`), not `cat`: Bash output over the size limit is saved in the session's tool-results folder, and the clean-room hook blocks reading it back. The same for a background command: the hook blocks its `tasks/*.output` file, so redirect its output into a file in the scratchpad.
 - Edit and read our own files with the Edit and Read tools when the command would mention pMARS: the hook refused `sed -i`, `sed -n` and a Python edit of `tools/pmars-diff.mjs`, `PLAN.md` and the semantics doc because their text held `pmars` or `--pmars`.
 - `src/engine/wasm/mars.wasm` is committed and the tests load it. Without a rebuild, the tests run the old C code.
 - `Mars.current` is an index, 0 is a valid warrior: test `m.current >= 0`, not `m.current &&`.
