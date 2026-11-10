@@ -1,8 +1,9 @@
 # Redcode and MARS semantics
 
 This document describes the observable behavior of the engine: the
-expression evaluator and the assembler in `js/`, the simulator in `js/` and
-`lib/src/` (C, built to `wasm/42mars.wasm`). The
+expression evaluator and the assembler in `js/` and in `lib/src/asm.c`, the
+simulator in `js/` and `lib/src/mars.c` (the C files built to
+`wasm/42mars.wasm`). The
 behavior matches pMARS 0.9.x, the reference Core War simulator, including some
 of its quirks, because existing warriors depend on them.
 
@@ -20,6 +21,12 @@ Three modules, plain JavaScript ES modules, no dependencies:
 - `mars.js`: simulator
 
 `opcodes.js` holds the opcode, modifier and mode tables and the formatting.
+
+`lib/src/asm.c` is a port of `expr.js` and `assembler.js` to C with the same
+results: the same result object, messages and expanded statements included
+(`test/asm-c.test.js`, `test/golden.test.js`). `wasm/42mars.js` calls it as
+`assembleWasm(source, options)` and `evaluateWasm(text)`. Where the C code
+differs from the JS code, section 4 says so.
 
 ---------------------------------------------------------------------------
 
@@ -920,3 +927,31 @@ leave these inputs out.
   no instructions; the engine reports the error in pass 2.
 - pMARS keeps its scratch buffer between the warriors of one run (see "The
   scratch buffer"); the engine starts each assembly with a fresh one.
+
+### The C assembler against the JS assembler
+
+`lib/src/asm.c` gives the same result as `assembler.js` and `expr.js`
+except on input where the JS code runs out of stack or throws:
+
+- Deep nesting. The C evaluator allows 6000 nested calls of its two
+  recursive functions, then the expression is bad: 2999 nested parentheses
+  or register assignments, 5998 unary operators or binary operators in a
+  row. The JS evaluator recurses until V8's stack ends and throws a
+  RangeError; called with an empty stack in Node 22 that is after 2920
+  parentheses, 3712 assignments, 5120 binary and 7168 unary operators. So
+  the two differ only for 3000 to 3712 assignments and 5999 to 7168 unary
+  operators, where JS has a value and C a bad expression.
+- FOR blocks nested deeper than 100 are the error `FOR blocks nested too
+  deep` in C, which also stops pass 1. Each level takes about 540 bytes of
+  the 64 KB stack of the wasm build (121 levels fit). The JS assembler
+  handles about 2500 levels before its stack ends.
+- An exception inside wasm (V8 out of stack when the caller's JS stack is
+  nearly used up) leaves the C stack pointer of that instance behind;
+  `assembleWasm` and `evaluateWasm` then drop the instance and rethrow.
+- A core size below 1 is rejected (`assembleWasm` throws a RangeError); the
+  JS assembler divides by it.
+- The C code works on bytes. `assembleWasm` passes Latin-1 when every
+  character of the source is below 256, else UTF-8. In UTF-8 mode one
+  character outside ASCII is one token, as in JS, and message texts trim the
+  same Unicode spaces as JS's `trim()`; characters outside the Basic
+  Multilingual Plane are one token in C and two (surrogates) in JS.

@@ -63,7 +63,7 @@ Read this before proposing a speed idea; `docs/performance-log.md` has the numbe
 
 ## Where things are
 
-- Layout, library first: `lib/` the C library (`lib/src/mars.c`; `lib/tools/` native drivers built by `tools/bench-native.mjs` and `tools/tie-ceiling.mjs`), `wasm/` its WebAssembly build (`build.sh`, `42mars.wasm`) and JS interface (`42mars.js`), `ui/` the visualizer, `js/` the JS assembler and simulator. `js/` is transitional: the JS assembler goes once the C assembler passes the fixtures (L2), `mars.js` once the visualizer runs on the library's step interface (L3). New engine work goes into `lib/`.
+- Layout, library first: `lib/` the C library (`lib/src/mars.c` simulator, `lib/src/asm.c` assembler; `lib/tools/` native drivers built by `tools/bench-native.mjs` and `tools/tie-ceiling.mjs`), `wasm/` its WebAssembly build (`build.sh`, `42mars.wasm`) and JS interface (`42mars.js`), `ui/` the visualizer, `js/` the JS assembler and simulator. `js/` is transitional: the JS assembler goes once the tools and the UI assemble through wasm (the C one is done, L2), `mars.js` once the visualizer runs on the library's step interface (L3). New engine work goes into `lib/`.
 - `tools/ab-wasm.mjs`, `tools/ab-native.mjs`, `tools/ab-tool.mjs`: alternating A/B runs of two wasm builds, two `mars.c` versions natively, two versions of a tool. Use them instead of timing by hand.
 - `PLAN.md`: status, validation results, speed summary, roadmap (M1 to M4), open decisions. Update it when a roadmap item lands.
 - `docs/redcode-semantics.md`: exact assembler and simulator behavior, pMARS quirks, deviations from pMARS (section 4). The spec: change it together with the code.
@@ -74,6 +74,8 @@ Read this before proposing a speed idea; `docs/performance-log.md` has the numbe
 ## Engines
 
 Three implementations must agree: `js/mars.js` (visualizer, per-cell bookkeeping; `headless: true` skips it), `lib/src/mars.c` (tournaments, via `wasm/42mars.js`), and pMARS. A behavior change goes into mars.js, into both wasm loops (`execute`, `execute2`), and into the semantics doc. `test/tournament.test.js` checks JS against wasm, `tools/pmars-diff.mjs` both against pMARS.
+
+The assembler and the evaluator exist twice too, `js/assembler.js` + `js/expr.js` and their C port `lib/src/asm.c` (`assembleWasm`, `evaluateWasm`). A change goes into both; `test/asm-c.test.js` compares the whole result objects, `tools/pmars-diff.mjs --wasm-asm` the C one against pMARS.
 
 ## Conventions
 

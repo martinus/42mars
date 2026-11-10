@@ -7,7 +7,10 @@
 // with js/expr.js.
 //
 //   node tools/expr-fuzz.mjs --eval path/to/evaluator [--n 500000] [--seed 1]
-//        [--jobs 16] [--show 20]
+//        [--jobs 16] [--show 20] [--wasm]
+//
+// --wasm compares the C evaluator (lib/src/asm.c through wasm/42mars.js)
+// instead of js/expr.js.
 //
 // The external program reads one expression per line on stdin and prints
 // `status value` per line (status 0 ok, 1 overflow, -1 bad expression, -2
@@ -20,6 +23,7 @@
 import { spawn } from 'node:child_process';
 import { cpus } from 'node:os';
 import { Evaluator } from '../js/expr.js';
+import { evaluateWasm } from '../wasm/42mars.js';
 
 const args = process.argv.slice(2);
 const arg = (name, dflt) => {
@@ -27,6 +31,7 @@ const arg = (name, dflt) => {
   return i >= 0 ? args[i + 1] : dflt;
 };
 const EVAL = arg('eval');
+const ourEvaluate = args.includes('--wasm') ? (e) => evaluateWasm(e) : (e) => new Evaluator().evaluate(e);
 if (!EVAL) {
   console.error('usage: node tools/expr-fuzz.mjs --eval path/to/evaluator [--n 500000] [--seed 1] [--jobs n] [--show n]');
   process.exit(2);
@@ -155,7 +160,7 @@ await Promise.all(Array.from({ length: Math.min(JOBS, chunks.length) }, async ()
       const [ws, wv] = (out[k] ?? '').trim().split(/\s+/);
       const want = Number(ws);
       byStatus[ws] = (byStatus[ws] ?? 0) + 1;
-      const got = new Evaluator().evaluate(e);
+      const got = ourEvaluate(e);
       stats.total++;
       let what = null;
       if (cls(want) !== cls(got.status)) { stats.accept++; what = 'accept'; }

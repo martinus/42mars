@@ -358,3 +358,122 @@ class WarriorView {
     return out;
   }
 }
+
+// ---------------------------------------------------------------- assembler
+
+// The C assembler and evaluator (lib/src/asm.c) with the interface of
+// js/assembler.js and js/expr.js:
+//   assembleWasm(source, options)  same object as assemble()
+//   evaluateWasm(text)             same { status, value } as Evaluator.evaluate()
+// Both use one module instance per module, created on first use. In a
+// browser, call compileWasmMars() first or pass the module.
+//
+// Text goes in as Latin-1 bytes when every character is below 256 (warrior
+// files are read as latin1), else as UTF-8; the result strings are decoded
+// the same way.
+
+const asmInstances = new WeakMap();
+
+// Calls fn with the exports of the module's assembler instance. An exception
+// inside wasm (V8 out of stack, a trap) leaves the C stack pointer where it
+// was, so that instance is thrown away and the next call gets a new one.
+function withAsm(module, fn) {
+  const mod = module ?? compileSync();
+  let x = asmInstances.get(mod);
+  if (!x) {
+    x = new WebAssembly.Instance(mod).exports;
+    asmInstances.set(mod, x);
+  }
+  try {
+    return fn(x);
+  } catch (e) {
+    asmInstances.delete(mod);
+    throw e;
+  }
+}
+
+function encodeText(text) {
+  let latin1 = true;
+  for (let i = 0; i < text.length && latin1; i++) latin1 = text.charCodeAt(i) < 256;
+  if (!latin1) return { bytes: new TextEncoder().encode(text), utf8: true };
+  const bytes = new Uint8Array(text.length);
+  for (let i = 0; i < text.length; i++) bytes[i] = text.charCodeAt(i);
+  return { bytes, utf8: false };
+}
+
+const latin1Decoder = new TextDecoder('latin1');
+const utf8Decoder = new TextDecoder('utf-8');
+
+export function assembleWasm(source, options = {}, module = undefined) {
+  return withAsm(module, (x) => assembleWith(x, source, options));
+}
+
+function assembleWith(x, source, options) {
+  const o = effectiveOptions(options);
+  const { bytes, utf8 } = encodeText(source);
+  for (let size = Math.max(1 << 20, 16 * bytes.length); ; size *= 4) {
+    if (size > 2 ** 31) throw new Error('assembleWasm: out of memory');
+    const base = x.mars_scratch(bytes.length + 8 + size);
+    if (!base) throw new Error('assembleWasm: out of memory');
+    new Uint8Array(x.memory.buffer, base, bytes.length).set(bytes);
+    const mem = (base + bytes.length + 7) & ~7;
+    const r = x.m42_assemble(base, bytes.length, mem, size, o.coreSize, o.maxProcesses, o.maxCycles, o.maxLength,
+      o.minDistance, o.warriors, o.rounds, o.pSpaceSize, o.readLimit, o.writeLimit, utf8 ? 1 : 0);
+    if (!r) {
+      if (!(o.coreSize >= 1)) throw new RangeError('assembleWasm: coreSize must be at least 1');
+      continue; // the working memory was too small
+    }
+    return readAsmResult(x, r, utf8, o);
+  }
+}
+
+function readAsmResult(x, r, utf8, options) {
+  const dv = new DataView(x.memory.buffer);
+  const u8 = new Uint8Array(x.memory.buffer);
+  const decoder = utf8 ? utf8Decoder : latin1Decoder;
+  const u32 = (at) => dv.getUint32(at, true);
+  const text = (at) => decoder.decode(u8.subarray(u32(at), u32(at) + u32(at + 4)));
+  const messages = (count, at, severity) => {
+    const out = [];
+    for (let k = 0, p = u32(at); k < u32(count); k++, p += 12) {
+      const line = dv.getInt32(p, true);
+      out.push({ severity, line: line === 0 ? null : line, text: text(p + 4) });
+    }
+    return out;
+  };
+  const instructions = [];
+  for (let k = 0, p = u32(r + 40); k < u32(r + 24); k++, p += 16) {
+    instructions.push({ op: u8[p], mod: u8[p + 1], aMode: u8[p + 2], aVal: u32(p + 4), bMode: u8[p + 3], bVal: u32(p + 8), line: dv.getInt32(p + 12, true) });
+  }
+  const expanded = [];
+  for (let k = 0, p = u32(r + 52); k < u32(r + 36); k++, p += 8) expanded.push(text(p));
+  return {
+    ok: dv.getInt32(r, true) !== 0,
+    name: text(r + 56),
+    author: text(r + 64),
+    date: text(r + 72),
+    version: text(r + 80),
+    strategy: text(r + 88),
+    instructions,
+    start: u32(r + 4),
+    pin: dv.getInt32(r + 8, true) ? Number(dv.getBigInt64(r + 16, true)) : null,
+    errors: messages(r + 28, r + 44, 'error'),
+    warnings: messages(r + 32, r + 48, 'warning'),
+    expanded,
+    options,
+  };
+}
+
+export function evaluateWasm(text, module = undefined) {
+  return withAsm(module, (x) => evaluateWith(x, text));
+}
+
+function evaluateWith(x, text) {
+  const { bytes } = encodeText(text);
+  const base = x.mars_scratch(bytes.length + 16);
+  if (!base) throw new Error('evaluateWasm: out of memory');
+  new Uint8Array(x.memory.buffer, base, bytes.length).set(bytes);
+  const at = (base + bytes.length + 7) & ~7;
+  const status = x.m42_evaluate(base, bytes.length, at);
+  return { status, value: new DataView(x.memory.buffer).getBigInt64(at, true) };
+}

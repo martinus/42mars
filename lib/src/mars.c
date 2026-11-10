@@ -1019,3 +1019,13 @@ EXPORT(mars_w_score) u32 *mars_w_score(u32 i) { Mars *const m = CTX; return m->w
 EXPORT(mars_w_pspace) u32 *mars_w_pspace(u32 i) { Mars *const m = CTX; return m->war[i].pspace; }
 // Address of the k-th process of warrior i (0: the next to run).
 EXPORT(mars_w_process) u32 mars_w_process(u32 i, u32 k) { Mars *const m = CTX; return m->war[i].q[(m->war[i].head + k) & m->qmask]; }
+
+// Memory for callers that need a working area between matches, e.g. the
+// assembler (asm.c): `bytes` at the end of the heap, valid until the next
+// mars_config() or mars_reserve_log(). Returns 0 when the memory cannot grow.
+EXPORT(mars_scratch)
+u8 *mars_scratch(u32 bytes) {
+  Mars *const m = CTX;
+  u8 *p = (u8 *)(((usize)(m->heap_top ? m->heap_top : HEAP_FIRST) + 63) & ~(usize)63);
+  return reserve((usize)p + bytes) ? p : 0;
+}
