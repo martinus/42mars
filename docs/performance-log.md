@@ -1280,6 +1280,30 @@ the workers use it anyway, one module per worker. The native build and
 one process needs the pointer form and pays 1 to 3% for it, measured here;
 whether L3 (`42mars.h`) takes that or offers both forms is decided there.
 
+### The C assembler in the same module: no change in speed, 5 ms more start-up (10th November 2026, #54)
+
+`lib/src/asm.c` is linked into `wasm/42mars.wasm` after `mars.c`; the
+module grows from 49.7 to 77 KB. The code of `execute()`,
+`execute2_8000()` and `execute2_any()` stays the same apart from call
+indices, but `asm.c`'s read-only data lies in front of the simulator's, so
+the core, the queues and the context move up by 1280 bytes (still 64-byte
+aligned). `tools/ab-wasm.mjs`, `main` against the new module, median and
+range:
+
+| Measure | `main` | with the assembler |
+|---|---|---|
+| bench (n=9) | 362.5 (351.3–370.0) | 364.2 (359.4–372.9), +0.5% |
+| pairs (n=9) | 357.2 (351.2–360.4) | 354.1 (345.4–359.9), -0.9% |
+| t20 (n=9) | 2.98 (2.97–2.99) | 3.00 (2.97–3.04), +0.7% |
+| t80, 16 jobs (n=5) | 2.96 (2.95–2.98) | 2.96 (2.96–3.00), 0.0% |
+| t80, 31 jobs (n=5) | 2.74 (2.72–2.74) | 2.74 (2.72–2.75), 0.0% |
+
+All within the ranges. The fixed cost, t80 with `--rounds 1 --jobs 31`
+(whole process, 7 alternating runs): median 231 ms with the assembler
+against 226 ms, about 5 ms more for compiling the larger module. Splitting the assembler into a
+module of its own would save that for callers that only simulate; not done,
+it is 0.2% of a t80 tournament.
+
 ## Ideas from other simulators
 
 exMARS (Martin Ankerl, 2003, based on exhaust and pMARS) and the exMARS fork

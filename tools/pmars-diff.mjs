@@ -23,6 +23,8 @@
 // --wasm-match plays each battle with one runMatch() call with early tie
 // detection, which leaves the final core of some rounds different, so it
 // compares the scores only and does not go with --pmars-trace.
+// --wasm-asm assembles our side with the C assembler (lib/src/asm.c through
+// wasm/42mars.js) instead of js/assembler.js.
 // Exit code 1 when anything differs.
 //
 // Generated warriors and pMARS output go into a new folder pmars-diff-*
@@ -51,7 +53,7 @@ import { join } from 'node:path';
 import { assemble } from '../js/assembler.js';
 import { Evaluator } from '../js/expr.js';
 import { Mars } from '../js/mars.js';
-import { compileWasmMars, createWasmMarsSync } from '../wasm/42mars.js';
+import { assembleWasm, compileWasmMars, createWasmMarsSync } from '../wasm/42mars.js';
 import { formatListing } from '../js/opcodes.js';
 
 const args = process.argv.slice(2);
@@ -74,6 +76,9 @@ const ONLY = arg('only') ? new Set(arg('only').split(',')) : null;
 const HEADLESS = args.includes('--headless');
 const WASM_MATCH = args.includes('--wasm-match');
 const WASM = args.includes('--wasm') || WASM_MATCH ? await compileWasmMars() : null;
+// --wasm-asm: our side assembles with the C assembler (lib/src/asm.c);
+// usable() keeps the JS one, whose evaluator it instruments.
+const ourAssemble = args.includes('--wasm-asm') ? assembleWasm : assemble;
 if (WASM_MATCH && TRACE) {
   console.error('--wasm-match compares scores only; leave out --pmars-trace');
   process.exit(2);
@@ -171,7 +176,7 @@ async function compareListing(file, source, o = STANDARD) {
   const r = await pmars([...rules(o), '-r', '0', file]);
   if (r.timedOut) return `${file}: pMARS did not finish`;
   const ok = r.out.includes('Program "');
-  const ours = assemble(source, { ...o, warriors: 1, rounds: 0 }); // pmars -r 0: ROUNDS is 0
+  const ours = ourAssemble(source, { ...o, warriors: 1, rounds: 0 }); // pmars -r 0: ROUNDS is 0
   if (ok !== ours.ok) {
     const why = ours.ok ? `pMARS rejects:\n${(r.out + r.err).trim().split('\n').slice(0, 4).join('\n')}` : `we reject: ${ours.errors.map((e) => `line ${e.line}: ${e.text}`).join('; ')}`;
     return `${file}: ${why}`;
@@ -438,7 +443,7 @@ async function compareBattle(files, sources, o, pos, rounds) {
   const lines = r.out.trim().split('\n').filter(Boolean);
   if (lines.length !== files.length) return `${files.join(' ')}: unexpected pMARS output ${JSON.stringify(r.out + r.err).slice(0, 200)}`;
   const want = lines.map((l) => l.trim().split(/\s+/).map(Number));
-  const ws = sources.map((s) => assemble(s, { ...o, warriors: files.length, rounds }));
+  const ws = sources.map((s) => ourAssemble(s, { ...o, warriors: files.length, rounds }));
   if (ws.some((w) => !w.ok)) return `${files.join(' ')}: pMARS ran it, we do not assemble it`;
   const m = WASM ? createWasmMarsSync({ ...o, rounds }, WASM) : new Mars({ ...o, rounds, headless: HEADLESS });
   if (WASM_MATCH) m.runMatch(ws, { rounds, seed: pos - o.minDistance, earlyTie: true });
@@ -467,7 +472,7 @@ async function compareBattle(files, sources, o, pos, rounds) {
 async function battles() {
   if (!CORPUS) return console.log('battles: skipped (no --corpus)');
   const files = readdirSync(CORPUS).filter((f) => /\.red$/i.test(f)).sort()
-    .filter((f) => assemble(readFileSync(join(CORPUS, f), 'latin1')).ok);
+    .filter((f) => ourAssemble(readFileSync(join(CORPUS, f), 'latin1')).ok);
   const n = 1200 * SCALE;
   const cases = Array.from({ length: n }, (_, i) => {
     const a = pick(files);
