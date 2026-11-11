@@ -16,9 +16,8 @@
 // the wasm module.
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { assemble } from '../js/assembler.js';
 import { Mars } from '../js/mars.js';
-import { compileWasmMars, createWasmMarsSync } from '../wasm/42mars.js';
+import { compileWasmMars, createWasmMarsSync, assembleWasm as assemble } from '../wasm/42mars.js';
 
 const flags = ['--headless', '--wasm', '--wasm-match'];
 const earlyTie = process.argv.includes('--early-tie');
@@ -27,8 +26,9 @@ const mode = flags.find((f) => process.argv.includes(f)) ?? 'visual';
 const dir = args[0];
 const ROUNDS = Number(args[1] || 200);
 const pairs = [['agony.red', 'bubbles.red'], ['bomber.red', 'chalk.red'], ['army.red', 'bananasplit.red']];
+const compiled = await compileWasmMars(); // also the assembler
 const codes = pairs.map((pair) => pair.map((f) => assemble(readFileSync(join(dir, f), 'latin1'))));
-const module = mode.startsWith('--wasm') ? await compileWasmMars() : null;
+const module = mode.startsWith('--wasm') ? compiled : null;
 let steps = 0;
 let executed = 0;
 const t0 = performance.now();

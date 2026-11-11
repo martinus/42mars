@@ -6,17 +6,18 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { assemble } from '../js/assembler.js';
-import { Evaluator, EVAL_OK, EVAL_BAD } from '../js/expr.js';
+import { assembleWasm as assemble, evaluateWasm as evaluate } from '../wasm/42mars.js';
 import { formatInstruction } from '../js/opcodes.js';
+
+// evaluateWasm() status
+const EVAL_OK = 0;
+const EVAL_BAD = -1;
 
 function asm(src) {
   const w = assemble(src);
   assert.ok(w.ok, `assembly failed: ${JSON.stringify(w.errors)}`);
   return w.instructions.map((i) => formatInstruction(i.op, i.mod, i.aMode, i.aVal, i.bMode, i.bVal, 8000));
 }
-
-const evaluate = (text) => new Evaluator().evaluate(text);
 
 // ---- 1. expression evaluation order
 

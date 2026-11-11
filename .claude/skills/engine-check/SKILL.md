@@ -17,11 +17,9 @@ Setup: `O=${COREWAR_ORACLE:-$HOME/.local/share/corewar-theater}`, `SEED=$(date +
    $D --pmars-trace $O/bin/pmars-trace --headless   # mars.js headless
    $D --pmars-trace $O/bin/pmars-trace --wasm       # wasm, round by round, core hash per round
    $D --wasm-match                                  # wasm runMatch with early ties, scores only
-   $D --wasm-asm --only listings,exprs,sources      # the C assembler (lib/src/asm.c)
-   node tools/corpus.mjs $O/corpus --compare-c      # C and JS assembler: same result object per file
    ```
-   Assembler-only change: the first line and the two assembler lines are enough. Use `--only battles,fuzz,multi` while iterating on the simulator and the full run at the end. `--scale 4` for a deeper run. Any difference is a bug in our engine unless the case is in section 4 of `docs/redcode-semantics.md`; reproduce it as a small test before fixing. A run without differences deletes its temporary folder; a run with differences keeps it and ends with `tmp files in <dir>`, which holds the generated warriors to reproduce them. `--tmp <dir>` is never deleted.
-4. Expression evaluator changed: `node tools/expr-fuzz.mjs --eval $O/bin/evalh --seed $SEED`, and the same with `--wasm` for the C evaluator. Both print the same counts; the known kind and overflow differences are in section 4 of the semantics doc.
+   Assembler-only change: `$D --only listings,exprs,sources` is enough. Use `--only battles,fuzz,multi` while iterating on the simulator and the full run at the end. `--scale 4` for a deeper run. Any difference is a bug in our engine unless the case is in section 4 of `docs/redcode-semantics.md`; reproduce it as a small test before fixing. A run without differences deletes its temporary folder; a run with differences keeps it and ends with `tmp files in <dir>`, which holds the generated warriors to reproduce them. `--tmp <dir>` is never deleted.
+4. Expression evaluator changed: `node tools/expr-fuzz.mjs --eval $O/bin/evalh --seed $SEED`: no differences except the known ones in the error kind (section 4 of the semantics doc).
 5. Tournament against pMARS, prints `SAME`:
    `node tools/tournament.mjs $O/sets/t20 --rounds 100 --seed $SEED --engine wasm --pmars $O/bin/pmars --compare`
    and the C library natively through `lib/42mars.h` (`lib/example.c`), also `SAME`:

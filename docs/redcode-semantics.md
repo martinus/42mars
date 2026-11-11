@@ -1,10 +1,9 @@
 # Redcode and MARS semantics
 
 This document describes the observable behavior of the engine: the
-expression evaluator and the assembler in `js/` and in `lib/src/asm.c`, the
-simulator in `js/` and `lib/src/mars.c` (the C files built to
-`wasm/42mars.wasm`). The
-behavior matches pMARS 0.9.x, the reference Core War simulator, including some
+expression evaluator and the assembler in `lib/src/asm.c`, the simulator in
+`js/mars.js` and `lib/src/mars.c` (the C files built to
+`wasm/42mars.wasm`). The behavior matches pMARS 0.9.x, the reference Core War simulator, including some
 of its quirks, because existing warriors depend on them.
 
 The engine was written from this description, without access to pMARS source
@@ -14,13 +13,14 @@ hashes. `tools/pmars-diff.mjs` and `tools/expr-fuzz.mjs` compare it with a
 pMARS binary, used as a black box, on corpus warriors and random input.
 Section 4 lists where the engine deliberately differs.
 
-Three modules, plain JavaScript ES modules, no dependencies:
-
-- `expr.js`: expression evaluator
-- `assembler.js`: Redcode assembler
-- `mars.js`: simulator
-
-`opcodes.js` holds the opcode, modifier and mode tables and the formatting.
+The expression evaluator and the assembler are C (`lib/src/asm.c`);
+`wasm/42mars.js` calls them as `evaluateWasm(text)` and
+`assembleWasm(source, options)`. They started as a port of a JavaScript
+assembler (`expr.js`, `assembler.js`), removed in November 2026 after the
+tools and the visualizer had moved to the C one. The simulator exists twice:
+`js/mars.js` for the visualizer (section 3) and `lib/src/mars.c` (section
+3.7). `js/opcodes.js` holds the opcode, modifier and mode tables and the
+formatting.
 
 The C library's interface is `lib/42mars.h`, documented in the header; its
 functions have the behavior described here.
@@ -28,36 +28,27 @@ functions have the behavior described here.
 `cli/42mars.c` is a command line program with pMARS's options and output
 (section 5).
 
-`lib/src/asm.c` is a port of `expr.js` and `assembler.js` to C with the same
-results: the same result object, messages and expanded statements included
-(`test/asm-c.test.js`, `test/golden.test.js`). `wasm/42mars.js` calls it as
-`assembleWasm(source, options)` and `evaluateWasm(text)`. Where the C code
-differs from the JS code, section 4 says so.
-
 ---------------------------------------------------------------------------
 
-## 1. expr.js
+## 1. The expression evaluator
 
 ### API
 
 ```js
-export const EVAL_OK = 0;
-export const EVAL_OVERFLOW = 1;   // result valid, but 64-bit overflow happened
-export const EVAL_BAD = -1;       // syntax error
-export const EVAL_DIV_ZERO = -2;  // division or modulo by zero
-export class Evaluator {
-  constructor();          // all 26 registers are 0n
-  resetRegisters();
-  evaluate(text) -> { status, value }   // value is a BigInt
-}
+evaluateWasm(text) -> { status, value }   // value is a BigInt
+// status, named as in lib/src/asm.c:
+//   EVAL_OK        0
+//   EVAL_OVERFLOW  1   result valid, but 64-bit overflow happened
+//   EVAL_BAD      -1   syntax error
+//   EVAL_DIV_ZERO -2   division or modulo by zero
 ```
 
-Registers persist across `evaluate` calls of one `Evaluator` instance.
+Each `evaluateWasm` call starts with all 26 registers 0. Within one
+assembly the registers persist from one expression to the next.
 
 ### Syntax and semantics
 
-- Integers are signed 64-bit (`BigInt` clamped by wrapping with
-  `BigInt.asIntN(64, x)`). When a binary `+`, `-` or `*` result leaves the
+- Integers are signed 64-bit and wrap around. When a binary `+`, `-` or `*` result leaves the
   64-bit range, the result wraps and the status becomes `EVAL_OVERFLOW`,
   unless the status already is an error. Unary minus wraps without changing
   the status (`-(-9223372036854775807-1)` is -2^63 with `EVAL_OK`). `/` and
@@ -175,11 +166,12 @@ expressions.
 
 ---------------------------------------------------------------------------
 
-## 2. assembler.js
+## 2. The assembler
 
 ### API
 
 ```js
+// wasm/42mars.js
 export const DEFAULT_OPTIONS = Object.freeze({
   coreSize: 8000, maxProcesses: 8000, maxCycles: 80000, maxLength: 100,
   minDistance: 100, rounds: 1, warriors: 2,
@@ -187,10 +179,10 @@ export const DEFAULT_OPTIONS = Object.freeze({
   readLimit: 0,    // 0 means coreSize
   writeLimit: 0,   // 0 means coreSize
 });
-export const PMARS_VERSION = 95;
-export function defaultModifier(op, aMode, bMode) -> modifier index
-export function assemble(source, options = {}) -> result
+export function assembleWasm(source, options = {}) -> result
 ```
+
+`VERSION` is 95 (pMARS 0.9.5).
 
 `options` takes the names of `DEFAULT_OPTIONS` and `icws88: true`, pMARS's
 `-8` (ICWS'88 only, end of 2.4). `formatListing()` of `opcodes.js` prints a
@@ -387,7 +379,7 @@ several steps overwrite with a string followed by a 0 byte. Older bytes
 after that 0 byte stay. This is visible in one case only: an opcode with
 characters glued to it at the end of a line. Corpus warrior `asianflu.red`
 has the line `\tdat#9`, which pMARS assembles as `DAT.F #0, #90`. The engine
-models the buffer for each assembly (class `Scratch` in `assembler.js`).
+models the buffer for each assembly.
 
 Writes, in program order:
 
@@ -539,7 +531,7 @@ ORG|END|PIN expr
     is `#0`.
   - `JMP`, `SPL`, `NOP`: the B operand is `$0`.
   - any other opcode: error ("missing operand").
-- No modifier given: the default, see `defaultModifier`:
+- No modifier given: the default (`default_modifier()` in `asm.c`):
   - `DAT`, `NOP`: `F`
   - `MOV`, `CMP`, `SEQ`, `SNE`: `AB` if the A mode is `#`; else `B` if the B
     mode is `#`; else `I`
@@ -547,10 +539,13 @@ ORG|END|PIN expr
     else `F`
   - `SLT`, `LDP`, `STP`: `AB` if A is `#`, else `B`
   - all others (`JMP`, `JMZ`, `JMN`, `DJN`, `SPL`): `B`
-- Expressions are evaluated with one `Evaluator` per assembly, shared with
-  pass 1 (registers carry over in order of evaluation: pass 1 asserts and FOR
-  counts first, then the A then B operand of each statement in order).
-  Evaluation errors are errors; overflow is a warning. Values are normalized
+- Expressions are evaluated with one set of registers per assembly, shared
+  with pass 1 (registers carry over in order of evaluation: pass 1 asserts
+  and FOR counts first, then the A then B operand of each statement in
+  order). Evaluation errors are errors; overflow is a warning. Every
+  expression the assembler evaluates (asserts, FOR counts, operands, ORG,
+  END, PIN) also gets a warning where pMARS has no defined result or takes
+  very long (section 4); those texts start with `pMARS`. Values are normalized
   modulo `coreSize` into `0 .. coreSize-1`.
 - After any error has happened anywhere in the assembly, statements are still
   parsed (to report syntax errors), but no expressions are evaluated any more
@@ -994,7 +989,17 @@ addresses in the linear memory.
 The engine always produces a result. Where pMARS does not terminate,
 crashes, or has no defined result, it does something reasonable instead.
 The random generators of `tools/pmars-diff.mjs` and `tools/expr-fuzz.mjs`
-leave these inputs out.
+leave these inputs out. For the expression cases below (a value of 2^40 or
+more, -2^63 divided by -1, a lone `!`, `=`, `&` or `|`), the assembler
+warns, with a text that starts with `pMARS`:
+
+- `pMARS takes very long for the value of '<expression>'`
+- `pMARS crashes on -2^63 / -1 in '<expression>'`
+- `pMARS has no defined result for '<expression>': a lone ! = & or | where
+  an operator belongs`
+
+pMARS has no such warnings, so `test/golden.test.js` leaves them out of the
+warning counts it compares, and the tools skip sources that get them.
 
 - pMARS loops forever on a line whose content is longer than 255 characters.
   The engine reads it like any other line.
@@ -1023,33 +1028,22 @@ leave these inputs out.
 - pMARS keeps its scratch buffer between the warriors of one run (see "The
   scratch buffer"); the engine starts each assembly with a fresh one.
 
-### The C assembler against the JS assembler
+### Limits of the assembler
 
-`lib/src/asm.c` gives the same result as `assembler.js` and `expr.js`
-except on input where the JS code runs out of stack or throws:
-
-- Deep nesting. The C evaluator allows 6000 nested calls of its two
-  recursive functions, then the expression is bad: 2999 nested parentheses
-  or register assignments, 5998 unary operators or binary operators in a
-  row. The JS evaluator recurses until V8's stack ends and throws a
-  RangeError; called with an empty stack in Node 22 that is after 2920
-  parentheses, 3712 assignments, 5120 binary and 7168 unary operators. So
-  the two differ only for 3000 to 3712 assignments and 5999 to 7168 unary
-  operators, where JS has a value and C a bad expression.
+- Deep nesting. The evaluator allows 6000 nested calls of its two recursive
+  functions, then the expression is bad: 2999 nested parentheses or
+  register assignments, 5998 unary operators or binary operators in a row.
 - FOR blocks nested deeper than 100 are the error `FOR blocks nested too
-  deep` in C, which also stops pass 1. Each level takes about 540 bytes of
-  the 64 KB stack of the wasm build (121 levels fit). The JS assembler
-  handles about 2500 levels before its stack ends.
+  deep`, which also stops pass 1. Each level takes about 540 bytes of the
+  64 KB stack of the wasm build (121 levels fit).
 - An exception inside wasm (V8 out of stack when the caller's JS stack is
   nearly used up) leaves the C stack pointer of that instance behind;
   `assembleWasm` and `evaluateWasm` then drop the instance and rethrow.
-- A core size below 1 is rejected (`assembleWasm` throws a RangeError); the
-  JS assembler divides by it.
+- A core size below 1 is rejected (`assembleWasm` throws a RangeError).
 - The C code works on bytes. `assembleWasm` passes Latin-1 when every
   character of the source is below 256, else UTF-8. In UTF-8 mode one
-  character outside ASCII is one token, as in JS, and message texts trim the
-  same Unicode spaces as JS's `trim()`; characters outside the Basic
-  Multilingual Plane are one token in C and two (surrogates) in JS.
+  character outside ASCII is one token, and message texts trim the Unicode
+  spaces that JavaScript's `trim()` trims.
 
 ---------------------------------------------------------------------------
 

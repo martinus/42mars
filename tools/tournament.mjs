@@ -54,10 +54,9 @@ import { readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { availableParallelism } from 'node:os';
 import { basename, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { assemble } from '../js/assembler.js';
 import { Mars } from '../js/mars.js';
 import { OP } from '../js/opcodes.js';
-import { compileWasmMars, createWasmMarsSync, packWarrior } from '../wasm/42mars.js';
+import { compileWasmMars, createWasmMarsSync, packWarrior, assembleWasm as assemble } from '../wasm/42mars.js';
 import { nativeMatch } from './native-input.mjs';
 
 // ------------------------------------------------------------------ tasks
@@ -393,6 +392,7 @@ function benchTable(o, names, pairs, results) {
 
 async function main() {
   const o = parseArgs(process.argv.slice(2));
+  await compileWasmMars(); // the assembler is in 42mars.wasm
   const all = collectFiles(o.files);
   if (o.bench) all.unshift(o.bench);
   if (all.length < 2) {

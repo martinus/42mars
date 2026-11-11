@@ -9,9 +9,8 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { assemble } from '../js/assembler.js';
 import { Mars } from '../js/mars.js';
-import { createWasmMarsSync } from '../wasm/42mars.js';
+import { createWasmMarsSync, assembleWasm as assemble } from '../wasm/42mars.js';
 
 // The instruction, then distinct cells 1..11: dat #11, #1 .. dat #21, #11.
 const warrior = (ins) => ` ${ins}\n` + Array.from({ length: 11 }, (_, i) => ` dat #${11 + i}, #${i + 1}\n`).join('');

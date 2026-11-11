@@ -16,9 +16,10 @@
 // the wasm module.
 import { readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { assemble } from '../js/assembler.js';
-import { compileWasmMars, createWasmMarsSync } from '../wasm/42mars.js';
+import { compileWasmMars, createWasmMarsSync, assembleWasm as assemble } from '../wasm/42mars.js';
 import { nativeMatch } from './native-input.mjs';
+
+await compileWasmMars(); // assembleWasm() then works on every Node 20
 
 const argv = process.argv.slice(2);
 const opt = (name, dflt) => { const i = argv.indexOf(`--${name}`); return i >= 0 ? argv.splice(i, 2)[1] : dflt; };

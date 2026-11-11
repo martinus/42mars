@@ -7,7 +7,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { assemble } from '../js/assembler.js';
+import { assembleWasm as assemble } from '../wasm/42mars.js';
 import { Mars } from '../js/mars.js';
 
 function warrior(src) {

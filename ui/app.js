@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 Martin Leitner-Ankerl
 
-import { assemble } from '../js/assembler.js';
+import { assembleWasm as assemble, compileWasmMars } from '../wasm/42mars.js';
 import { Mars } from '../js/mars.js';
 import { formatInstruction, formatListing, OP, OPCODES } from '../js/opcodes.js';
 import { Renderer, TEX_W } from './renderer.js';
@@ -9,6 +9,10 @@ import { computeLayout, addressAt, cellCenter, LAYOUT_GRID, LAYOUT_RING } from '
 import { Timeline } from './timeline.js';
 import { Overlay } from './overlay.js';
 import { ActivityTracker, ACTIVITIES, ACTIVITY_LABELS, ACTIVITY_SENTENCES, OPCODE_DOCS, explainStep, traceEntry, pad4 } from './explain.js';
+
+// The assembler is the C one in 42mars.wasm: compiled once before anything
+// assembles (in a browser it cannot be loaded synchronously).
+await compileWasmMars();
 
 // ------------------------------------------------------------------ config
 

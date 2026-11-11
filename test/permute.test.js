@@ -8,9 +8,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { assemble } from '../js/assembler.js';
 import { Mars } from '../js/mars.js';
-import { createWasmMarsSync } from '../wasm/42mars.js';
+import { createWasmMarsSync, assembleWasm as assemble } from '../wasm/42mars.js';
 
 const fixture = JSON.parse(readFileSync(new URL('./fixtures/permute.json', import.meta.url), 'utf8'));
 const small = { coreSize: fixture.coreSize, minDistance: fixture.minDistance, maxLength: 5 };

@@ -2,18 +2,51 @@
 // Copyright (c) 2026 Martin Leitner-Ankerl
 //
 // The C assembler and evaluator (lib/src/asm.c, through wasm/42mars.js)
-// against js/assembler.js and js/expr.js: the whole result object must be
-// the same, messages and expanded statements included. Random sources mix
-// the constructs where pMARS has quirks: EQU (also multi-line and
-// recursive), FOR/ROF with counters and `&`, CURLINE, opcodes with glued
-// text, CR, continuation lines, ;redcode and ;assert lines, and broken
-// input.
+// against recorded results: the whole result object must stay the same,
+// messages and expanded statements included. Random sources mix the
+// constructs where pMARS has quirks: EQU (also multi-line and recursive),
+// FOR/ROF with counters and `&`, CURLINE, opcodes with glued text, CR,
+// continuation lines, ;redcode and ;assert lines, and broken input.
+//
+// test/fixtures/asm-c.json holds a digest of the results per group of
+// cases. They were recorded where the C code gave the same results as the
+// JavaScript assembler it was ported from (js/assembler.js and js/expr.js,
+// removed on 11th November 2026; the C code adds only the warnings that
+// start with "pMARS"). For an intended change of the results, record them
+// again with `ASM_C_RECORD=1 node --test test/asm-c.test.js` and say why in
+// the commit.
 
-import { test } from 'node:test';
+import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { assemble } from '../js/assembler.js';
-import { Evaluator } from '../js/expr.js';
+import { createHash } from 'node:crypto';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { assembleWasm, evaluateWasm } from '../wasm/42mars.js';
+
+const FIXTURE = new URL('./fixtures/asm-c.json', import.meta.url);
+const RECORD = Boolean(process.env.ASM_C_RECORD);
+const recorded = RECORD ? {} : JSON.parse(readFileSync(FIXTURE, 'utf8'));
+const recording = {};
+after(() => {
+  if (RECORD) writeFileSync(FIXTURE, `${JSON.stringify(recording, null, '\t')}\n`);
+});
+
+const digest = (value) => createHash('sha256').update(JSON.stringify(value, (k, v) => (typeof v === 'bigint' ? `${v}n` : v))).digest('hex').slice(0, 16);
+
+// Checks the digests of one group of results against the recorded ones (or
+// records them). `results` is a list of [what, result] pairs; a group of
+// `per` results shares one digest.
+function check(name, results, per = 1) {
+  const got = [];
+  for (let i = 0; i < results.length; i += per) got.push(digest(results.slice(i, i + per).map(([, r]) => r)));
+  if (RECORD) {
+    recording[name] = got;
+    return;
+  }
+  const want = recorded[name];
+  assert.equal(got.length, want.length, `${name}: number of groups`);
+  const k = got.findIndex((d, i) => d !== want[i]);
+  if (k >= 0) assert.fail(`${name}: results ${k * per} to ${k * per + per - 1} changed, the first of them: ${JSON.stringify(results[k * per][0])}`);
+}
 
 function generator(seed) {
   let s = seed >>> 0 || 1;
@@ -138,72 +171,82 @@ function source(g) {
   return g.rand(2) ? validSource(g) : brokenSource(g);
 }
 
-const same = (src, opts) => assert.deepEqual(assembleWasm(src, opts), assemble(src, opts), JSON.stringify(src));
-
-test('random sources give the same result in C and JS', () => {
+test('random sources give the recorded results', () => {
   const g = generator(20261110);
-  for (let k = 0; k < 4000; k++) same(source(g), k % 7 === 0 ? { coreSize: 80, maxLength: 5 } : k % 3 === 0 ? { icws88: true } : {});
+  const results = [];
+  for (let k = 0; k < 4000; k++) {
+    const src = source(g);
+    const opts = k % 7 === 0 ? { coreSize: 80, maxLength: 5 } : k % 3 === 0 ? { icws88: true } : {};
+    results.push([src, assembleWasm(src, opts)]);
+  }
+  check('sources', results, 100);
 });
 
-test('random expressions give the same result in C and JS', () => {
+test('random expressions give the recorded results', () => {
   const g = generator(77);
+  const results = [];
   for (let k = 0; k < 20000; k++) {
     const e = expr(g);
-    const a = new Evaluator().evaluate(e);
-    assert.deepEqual(evaluateWasm(e), a, e);
+    results.push([e, evaluateWasm(e)]);
   }
+  check('expressions', results, 100);
 });
 
 test('the C assembler on chosen cases', () => {
+  const results = [];
+  const run = (src, opts) => results.push([src, assembleWasm(src, opts)]);
   // registers to start with (the first warrior of a pMARS run)
-  same(';assert s == 2 && W == 2\n dat #s, #w\n dat #x=x+1, #a\n', { registers: { s: 2, W: 2, x: -5, a: 7 } });
-  same(';assert s == 2\n dat #s, #w\n');
+  run(';assert s == 2 && W == 2\n dat #s, #w\n dat #x=x+1, #a\n', { registers: { s: 2, W: 2, x: -5, a: 7 } });
+  run(';assert s == 2\n dat #s, #w\n');
   assert.equal(assembleWasm(';assert s == 2\n dat #s, #w\n', { registers: { s: 2 } }).ok, true);
   assert.throws(() => assembleWasm(' dat 0\n', { registers: { ab: 1 } }), RangeError);
   // EQU recursion, in pass 1 and in pass 2 (defined after its use)
-  same('a equ b\nb equ a\n mov a, 1\n');
-  same(' mov c, 1\nc equ c\n');
+  run('a equ b\nb equ a\n mov a, 1\n');
+  run(' mov c, 1\nc equ c\n');
   // a FOR block without ROF, counters in labels, CURLINE
-  same('i for 3\nx&i dat x&i, CURLINE\nrof\n jmp x02\n');
-  same('n for 2\n dat n\n');
+  run('i for 3\nx&i dat x&i, CURLINE\nrof\n jmp x02\n');
+  run('n for 2\n dat n\n');
   // the scratch buffer: text glued to an opcode picks up older bytes, so
   // pMARS reads `dat#9` after the label xyzzy9 as `DAT#99`
-  same('xyzzy9\ndat#9');
-  same('abcdef9 dat 0\ndat#9\n');
+  run('xyzzy9\ndat#9');
+  run('abcdef9 dat 0\ndat#9\n');
   // Latin-1 and UTF-8 text, in the metadata and as stray characters
-  same(';name Fünf\n;author Ä\n dat 0\n ä\n');
-  same(';name 日本\n dat 0\n mov 0, 日\n;strategy x　\n');
-  same(';assert 1 == 1 \n;assert 0　\n dat 0\n');
+  run(';name Fünf\n;author Ä\n dat 0\n ä\n');
+  run(';name 日本\n dat 0\n mov 0, 日\n;strategy x　\n');
+  run(';assert 1 == 1 \n;assert 0　\n dat 0\n');
   // options: maxLength, PIN beyond 2^53 (rounded to a Number, as in JS)
-  same(' dat 0\n dat 1\n dat 2\n', { maxLength: 2 });
-  same(' pin 9007199254740993\n dat 0\n');
+  run(' dat 0\n dat 1\n dat 2\n', { maxLength: 2 });
+  run(' pin 9007199254740993\n dat 0\n');
   // a large expansion: grows the working memory several times
-  same('i for 200\nj for 100\n dat i, j\nrof\nrof\n', { maxLength: 30000 });
+  run('i for 200\nj for 100\n dat i, j\nrof\nrof\n', { maxLength: 30000 });
+  check('chosen cases', results);
 });
 
 test('the C evaluator: limits', () => {
   // -2^63 / -1 and % -1 wrap (C would trap)
-  assert.deepEqual(evaluateWasm('(-9223372036854775807-1)/-1'), new Evaluator().evaluate('(-9223372036854775807-1)/-1'));
-  assert.deepEqual(evaluateWasm('(-9223372036854775807-1)%-1'), new Evaluator().evaluate('(-9223372036854775807-1)%-1'));
-  assert.deepEqual(evaluateWasm('3037000500*3037000500'), new Evaluator().evaluate('3037000500*3037000500'));
-  assert.deepEqual(evaluateWasm('-3037000499*3037000499'), new Evaluator().evaluate('-3037000499*3037000499'));
-  assert.deepEqual(evaluateWasm('4611686018427387904*-2'), new Evaluator().evaluate('4611686018427387904*-2'));
-  // Deep nesting: the same as JS up to where the C limit (6000 nested calls)
-  // or the JS stack ends (semantics doc, section 4).
+  const MIN = -(1n << 63n);
+  assert.deepEqual(evaluateWasm('(-9223372036854775807-1)/-1'), { status: 0, value: MIN });
+  assert.deepEqual(evaluateWasm('(-9223372036854775807-1)%-1'), { status: 0, value: 0n });
+  // 64-bit products: the overflow status where the product does not fit
+  assert.deepEqual(evaluateWasm('3037000500*3037000500'), { status: 1, value: BigInt.asIntN(64, 3037000500n * 3037000500n) });
+  assert.deepEqual(evaluateWasm('-3037000499*3037000499'), { status: 0, value: -3037000499n * 3037000499n });
+  assert.deepEqual(evaluateWasm('4611686018427387904*-2'), { status: 0, value: MIN });
+  // Deep nesting: evaluated up to the C limit of 6000 nested calls, beyond
+  // it not an expression (semantics doc, section 4).
   const shapes = {
-    nested: [(k) => `${'('.repeat(k)}1${')'.repeat(k)}`, 2500],
-    unary: [(k) => `${'-'.repeat(k)}1`, 5000],
-    flat: [(k) => `${'1+'.repeat(k)}1`, 4000],
-    assign: [(k) => `${'a='.repeat(k)}1`, 2500],
+    nested: [(k) => `${'('.repeat(k)}1${')'.repeat(k)}`, 2500, 1n],
+    unary: [(k) => `${'-'.repeat(k)}1`, 5000, 1n],
+    flat: [(k) => `${'1+'.repeat(k)}1`, 4000, 4001n],
+    assign: [(k) => `${'a='.repeat(k)}1`, 2500, 1n],
   };
-  for (const [f, k] of Object.values(shapes)) assert.deepEqual(evaluateWasm(f(k)), new Evaluator().evaluate(f(k)));
+  for (const [f, k, value] of Object.values(shapes)) assert.deepEqual(evaluateWasm(f(k)), { status: 0, value });
   for (const [f, k] of Object.values(shapes)) assert.equal(evaluateWasm(f(3 * k)).status, -1);
 });
 
 const forNest = (k) => `${' for 1\n'.repeat(k)} dat 0\n${' rof\n'.repeat(k)}`;
 
 test('FOR blocks nest 100 deep in C', () => {
-  same(forNest(100));
+  assert.equal(assembleWasm(forNest(100)).ok, true);
   const w = assembleWasm(forNest(101));
   assert.equal(w.ok, false);
   assert.deepEqual(w.errors.map((e) => e.text), ['FOR blocks nested too deep']);
@@ -221,7 +264,7 @@ test('an exception inside wasm does not break later calls', () => {
     try { at(n); } catch (e) { thrown = e; }
   }
   assert.ok(thrown instanceof RangeError || thrown instanceof WebAssembly.RuntimeError, String(thrown));
-  same(src);
+  assert.equal(assembleWasm(src).ok, true);
 });
 
 test('a core size below 1 is a RangeError', () => {

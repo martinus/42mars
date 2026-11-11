@@ -12,42 +12,32 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { Evaluator } from '../js/expr.js';
-import { assemble } from '../js/assembler.js';
 import { assembleWasm, evaluateWasm } from '../wasm/42mars.js';
 
 const load = (f) => JSON.parse(readFileSync(new URL(`./fixtures/${f}`, import.meta.url), 'utf8'));
 
-// js/expr.js and js/assembler.js, and their C port lib/src/asm.c through
-// the wasm build.
-const engines = [
-  ['js', (e) => new Evaluator().evaluate(e), assemble],
-  ['c', evaluateWasm, assembleWasm],
-];
-
-for (const [engine, evaluate] of engines) {
-  test(`expressions match the reference results (${engine})`, () => {
-    const bad = [];
-    for (const [expr, status, value] of load('expressions.json')) {
-      const r = evaluate(expr);
-      if (r.status !== status || (status >= 0 && r.value.toString() !== value)) {
-        bad.push(`${JSON.stringify(expr)}: want ${status}/${value}, got ${r.status}/${r.value}`);
-      }
+// The C assembler and evaluator, lib/src/asm.c, through the wasm build.
+test('expressions match the reference results', () => {
+  const bad = [];
+  for (const [expr, status, value] of load('expressions.json')) {
+    const r = evaluateWasm(expr);
+    if (r.status !== status || (status >= 0 && r.value.toString() !== value)) {
+      bad.push(`${JSON.stringify(expr)}: want ${status}/${value}, got ${r.status}/${r.value}`);
     }
-    assert.deepEqual(bad.slice(0, 10), []);
-  });
-}
+  }
+  assert.deepEqual(bad.slice(0, 10), []);
+});
 
 for (const { name, src, opts, result } of load('snippets.json')) {
-  for (const [engine, , assembler] of engines) {
-    test(`snippet ${name} (${engine})`, () => {
-      const w = assembler(src, opts);
-      const got = {
-        ok: w.ok, name: w.name, author: w.author, strategy: w.strategy, start: w.start, pin: w.pin,
-        instructions: w.instructions.map((i) => [i.op, i.mod, i.aMode, i.aVal, i.bMode, i.bVal, i.line]),
-        warnings: w.warnings.length,
-      };
-      assert.deepEqual(got, result);
-    });
-  }
+  test(`snippet ${name}`, () => {
+    const w = assembleWasm(src, opts);
+    const got = {
+      ok: w.ok, name: w.name, author: w.author, strategy: w.strategy, start: w.start, pin: w.pin,
+      instructions: w.instructions.map((i) => [i.op, i.mod, i.aMode, i.aVal, i.bMode, i.bVal, i.line]),
+      // pMARS has no counterpart of our warnings about its own limits
+      // (texts that start with "pMARS")
+      warnings: w.warnings.filter((m) => !m.text.startsWith('pMARS ')).length,
+    };
+    assert.deepEqual(got, result);
+  });
 }

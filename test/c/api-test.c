@@ -4,7 +4,7 @@
 // Drives the public functions of lib/42mars.h for test/c-api.test.js and
 // prints one JSON object. Arguments: warrior files; the matches use those
 // that assemble, the first of them against the others. The JS side compares
-// the output with js/assembler.js and the wasm engine.
+// the output with the wasm build of the library.
 
 #include <stdio.h>
 #include <stdlib.h>
