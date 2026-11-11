@@ -3,12 +3,14 @@
 // Copyright (c) 2026 Martin Leitner-Ankerl
 // Assembles Redcode files and prints a pMARS-style listing, errors and warnings.
 // Usage: node tools/asm.mjs [--coresize N] [--maxlength N] [--icws88] file.red...
+// Each file as `pmars -r 0 file` assembles it: as the only warrior, with the
+// registers w and s at 1, which pMARS's score formula check leaves.
 import { readFileSync } from 'node:fs';
 import { assemble } from '../js/assembler.js';
 import { formatListing } from '../js/opcodes.js';
 
 const args = process.argv.slice(2);
-const options = {};
+const options = { registers: { w: 1, s: 1 } };
 const files = [];
 for (let i = 0; i < args.length; i++) {
   if (args[i] === '--coresize') options.coreSize = Number(args[++i]);

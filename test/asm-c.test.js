@@ -155,6 +155,11 @@ test('random expressions give the same result in C and JS', () => {
 });
 
 test('the C assembler on chosen cases', () => {
+  // registers to start with (the first warrior of a pMARS run)
+  same(';assert s == 2 && W == 2\n dat #s, #w\n dat #x=x+1, #a\n', { registers: { s: 2, W: 2, x: -5, a: 7 } });
+  same(';assert s == 2\n dat #s, #w\n');
+  assert.equal(assembleWasm(';assert s == 2\n dat #s, #w\n', { registers: { s: 2 } }).ok, true);
+  assert.throws(() => assembleWasm(' dat 0\n', { registers: { ab: 1 } }), RangeError);
   // EQU recursion, in pass 1 and in pass 2 (defined after its use)
   same('a equ b\nb equ a\n mov a, 1\n');
   same(' mov c, 1\nc equ c\n');

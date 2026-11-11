@@ -235,8 +235,8 @@ function makeTasks(o, codes, pairs) {
   const whole = [];
   const split = [];
   pairs.forEach((p, k) => {
-    const task = (firstRound, rounds) => ({ pairing: k, a: p.a, b: p.b, seed: (o.permute ? 2 : 1) * (p.pos - o.distance), firstRound, rounds });
-    if (hasLdp[p.a] || hasLdp[p.b] || block >= o.rounds) whole.push(task(0, o.rounds));
+    const task = (firstRound, rounds) => ({ pairing: k, a: p.ca, b: p.cb, seed: (o.permute ? 2 : 1) * (p.pos - o.distance), firstRound, rounds });
+    if (hasLdp[p.ca] || hasLdp[p.cb] || block >= o.rounds) whole.push(task(0, o.rounds));
     else for (let r = 0; r < o.rounds; r += block) split.push(task(r, Math.min(block, o.rounds - r)));
   });
   split.sort((x, y) => x.firstRound - y.firstRound || x.pairing - y.pairing);
@@ -402,27 +402,40 @@ async function main() {
   const files = [];
   const codes = []; // what the engines read of each assembled warrior
   const names = [];
+  // pMARS plays a pairing as `pmars a b` and assembles a with the registers
+  // its score formula check leaves, w = s = 2, b with all 0 (semantics doc,
+  // section 5): the code of each warrior as a and as b, one entry in codes
+  // when both are the same.
+  const asA = [];
+  const asB = [];
+  const code = (w) => ({ ok: w.ok, name: w.name, author: w.author, start: w.start, pin: w.pin, instructions: w.instructions });
   for (const f of all) {
     const src = readFileSync(f, 'latin1');
-    const w = assemble(src, { coreSize: o.size, maxLength: o.length, minDistance: o.distance, maxProcesses: o.processes, maxCycles: o.cycles, rounds: o.rounds, warriors: 2, readLimit: o.readLimit, writeLimit: o.writeLimit, icws88: Boolean(o.icws88) });
-    if (!w.ok || w.instructions.length === 0) {
-      const why = w.ok ? 'no instructions' : w.errors[0].text;
+    const rules = { coreSize: o.size, maxLength: o.length, minDistance: o.distance, maxProcesses: o.processes, maxCycles: o.cycles, rounds: o.rounds, warriors: 2, readLimit: o.readLimit, writeLimit: o.writeLimit, icws88: Boolean(o.icws88) };
+    const w = assemble(src, rules);
+    const first = assemble(src, { ...rules, registers: { w: 2, s: 2 } });
+    const bad = [w, first].find((x) => !x.ok || x.instructions.length === 0);
+    if (bad) {
+      const why = bad.ok ? 'no instructions' : bad.errors[0].text;
       if (o.bench && files.length === 0) { console.error(`${f}: ${why}`); process.exit(2); }
       console.error(`skipped ${f}: ${why}`);
       continue;
     }
     files.push(f);
-    codes.push({ ok: w.ok, name: w.name, author: w.author, start: w.start, pin: w.pin, instructions: w.instructions });
     names.push(`${w.name} (${basename(f)})`);
+    asB.push(codes.push(code(w)) - 1);
+    const same = JSON.stringify([first.instructions, first.start, first.pin]) === JSON.stringify([w.instructions, w.start, w.pin]);
+    asA.push(same ? asB[asB.length - 1] : codes.push(code(first)) - 1);
   }
+  // a and b index names and files, ca and cb codes
   const pairs = [];
   for (let a = 0; a < (o.bench ? 1 : files.length); a++) {
-    for (let b = a + 1; b < files.length; b++) pairs.push({ a, b, pos: pairPosition(o.seed, a, b, o) });
+    for (let b = a + 1; b < files.length; b++) pairs.push({ a, b, pos: pairPosition(o.seed, a, b, o), ca: asA[a], cb: asB[b] });
   }
   if (o.nativeInput) {
     if (o.permute || o.readLimit || o.writeLimit) throw new Error('--native-input: lib/tools/bench-native.c has no permute and no limits');
     const rules = { coreSize: o.size, maxProcesses: o.processes, maxCycles: o.cycles, minDistance: o.distance, pSpaceSize: Math.floor(o.size / 16) };
-    writeFileSync(o.nativeInput, pairs.map((p) => nativeMatch([codes[p.a], codes[p.b]], rules, p.pos - o.distance, o.rounds)).join(''));
+    writeFileSync(o.nativeInput, pairs.map((p) => nativeMatch([codes[p.ca], codes[p.cb]], rules, p.pos - o.distance, o.rounds)).join(''));
     return;
   }
   console.error(`${files.length} warriors, ${pairs.length} pairings, ${o.rounds} rounds each, ${o.jobs} jobs`);

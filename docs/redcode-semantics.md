@@ -194,7 +194,12 @@ export function assemble(source, options = {}) -> result
 
 `options` takes the names of `DEFAULT_OPTIONS` and `icws88: true`, pMARS's
 `-8` (ICWS'88 only, end of 2.4). `formatListing()` of `opcodes.js` prints a
-result assembled with it in the ICWS'88 form.
+result assembled with it in the ICWS'88 form. `registers`, e.g. `{ s: 2, w:
+2 }`, gives registers to start with instead of 0 (`m42_assemble()` in C: 26
+values a..z): pMARS assembles the first warrior of a run with the registers
+its score formula check left (section 5), so `w` and `s` are the number of
+warriors there with the default formula, and the other warriors with all 0.
+`tools/pmars-diff.mjs`, `tools/tournament.mjs` and `42mars` do the same.
 
 `result`:
 
@@ -1088,9 +1093,16 @@ two on corpus warriors, `test/cli.test.js` holds recorded pMARS outputs.
   `* { }` as 130 .. 132. Checked for sums below 2^31.
 - `-= formula`: the score formula, default `(W*W-1)/S`, evaluated with the
   expression rules of section 1 and registers `w` (warriors) and `s`
-  (survivors). Before assembling it is evaluated with fresh registers for s
-  = 1 .. warriors; an error (bad expression, division by zero) is "Bad score
-  formula", exit 2. For the scores it is evaluated for every warrior in file
+  (survivors). Before assembling it is evaluated for s = 1 .. warriors with
+  one set of registers, all 0 at first: `w` is set to the number of warriors
+  once, `s` before each evaluation, and assignments stay (`x=x+5` leaves 5 *
+  warriors, `w=w+10` with 2 warriors 22). An error (bad expression,
+  division by zero) is "Bad score formula", exit 2. The first warrior is
+  assembled with the registers this leaves (a `;assert s == 2` passes there
+  with two warriors), the others with all 0: `dat #w, #s` is `#2, #2` in the
+  first of two warriors and `#0, #0` in the second. (Found from a fuzzed
+  `spl*` at the end of a line, whose operand was the leftover `S` of a
+  label in the scratch buffer, 2.3.) For the scores it is evaluated for every warrior in file
   order and s = 1 .. warriors, with the registers kept from one evaluation
   to the next (`x=x+1` counts the evaluations). A warrior's score is the
   sum over s of (rounds it survived with s warriors alive) * formula.

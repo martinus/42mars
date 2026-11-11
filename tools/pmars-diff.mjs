@@ -183,12 +183,17 @@ function rules(o) {
 }
 const STANDARD = { coreSize: 8000, maxCycles: 80000, maxProcesses: 8000, maxLength: 100, minDistance: 100 };
 
+// The registers pMARS assembles its first warrior with when it runs n
+// warriors with the default score formula (semantics doc, section 5).
+const firstRegisters = (n) => ({ w: n, s: n });
+
 // Compares one source file: listing or rejection.
 async function compareListing(file, source, o = STANDARD) {
   const r = await pmars([...rules(o), '-r', '0', file]);
   if (r.timedOut) return `${file}: pMARS did not finish`;
   const ok = r.out.includes('Program "');
-  const ours = ourAssemble(source, { ...o, warriors: 1, rounds: 0 }); // pmars -r 0: ROUNDS is 0
+  // pmars -r 0: ROUNDS is 0; its formula check leaves w = s = 1 (one warrior)
+  const ours = ourAssemble(source, { ...o, warriors: 1, rounds: 0, registers: firstRegisters(1) });
   if (ok !== ours.ok) {
     const why = ours.ok ? `pMARS rejects:\n${(r.out + r.err).trim().split('\n').slice(0, 4).join('\n')}` : `we reject: ${ours.errors.map((e) => `line ${e.line}: ${e.text}`).join('; ')}`;
     return `${file}: ${why}`;
@@ -274,7 +279,8 @@ function randomExpr(depth = 0) {
     if (depth < 3 && r === 0) return `(${randomExpr(depth + 1)})`;
     if (r === 1) return `-${term()}`;
     if (r === 2) return `!${term()}`;
-    if (r === 3) return pick(['CORESIZE', 'MAXLENGTH', 'a', 'b']);
+    // s and w: pMARS's score formula check leaves them at the number of warriors
+    if (r === 3) return pick(['CORESIZE', 'MAXLENGTH', 'a', 'b', 's', 'W']);
     if (r === 4 && depth < 2) return `(${pick(['a', 'b'])}=${randomExpr(depth + 1)})`;
     return String(rand(r === 5 ? 100000 : 13));
   };
@@ -459,7 +465,7 @@ async function compareBattle(files, sources, o, pos, rounds) {
   const lines = r.out.trim().split('\n').filter(Boolean);
   if (lines.length !== files.length) return `${files.join(' ')}: unexpected pMARS output ${JSON.stringify(r.out + r.err).slice(0, 200)}`;
   const want = lines.map((l) => l.trim().split(/\s+/).map(Number));
-  const ws = sources.map((s) => ourAssemble(s, { ...o, warriors: files.length, rounds }));
+  const ws = sources.map((s, i) => ourAssemble(s, { ...o, warriors: files.length, rounds, registers: i === 0 ? firstRegisters(files.length) : undefined }));
   if (ws.some((w) => !w.ok)) return `${files.join(' ')}: pMARS ran it, we do not assemble it`;
   const m = WASM ? createWasmMarsSync({ ...o, rounds }, WASM) : new Mars({ ...o, rounds, headless: HEADLESS });
   const seed = (permute ? 2 : 1) * (pos - o.minDistance);

@@ -69,7 +69,7 @@ static int rules_ok(const m42_rules *r) {
 #define RESULT(w) ((const AsmResult *)(const void *)(w))
 
 EXPORT(m42_assemble)
-int m42_assemble(const char *src, size_t len, const m42_rules *rules, unsigned flags, void *mem, size_t size,
+int m42_assemble(const char *src, size_t len, const m42_rules *rules, unsigned flags, const int64_t registers[26], void *mem, size_t size,
                  m42_warrior **out) {
   if (!out) return M42_ERR_ARGUMENT;
   *out = 0;
@@ -78,7 +78,7 @@ int m42_assemble(const char *src, size_t len, const m42_rules *rules, unsigned f
   if ((!src && len) || !mem) return M42_ERR_ARGUMENT;
   const AsmOptions o = {rules->core_size, rules->max_processes, rules->max_cycles, rules->max_length,
                         rules->min_distance, rules->warriors, rules->rounds, pspace_of(rules),
-                        rules->read_limit, rules->write_limit, (flags & M42_UTF8) != 0, (flags & M42_ICWS88) != 0};
+                        rules->read_limit, rules->write_limit, (flags & M42_UTF8) != 0, (flags & M42_ICWS88) != 0, registers};
   AsmResult *r = assemble(mem, size, (const u8 *)(src ? src : ""), len, &o);
   if (!r) return M42_ERR_MEMORY;
   *out = (m42_warrior *)(void *)r;
@@ -253,13 +253,14 @@ m42_warrior *m42_warrior_pack(const m42_warrior *w, void *dst, size_t size) {
 
 #ifndef M42_NO_LIBC
 EXPORT(m42_assemble_new)
-m42_warrior *m42_assemble_new(const char *src, size_t len, const m42_rules *rules, unsigned flags, int *status) {
+m42_warrior *m42_assemble_new(const char *src, size_t len, const m42_rules *rules, unsigned flags,
+                              const int64_t registers[26], int *status) {
   // Working memory from 1 MB or 64 bytes per source byte, times 4 per try.
   for (size_t size = len > (1u << 14) ? len * 64 : (1u << 20); size && size <= (size_t)-1 / 4; size *= 4) {
     void *mem = malloc(size);
     if (!mem) break;
     m42_warrior *w;
-    const int s = m42_assemble(src, len, rules, flags, mem, size, &w);
+    const int s = m42_assemble(src, len, rules, flags, registers, mem, size, &w);
     if (s == M42_ERR_MEMORY) { free(mem); continue; }
     if (s != M42_OK) { free(mem); set_status(status, s); return 0; }
     // malloc's alignment is at least 8, so the packed warrior starts the
