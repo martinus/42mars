@@ -102,6 +102,94 @@ function effectiveOptions(options) {
 
 const isCount = (v) => Number.isSafeInteger(v) && v >= 0;
 
+// ---------------------------------------------------------------- memory
+
+// The memory of one instance. lib/42mars.h takes all its memory from the
+// caller: here the linear memory above __heap_base, grown when needed.
+// keep() is for the life of the instance (the context's heap), scratch()
+// for one call, until the next reset().
+class Memory {
+  constructor(x) {
+    this.x = x;
+    this.top = (x.__heap_base.value + 63) & ~63;
+    this.mark = this.top;
+    this.buffer = null;
+  }
+
+  keep(bytes) {
+    const at = this.top;
+    this.top = (at + bytes + 63) & ~63;
+    this.mark = this.top;
+    this.ensure(this.top);
+    return at;
+  }
+
+  reset() {
+    this.mark = this.top;
+  }
+
+  scratch(bytes) {
+    const at = (this.mark + 7) & ~7;
+    this.mark = at + bytes;
+    this.ensure(this.mark);
+    return at;
+  }
+
+  ensure(end) {
+    const have = this.x.memory.buffer.byteLength;
+    if (end > have) this.x.memory.grow(Math.ceil((end - have) / 65536));
+  }
+
+  // Views of the linear memory, renewed after it grew.
+  views() {
+    if (this.buffer !== this.x.memory.buffer) {
+      this.buffer = this.x.memory.buffer;
+      this.u8 = new Uint8Array(this.buffer);
+      this.dv = new DataView(this.buffer);
+    }
+    return this;
+  }
+
+  // A 0-terminated string at `at`.
+  cString(at) {
+    const { u8 } = this.views();
+    let end = at;
+    while (u8[end]) end++;
+    return latin1Decoder.decode(u8.subarray(at, end));
+  }
+}
+
+const memories = new WeakMap(); // exports -> Memory
+const memoryOf = (x) => {
+  let m = memories.get(x);
+  if (!m) memories.set(x, (m = new Memory(x)));
+  return m;
+};
+
+// m42_rules (11 uint32, 44 bytes) for the options, see lib/42mars.h.
+function writeRules(mem, at, o, warriors) {
+  const { dv } = mem.views();
+  [44, o.coreSize, o.maxCycles, o.maxProcesses, o.maxLength, o.minDistance, o.pSpaceSize, o.readLimit, o.writeLimit,
+    o.rounds, warriors].forEach((v, i) => dv.setUint32(at + 4 * i, v, true));
+}
+
+const M42_OK = 0;
+const M42_ERR_MEMORY = -1;
+
+function check(x, mem, status) {
+  if (status === M42_OK) return;
+  if (status === M42_ERR_MEMORY) throw new Error('wasm engine: out of memory');
+  throw new Error(`wasm engine: ${mem.cString(x.m42_status_text(status))}`);
+}
+
+// ---------------------------------------------------------------- simulator
+
+// Offsets in the struct area of an instance: m42_rules, m42_match_options
+// (32 bytes: size, rounds, first_round, early_tie, int64 seed at 16,
+// positions at 24, log at 28), m42_state (32 bytes), m42_warrior_state (40
+// bytes), and room for single values.
+const S_RULES = 0, S_OPTIONS = 48, S_STATE = 80, S_WARRIOR = 112, S_VALUE = 160, S_SIZE = 192;
+
 class WasmMars {
   constructor(instance, options) {
     this.opt = effectiveOptions(options);
@@ -118,7 +206,10 @@ class WasmMars {
     this.coreSize = o.coreSize;
     this.x = instance.exports;
     this.memory = this.x.memory;
-    this.buffer = null;
+    this.mem = memoryOf(this.x);
+    this.structs = this.mem.keep(S_SIZE);
+    this.ctx = 0;
+    this.capacity = 0; // warriors the context was made for
     this.warriors = [];
     this.results = [];
     this.roundResult = null;
@@ -129,17 +220,28 @@ class WasmMars {
 
   // Byte view of the linear memory, renewed after it grew.
   bytes() {
-    if (this.buffer !== this.memory.buffer) {
-      this.buffer = this.memory.buffer;
-      this.u8 = new Uint8Array(this.buffer);
-      this.u32 = new Uint32Array(this.buffer);
-      this.i32 = new Int32Array(this.buffer);
-      this.f64 = new Float64Array(this.buffer);
-    }
-    return this.u8;
+    return this.mem.views().u8;
   }
 
-  load(codes, { seed, positions } = {}) {
+  // The context, made again with a larger heap when a load has more
+  // warriors than it was made for.
+  context(n) {
+    if (n <= this.capacity) return;
+    const x = this.x;
+    writeRules(this.mem, this.structs + S_RULES, this.opt, n);
+    const size = x.m42_ctx_size(this.structs + S_RULES);
+    if (!size) throw new RangeError('wasm engine: rules out of range');
+    const heap = this.mem.keep(size);
+    const ctx = x.m42_ctx_init(heap, size, this.structs + S_RULES, this.structs + S_VALUE);
+    if (!ctx) check(x, this.mem, this.mem.views().dv.getInt32(this.structs + S_VALUE, true));
+    this.ctx = ctx;
+    this.capacity = n;
+  }
+
+  // Checks the warriors and writes them, their pointers and the options
+  // into scratch memory: m42_warrior_make() per warrior. Returns the
+  // address of the pointer array.
+  prepare(codes, { seed, positions, rounds = 1, firstRound = 0, earlyTie = true, log = 0 }) {
     const o = this.opt;
     for (const c of codes) {
       if (!c.ok) throw new Error(`warrior '${c.name}' did not assemble`);
@@ -151,43 +253,54 @@ class WasmMars {
     if (positions && (positions.length < codes.length || !positions.every((p) => isCount(p) && p < 2 ** 31))) {
       throw new RangeError('positions must be non-negative integers, one per warrior');
     }
-
-    const nw = codes.length;
-    const total = codes.reduce((s, c) => s + lengthOf(c), 0);
-    const input = this.x.mars_config(o.coreSize, o.maxProcesses, o.maxCycles, o.minDistance, o.pSpaceSize, nw, total);
-    if (!input) throw new Error('wasm engine: out of memory');
-    this.bytes();
-    // Warriors with the same PIN share their p-space cells (not the last result).
-    const groups = new Map();
-    const i32 = this.i32;
-    let k = input >> 2;
-    codes.forEach((code, i) => {
-      let group = i;
-      if (code.pin !== null && code.pin !== undefined) {
-        if (groups.has(code.pin)) group = groups.get(code.pin);
-        else groups.set(code.pin, i);
+    const n = codes.length;
+    this.context(n);
+    const x = this.x;
+    const mem = this.mem;
+    mem.reset();
+    const ws = mem.scratch(4 * n);
+    for (let i = 0; i < n; i++) {
+      const c = codes[i];
+      const len = lengthOf(c);
+      const code = mem.scratch(16 * len);
+      const pin = c.pin !== null && c.pin !== undefined ? mem.scratch(8) : 0;
+      const size = x.m42_warrior_make_size(len);
+      const at = mem.scratch(size);
+      const { u8, dv } = mem.views();
+      // m42_instruction: opcode, modifier, A mode, B mode, then uint32 A, B, line
+      const put = (k, op, aMode, aVal, bMode, bVal) => {
+        const p = code + 16 * k;
+        u8[p] = op >> 3; u8[p + 1] = op & 7; u8[p + 2] = aMode; u8[p + 3] = bMode;
+        dv.setUint32(p + 4, aVal, true); dv.setUint32(p + 8, bVal, true); dv.setInt32(p + 12, 0, true);
+      };
+      if (c.packed) {
+        for (let k = 0, j = 0; k < len; k++, j += 5) put(k, c.packed[j], c.packed[j + 1], c.packed[j + 2], c.packed[j + 3], c.packed[j + 4]);
+      } else {
+        c.instructions.forEach((ins, k) => put(k, (ins.op << 3) | ins.mod, ins.aMode, ins.aVal, ins.bMode, ins.bVal));
       }
-      i32[k++] = lengthOf(code);
-      i32[k++] = code.start;
-      i32[k++] = group;
-      i32[k++] = positions ? positions[i] : 0;
-    });
-    for (const code of codes) {
-      if (code.packed) {
-        i32.set(code.packed, k);
-        k += code.packed.length;
-        continue;
-      }
-      for (const ins of code.instructions) {
-        i32[k++] = (ins.op << 3) | ins.mod;
-        i32[k++] = ins.aMode;
-        i32[k++] = ins.aVal;
-        i32[k++] = ins.bMode;
-        i32[k++] = ins.bVal;
-      }
+      if (pin) dv.setBigInt64(pin, BigInt(c.pin), true);
+      const w = x.m42_warrior_make(code, len, c.start, pin, at, size);
+      if (!w) throw new Error(`wasm engine: cannot load warrior '${c.name}'`);
+      mem.views().dv.setUint32(ws + 4 * i, w, true);
+    }
+    let pos = 0;
+    if (positions) {
+      pos = mem.scratch(4 * n);
+      for (let i = 0; i < n; i++) mem.views().dv.setUint32(pos + 4 * i, positions[i], true);
     }
     const s = seed === undefined ? rng(1 + Math.floor(Math.random() * 2147483646)) : seed;
-    this.x.mars_load(s, positions ? 1 : 0);
+    const { dv } = mem.views();
+    const opt = this.structs + S_OPTIONS;
+    [32, rounds, firstRound, earlyTie ? 1 : 0].forEach((v, i) => dv.setUint32(opt + 4 * i, v, true));
+    dv.setBigInt64(opt + 16, BigInt(s), true);
+    dv.setUint32(opt + 24, pos, true);
+    dv.setUint32(opt + 28, log, true);
+    return ws;
+  }
+
+  load(codes, { seed, positions } = {}) {
+    const ws = this.prepare(codes, { seed, positions });
+    check(this.x, this.mem, this.x.m42_load(this.ctx, ws, codes.length, this.structs + S_OPTIONS));
     this.warriors = codes.map((code, index) => new WarriorView(this, index, code));
     this.results = [];
     this.roundResult = null;
@@ -195,18 +308,19 @@ class WasmMars {
   }
 
   startRound() {
-    this.x.mars_start_round();
+    this.x.m42_start_round(this.ctx);
     this.roundResult = null;
     this.version++;
   }
 
   // Executes up to n instructions; returns how many. Stops early when the
-  // round ends.
+  // round ends. A fraction rounds up, like mars.js.
   run(n) {
-    if (this.roundResult !== null || this.x.mars_round_over()) return 0;
-    const done = this.x.mars_run(n);
+    if (this.roundResult !== null || this.roundOver || !(n > 0)) return 0;
+    const count = n >= 1.8e19 ? 2n ** 64n - 1n : BigInt(Math.ceil(n));
+    const done = Number(this.x.m42_run(this.ctx, count));
     this.version++;
-    if (this.x.mars_round_over()) this.recordResult();
+    if (this.roundOver) this.recordResult();
     return done;
   }
 
@@ -215,15 +329,15 @@ class WasmMars {
   }
 
   endRound() {
-    if (this.x.mars_round_over()) return;
-    this.x.mars_end_round();
+    if (this.roundOver) return;
+    this.x.m42_end_round(this.ctx);
     this.version++;
     this.recordResult();
   }
 
   recordResult() {
     const survivors = [];
-    for (let i = 0; i < this.warriors.length; i++) if (this.x.mars_w_alive(i)) survivors.push(i);
+    for (let i = 0; i < this.warriors.length; i++) if (this.warriors[i].alive) survivors.push(i);
     this.roundResult = { round: this.round, cycles: this.time, survivors };
     this.results.push(this.roundResult);
   }
@@ -252,36 +366,64 @@ class WasmMars {
     if (!isCount(rounds) || !isCount(firstRound) || rounds + firstRound > 0xffffffff) {
       throw new RangeError(`bad rounds or firstRound: ${rounds}, ${firstRound}`);
     }
-    this.load(codes, { seed, positions });
-    const log = this.x.mars_reserve_log(rounds);
-    if (!log && rounds > 0) throw new Error('wasm engine: out of memory');
-    const instructions = this.x.mars_run_match(rounds, earlyTie ? 1 : 0, firstRound);
-    this.version++;
-    const u8 = this.bytes();
-    const stride = this.x.mars_log_stride();
+    const x = this.x;
     const nw = codes.length;
+    // The log goes behind the warriors in scratch memory; prepare() resets it.
+    const ws = this.prepare(codes, { seed, positions, rounds, firstRound, earlyTie });
+    const log = this.mem.scratch(x.m42_log_size(nw, rounds));
+    const scores = this.mem.scratch(12 * nw); // m42_score: wins, losses, ties
+    const counters = this.mem.scratch(4 * (2 * nw - 1));
+    this.mem.views().dv.setUint32(this.structs + S_OPTIONS + 28, log, true);
+    check(x, this.mem, x.m42_match(this.ctx, ws, nw, this.structs + S_OPTIONS, scores, this.structs + S_VALUE));
+    this.version++;
+    const { u8, dv } = this.mem.views();
+    const instructions = Number(dv.getBigUint64(this.structs + S_VALUE, true));
+    const stride = x.m42_log_stride(nw);
     const results = [];
     for (let r = 0; r < rounds; r++) {
       const at = log + r * stride;
       const survivors = [];
       for (let i = 0; i < nw; i++) if (u8[at + 8 + i]) survivors.push(i);
-      results.push({ round: firstRound + r + 1, cycles: this.f64[at >> 3], survivors });
+      results.push({ round: firstRound + r + 1, cycles: Number(dv.getBigUint64(at, true)), survivors });
     }
+    this.warriors = codes.map((code, index) => new WarriorView(this, index, code));
     this.results = results;
     this.roundResult = results.length ? results[results.length - 1] : null;
+    // The scores from m42_match, the counters with one call per warrior:
+    // tournaments call this once per block of rounds.
+    const warriors = this.warriors.map((w, i) => {
+      x.m42_warrior_scores(this.ctx, i, counters, 2 * nw - 1);
+      const { dv: v } = this.mem.views();
+      const score = [];
+      for (let k = 0; k < 2 * nw - 1; k++) score.push(v.getUint32(counters + 4 * k, true));
+      return { name: w.name, wins: v.getUint32(scores + 12 * i, true), losses: v.getUint32(scores + 12 * i + 4, true), ties: v.getUint32(scores + 12 * i + 8, true), score };
+    });
+    return { warriors, results, instructions };
+  }
+
+  // m42_state; before the first load: round 0, round over.
+  state() {
+    const at = this.structs + S_STATE;
+    if (!this.ctx || this.x.m42_get_state(this.ctx, at) !== M42_OK) {
+      return { round: 0, roundOver: true, current: 0, warriorsLeft: 0, time: 0, cyclesLeft: 0 };
+    }
+    const { dv } = this.mem.views();
     return {
-      warriors: this.warriors.map((w) => ({ name: w.name, wins: w.wins, losses: w.losses, ties: w.ties, score: w.score })),
-      results,
-      instructions,
+      round: dv.getUint32(at, true),
+      roundOver: dv.getUint32(at + 4, true) !== 0,
+      current: dv.getUint32(at + 8, true),
+      warriorsLeft: dv.getUint32(at + 12, true),
+      time: Number(dv.getBigUint64(at + 16, true)),
+      cyclesLeft: Number(dv.getBigInt64(at + 24, true)),
     };
   }
 
-  get round() { return this.x.mars_round(); }
-  get roundOver() { return this.x.mars_round_over() !== 0; }
-  get time() { return this.x.mars_time(); }
-  get cyclesLeft() { return this.x.mars_cycles_left(); }
-  get warriorsLeft() { return this.x.mars_warriors_left(); }
-  get current() { return this.x.mars_current(); }
+  get round() { return this.state().round; }
+  get roundOver() { return this.state().roundOver; }
+  get time() { return this.state().time; }
+  get cyclesLeft() { return this.state().cyclesLeft; }
+  get warriorsLeft() { return this.state().warriorsLeft; }
+  get current() { return this.state().current; }
 
   // Decodes the core into mars.js arrays; cached until the core can change.
   core() {
@@ -291,16 +433,18 @@ class WasmMars {
       op: new Uint8Array(n), am: new Uint8Array(n), bm: new Uint8Array(n),
       av: new Int32Array(n), bv: new Int32Array(n),
     };
-    const u8 = this.bytes();
-    const base = this.x.mars_core();
-    const u16 = new Uint16Array(u8.buffer, base, 4 * n);
-    for (let a = 0, k = 0; a < n; a++, k += 4) {
-      const ins = u16[k + 2];
-      s.av[a] = u16[k];
-      s.bv[a] = u16[k + 1];
-      s.op[a] = ins & 0xff;
-      s.am[a] = (ins >> 8) & 7;
-      s.bm[a] = ins >> 11;
+    const base = this.ctx ? this.x.m42_core(this.ctx) : 0;
+    if (base) {
+      // m42_cell: uint16 a, b, word, pad
+      const u16 = new Uint16Array(this.bytes().buffer, base, 4 * n);
+      for (let a = 0, k = 0; a < n; a++, k += 4) {
+        const ins = u16[k + 2];
+        s.av[a] = u16[k];
+        s.bv[a] = u16[k + 1];
+        s.op[a] = ins & 0xff;
+        s.am[a] = (ins >> 8) & 7;
+        s.bm[a] = ins >> 11;
+      }
     }
     this.snapshot = s;
     this.snapshotVersion = this.version;
@@ -331,31 +475,61 @@ class WarriorView {
     this.author = code.author;
   }
 
-  get position() { return this.x.mars_w_position(this.index); }
-  get tasks() { return this.x.mars_w_tasks(this.index); }
-  get alive() { return this.x.mars_w_alive(this.index) !== 0; }
-  get diedAt() { const t = this.x.mars_w_died_at(this.index); return t < 0 ? null : t; }
-  get wins() { return this.x.mars_w_wins(this.index); }
-  get losses() { return this.x.mars_w_losses(this.index); }
-  get ties() { return this.x.mars_w_ties(this.index); }
-  get lastResult() { return this.x.mars_w_last_result(this.index); }
-
-  get score() {
-    this.mars.bytes();
-    const at = this.x.mars_w_score(this.index) >> 2;
-    return Array.from(this.mars.u32.subarray(at, at + 2 * this.mars.warriors.length - 1));
+  // m42_warrior_state: alive, processes, position, last_result, int64
+  // died_at at 16, wins, losses, ties at 24.
+  state() {
+    const m = this.mars;
+    const at = m.structs + S_WARRIOR;
+    check(this.x, m.mem, this.x.m42_get_warrior(m.ctx, this.index, at));
+    const { dv } = m.mem.views();
+    const died = Number(dv.getBigInt64(at + 16, true));
+    return {
+      alive: dv.getUint32(at, true) !== 0,
+      tasks: dv.getUint32(at + 4, true),
+      position: dv.getUint32(at + 8, true),
+      lastResult: dv.getUint32(at + 12, true),
+      diedAt: died < 0 ? null : died,
+      wins: dv.getUint32(at + 24, true),
+      losses: dv.getUint32(at + 28, true),
+      ties: dv.getUint32(at + 32, true),
+    };
   }
 
+  get position() { return this.state().position; }
+  get tasks() { return this.state().tasks; }
+  get alive() { return this.state().alive; }
+  get diedAt() { return this.state().diedAt; }
+  get wins() { return this.state().wins; }
+  get losses() { return this.state().losses; }
+  get ties() { return this.state().ties; }
+  get lastResult() { return this.state().lastResult; }
+
+  get score() {
+    const m = this.mars;
+    const count = this.x.m42_warrior_scores(m.ctx, this.index, 0, 0);
+    const at = m.mem.scratch(4 * count);
+    this.x.m42_warrior_scores(m.ctx, this.index, at, count);
+    return Array.from(new Uint32Array(m.bytes().buffer, at, count));
+  }
+
+  // Cells 0 .. pSpaceSize-1; cell 0 is unused (index 0 is the last result).
   get pspace() {
-    this.mars.bytes();
-    const at = this.x.mars_w_pspace(this.index) >> 2;
-    return Int32Array.from(this.mars.u32.subarray(at, at + this.mars.opt.pSpaceSize));
+    const m = this.mars;
+    const out = new Int32Array(m.opt.pSpaceSize);
+    const at = m.structs + S_VALUE;
+    for (let i = 1; i < out.length; i++) {
+      check(this.x, m.mem, this.x.m42_pspace_get(m.ctx, this.index, i, at));
+      out[i] = m.mem.views().dv.getInt32(at, true);
+    }
+    return out;
   }
 
   processes() {
-    const out = [];
-    for (let k = 0; k < this.tasks; k++) out.push(this.x.mars_w_process(this.index, k));
-    return out;
+    const m = this.mars;
+    const count = this.x.m42_queue(m.ctx, this.index, 0, 0);
+    const at = m.mem.scratch(4 * count);
+    this.x.m42_queue(m.ctx, this.index, at, count);
+    return Array.from(new Uint32Array(m.bytes().buffer, at, count));
   }
 }
 
@@ -385,7 +559,7 @@ function withAsm(module, fn) {
     asmInstances.set(mod, x);
   }
   try {
-    return fn(x);
+    return fn(x, memoryOf(x));
   } catch (e) {
     asmInstances.delete(mod);
     throw e;
@@ -405,75 +579,85 @@ const latin1Decoder = new TextDecoder('latin1');
 const utf8Decoder = new TextDecoder('utf-8');
 
 export function assembleWasm(source, options = {}, module = undefined) {
-  return withAsm(module, (x) => assembleWith(x, source, options));
+  return withAsm(module, (x, mem) => assembleWith(x, mem, source, options));
 }
 
-function assembleWith(x, source, options) {
+function assembleWith(x, mem, source, options) {
   const o = effectiveOptions(options);
+  if (!(o.coreSize >= 1)) throw new RangeError('assembleWasm: coreSize must be at least 1');
   const { bytes, utf8 } = encodeText(source);
+  mem.reset();
+  const rules = mem.scratch(48);
+  writeRules(mem, rules, o, o.warriors);
+  const src = mem.scratch(bytes.length);
+  mem.views().u8.set(bytes, src);
+  const out = mem.scratch(8);
+  const start = mem.mark;
+  // The working memory grows by 4 until the assembler fits (42mars.h).
   for (let size = Math.max(1 << 20, 16 * bytes.length); ; size *= 4) {
     if (size > 2 ** 31) throw new Error('assembleWasm: out of memory');
-    const base = x.mars_scratch(bytes.length + 8 + size);
-    if (!base) throw new Error('assembleWasm: out of memory');
-    new Uint8Array(x.memory.buffer, base, bytes.length).set(bytes);
-    const mem = (base + bytes.length + 7) & ~7;
-    const r = x.asm_assemble(base, bytes.length, mem, size, o.coreSize, o.maxProcesses, o.maxCycles, o.maxLength,
-      o.minDistance, o.warriors, o.rounds, o.pSpaceSize, o.readLimit, o.writeLimit, utf8 ? 1 : 0);
-    if (!r) {
-      if (!(o.coreSize >= 1)) throw new RangeError('assembleWasm: coreSize must be at least 1');
-      continue; // the working memory was too small
-    }
-    return readAsmResult(x, r, utf8, o);
+    mem.mark = start;
+    const work = mem.scratch(size);
+    const status = x.m42_assemble(src, bytes.length, rules, utf8 ? 1 : 0, work, size, out);
+    if (status === M42_ERR_MEMORY) continue;
+    check(x, mem, status);
+    return readWarrior(x, mem, mem.views().dv.getUint32(out, true), utf8 ? utf8Decoder : latin1Decoder, o);
   }
 }
 
-function readAsmResult(x, r, utf8, options) {
-  const dv = new DataView(x.memory.buffer);
-  const u8 = new Uint8Array(x.memory.buffer);
-  const decoder = utf8 ? utf8Decoder : latin1Decoder;
-  const u32 = (at) => dv.getUint32(at, true);
-  const text = (at) => decoder.decode(u8.subarray(u32(at), u32(at) + u32(at + 4)));
-  const messages = (count, at, severity) => {
-    const out = [];
-    for (let k = 0, p = u32(at); k < u32(count); k++, p += 12) {
-      const line = dv.getInt32(p, true);
-      out.push({ severity, line: line === 0 ? null : line, text: text(p + 4) });
-    }
-    return out;
+// The assemble() object of an m42_warrior, through the functions of 42mars.h.
+function readWarrior(x, mem, w, decoder, options) {
+  const value = mem.scratch(8);
+  // A text by a function that copies it like snprintf: size first, then the text.
+  const text = (copy) => {
+    const n = copy(0, 0);
+    const buf = mem.scratch(n + 1);
+    copy(buf, n + 1);
+    return decoder.decode(mem.views().u8.subarray(buf, buf + n));
   };
   const instructions = [];
-  for (let k = 0, p = u32(r + 40); k < u32(r + 24); k++, p += 16) {
-    instructions.push({ op: u8[p], mod: u8[p + 1], aMode: u8[p + 2], aVal: u32(p + 4), bMode: u8[p + 3], bVal: u32(p + 8), line: dv.getInt32(p + 12, true) });
+  const code = x.m42_warrior_code(w);
+  for (let k = 0; k < x.m42_warrior_length(w); k++) {
+    const { u8, dv } = mem.views();
+    const p = code + 16 * k;
+    instructions.push({ op: u8[p], mod: u8[p + 1], aMode: u8[p + 2], aVal: dv.getUint32(p + 4, true), bMode: u8[p + 3], bVal: dv.getUint32(p + 8, true), line: dv.getInt32(p + 12, true) });
+  }
+  const errors = [];
+  const warnings = [];
+  const nErrors = x.m42_warrior_errors(w);
+  for (let i = 0; i < nErrors + x.m42_warrior_warnings(w); i++) {
+    const t = text((buf, n) => x.m42_warrior_message(w, i, value, 0, buf, n));
+    const line = mem.views().dv.getInt32(value, true);
+    (i < nErrors ? errors : warnings).push({ severity: i < nErrors ? 'error' : 'warning', line: line === 0 ? null : line, text: t });
   }
   const expanded = [];
-  for (let k = 0, p = u32(r + 52); k < u32(r + 36); k++, p += 8) expanded.push(text(p));
+  for (let i = 0; i < x.m42_warrior_statements(w); i++) expanded.push(text((buf, n) => x.m42_warrior_statement(w, i, buf, n)));
+  const field = (which) => text((buf, n) => x.m42_warrior_text(w, which, buf, n));
   return {
-    ok: dv.getInt32(r, true) !== 0,
-    name: text(r + 56),
-    author: text(r + 64),
-    date: text(r + 72),
-    version: text(r + 80),
-    strategy: text(r + 88),
+    ok: x.m42_warrior_ok(w) !== 0,
+    name: field(0),
+    author: field(1),
+    date: field(2),
+    version: field(3),
+    strategy: field(4),
     instructions,
-    start: u32(r + 4),
-    pin: dv.getInt32(r + 8, true) ? Number(dv.getBigInt64(r + 16, true)) : null,
-    errors: messages(r + 28, r + 44, 'error'),
-    warnings: messages(r + 32, r + 48, 'warning'),
+    start: x.m42_warrior_start(w),
+    pin: x.m42_warrior_pin(w, value) ? Number(mem.views().dv.getBigInt64(value, true)) : null,
+    errors,
+    warnings,
     expanded,
     options,
   };
 }
 
 export function evaluateWasm(text, module = undefined) {
-  return withAsm(module, (x) => evaluateWith(x, text));
-}
-
-function evaluateWith(x, text) {
-  const { bytes } = encodeText(text);
-  const base = x.mars_scratch(bytes.length + 16);
-  if (!base) throw new Error('evaluateWasm: out of memory');
-  new Uint8Array(x.memory.buffer, base, bytes.length).set(bytes);
-  const at = (base + bytes.length + 7) & ~7;
-  const status = x.asm_evaluate(base, bytes.length, at);
-  return { status, value: new DataView(x.memory.buffer).getBigInt64(at, true) };
+  return withAsm(module, (x, mem) => {
+    const { bytes } = encodeText(text);
+    mem.reset();
+    const at = mem.scratch(bytes.length);
+    mem.views().u8.set(bytes, at);
+    const value = mem.scratch(8);
+    const status = x.m42_evaluate(at, bytes.length, value);
+    return { status, value: mem.views().dv.getBigInt64(value, true) };
+  });
 }

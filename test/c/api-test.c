@@ -176,11 +176,12 @@ int main(int argc, char **argv) {
 
   // Errors: no warriors, a bad rule, too many warriors, no context,
   // assembling with the bad rule, a warrior that did not assemble.
-  m42_rules bad = r;
-  bad.core_size = 70000;
+  m42_rules bad = r, zero = r;
+  bad.core_size = 70000; // too big for the simulator, fine for the assembler
+  zero.core_size = 0;
   printf("],\"errors\":[%d,%d,%d,%d,%d,%d]", m42_match(m, pair, 0, &o, 0, 0), m42_ctx_size(&bad) == 0,
          m42_match(m, (const m42_warrior *const *)w, 3, &o, 0, 0), m42_start_round(0),
-         m42_assemble("dat 0", 5, &bad, 0, mem, size, &w[63]), m42_match(m, (const m42_warrior *const *)w + n - 2, 2, &o, 0, 0));
+         m42_assemble("dat 0", 5, &zero, 0, mem, size, &w[63]), m42_match(m, (const m42_warrior *const *)w + n - 2, 2, &o, 0, 0));
 
   // PIN: warriors with the same PIN share p-space cells 1 and up.
   int st;

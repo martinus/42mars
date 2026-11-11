@@ -91,10 +91,12 @@ test('the C library through 42mars.h agrees with the JS assembler and the wasm e
     m.startRound();
     let executed = 0;
     while (!m.roundOver) executed += m.run(1000);
-    const u8 = m.bytes();
-    const at = m.x.mars_core();
+    // the hash of api-test.c over a, b, word, pad of every cell
+    const c = m.core();
     let h = 2166136261;
-    for (let i = 0; i < m.coreSize * 4; i++) h = Math.imul(h ^ (u8[at + 2 * i] | (u8[at + 2 * i + 1] << 8)), 16777619) >>> 0;
+    for (let i = 0; i < m.coreSize; i++) {
+      for (const v of [c.av[i], c.bv[i], c.op[i] | (c.am[i] << 8) | (c.bm[i] << 11), 0]) h = Math.imul(h ^ v, 16777619) >>> 0;
+    }
     assert.deepEqual(s[`r${round}`], {
       executed, time: m.time, round: m.round, hash: h,
       alive: m.warriors.map((w) => (w.alive ? 1 : 0)), position: m.warriors[1].position,
@@ -108,7 +110,7 @@ test('the C library through 42mars.h agrees with the JS assembler and the wasm e
   // p-space: set and get cell 7, then cell 500 (out of range) and warrior 5
   assert.deepEqual(s.pspace, [0, 0, 4242, -3, -3]);
   // no warriors, a core of 70000, three warriors with rules for two, no
-  // context, assembling with the bad rules, the broken warrior in a match
+  // context, assembling with core size 0, the broken warrior in a match
   assert.deepEqual(out.errors, [-3, 1, -3, -3, -2, -4]);
   // the same PIN shares p-space cell 3, not the last result; another PIN
   // does not share

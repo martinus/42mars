@@ -11,10 +11,10 @@
 //   M42_NO_LIBC        no <stdlib.h>: leaves out m42_new, m42_free,
 //                      m42_assemble_new and m42_warrior_free
 //   M42_FIXED_CONTEXT  one context with static storage, at a fixed address:
-//                      m42_ctx_init() always returns it and needs no memory.
-//                      The WebAssembly build uses it; a context through a
-//                      pointer is 4 to 6% slower in WebAssembly, 1 to 3%
-//                      natively (docs/performance-log.md, #53).
+//                      m42_ctx_init() always returns it, and the memory
+//                      given is its heap. The WebAssembly build uses it; a
+//                      context through a pointer is 4 to 6% slower in
+//                      WebAssembly, 1 to 3% natively (#53).
 //
 // Use:
 //   m42_rules r = m42_rules_94();
@@ -101,7 +101,7 @@ typedef struct {
 #define M42_UTF8 1u // m42_assemble flag: the source is UTF-8, not Latin-1
 
 // Assembles `len` bytes of Redcode with the predefined constants of `rules`
-// (CORESIZE, MAXLENGTH, ...). `mem` is working memory of `size` bytes; the
+// (CORESIZE, MAXLENGTH, ...; only core_size >= 1 is checked). `mem` is working memory of `size` bytes; the
 // warrior lives in it until the memory is reused. Returns M42_OK when the
 // assembler ran, also if the source has errors (m42_warrior_ok() says), and
 // M42_ERR_MEMORY when `size` was too small: try again with more, about 64
@@ -119,6 +119,13 @@ int m42_warrior_pin(const m42_warrior *w, int64_t *pin);
 // The instructions, m42_warrior_length() of them.
 const m42_instruction *m42_warrior_code(const m42_warrior *w);
 
+// A warrior from instructions instead of source (e.g. from an evolver):
+// ok, no texts or messages. pin may be 0. m42_warrior_make_size() bytes of
+// `mem` hold it; 0 when `size` is too small or an argument is invalid.
+size_t m42_warrior_make_size(uint32_t length);
+m42_warrior *m42_warrior_make(const m42_instruction *code, uint32_t length, uint32_t start, const int64_t *pin,
+                              void *mem, size_t size);
+
 typedef enum { M42_NAME, M42_AUTHOR, M42_DATE, M42_VERSION_TEXT, M42_STRATEGY } m42_text;
 // Copies a text with a terminating 0 into buf (at most n bytes, cut if
 // needed) and returns its full length, like snprintf. Defaults: name
@@ -131,6 +138,15 @@ size_t m42_warrior_text(const m42_warrior *w, m42_text which, char *buf, size_t 
 uint32_t m42_warrior_errors(const m42_warrior *w);
 uint32_t m42_warrior_warnings(const m42_warrior *w);
 size_t m42_warrior_message(const m42_warrior *w, uint32_t i, int32_t *line, int *is_error, char *buf, size_t n);
+
+// The statements after EQU, FOR and label expansion, one per instruction or
+// pseudo-op, as text (a debugging aid; the format may change).
+uint32_t m42_warrior_statements(const m42_warrior *w);
+size_t m42_warrior_statement(const m42_warrior *w, uint32_t i, char *buf, size_t n);
+
+// Evaluates one Redcode expression (with fresh registers a..z) into *value.
+typedef enum { M42_EVAL_OK = 0, M42_EVAL_OVERFLOW = 1, M42_EVAL_BAD = -1, M42_EVAL_DIV_ZERO = -2 } m42_eval_status;
+int m42_evaluate(const char *text, size_t len, int64_t *value);
 
 // The bytes a packed copy of w needs, and the copy: the result lives in
 // `dst` alone. Returns 0 when `size` is too small.
@@ -148,8 +164,8 @@ void m42_warrior_free(m42_warrior *w);
 typedef struct m42_ctx m42_ctx;
 
 // Bytes for a context that plays matches of up to rules->warriors warriors
-// of up to rules->max_length instructions with these rules (0 with
-// M42_FIXED_CONTEXT).
+// of up to rules->max_length instructions with these rules. With
+// M42_FIXED_CONTEXT, the context itself is static and this is its heap.
 size_t m42_ctx_size(const m42_rules *rules);
 // A context in caller memory (any alignment). 0 on failure, *status says why.
 m42_ctx *m42_ctx_init(void *mem, size_t size, const m42_rules *rules, int *status);
@@ -168,10 +184,17 @@ typedef struct {
   int64_t seed;               // position generator state, >= 0 (two warriors: seed =
                               // pmars -F position - min_distance)
   const uint32_t *positions;  // 0: from the seed; else fixed, one per warrior
+  uint8_t *log;               // 0, or m42_log_size() bytes for the round results of m42_match
 } m42_match_options;
 
-// 1 round, first_round 0, early ties on, seed 0, no fixed positions.
+// 1 round, first_round 0, early ties on, seed 0, no fixed positions, no log.
 m42_match_options m42_match_options_default(void);
+
+// The round log of m42_match: one record of m42_log_stride(warriors) bytes
+// per round, the instructions the round ran (uint64_t, native byte order),
+// then one byte per warrior, 1 when it was alive at the end.
+uint32_t m42_log_stride(uint32_t warriors);
+size_t m42_log_size(uint32_t warriors, uint32_t rounds);
 
 typedef struct {
   uint32_t wins, losses, ties;
@@ -218,6 +241,12 @@ typedef struct {
   m42_score score;
 } m42_warrior_state;
 int m42_get_warrior(const m42_ctx *m, uint32_t w, m42_warrior_state *s);
+
+// pMARS's score counters of warrior w, 2 * warriors - 1 of them: counter k
+// < warriors counts the rounds it survived with k + 1 warriors alive at the
+// end, counter warriors - 1 + k the rounds it died when k + 1 were left.
+// Copies up to `max` and returns the count.
+uint32_t m42_warrior_scores(const m42_ctx *m, uint32_t w, uint32_t *out, uint32_t max);
 
 // A core cell: values, and the instruction word: opcode << 3 | modifier in
 // bits 0..7, A mode in bits 8..10, B mode in bits 11..13.
