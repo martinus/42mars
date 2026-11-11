@@ -110,16 +110,17 @@ export class Overlay {
     g.textAlign = 'center';
     g.textBaseline = 'middle';
     const fs = Math.min(13, cell * 0.28) * dpr;
+    const c = m.core();
+    const { owner } = m.watch();
     for (let a = 0; a < m.coreSize; a++) {
       const p = cellCenter(L, a);
-      const x = m.op[a];
-      if (m.owner[a] < 0) continue; // untouched core: the dot is enough
+      if (!owner[a]) continue; // untouched core: the dot is enough
       g.fillStyle = 'rgba(255,255,255,0.92)';
       g.font = `600 ${fs}px ui-monospace, monospace`;
-      g.fillText(OPCODES[x >> 3], p.x, big ? p.y - fs * 0.55 : p.y);
+      g.fillText(OPCODES[c.op[a] >> 3], p.x, big ? p.y - fs * 0.55 : p.y);
       if (big) {
         g.font = `${fs * 0.8}px ui-monospace, monospace`;
-        g.fillText(`${MODE_SYMBOLS[m.am[a]]}${denormalize(m.av[a], m.coreSize)} ${MODE_SYMBOLS[m.bm[a]]}${denormalize(m.bv[a], m.coreSize)}`, p.x, p.y + fs * 0.6);
+        g.fillText(`${MODE_SYMBOLS[c.am[a]]}${denormalize(c.av[a], m.coreSize)} ${MODE_SYMBOLS[c.bm[a]]}${denormalize(c.bv[a], m.coreSize)}`, p.x, p.y + fs * 0.6);
       }
     }
     g.textAlign = 'start';
