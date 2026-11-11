@@ -42,7 +42,7 @@ static m42_warrior *load(const char *path, const m42_rules *rules) {
     return 0;
   }
   int status;
-  m42_warrior *w = m42_assemble_new(src, len, rules, 0, &status);
+  m42_warrior *w = m42_assemble_new(src, len, rules, 0, 0, &status);
   free(src);
   if (!w) {
     fprintf(stderr, "%s: %s\n", path, m42_status_text(status));

@@ -874,6 +874,14 @@ export function assemble(source, options = {}) {
   const meta = { name: 'Unknown', author: 'Anonymous', date: '', version: '', strategy: [] };
   const msg = new Messages();
   const evaluator = new Evaluator();
+  // Registers to start with, e.g. { s: 2, w: 2 }: pMARS assembles its first
+  // warrior with the registers its score formula check left (semantics doc,
+  // section 5), the others with all 0.
+  for (const [name, v] of Object.entries(opts.registers ?? {})) {
+    const i = name.toLowerCase().charCodeAt(0) - 97;
+    if (name.length !== 1 || i < 0 || i > 25) throw new RangeError(`registers: not a register name: ${name}`);
+    evaluator.registers[i] = BigInt.asIntN(64, BigInt(v));
+  }
 
   const scratch = new Scratch();
   const lines = readSource(source, meta, scratch);

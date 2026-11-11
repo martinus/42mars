@@ -445,6 +445,7 @@ typedef struct {
   i64 writeLimit; // 0: coreSize
   u32 utf8;
   u32 icws88;     // pmars -8
+  const int64_t *registers; // 0, or a..z to start with
 } AsmOptions;
 
 // ---------------------------------------------------------------- state
@@ -1550,6 +1551,7 @@ static AsmResult *assemble(void *mem, usize size, const u8 *src, usize len, cons
   if (!a || !r || opts->coreSize < 1 || len > 0xffffffffu) return 0;
   a->A = A;
   a->o = *opts;
+  if (opts->registers) for (int i = 0; i < 26; i++) a->ev.registers[i] = opts->registers[i];
   if (!a->o.pSpaceSize) a->o.pSpaceSize = a->o.coreSize / 16;
   if (!a->o.readLimit) a->o.readLimit = a->o.coreSize;
   if (!a->o.writeLimit) a->o.writeLimit = a->o.coreSize;

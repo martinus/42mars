@@ -93,6 +93,7 @@ typedef struct {
   long long rounds, size, cycles, processes, length, distance, pspace, position, readLimit, writeLimit;
   int brief, koth, sorted, assemble, fixed, permute, hasDistance, hasPosition;
   const char *formula;
+  int64_t registers[26]; // after the formula check: the first warrior starts with them
 } Args;
 
 static int push(List *l, char *s) {
@@ -290,7 +291,7 @@ static int play(Args *a, m42_warrior **w) {
     if (f && f != stdin) fclose(f);
     if (!src) return fail(3, "cannot read", path);
     int s;
-    w[i] = m42_assemble_new(src, len, &rules, icws88 ? M42_ICWS88 : 0, &s);
+    w[i] = m42_assemble_new(src, len, &rules, icws88 ? M42_ICWS88 : 0, i == 0 ? a->registers : 0, &s);
     free(src);
     if (!w[i]) return fail(3, m42_status_text(s), path);
     for (uint32_t k = 0; k < m42_warrior_errors(w[i]) + m42_warrior_warnings(w[i]); k++) {
@@ -393,7 +394,7 @@ static int run(Args *a) {
 }
 
 // The checks pMARS makes before it assembles anything.
-static int check(const Args *a) {
+static int check(Args *a) {
   const int n = a->nfiles;
   if ((long long)n * a->distance > a->size) return fail(2, "the core size is too small for the warriors and the distance", 0);
   if (a->permute && n != 2) return fail(2, "-P needs exactly two warriors", 0);
@@ -401,10 +402,12 @@ static int check(const Args *a) {
     const long long limit = k ? a->writeLimit : a->readLimit;
     if (limit && (limit > a->size || a->size % limit)) return fail(2, "a read or write limit (-R, -W) must divide the core size", 0);
   }
-  // The score formula, for every number of survivors.
+  // The score formula, for every number of survivors, with one set of
+  // registers: w is set once, s before each evaluation. pMARS assembles the
+  // first warrior with the registers this leaves (semantics doc, section 5).
+  int64_t *reg = a->registers;
+  reg['w' - 'a'] = n;
   for (int s = 1; s <= n; s++) {
-    int64_t reg[26] = {0};
-    reg['w' - 'a'] = n;
     reg['s' - 'a'] = s;
     int64_t v;
     if (m42_evaluate_registers(a->formula, strlen(a->formula), reg, &v) < 0) return fail(2, "bad score formula", a->formula);

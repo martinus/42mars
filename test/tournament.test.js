@@ -93,6 +93,21 @@ test('tournament: the standings after each round are those of a tournament of th
   for (const k of [1, 2, 9, 12]) assert.deepEqual(byRound.progress[k - 1], scores(tournament(`k${k}`, k)), `after round ${k}`);
 });
 
+test('tournament: the first warrior of a pairing starts with the registers w = s = 2, as in pMARS', () => {
+  // `jmp s` jumps to the dat with s = 2 and loops with s = 0: sw loses every
+  // round as the first warrior of a pairing (pmars sw.red other.red) and
+  // ties as the second; checked against pMARS with --pmars --compare
+  const warriors = join(dir, 'registers');
+  mkdirSync(warriors);
+  writeFileSync(join(warriors, 'a-wait.red'), ';name wait\njmp 0\n');
+  writeFileSync(join(warriors, 'b-sw.red'), ';name sw\njmp s\njmp 0\ndat 0, 0\n');
+  writeFileSync(join(warriors, 'c-wait.red'), ';name wait2\njmp 0\n');
+  for (const engine of ['js', 'wasm']) {
+    const t = run(engine, 2, `registers-${engine}`, warriors);
+    assert.deepEqual(pairings(t), [[[0, 0, 20], [0, 0, 20]], [[0, 0, 20], [0, 0, 20]], [[0, 20, 0], [20, 0, 0]]], engine);
+  }
+});
+
 // --pmars with a stand-in script: it answers from its -F position, so each
 // pairing's result shows whether it reached the right pairing, and it logs
 // its arguments. One file name has a space in it.

@@ -27,6 +27,8 @@ const bin = program(prebuilt ?? tmp, '42mars');
 writeFileSync(join(tmp, 'pinny.red'), ';name pinny\n pin 77\n org 2\n dat -1, 7999\n spl.b #-3, }5\nfoo jmp foo\n end\n');
 writeFileSync(join(tmp, 'broken.red'), ' mov 0\n');
 writeFileSync(join(tmp, 'die.red'), ' dat 0\n'); // alone, it dies in every round
+// registers: pMARS assembles the first warrior with what its score formula check leaves
+writeFileSync(join(tmp, 'regs.red'), ';name regs\n dat #w, #s\n dat #x, #a\n jmp 0\n');
 
 before(() => (prebuilt || skip ? undefined : promisify(execFile)('cc', ['-O2', '-o', bin, join(root, 'cli/42mars.c'), join(root, 'lib/42mars.c')])));
 

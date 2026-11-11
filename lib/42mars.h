@@ -22,8 +22,8 @@
 // Use:
 //   m42_rules r = m42_rules_94();
 //   m42_warrior *w[2];
-//   w[0] = m42_assemble_new(src0, len0, &r, 0, &status);   // check m42_warrior_ok()
-//   w[1] = m42_assemble_new(src1, len1, &r, 0, &status);
+//   w[0] = m42_assemble_new(src0, len0, &r, 0, 0, &status);   // check m42_warrior_ok()
+//   w[1] = m42_assemble_new(src1, len1, &r, 0, 0, &status);
 //   m42_ctx *m = m42_new(&r, &status);
 //   m42_match_options o = m42_match_options_default();
 //   o.rounds = 100;
@@ -122,9 +122,13 @@ typedef struct {
 // assembler ran, also if the source has errors (m42_warrior_ok() says), and
 // M42_ERR_MEMORY when `size` was too small: try again with more, about 64
 // times the source length is usually enough. m42_warrior_pack() copies a
-// warrior into a block of its own size.
+// warrior into a block of its own size. `registers`: 0 (all 0), or the
+// values of the registers a..z (registers[0] is a) to start with: pMARS
+// assembles its first warrior with the registers its score formula check
+// left, w and s the number of warriors with the default formula, and the
+// others with all 0 (docs/redcode-semantics.md, section 5).
 M42_API int m42_assemble(const char *src, size_t len, const m42_rules *rules, unsigned flags,
-                 void *mem, size_t size, m42_warrior **out);
+                 const int64_t registers[26], void *mem, size_t size, m42_warrior **out);
 
 // 1 when the warrior assembled without errors.
 M42_API int m42_warrior_ok(const m42_warrior *w);
@@ -174,7 +178,8 @@ M42_API m42_warrior *m42_warrior_pack(const m42_warrior *w, void *dst, size_t si
 
 #ifndef M42_NO_LIBC
 // m42_assemble() with malloc: a packed warrior, 0 when malloc failed (*status).
-M42_API m42_warrior *m42_assemble_new(const char *src, size_t len, const m42_rules *rules, unsigned flags, int *status);
+M42_API m42_warrior *m42_assemble_new(const char *src, size_t len, const m42_rules *rules, unsigned flags,
+                                      const int64_t registers[26], int *status);
 M42_API void m42_warrior_free(m42_warrior *w);
 #endif
 

@@ -46,7 +46,7 @@ static m42_warrior *assemble(const char *path, const m42_rules *r, int *tries) {
   for (size_t size = 16;; size = size * 2 + 1) {
     void *mem = malloc(size);
     m42_warrior *w;
-    const int s = m42_assemble(src, len, r, 0, mem, size, &w);
+    const int s = m42_assemble(src, len, r, 0, 0, mem, size, &w);
     ++*tries;
     if (s == M42_ERR_MEMORY) { free(mem); continue; }
     if (s != M42_OK) exit(3);
@@ -188,7 +188,7 @@ int main(int argc, char **argv) {
   zero.core_size = 0;
   printf("],\"errors\":[%d,%d,%d,%d,%d,%d]", m42_match(m, pair, 0, &o, 0, 0), m42_ctx_size(&bad) == 0,
          m42_match(m, (const m42_warrior *const *)w, 3, &o, 0, 0), m42_start_round(0),
-         m42_assemble("dat 0", 5, &zero, 0, mem, size, &w[63]), m42_match(m, (const m42_warrior *const *)w + n - 2, 2, &o, 0, 0));
+         m42_assemble("dat 0", 5, &zero, 0, 0, mem, size, &w[63]), m42_match(m, (const m42_warrior *const *)w + n - 2, 2, &o, 0, 0));
 
   // permute: two warriors, no fixed positions
   m42_match_options po = o;
@@ -200,9 +200,9 @@ int main(int argc, char **argv) {
 
   // PIN: warriors with the same PIN share p-space cells 1 and up.
   int st;
-  m42_warrior *p7a = m42_assemble_new(" pin 7\n dat 0\n", 14, &r, 0, &st);
-  m42_warrior *p7b = m42_assemble_new(" pin 7\n dat 1\n", 14, &r, 0, &st);
-  m42_warrior *p8 = m42_assemble_new(" pin 8\n dat 2\n", 14, &r, 0, &st);
+  m42_warrior *p7a = m42_assemble_new(" pin 7\n dat 0\n", 14, &r, 0, 0, &st);
+  m42_warrior *p7b = m42_assemble_new(" pin 7\n dat 1\n", 14, &r, 0, 0, &st);
+  m42_warrior *p8 = m42_assemble_new(" pin 8\n dat 2\n", 14, &r, 0, 0, &st);
   const m42_warrior *same[2] = {p7a, p7b}, *other[2] = {p7a, p8};
   uint32_t shared = 0, apart = 0, last = 0;
   if (!p7a || !p7b || !p8 || !m42_warrior_ok(p7a) || !m42_warrior_ok(p7b) || !m42_warrior_ok(p8)) exit(5);
@@ -219,7 +219,7 @@ int main(int argc, char **argv) {
   // A context of exactly m42_ctx_size() holds two warriors of max_length.
   char longest[1024] = "";
   for (uint32_t i = 0; i < r.max_length; i++) strcat(longest, " spl 0\n");
-  m42_warrior *big = m42_assemble_new(longest, strlen(longest), &r, 0, &st);
+  m42_warrior *big = m42_assemble_new(longest, strlen(longest), &r, 0, 0, &st);
   void *exact = malloc(size);
   m42_ctx *m2 = m42_ctx_init(exact, size, &r, &st);
   const m42_warrior *bigs[2] = {big, big};

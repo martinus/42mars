@@ -633,6 +633,18 @@ function assembleWith(x, mem, source, options) {
   writeRules(mem, rules, o, o.warriors);
   const src = mem.scratch(bytes.length);
   mem.views().u8.set(bytes, src);
+  // Registers to start with, e.g. { s: 2, w: 2 }, as js/assembler.js.
+  let regs = 0;
+  if (o.registers) {
+    regs = mem.scratch(8 * 26);
+    const { dv } = mem.views();
+    for (let i = 0; i < 26; i++) dv.setBigInt64(regs + 8 * i, 0n, true);
+    for (const [name, v] of Object.entries(o.registers)) {
+      const i = name.toLowerCase().charCodeAt(0) - 97;
+      if (name.length !== 1 || i < 0 || i > 25) throw new RangeError(`registers: not a register name: ${name}`);
+      dv.setBigInt64(regs + 8 * i, BigInt.asIntN(64, BigInt(v)), true);
+    }
+  }
   const out = mem.scratch(8);
   const start = mem.mark;
   // The working memory grows by 4 until the assembler fits (42mars.h).
@@ -641,7 +653,7 @@ function assembleWith(x, mem, source, options) {
     mem.mark = start;
     const work = mem.scratch(size);
     // flags: M42_UTF8 1, M42_ICWS88 2
-    const status = x.m42_assemble(src, bytes.length, rules, (utf8 ? 1 : 0) | (o.icws88 ? 2 : 0), work, size, out);
+    const status = x.m42_assemble(src, bytes.length, rules, (utf8 ? 1 : 0) | (o.icws88 ? 2 : 0), regs, work, size, out);
     if (status === M42_ERR_MEMORY) continue;
     check(x, mem, status);
     return readWarrior(x, mem, mem.views().dv.getUint32(out, true), utf8 ? utf8Decoder : latin1Decoder, o);
