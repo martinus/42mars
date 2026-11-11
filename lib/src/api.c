@@ -28,9 +28,8 @@ const char *m42_status_text(int status) {
   }
 }
 
-static int set_status(int *status, int value) {
+static void set_status(int *status, int value) {
   if (status) *status = value;
-  return value;
 }
 
 // ---------------------------------------------------------------- rules
@@ -112,33 +111,50 @@ size_t m42_warrior_message(const m42_warrior *w, uint32_t i, int32_t *line, int 
   const AsmResult *r = w ? RESULT(w) : 0;
   const AsmMsg *msg = !r ? 0 : i < r->nErrors ? &r->errors[i] : i - r->nErrors < r->nWarnings ? &r->warnings[i - r->nErrors] : 0;
   if (line) *line = msg ? msg->line : 0;
-  if (is_error) *is_error = msg && r && i < r->nErrors;
+  if (is_error) *is_error = msg && i < r->nErrors;
   return copy_text(msg ? msg->text : none, buf, n);
 }
 
-// A packed warrior: the AsmResult, then its arrays, then all texts.
-static usize packed_layout(const AsmResult *r, usize *texts) {
-  usize s = sizeof(AsmResult);
-  s += (usize)r->nIns * sizeof(AsmIns) + (usize)(r->nErrors + r->nWarnings) * sizeof(AsmMsg) +
-       (usize)r->nExpanded * sizeof(AsmText);
-  usize t = r->name.n + r->author.n + r->date.n + r->version.n + r->strategy.n;
-  for (u32 i = 0; i < r->nErrors; i++) t += r->errors[i].text.n;
-  for (u32 i = 0; i < r->nWarnings; i++) t += r->warnings[i].text.n;
-  for (u32 i = 0; i < r->nExpanded; i++) t += r->expanded[i].n;
-  *texts = t;
-  return s + t + 8; // 8: alignment of the start
+// Every text of a result, for packing: calls fn(ctx, dst, src) with the
+// field of the copy `q` and of the original `r`. Counting passes r as q.
+#define EACH_TEXT(r, q, fn, ctx)                                                                     \
+  do {                                                                                               \
+    fn(ctx, &(q)->name, &(r)->name);                                                                 \
+    fn(ctx, &(q)->author, &(r)->author);                                                             \
+    fn(ctx, &(q)->date, &(r)->date);                                                                 \
+    fn(ctx, &(q)->version, &(r)->version);                                                           \
+    fn(ctx, &(q)->strategy, &(r)->strategy);                                                         \
+    for (u32 i_ = 0; i_ < (r)->nErrors; i_++) fn(ctx, &(q)->errors[i_].text, &(r)->errors[i_].text);       \
+    for (u32 i_ = 0; i_ < (r)->nWarnings; i_++) fn(ctx, &(q)->warnings[i_].text, &(r)->warnings[i_].text); \
+    for (u32 i_ = 0; i_ < (r)->nExpanded; i_++) fn(ctx, &(q)->expanded[i_], &(r)->expanded[i_]);          \
+  } while (0)
+
+static void count_text(usize *n, const AsmText *dst, const AsmText *src) {
+  (void)dst;
+  *n += src->n;
 }
 
-size_t m42_warrior_packed_size(const m42_warrior *w) {
-  usize t;
-  return w ? packed_layout(RESULT(w), &t) : 0;
+static void move_text(u8 **at, AsmText *dst, const AsmText *src) {
+  dst->p = *at;
+  dst->n = src->n;
+  if (src->n) __builtin_memcpy(*at, src->p, src->n);
+  *at += src->n;
 }
+
+// A packed warrior: the AsmResult, then its arrays, then all texts.
+static usize packed_size(const AsmResult *r) {
+  usize texts = 0;
+  EACH_TEXT(r, r, count_text, &texts);
+  return 8 + sizeof(AsmResult) + (usize)r->nIns * sizeof(AsmIns) +
+         (usize)(r->nErrors + r->nWarnings) * sizeof(AsmMsg) + (usize)r->nExpanded * sizeof(AsmText) + texts;
+}
+
+size_t m42_warrior_packed_size(const m42_warrior *w) { return w ? packed_size(RESULT(w)) : 0; }
 
 m42_warrior *m42_warrior_pack(const m42_warrior *w, void *dst, size_t size) {
   if (!w || !dst) return 0;
   const AsmResult *r = RESULT(w);
-  usize t;
-  if (size < packed_layout(r, &t)) return 0;
+  if (size < packed_size(r)) return 0;
   u8 *p = (u8 *)(((usize)dst + 7) & ~(usize)7);
   AsmResult *q = (AsmResult *)(void *)p;
   *q = *r;
@@ -152,23 +168,16 @@ m42_warrior *m42_warrior_pack(const m42_warrior *w, void *dst, size_t size) {
   p += (usize)r->nWarnings * sizeof(AsmMsg);
   q->expanded = (AsmText *)(void *)p;
   p += (usize)r->nExpanded * sizeof(AsmText);
-  u8 *text = p;
-  #define MOVE(dst_, src_) do { (dst_).p = text; (dst_).n = (src_).n; if ((src_).n) __builtin_memcpy(text, (src_).p, (src_).n); text += (src_).n; } while (0)
-  MOVE(q->name, r->name);
-  MOVE(q->author, r->author);
-  MOVE(q->date, r->date);
-  MOVE(q->version, r->version);
-  MOVE(q->strategy, r->strategy);
-  for (u32 i = 0; i < r->nErrors; i++) { q->errors[i].line = r->errors[i].line; MOVE(q->errors[i].text, r->errors[i].text); }
-  for (u32 i = 0; i < r->nWarnings; i++) { q->warnings[i].line = r->warnings[i].line; MOVE(q->warnings[i].text, r->warnings[i].text); }
-  for (u32 i = 0; i < r->nExpanded; i++) MOVE(q->expanded[i], r->expanded[i]);
-  #undef MOVE
+  for (u32 i = 0; i < r->nErrors; i++) q->errors[i].line = r->errors[i].line;
+  for (u32 i = 0; i < r->nWarnings; i++) q->warnings[i].line = r->warnings[i].line;
+  EACH_TEXT(r, q, move_text, &p);
   return (m42_warrior *)(void *)q;
 }
 
 #ifndef M42_NO_LIBC
 m42_warrior *m42_assemble_new(const char *src, size_t len, const m42_rules *rules, unsigned flags, int *status) {
-  for (size_t size = len * 64 > (1u << 20) ? len * 64 : (1u << 20); size <= ((size_t)1 << 34) / 4; size *= 4) {
+  // Working memory from 1 MB or 64 bytes per source byte, times 4 per try.
+  for (size_t size = len > (1u << 14) ? len * 64 : (1u << 20); size && size <= (size_t)-1 / 4; size *= 4) {
     void *mem = malloc(size);
     if (!mem) break;
     m42_warrior *w;
@@ -210,17 +219,17 @@ void m42_warrior_free(m42_warrior *w) { free(w); }
 // rules->max_length instructions each (fewer warriors take less).
 static usize heap_need(const m42_rules *r) {
   const usize nw = r->warriors, ins = nw * r->max_length, psize = pspace_of(r);
-  usize qlen = 1;
-  while (qlen < r->max_processes && qlen < 1u << 30) qlen <<= 1;
-  const int linear = nw == 2 && r->max_cycles <= LINEAR_CYCLES;
-  usize s = 64;
+  const u32 qlen = queue_len(r->max_processes);
+  const int linear = LINEAR_QUEUES(nw, r->max_cycles);
+  usize s = 0;
+  // alloc() rounds each start up to 64 bytes; the heap starts aligned.
   #define TAKE(bytes) (s += ((usize)(bytes) + 63) & ~(usize)63)
   TAKE(nw * sizeof(Warrior));
   TAKE((4 * nw + 5 * ins) * 4);
   TAKE(ins * sizeof(Cell));
   TAKE(nw * (psize ? psize : 1) * 4);
   TAKE(nw * (2 * nw - 1) * 4);
-  for (usize i = 0; i < nw; i++) if (!(i < 2 && (linear || qlen <= QSTATIC))) TAKE(qlen * 2);
+  for (usize i = 0; i < nw; i++) if (!STATIC_QUEUE(i, linear, qlen)) TAKE((usize)qlen * 2);
   #undef TAKE
   return s;
 }
@@ -245,7 +254,9 @@ m42_ctx *m42_ctx_init(void *mem, size_t size, const m42_rules *rules, int *statu
   if (!mem) { set_status(status, M42_ERR_ARGUMENT); return 0; }
   if (size < m42_ctx_size(rules)) { set_status(status, M42_ERR_MEMORY); return 0; }
   Mars *m = (Mars *)(((usize)mem + 63) & ~(usize)63);
-  __builtin_memset(m, 0, sizeof(Mars));
+  // Not the core and queue arrays in front (1.1 MB): start_round() clears
+  // the core, and every queue entry is written before it is read.
+  __builtin_memset(&m->N, 0, sizeof(Mars) - __builtin_offsetof(Mars, N));
   m->heap_end = (u8 *)mem + size;
   m->heap_top = HEAP_FIRST(m);
 #endif
@@ -288,14 +299,20 @@ m42_match_options m42_match_options_default(void) {
   return o;
 }
 
+// The options of a call, the defaults for 0; M42_OK or M42_ERR_ARGUMENT.
+static int get_options(const m42_match_options *options, m42_match_options *o) {
+  *o = options ? *options : m42_match_options_default();
+  return o->size >= sizeof(m42_match_options) && o->seed >= 0 && (u64)o->rounds + o->first_round <= 0xffffffffu
+             ? M42_OK
+             : M42_ERR_ARGUMENT;
+}
+
 // Loads warriors, the way wasm/42mars.js load() did: checks, the load
 // area of config(), p-space groups by PIN, then load().
 static int load_warriors(Mars *m, const m42_warrior *const *ws, u32 n, const m42_match_options *o) {
   const m42_rules *r = &m->rules;
-  if (!ws || n < 1 || n > r->warriors || (o && o->size < sizeof(m42_match_options))) return M42_ERR_ARGUMENT;
-  const i64 seed = o ? o->seed : 0;
-  const uint32_t *positions = o ? o->positions : 0;
-  if (seed < 0) return M42_ERR_ARGUMENT;
+  if (!ws || n < 1 || n > r->warriors) return M42_ERR_ARGUMENT;
+  const uint32_t *positions = o->positions;
   if ((u64)n * r->min_distance > r->core_size) return M42_ERR_RULES;
   u32 total = 0;
   for (u32 i = 0; i < n; i++) {
@@ -331,15 +348,14 @@ static int load_warriors(Mars *m, const m42_warrior *const *ws, u32 n, const m42
       *k++ = (i32)x->bVal;
     }
   }
-  load(m, seed, positions != 0);
+  load(m, o->seed, positions != 0);
   return M42_OK;
 }
 
 int m42_match(m42_ctx *ctx, const m42_warrior *const *warriors, uint32_t n, const m42_match_options *options,
               m42_score *scores, uint64_t *instructions) {
-  if (!ctx) return M42_ERR_ARGUMENT;
-  const m42_match_options o = options ? *options : m42_match_options_default();
-  if (o.size < sizeof(m42_match_options) || (u64)o.rounds + o.first_round > 0xffffffffu) return M42_ERR_ARGUMENT;
+  m42_match_options o;
+  if (!ctx || get_options(options, &o) != M42_OK) return M42_ERR_ARGUMENT;
   Mars *m = CTX_OF(ctx);
   const int s = load_warriors(m, warriors, n, &o);
   if (s != M42_OK) return s;
@@ -369,44 +385,51 @@ int m42_bench(m42_ctx *m, const m42_warrior *w, const m42_warrior *const *oppone
 // ---------------------------------------------------------------- stepping
 
 int m42_load(m42_ctx *m, const m42_warrior *const *warriors, uint32_t n, const m42_match_options *options) {
-  if (!m) return M42_ERR_ARGUMENT;
-  return load_warriors(CTX_OF(m), warriors, n, options);
+  m42_match_options o;
+  if (!m || get_options(options, &o) != M42_OK) return M42_ERR_ARGUMENT;
+  return load_warriors(CTX_OF(m), warriors, n, &o);
+}
+
+// M42_OK when ctx has warriors loaded, else the status to return.
+static int ready(const m42_ctx *ctx) {
+  return !ctx ? M42_ERR_ARGUMENT : !CCTX_OF(ctx)->loaded ? M42_ERR_STATE : M42_OK;
+}
+
+// P-space cell i of warrior w (cell 0: the last result), 0 when out of range.
+static u32 *pspace_cell(const Mars *m, u32 w, u32 i) {
+  if (w >= m->nw || (i && i >= m->psize)) return 0;
+  return i ? &m->war[w].pspace[i] : &m->war[w].lastResult;
 }
 
 int m42_start_round(m42_ctx *ctx) {
-  Mars *m = CTX_OF(ctx);
-  if (!ctx) return M42_ERR_ARGUMENT;
-  if (!m->loaded) return M42_ERR_STATE;
-  start_round(m);
-  return M42_OK;
+  const int s = ready(ctx);
+  if (s == M42_OK) start_round(CTX_OF(ctx));
+  return s;
 }
 
 uint64_t m42_run(m42_ctx *ctx, uint64_t count) {
-  Mars *m = CTX_OF(ctx);
-  if (!ctx || !m->loaded || m->roundOver || !count) return 0;
-  return run_some(m, count);
+  if (ready(ctx) != M42_OK || CTX_OF(ctx)->roundOver || !count) return 0;
+  return run_some(CTX_OF(ctx), count);
 }
 
 int m42_end_round(m42_ctx *ctx) {
-  Mars *m = CTX_OF(ctx);
-  if (!ctx) return M42_ERR_ARGUMENT;
-  if (!m->loaded) return M42_ERR_STATE;
-  end_round(m);
-  return M42_OK;
+  const int s = ready(ctx);
+  if (s == M42_OK) end_round(CTX_OF(ctx));
+  return s;
 }
 
 int m42_get_state(const m42_ctx *ctx, m42_state *s) {
+  const int r = s ? ready(ctx) : M42_ERR_ARGUMENT;
+  if (r != M42_OK) return r;
   const Mars *m = CCTX_OF(ctx);
-  if (!ctx || !s) return M42_ERR_ARGUMENT;
-  if (!m->loaded) return M42_ERR_STATE;
   *s = (m42_state){m->round_, m->roundOver, m->current, m->warriorsLeft, (u64)m->timeNow, m->cyclesLeft};
   return M42_OK;
 }
 
 int m42_get_warrior(const m42_ctx *ctx, uint32_t w, m42_warrior_state *s) {
+  const int r = s ? ready(ctx) : M42_ERR_ARGUMENT;
+  if (r != M42_OK) return r;
   const Mars *m = CCTX_OF(ctx);
-  if (!ctx || !s) return M42_ERR_ARGUMENT;
-  if (!m->loaded) return M42_ERR_STATE;
   if (w >= m->nw) return M42_ERR_ARGUMENT;
   const Warrior *x = &m->war[w];
   *s = (m42_warrior_state){x->alive, x->tail - x->head, x->position, x->lastResult, x->diedAt,
@@ -420,8 +443,8 @@ const m42_cell *m42_core(const m42_ctx *ctx) {
 }
 
 uint32_t m42_queue(const m42_ctx *ctx, uint32_t w, uint32_t *out, uint32_t max) {
+  if (ready(ctx) != M42_OK || w >= CCTX_OF(ctx)->nw) return 0;
   const Mars *m = CCTX_OF(ctx);
-  if (!ctx || !m->loaded || w >= m->nw) return 0;
   const Warrior *x = &m->war[w];
   const u32 tasks = x->tail - x->head;
   for (u32 k = 0; out && k < tasks && k < max; k++) out[k] = x->q[(x->head + k) & m->qmask];
@@ -429,20 +452,19 @@ uint32_t m42_queue(const m42_ctx *ctx, uint32_t w, uint32_t *out, uint32_t max) 
 }
 
 int m42_pspace_get(const m42_ctx *ctx, uint32_t w, uint32_t i, uint32_t *value) {
-  const Mars *m = CCTX_OF(ctx);
-  if (!ctx || !value) return M42_ERR_ARGUMENT;
-  if (!m->loaded) return M42_ERR_STATE;
-  if (w >= m->nw || (i && i >= m->psize)) return M42_ERR_ARGUMENT;
-  *value = i ? m->war[w].pspace[i] : m->war[w].lastResult;
+  const int r = value ? ready(ctx) : M42_ERR_ARGUMENT;
+  if (r != M42_OK) return r;
+  const u32 *cell = pspace_cell(CCTX_OF(ctx), w, i);
+  if (!cell) return M42_ERR_ARGUMENT;
+  *value = *cell;
   return M42_OK;
 }
 
 int m42_pspace_set(m42_ctx *ctx, uint32_t w, uint32_t i, uint32_t value) {
-  Mars *m = CTX_OF(ctx);
-  if (!ctx) return M42_ERR_ARGUMENT;
-  if (!m->loaded) return M42_ERR_STATE;
-  if (w >= m->nw || (i && i >= m->psize)) return M42_ERR_ARGUMENT;
-  if (i) m->war[w].pspace[i] = value;
-  else m->war[w].lastResult = value;
+  const int r = ready(ctx);
+  if (r != M42_OK) return r;
+  u32 *cell = pspace_cell(CTX_OF(ctx), w, i);
+  if (!cell) return M42_ERR_ARGUMENT;
+  *cell = value;
   return M42_OK;
 }
