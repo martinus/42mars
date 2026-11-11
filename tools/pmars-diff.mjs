@@ -25,6 +25,9 @@
 // compares the scores only and does not go with --pmars-trace.
 // --wasm-asm assembles our side with the C assembler (lib/src/asm.c through
 // wasm/42mars.js) instead of js/assembler.js.
+// --cli path/to/42mars adds the section `cli`: the command line program
+// (cli/build.sh) and pMARS with the same arguments on corpus warriors,
+// stdout and exit code compared.
 // Exit code 1 when anything differs.
 //
 // Generated warriors and pMARS output go into a new folder pmars-diff-*
@@ -542,7 +545,63 @@ async function multi() {
   report('multi', n, diffs);
 }
 
-const sections = { listings, exprs, sources, battles, fuzz, multi };
+// ---------------------------------------------------------------- cli
+
+// --cli path/to/42mars: both programs with the same arguments on corpus
+// warriors, stdout and exit code compared. Arguments mix warrior counts,
+// listings, -b, -k, -o, -A, -=, -F or -f (never random positions), rule
+// changes, -@ files and some invalid options.
+const CLI = arg('cli');
+const FORMULAS = ['(W*W-1)/S', '1', 'S', 'W*10+S', 'x=x+S', '10/S', '1/0', 'W-S'];
+
+async function cli() {
+  if (!CLI || !CORPUS) return console.log('cli: skipped (needs --cli and --corpus)');
+  const files = readdirSync(CORPUS).filter((f) => /\.red$/i.test(f)).sort().map((f) => join(CORPUS, f));
+  const n = 1500 * SCALE;
+  const cases = Array.from({ length: n }, (_, i) => {
+    const k = [1, 2, 2, 2, 2, 2, 3, 4][rand(8)];
+    const args = [];
+    if (rand(10) < 6) args.push('-b');
+    if (rand(10) < 4) args.push('-k');
+    if (rand(10) < 3) args.push('-o');
+    if (rand(12) === 0) args.push('-A');
+    if (rand(7) === 0) args.push('-=', pick(FORMULAS));
+    const r = pick([0, 1, 1, 3, 5, 10]);
+    args.push('-r', String(r));
+    const ruleSet = rand(10);
+    let d = 100;
+    if (ruleSet === 1) { args.push('-l', '50'); d = 50; }
+    else if (ruleSet === 2) args.push('-c', '1000', '-p', '64');
+    else if (ruleSet === 3) args.push('-S', String(1 + rand(20)));
+    else if (ruleSet === 4) { args.push('-d', '200'); d = 200; }
+    else if (ruleSet === 5 && rand(3) === 0) args.push(pick(['-d', '-F']), '50'); // both too small: exit 2
+    else if (ruleSet === 6 && rand(3) === 0) args.push(pick(['-s', '-p']), '0');
+    if (rand(10) < 3) args.push('-f');
+    else args.push('-F', String(d + rand(8000 + 1 - 2 * d)));
+    const ws = Array.from({ length: k }, () => pick(files));
+    if (rand(20) === 0) {
+      const at = join(TMP, `options${i}.txt`);
+      writeFileSync(at, args.join('\n') + '\n');
+      return ['-@', at, ...ws];
+    }
+    return i % 2 ? [...args, ...ws] : [...ws, ...args];
+  });
+  const diffs = diffList();
+  await pool(cases, async (argv) => {
+    const [theirs, ours] = await Promise.all([pmars(argv), pmars(argv, CLI)]);
+    if (theirs.timedOut) return diffs.push(`${argv.join(' ')}: pMARS did not finish`);
+    if (theirs.code === ours.code && theirs.out === ours.out) return;
+    const wl = theirs.out.split('\n');
+    const gl = ours.out.split('\n');
+    const at = wl.findIndex((l, i) => l !== gl[i]);
+    diffs.push(`${argv.join(' ')}\n  exit pMARS ${theirs.code}, ours ${ours.code}` +
+      (at >= 0 ? `; stdout line ${at + 1}\n  pMARS: ${JSON.stringify(wl[at])}\n  ours:  ${JSON.stringify(gl[at])}` : '') +
+      (ours.err ? `\n  our stderr: ${JSON.stringify(ours.err.slice(0, 200))}` : ''));
+  });
+  report('cli', n, diffs);
+}
+
+const sections = { listings, exprs, sources, battles, fuzz, multi, cli };
 const t0 = Date.now();
 for (const [name, fn] of Object.entries(sections)) {
   if (!ONLY || ONLY.has(name)) await fn();

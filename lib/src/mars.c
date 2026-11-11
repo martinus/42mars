@@ -457,7 +457,7 @@ static inline __attribute__((always_inline)) int exec_ins(Mars *const m, Cell *c
 // Address arithmetic: both operands are below n, so one conditional
 // subtraction reduces the sum.
 #define WRAP(x) ({ u32 x_ = (x); x_ >= n ? x_ - n : x_; })
-#define DEC(x) ((x) == 0 ? n - 1 : (x) - 1)
+#define DEC(x) ((x) == 0 ? n - 1 : (u32)(x) - 1)
 #define INC(x) ((x) + 1 == n ? 0 : (x) + 1)
 
   // A operand: pointer and a snapshot of the whole A cell, Acell, with the

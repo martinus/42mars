@@ -25,6 +25,9 @@ Three modules, plain JavaScript ES modules, no dependencies:
 The C library's interface is `lib/42mars.h`, documented in the header; its
 functions have the behavior described here.
 
+`cli/42mars.c` is a command line program with pMARS's options and output
+(section 5).
+
 `lib/src/asm.c` is a port of `expr.js` and `assembler.js` to C with the same
 results: the same result object, messages and expanded statements included
 (`test/asm-c.test.js`, `test/golden.test.js`). `wasm/42mars.js` calls it as
@@ -958,3 +961,83 @@ except on input where the JS code runs out of stack or throws:
   character outside ASCII is one token, as in JS, and message texts trim the
   same Unicode spaces as JS's `trim()`; characters outside the Basic
   Multilingual Plane are one token in C and two (surrogates) in JS.
+
+---------------------------------------------------------------------------
+
+## 5. The command line program
+
+`cli/42mars.c` (built by `cli/build.sh` to `build/42mars`) takes pMARS
+0.9.5's options and writes pMARS's stdout and exit codes, so that tools that
+run pMARS can run it instead. It uses only `lib/42mars.h`. Everything below
+was found by running the pMARS server build (`$O/bin/pmars`, and the trace
+build for positions); `tools/pmars-diff.mjs --cli build/42mars` compares the
+two on corpus warriors, `test/cli.test.js` holds recorded pMARS outputs.
+
+### Options
+
+- `-r # -s # -c # -p # -l # -d # -S #` take the next argument, digits only
+  (`-r5`, `-r -1`, `-r 10abc`: exit 2). Flags without a value combine
+  (`-bk`); options and files mix in any order. `-@ file` reads more options
+  and files from a file, separated by whitespace. `-` reads a warrior from
+  stdin.
+- pMARS's ranges, exit 2 outside them: `-s` and `-S` 1 .. 2^30, `-p` 1 ..
+  2^31-1, `-c` 1 .. 2^63-1, `-l` 1 .. 1000, `-r` from 0. The default `-d`
+  is the `-l` value (100 for both by default); `-d` below `-l` is exit 2.
+  The default `-S` is core size / 16.
+- At most 36 warriors (37: exit 2). `warriors * distance > core size`:
+  exit 2, checked before anything is assembled, as is the score formula.
+- `-F pos`: the position of warrior 2 in the first round; the generator
+  starts at `pos - distance`, so a position beyond the core wraps (7901
+  with core 8000 and distance 100 is position 100). Below the distance:
+  exit 2. pMARS takes anything that is not a plain number (`4000+1`,
+  `0x10`, ` 4001`) as "no -F" and uses random positions; `42mars` exits 2.
+  `-f` and `-F` together: exit 2.
+- Neither `-F` nor `-f`: random positions (pMARS's and ours differ).
+- `-f`, the fixed position series: the generator starts at `rng(sum)`,
+  where `sum` adds `field XOR k` over all fields of all warriors in file
+  order, five per instruction (op byte `op << 3 | mod`, A mode, B mode, A
+  value, B value), `k` counting the fields from 0 over all warriors, values
+  in 0 .. core size - 1. pMARS codes the modes `# $ @ < >` as 0 .. 4 and
+  `* { }` as 130 .. 132. Checked for sums below 2^31.
+- `-= formula`: the score formula, default `(W*W-1)/S`, evaluated with the
+  expression rules of section 1 and registers `w` (warriors) and `s`
+  (survivors). Before assembling it is evaluated with fresh registers for s
+  = 1 .. warriors; an error (bad expression, division by zero) is "Bad score
+  formula", exit 2. For the scores it is evaluated for every warrior in file
+  order and s = 1 .. warriors, with the registers kept from one evaluation
+  to the next (`x=x+1` counts the evaluations). A warrior's score is the
+  sum over s of (rounds it survived with s warriors alive) * formula.
+- `-e` (the debugger, off in the server build) is ignored.
+- Not supported by `42mars` (exit 2): `-R`, `-W` (#40), `-P` (#41), `-8`
+  (#42), `-V` (pMARS prints its internal assembler passes), and values
+  beyond the engine: core size above 65536, more than 2^24 processes or
+  p-space cells, more than 2^32-1 cycles.
+
+### Output
+
+Warriors are assembled in file order. Without `-b`, each warrior's listing
+is printed as soon as it assembled: the listing of section 2 (`Program
+"name" (length n) by "author"`, an empty line, `ORG START` when the start is
+inside the warrior, one line per instruction with `START` in front of the
+start instruction), then an empty line. The first warrior that does not
+assemble ends the run with exit 3 (messages on stderr, ours in our words);
+a file that cannot be read too. With `-A`, instead of the listing, each
+warrior as `"       ORG %10d"` (the start, also outside the warrior), its
+instructions without labels, `"       PIN %10d"` if it has one, and `END`;
+then the run ends. `-b` with `-A` prints nothing. `-r 0` prints the
+listings only.
+
+Results (survived[s]: rounds survived with s warriors alive; rest: rounds
+not survived):
+
+| Warriors | Default | `-k` |
+|---|---|---|
+| 1 | `name by author scores S` | `S survived[1] rest` |
+| 2 | `name by author scores S` per warrior, then `Results: W1 W2 T` | `survived[1] survived[2]` per warrior |
+| 3+ | per warrior `name by author scores S` and `  Results: survived[1] .. survived[n] rest` | `S survived[1] .. survived[n] rest` per warrior |
+
+`-o` sorts the default output by score, highest first, stable; with two
+warriors the wins in `Results:` follow that order. `-k` ignores `-o`. A
+single warrior that dies counts the round in survived[1] too (its death
+counter is its survival counter, in pMARS and here), so `rest` is not its
+losses.

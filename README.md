@@ -4,7 +4,7 @@ A fast [Core War](https://corewar.co.uk/) simulator (MARS) with a Redcode assemb
 
 ```sh
 npm run serve          # http://127.0.0.1:8000/ (the visualizer in ui/)
-npm test               # 420 tests, Node 20 or newer, no dependencies
+npm test               # 439 tests, Node 20 or newer, no dependencies
 node tools/asm.mjs warriors/dwarf.red      # pMARS-style listing
 node tools/corpus.mjs path/to/warriors     # assemble a whole folder
 node tools/pmars-diff.mjs --pmars path/to/pmars --corpus path/to/warriors   # compare with pMARS
@@ -12,6 +12,7 @@ node tools/tournament.mjs path/to/warriors --rounds 100 --engine wasm   # round 
 node tools/tournament.mjs path/to/warriors --bench my.red             # my.red against each of them, worst first
 node tools/bench.mjs path/to/warriors --wasm-match   # simulator speed (see the file for the warriors)
 wasm/build.sh          # rebuild wasm/42mars.wasm (Node, clang with the wasm32 target)
+cli/build.sh           # build/42mars: pMARS's options and output, e.g. build/42mars -b -k -r 100 -f a.red b.red
 ```
 
 Layout: `lib/` is the 42mars C library: the header `lib/42mars.h` and one file to compile with your program, `cc -O2 example.c 42mars.c` (`lib/example.c` plays a match like `pmars -b`). The parts are the simulator `lib/src/mars.c`, the assembler `lib/src/asm.c` and the header's functions `lib/src/api.c`. `wasm/` is its WebAssembly build and JavaScript interface, `ui/` the Core War Theater visualizer on top. `js/` holds the JavaScript assembler and simulator; the assembler goes once the tools and the visualizer assemble through wasm, the simulator once the visualizer runs on the library (roadmap L3).

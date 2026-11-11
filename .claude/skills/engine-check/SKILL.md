@@ -26,6 +26,8 @@ Setup: `O=${COREWAR_ORACLE:-$HOME/.local/share/corewar-theater}`, `SEED=$(date +
    `node tools/tournament.mjs $O/sets/t20 --rounds 100 --seed $SEED --engine wasm --pmars $O/bin/pmars --compare`
    and the C library natively through `lib/42mars.h` (`lib/example.c`), also `SAME`:
    `node tools/example-check.mjs $O/sets/t20 --pmars $O/bin/pmars --seed $SEED`
+   and the command line program (after a change to it, the assembler or the simulator):
+   `cli/build.sh && node tools/pmars-diff.mjs --pmars $O/bin/pmars --corpus $O/corpus --seed $SEED --cli build/42mars --only cli` (0 differences)
 6. Mutation proof for each new regression test: make the smallest change that brings the defect back, check that the mutant built (for C: rebuild, `md5sum` of `42mars.wasm` changed), see the test fail for the expected reason, restore, rebuild, check that `md5sum` is back to the original. No mutant may stay behind.
 7. Docs: behavior change → `docs/redcode-semantics.md`; speed change → `docs/performance-log.md` (`perf-experiment` skill).
 
