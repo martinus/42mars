@@ -901,7 +901,7 @@ export async function createWasmMars(options) -> engine        // Node and brows
 export function createWasmMarsSync(options, module?) -> engine
 engine: opt, coreSize, load(codes, { seed, positions, permute }), startRound(),
   run(n), step(), endRound(), runMatch(codes, { rounds, seed, positions,
-  permute, earlyTie = true, firstRound = 0 }) -> { warriors: [{ name, wins, losses,
+  permute, earlyTie = true, firstRound = 0, pspace }) -> { warriors: [{ name, wins, losses,
   ties, score }], results, instructions },
   round, roundOver, roundResult, results, time, cyclesLeft, warriorsLeft,
   current, op, am, bm, av, bv, cell(addr),
@@ -934,7 +934,13 @@ P-space and the last results start empty, as at the start of a match. Only
 LDP reads them, and opcodes are only copied, so when no warrior's code
 contains LDP every round gives the same result as in the whole match, and
 blocks of rounds can run on several engines (`tools/tournament.mjs` plays
-every pairing without LDP as blocks of about 8 rounds).
+every pairing without LDP as blocks of 8 rounds, or of 1 with `--progress`).
+With `pspace` the blocks give the rounds of the whole match also with LDP:
+`pspace: true` starts as a match starts (p-space cells 0, last result
+coreSize - 1), an array per warrior (pSpaceSize cells, at least 1, cell 0
+the last result) continues from a previous call, and the result's warriors
+then have `pspace` after the last round (`m42_match_options.pspace` in C).
+Warriors with the same PIN share cells 1 and up; the last one's copy wins.
 
 `packWarrior(code)` returns the warrior with its instructions as an
 `Int32Array` `packed`, 5 integers per instruction (op byte, A mode, A

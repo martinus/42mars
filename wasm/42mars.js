@@ -198,7 +198,7 @@ function check(x, mem, status) {
 
 // Offsets in the struct area of an instance: m42_rules, m42_match_options
 // (40 bytes: size, rounds, first_round, early_tie, int64 seed at 16,
-// positions at 24, log at 28, permute at 32), m42_state (32 bytes),
+// positions at 24, log at 28, permute at 32, pspace at 36), m42_state (32 bytes),
 // m42_warrior_state (40 bytes), and room for single values.
 const S_RULES = 0, S_OPTIONS = 48, S_STATE = 88, S_WARRIOR = 120, S_VALUE = 160, S_SIZE = 192;
 
@@ -309,6 +309,7 @@ class WasmMars {
     dv.setUint32(opt + 24, pos, true);
     dv.setUint32(opt + 28, log, true);
     dv.setUint32(opt + 32, permute ? 1 : 0, true);
+    dv.setUint32(opt + 36, 0, true); // pspace: runMatch() sets it
     return ws;
   }
 
@@ -377,10 +378,17 @@ class WasmMars {
   // every round is the same as in the whole match, and the rounds can run
   // in blocks on several engines (tools/tournament.mjs does that).
   //
+  // pspace: carries p-space and the last results from one call to the
+  // next, so that blocks of rounds give the rounds of the whole match also
+  // with LDP. true starts as a match starts; else one Int32Array per warrior
+  // (pSpaceSize cells, at least 1, cell 0 the last result), as a previous
+  // call returned it. With it, each warrior of the result has `pspace` after
+  // the last round. Warriors with the same PIN share cells 1 and up.
+  //
   // permute (default false, also for load()): pmars -P, two warriors only.
   // Each position and first mover comes once before any of them repeats
   // (semantics doc, 3.2); the seed of pmars -P -F x is 2 * (x - minDistance).
-  runMatch(codes, { rounds = this.opt.rounds, seed, positions, permute, earlyTie = true, firstRound = 0 } = {}) {
+  runMatch(codes, { rounds = this.opt.rounds, seed, positions, permute, earlyTie = true, firstRound = 0, pspace } = {}) {
     if (!isCount(rounds) || !isCount(firstRound) || rounds + firstRound > 0xffffffff) {
       throw new RangeError(`bad rounds or firstRound: ${rounds}, ${firstRound}`);
     }
@@ -392,6 +400,20 @@ class WasmMars {
     const scores = this.mem.scratch(12 * nw); // m42_score: wins, losses, ties
     const counters = this.mem.scratch(4 * (2 * nw - 1));
     this.mem.views().dv.setUint32(this.structs + S_OPTIONS + 28, log, true);
+    const cells = Math.max(1, this.opt.pSpaceSize);
+    let ps = 0;
+    if (pspace) {
+      if (pspace !== true && (!Array.isArray(pspace) || pspace.length !== nw || pspace.some((p) => p.length !== cells))) {
+        throw new RangeError(`pspace: true, or one array of ${cells} cells per warrior`);
+      }
+      ps = this.mem.scratch(4 * cells * nw);
+      const view = new Int32Array(this.bytes().buffer, ps, cells * nw);
+      for (let i = 0; i < nw; i++) {
+        if (pspace === true) { view.fill(0, i * cells, (i + 1) * cells); view[i * cells] = this.coreSize - 1; } // as load() starts
+        else view.set(pspace[i], i * cells);
+      }
+      this.mem.views().dv.setUint32(this.structs + S_OPTIONS + 36, ps, true);
+    }
     check(x, this.mem, x.m42_match(this.ctx, ws, nw, this.structs + S_OPTIONS, scores, this.structs + S_VALUE));
     this.version++;
     const { u8, dv } = this.mem.views();
@@ -414,7 +436,9 @@ class WasmMars {
       const { dv: v } = this.mem.views();
       const score = [];
       for (let k = 0; k < 2 * nw - 1; k++) score.push(v.getUint32(counters + 4 * k, true));
-      return { name: w.name, wins: v.getUint32(scores + 12 * i, true), losses: v.getUint32(scores + 12 * i + 4, true), ties: v.getUint32(scores + 12 * i + 8, true), score };
+      const r = { name: w.name, wins: v.getUint32(scores + 12 * i, true), losses: v.getUint32(scores + 12 * i + 4, true), ties: v.getUint32(scores + 12 * i + 8, true), score };
+      if (ps) r.pspace = new Int32Array(this.bytes().buffer, ps + 4 * cells * i, cells).slice();
+      return r;
     });
     return { warriors, results, instructions };
   }

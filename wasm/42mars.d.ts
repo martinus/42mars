@@ -107,8 +107,10 @@ export interface MatchOptions extends LoadOptions {
   rounds?: number;
   /** Stop rounds early that can only end in a tie (default true): same scores, a different final core. */
   earlyTie?: boolean;
-  /** Play rounds firstRound + 1 .. firstRound + rounds, with empty p-space. Default 0. */
+  /** Play rounds firstRound + 1 .. firstRound + rounds, with empty p-space (unless pspace is given). Default 0. */
   firstRound?: number;
+  /** Carry p-space over: true starts as a match starts, else one array per warrior (pSpaceSize cells, at least 1, cell 0 the last result) as a previous call returned it. Then the result's warriors have `pspace`. */
+  pspace?: true | Int32Array[];
 }
 
 export interface RoundResult {
@@ -121,7 +123,7 @@ export interface RoundResult {
 }
 
 export interface MatchResult {
-  warriors: { name: string; wins: number; losses: number; ties: number; score: number[] }[];
+  warriors: { name: string; wins: number; losses: number; ties: number; score: number[]; pspace?: Int32Array }[];
   results: RoundResult[];
   /** Instructions executed. */
   instructions: number;

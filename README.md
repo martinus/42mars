@@ -51,11 +51,12 @@ In a browser without npm: `import { ... } from 'https://cdn.jsdelivr.net/npm/42m
 
 ```sh
 npm run serve          # http://127.0.0.1:8000/ (the visualizer in ui/)
-npm test               # 461 tests, Node 20 or newer, no dependencies
+npm test               # 463 tests, Node 20 or newer, no dependencies
 node tools/asm.mjs warriors/dwarf.red      # pMARS-style listing
 node tools/corpus.mjs path/to/warriors     # assemble a whole folder
 node tools/pmars-diff.mjs --pmars path/to/pmars --corpus path/to/warriors   # compare with pMARS
 node tools/tournament.mjs path/to/warriors --rounds 100 --engine wasm   # round robin on all cores
+node tools/tournament.mjs path/to/warriors --engine wasm --progress  # the standings after every round
 node tools/tournament.mjs path/to/warriors --bench my.red             # my.red against each of them, worst first
 node tools/bench.mjs path/to/warriors --wasm-match   # simulator speed (see the file for the warriors)
 wasm/build.sh          # rebuild wasm/42mars.wasm (Node, clang with the wasm32 target)

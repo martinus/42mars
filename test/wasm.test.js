@@ -255,6 +255,52 @@ test('runMatch in blocks with firstRound gives the rounds of the whole match whe
   assert.throws(() => createWasmMarsSync({}, module).runMatch(codes, { rounds: 2, firstRound: -1 }), RangeError);
 });
 
+// runMatch({ pspace }) carries p-space and the last results from one block to
+// the next: then the blocks give the rounds of the whole match also with LDP
+// (issue #48, tools/tournament.mjs could play such pairings round by round).
+test('runMatch in blocks with pspace carried over gives the rounds of the whole match, also with LDP', () => {
+  const ldp = warrior('ldp.ab #0, flag\nsub.ab #2, flag\njmz.b die, flag\njmp 0\ndie dat 0, 0\nflag dat 0, 0\n');
+  const playBlocks = (codes, o, seed, blocks) => {
+    let pspace = true;
+    const results = [];
+    let instructions = 0;
+    for (const [firstRound, rounds] of blocks) {
+      const r = createWasmMarsSync(o, module).runMatch(codes, { rounds, seed, firstRound, pspace });
+      results.push(...r.results);
+      instructions += r.instructions;
+      pspace = r.warriors.map((w) => w.pspace);
+    }
+    return { results, instructions, pspace };
+  };
+  const codes = [ldp, warrior('jmp 0\n')];
+  const whole = createWasmMarsSync({}, module).runMatch(codes, { rounds: 4, seed: 7, pspace: true });
+  assert.deepEqual(whole.results.map((r) => r.survivors.length), [2, 1, 2, 1]);
+  const rounds = playBlocks(codes, {}, 7, [[0, 1], [1, 1], [2, 1], [3, 1]]);
+  assert.deepEqual(rounds.results, whole.results);
+  assert.deepEqual(rounds.pspace, whole.warriors.map((w) => w.pspace));
+  // random warriors with LDP, STP and PINs, two and three warriors
+  for (const o of [RULES[1], RULES[5], RULES[6]]) {
+    for (const nw of [2, 3]) {
+      if (nw * o.minDistance > o.coreSize) continue;
+      const cs = Array.from({ length: nw }, (_, i) => warrior(randomWarrior(1 + rand(o.maxLength - 1), o.coreSize, { pspace: true, pin: i < 2 && rand(2) ? 5 : null }), { ...o, warriors: nw }));
+      const seed = rand(2147483646) + 1;
+      const all = createWasmMarsSync(o, module).runMatch(cs, { rounds: 11, seed, pspace: true });
+      const parts = playBlocks(cs, o, seed, [[0, 3], [3, 1], [4, 0], [4, 7]]);
+      const where = `${JSON.stringify(o)} ${nw} warriors seed ${seed}`;
+      assert.deepEqual(parts.results, all.results, where);
+      assert.equal(parts.instructions, all.instructions, where);
+      assert.deepEqual(parts.pspace, all.warriors.map((w) => w.pspace), where);
+    }
+  }
+  assert.throws(() => createWasmMarsSync({}, module).runMatch(codes, { pspace: [new Int32Array(3)] }), RangeError);
+  // pspace: true starts as a match starts: the last result is coreSize - 1,
+  // so this warrior dies in round 1 (and in no other round)
+  const first = [warrior('ldp.ab #0, flag\nadd.ab #1, flag\njmz.b die, flag\njmp 0\ndie dat 0, 0\nflag dat 0, 0\n'), warrior('jmp 0\n')];
+  const plain = createWasmMarsSync({}, module).runMatch(first, { rounds: 3, seed: 9 });
+  assert.deepEqual(plain.results.map((r) => r.survivors), [[1], [0, 1], [0, 1]]);
+  assert.deepEqual(createWasmMarsSync({}, module).runMatch(first, { rounds: 3, seed: 9, pspace: true }).results, plain.results);
+});
+
 // packWarrior() prepares a warrior once; the engine copies it in one block.
 // tools/tournament.mjs keeps the packed warriors of all threads in one
 // SharedArrayBuffer.
