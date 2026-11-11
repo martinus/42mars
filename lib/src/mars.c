@@ -3,8 +3,8 @@
 
 // Headless MARS simulator, the simulator of lib/42mars.h (api.c has the
 // public functions; lib/42mars.c compiles all parts as one unit). It
-// implements section 3 of docs/redcode-semantics.md and gives the same core,
-// queues, scores and round results as js/mars.js. With a watch attached
+// implements section 3 of docs/redcode-semantics.md: the core, the queues,
+// the scores and the round results of pMARS. With a watch attached
 // (end of the file) it also records the visualizer bookkeeping of 3.4 and
 // 3.6.
 //
@@ -14,7 +14,7 @@
 // Data layout:
 // - A core cell is 8 bytes: A value, B value (16 bits each, so the core size
 //   is at most 65536), the instruction word and padding. The instruction
-//   word holds opcode << 3 | modifier in bits 0..7 (the mars.js op byte), the
+//   word holds opcode << 3 | modifier in bits 0..7 (the op byte), the
 //   A mode in bits 8..10 and the B mode in bits 11..13. The A and B values of
 //   a cell are one 32-bit load, the whole cell one 64-bit load.
 // - Each warrior has its process queue as a ring buffer of 16-bit addresses
@@ -660,7 +660,7 @@ M42_FORCE_INLINE int exec_core(Mars *const m, const u32 n, const u32 mask, const
       const int onA = mod == 0 || mod == 3;
       const u32 src = mod == 0 ? AA : mod == 2 ? AA : AB;
       if ((ins & 0xf8) == 0210) {
-        u32 v = 0; // pSpaceSize 0: mars.js stores undefined, which is 0
+        u32 v = 0; // pSpaceSize 0: LDP loads 0
         if (m->psize) { u32 i = src % m->psize; v = i == 0 ? W->lastResult : W->pspace[i]; }
         if (onA) B->a = (u16)v; else B->b = (u16)v;
       } else if (m->psize) {
@@ -893,7 +893,7 @@ static M42_NOINLINE u64 execute(Mars *const m, u64 count) {
   // counts down from `budget`; when it reaches 0 either `count` is done or
   // the cycle budget is used up (or both).
   for (;;) {
-    i64 budget = m->cyclesLeft < 1 ? 1 : m->cyclesLeft; // like mars.js: at least one instruction
+    i64 budget = m->cyclesLeft < 1 ? 1 : m->cyclesLeft; // at least one instruction
     if (count - total < (u64)budget) budget = (i64)(count - total);
     i64 left = budget;
     for (;;) {

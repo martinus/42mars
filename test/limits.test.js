@@ -9,19 +9,19 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { Mars } from '../js/mars.js';
 import { createWasmMarsSync, assembleWasm as assemble } from '../wasm/42mars.js';
 
 // The instruction, then distinct cells 1..11: dat #11, #1 .. dat #21, #11.
 const warrior = (ins) => ` ${ins}\n` + Array.from({ length: 11 }, (_, i) => ` dat #${11 + i}, #${i + 1}\n`).join('');
 
 // Runs the first instruction and returns the cells asked for, as
-// [opcode, A value, B value].
+// [opcode, A value, B value]. engine 'watch': with a watch attached, which
+// runs the loop that records (semantics doc, 3.7).
 function run(engine, ins, readLimit, writeLimit, cells) {
   const opts = { coreSize: 80, maxLength: 12, minDistance: 12, readLimit, writeLimit };
   const w = assemble(warrior(ins), opts);
   assert.ok(w.ok, ins);
-  const m = engine === 'wasm' ? createWasmMarsSync(opts) : new Mars({ ...opts, headless: engine === 'headless' });
+  const m = createWasmMarsSync({ ...opts, watch: engine === 'watch' });
   m.load([w], { positions: [0] });
   m.startRound();
   m.step();
@@ -49,7 +49,7 @@ const CASES = [
 ];
 
 test('read and write limits: folded offsets and the pointer cells of pMARS', () => {
-  for (const engine of ['mars.js', 'headless', 'wasm']) {
+  for (const engine of ['wasm', 'watch']) {
     for (const c of CASES) {
       const at = Object.keys(c.cells).map(Number);
       assert.deepEqual(run(engine, c.ins, c.r, c.w, at), Object.values(c.cells), `${engine}: ${c.ins} -R ${c.r} -W ${c.w}`);
@@ -57,29 +57,30 @@ test('read and write limits: folded offsets and the pointer cells of pMARS', () 
   }
 });
 
-test('read and write limits: the visualizer bookkeeping marks the cell written', () => {
+test('read and write limits: the watch marks the cell written and the cell read', () => {
   // -W 4: mov.i $5, @3 writes cell 2 and reads cell 5 (see above)
   const opts = { coreSize: 80, maxLength: 12, minDistance: 12, readLimit: 80, writeLimit: 4 };
-  const m = new Mars(opts);
+  const m = createWasmMarsSync({ ...opts, watch: true });
   m.load([assemble(warrior('mov.i $5, @3'), opts)], { positions: [0] });
   m.startRound();
-  m.owner.fill(-1, 1, 12); // as if cells 1..11 were not the warrior's
+  m.watch().owner.fill(0, 1, 12); // as if cells 1..11 were not the warrior's
   m.step();
-  assert.equal(m.owner[2], 0);
-  assert.equal(m.tWrite[2], 1);
-  assert.equal(m.owner[5], -1);
+  const v = m.watch();
+  assert.deepEqual([v.owner[2], v.tWrite[2]], [1, 1]); // warrior 0 at time 1
+  assert.deepEqual([v.owner[5], v.readBy[5], v.tRead[5]], [0, 1, 1]);
+  const k = 4 * 1; // trace entry of time 1: pc, A pointer, B pointer (where B writes)
+  assert.deepEqual(Array.from(v.trace.subarray(k, k + 3)), [0, 5, 2]);
 });
 
 test('a read or write limit must divide the core size, as pmars -R and -W want', () => {
   for (const opts of [{ readLimit: 3 }, { writeLimit: 8001 }, { coreSize: 800, readLimit: 30 }]) {
-    assert.throws(() => new Mars(opts), RangeError, JSON.stringify(opts));
     assert.throws(() => createWasmMarsSync(opts).load([assemble(' dat 0\n')], { seed: 1 }), RangeError, JSON.stringify(opts));
   }
-  new Mars({ readLimit: 500, writeLimit: 1 });
+  createWasmMarsSync({ readLimit: 500, writeLimit: 1 }).load([assemble(' dat 0\n')], { seed: 1 });
 });
 
 test('read and write limits equal to the core size change nothing', () => {
-  for (const engine of ['mars.js', 'wasm']) {
+  for (const engine of ['wasm', 'watch']) {
     // cell 5's B field 5 becomes 4, cell 9 goes to cell 3
     assert.deepEqual(run(engine, 'mov.i <5, $3', 80, 80, [3, 5]), [[DAT, 19, 9], [DAT, 15, 4]], engine);
   }

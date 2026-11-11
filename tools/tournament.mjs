@@ -3,18 +3,20 @@
 // Copyright (c) 2026 Martin Leitner-Ankerl
 //
 // Round-robin tournament over a set of warriors, battles run in parallel on
-// worker threads with the headless simulator.
+// worker threads with the wasm engine (wasm/42mars.js).
 //
 //   node tools/tournament.mjs <dir or .red files...> [--rounds 100] [--jobs N]
 //        [--seed 1] [--size 8000 --cycles 80000 --processes 8000 --length 100
-//        --distance 100 --read-limit N --write-limit N] [--engine js|wasm]
+//        --distance 100 --read-limit N --write-limit N]
 //        [--matrix] [--json out.json]
 //        [--pmars path/to/pmars [--compare]] [--native-input file]
 //        [--bench warrior.red] [--permute] [--icws88] [--progress]
 //
+// --engine wasm is accepted and changes nothing: the only engine since the
+// JavaScript simulator went (#76); logged commands still carry it.
+//
 // --bench plays one warrior against every warrior of the set instead of a
-// round robin, on the wasm engine unless --engine says otherwise, and lists
-// the opponents from the worst result to the best.
+// round robin and lists the opponents from the worst result to the best.
 //
 // Every pairing plays --rounds rounds. The start position of the second
 // warrior in the first round is derived from --seed and the pairing, later
@@ -33,7 +35,7 @@
 //
 // --jobs is the number of threads, the main thread included (default: all
 // hardware threads). They take tasks from one shared list until it is empty.
-// With --engine wasm a task is a block of 8 rounds of a pairing (runMatch's
+// A task is a block of 8 rounds of a pairing (runMatch's
 // firstRound; 1 round with --progress, see makeTasks()), and the tasks go
 // round by round: the first block of every pairing, then the second ...
 // Rounds depend on each other only through p-space, which only LDP reads, so
@@ -54,7 +56,6 @@ import { readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { availableParallelism } from 'node:os';
 import { basename, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { Mars } from '../js/mars.js';
 import { OP } from '../js/opcodes.js';
 import { compileWasmMars, createWasmMarsSync, packWarrior, assembleWasm as assemble } from '../wasm/42mars.js';
 import { nativeMatch } from './native-input.mjs';
@@ -115,42 +116,17 @@ function views(shared) {
 function drain(shared, opts, module, done = () => {}) {
   const { warriors, at } = shared;
   const { i32, roundsDone, res, outcomes } = views(shared);
-  // The JS engine reads instruction objects: unpacked on first use.
-  const unpacked = new Array(warriors.length);
-  const code = (w) => {
-    if (module) return warriors[w];
-    if (unpacked[w]) return unpacked[w];
-    const p = warriors[w].packed;
-    const instructions = [];
-    for (let k = 0; k < p.length; k += 5) instructions.push({ op: p[k] >> 3, mod: p[k] & 7, aMode: p[k + 1], aVal: p[k + 2], bMode: p[k + 3], bVal: p[k + 4] });
-    return (unpacked[w] = { ...warriors[w], instructions });
-  };
-  const wasm = module ? createWasmMarsSync(opts, module) : null;
+  const wasm = createWasmMarsSync(opts, module);
   for (;;) {
     const id = Atomics.add(i32, 0, 1);
     if (id >= at.tasks) return;
     const [a, b, seed, firstRound, rounds, pairing] = i32.subarray(CTL + TASK * id, CTL + TASK * (id + 1));
-    let wa, wb, instructions, played;
-    if (wasm) {
-      // The match, or a block of its rounds, runs inside WebAssembly, with
-      // early tie detection.
-      const r = wasm.runMatch([code(a), code(b)], { rounds, seed, firstRound, permute: opts.permute });
-      [wa, wb] = r.warriors;
-      instructions = r.instructions;
-      played = r.results;
-    } else {
-      if (firstRound) throw new Error('--engine js plays whole matches only');
-      const m = new Mars({ ...opts, headless: true });
-      m.load([code(a), code(b)], { seed, permute: opts.permute });
-      instructions = 0;
-      for (let r = 0; r < rounds; r++) {
-        m.startRound();
-        while (!m.roundOver) m.run(1 << 22);
-        instructions += m.time;
-      }
-      [wa, wb] = m.warriors;
-      played = m.results;
-    }
+    // The match, or a block of its rounds, runs inside WebAssembly, with
+    // early tie detection.
+    const r = wasm.runMatch([warriors[a], warriors[b]], { rounds, seed, firstRound, permute: opts.permute });
+    const [wa, wb] = r.warriors;
+    const instructions = r.instructions;
+    const played = r.results;
     res.set([wa.wins, wa.losses, wa.ties, wb.wins, wb.losses, wb.ties, instructions], RESULT * id);
     for (const { round, survivors } of played) {
       outcomes[pairing * at.rounds + round - 1] = survivors.length === 2 ? OUTCOME_TIE : survivors[0] === 0 ? OUTCOME_A : OUTCOME_B;
@@ -171,7 +147,7 @@ function workerMain() {
 // ------------------------------------------------------------------ main
 
 function parseArgs(argv) {
-  const o = { files: [], rounds: 100, jobs: availableParallelism(), seed: 1, engine: 'js',
+  const o = { files: [], rounds: 100, jobs: availableParallelism(), seed: 1,
     size: 8000, cycles: 80000, processes: 8000, length: 100, distance: 100, readLimit: 0, writeLimit: 0, matrix: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -186,7 +162,9 @@ function parseArgs(argv) {
     else if (a === '--distance') o.distance = num();
     else if (a === '--read-limit') o.readLimit = num(); // pmars -R, 0: the core size
     else if (a === '--write-limit') o.writeLimit = num(); // pmars -W
-    else if (a === '--engine') o.engine = argv[++i];
+    else if (a === '--engine') {
+      if (argv[++i] !== 'wasm') throw new Error('--engine: only wasm, the JavaScript engine is gone (#76)');
+    }
     else if (a === '--matrix') o.matrix = true;
     else if (a === '--json') o.json = argv[++i];
     else if (a === '--pmars') o.pmars = argv[++i];
@@ -198,7 +176,6 @@ function parseArgs(argv) {
     else if (a === '--progress') o.progress = true;
     else o.files.push(a);
   }
-  if (o.bench && !argv.includes('--engine')) o.engine = 'wasm';
   return o;
 }
 
@@ -219,7 +196,7 @@ function pairPosition(seed, a, b, o) {
   return o.distance + (h % (o.size + 1 - 2 * o.distance));
 }
 
-// The tasks: with the wasm engine a pairing whose warriors have no LDP is
+// The tasks: a pairing whose warriors have no LDP is
 // split into blocks of BLOCK rounds, ordered by round, so that the standings
 // after each round are there early and all threads stay busy to the end
 // whatever the number of pairings. Whole pairings come first: they are the
@@ -230,7 +207,7 @@ function pairPosition(seed, a, b, o) {
 const BLOCK = 8;
 function makeTasks(o, codes, pairs) {
   const hasLdp = codes.map((c) => c.instructions.some((x) => x.op === OP.LDP));
-  const block = o.engine !== 'wasm' ? o.rounds : o.progress && !o.permute ? 1 : BLOCK;
+  const block = o.progress && !o.permute ? 1 : BLOCK;
   const whole = [];
   const split = [];
   pairs.forEach((p, k) => {
@@ -246,7 +223,7 @@ function makeTasks(o, codes, pairs) {
 // 1, 2 .. rounds as soon as every pairing has played round k, with the
 // results of rounds 1 .. k per pairing ({ a: [w, l, t], b: [w, l, t] }).
 async function runEngine(o, codes, pairs, onRound = null) {
-  const module = o.engine === 'wasm' ? await compileWasmMars() : null;
+  const module = await compileWasmMars();
   const tasks = makeTasks(o, codes, pairs);
   const opts = { coreSize: o.size, maxCycles: o.cycles, maxProcesses: o.processes, maxLength: o.length, minDistance: o.distance, rounds: o.rounds, readLimit: o.readLimit, writeLimit: o.writeLimit, permute: Boolean(o.permute) };
   const shared = shareTasks(codes, tasks, o.rounds, pairs.length);
@@ -396,7 +373,7 @@ async function main() {
   const all = collectFiles(o.files);
   if (o.bench) all.unshift(o.bench);
   if (all.length < 2) {
-    console.error('usage: node tools/tournament.mjs <dir or .red files...> [--rounds N] [--jobs N] [--engine js|wasm] [--pmars path [--compare]] [--matrix] [--json file] [--bench warrior.red] [--permute] [--icws88] [--progress]');
+    console.error('usage: node tools/tournament.mjs <dir or .red files...> [--rounds N] [--jobs N] [--pmars path [--compare]] [--matrix] [--json file] [--bench warrior.red] [--permute] [--icws88] [--progress]');
     process.exit(2);
   }
   const files = [];
@@ -461,10 +438,10 @@ async function main() {
     const s = (performance.now() - t0) / 1000;
     const t = o.bench ? benchTable(o, names, pairs, results) : table(o, names, pairs, results);
     console.log(t.text);
-    console.error(`engine (${o.engine}): ${s.toFixed(2)} s, ${(instructions / 1e6).toFixed(0)}M instructions executed, ${(instructions / s / 1e6).toFixed(0)}M instructions/s`);
+    console.error(`engine (wasm): ${s.toFixed(2)} s, ${(instructions / 1e6).toFixed(0)}M instructions executed, ${(instructions / s / 1e6).toFixed(0)}M instructions/s`);
     report = o.bench
-      ? { engine: o.engine, seconds: s, instructions, opponents: t.rows, total: t.total, results }
-      : { engine: o.engine, seconds: s, instructions, ranking: t.rows, matrix: t.matrix, results };
+      ? { engine: 'wasm', seconds: s, instructions, opponents: t.rows, total: t.total, results }
+      : { engine: 'wasm', seconds: s, instructions, ranking: t.rows, matrix: t.matrix, results };
     if (onRound) report.progress = progress;
   }
   if (o.pmars) {

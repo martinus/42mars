@@ -2,18 +2,23 @@
 // Copyright (c) 2026 Martin Leitner-Ankerl
 
 // The watch of the library (42mars.h, m42_watch; wasm/42mars.js with
-// { watch: true }) against the visualizer bookkeeping of mars.js: owner,
-// execBy, readBy, bump, origin, the times, territory, execHeat, the trace
-// and the process deaths, compared after every chunk of random length, for
-// random warriors with 2 to 4 warriors and with read and write limits.
+// { watch: true }): owner, execBy, readBy, bump, origin, the times,
+// territory, execCount, the trace and the process deaths after every chunk
+// of random length, for random warriors with 2 to 4 warriors and with read
+// and write limits, against digests recorded where they were mars.js's
+// bookkeeping (test/recorded.js, test/fixtures/watch.json). The trace flags
+// against the queue, and the core and the queues against an engine without
+// the watch, need no recording.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { Mars } from '../js/mars.js';
 import { compileWasmMars, createWasmMarsSync, assembleWasm as assemble } from '../wasm/42mars.js';
 
+import { Digest, recorded } from './recorded.js';
+
 const module = await compileWasmMars();
+const check = recorded('watch.json');
 
 let state = 0x2545f491;
 const rand = (k) => {
@@ -61,94 +66,71 @@ const RULES = [
   { coreSize: 120, maxCycles: 1000, maxProcesses: 16, maxLength: 8, minDistance: 8, readLimit: 30, writeLimit: 60 },
 ];
 
-const NEVER = -0x40000000; // mars.js's time of a cell not touched yet
-const queue = (W) => Array.from({ length: W.tasks }, (_, k) => W.queue[(W.head + k) % W.queue.length]);
+const bytes = (a) => Buffer.from(a.buffer, a.byteOffset, a.byteLength);
 
-// The watch, the core and the queues against mars.js. The messages are
-// made only for a difference: this runs after every chunk.
-function compareWatch(m, w, where) {
-  const v = w.watch();
-  const c = w.core();
-  const n = m.coreSize;
-  const fail = (what, got, want) => assert.fail(`${where}, ${what}: ${got}, mars.js ${want}`);
-  for (let i = 0; i < n; i++) {
-    if (v.owner[i] !== m.owner[i] + 1) fail(`cell ${i} owner`, v.owner[i] - 1, m.owner[i]);
-    if (v.execBy[i] !== m.execBy[i] + 1) fail(`cell ${i} execBy`, v.execBy[i] - 1, m.execBy[i]);
-    if (v.readBy[i] !== m.readBy[i] + 1) fail(`cell ${i} readBy`, v.readBy[i] - 1, m.readBy[i]);
-    if (v.bump[i] !== m.bump[i]) fail(`cell ${i} bump`, v.bump[i], m.bump[i]);
-    if (v.origin[i] !== m.origin[i]) fail(`cell ${i} origin`, v.origin[i], m.origin[i]);
-    if (v.tWrite[i] !== (m.tWrite[i] === NEVER ? 0 : m.tWrite[i])) fail(`cell ${i} tWrite`, v.tWrite[i], m.tWrite[i]);
-    if (v.tRead[i] !== (m.tRead[i] === NEVER ? 0 : m.tRead[i])) fail(`cell ${i} tRead`, v.tRead[i], m.tRead[i]);
-    if (v.tExec[i] !== (m.tExec[i] === NEVER ? 0 : m.tExec[i])) fail(`cell ${i} tExec`, v.tExec[i], m.tExec[i]);
-    if (c.op[i] !== m.op[i] || c.am[i] !== m.am[i] || c.bm[i] !== m.bm[i] || c.av[i] !== m.av[i] || c.bv[i] !== m.bv[i]) {
-      fail(`cell ${i}`, JSON.stringify(w.cell(i)), JSON.stringify(m.cell(i)));
-    }
-  }
-  m.warriors.forEach((M, i) => {
-    const W = w.warriors[i];
-    assert.equal(W.territory, M.territory, `${where}, warrior ${i}: territory`);
-    assert.deepEqual(Array.from(W.execCount), Array.from(M.execHeat), `${where}, warrior ${i}: execCount`);
-    assert.deepEqual(W.processes(), queue(M), `${where}, warrior ${i}: queue`);
-  });
-  // The trace of the instructions of this round that it still holds.
-  const T = v.trace.length / 4;
-  for (let t = Math.max(1, m.time - T + 1); t <= m.time; t++) {
-    const k = t % T;
-    if (v.trace[4 * k] !== m.tracePc[k] || v.trace[4 * k + 1] !== m.traceA[k] || v.trace[4 * k + 2] !== m.traceB[k] || v.trace[4 * k + 3] !== m.traceMeta[k]) {
-      fail(`trace at time ${t}`, v.trace.subarray(4 * k, 4 * k + 4).join(), [m.tracePc[k], m.traceA[k], m.traceB[k], m.traceMeta[k]].join());
-    }
-  }
+// The core, the queues and the time of the watched engine x against the
+// engine w without a watch, which runs the specialized loops.
+function compareEngines(w, x, where) {
+  assert.equal(x.time, w.time, `${where}: time`);
+  const a = w.core(), b = x.core();
+  for (const k of ['op', 'am', 'bm', 'av', 'bv']) assert.ok(bytes(a[k]).equals(bytes(b[k])), `${where}: core ${k}`);
+  w.warriors.forEach((W, i) => assert.deepEqual(x.warriors[i].processes(), W.processes(), `${where}, warrior ${i}: queue`));
 }
 
-// Plays a match on both engines in random chunks and compares the watch
-// after each chunk.
-function compareMatch(o, codes, seed, rounds) {
-  const m = new Mars(o);
-  const w = createWasmMarsSync({ ...o, watch: true }, module);
-  m.load(codes, { seed });
+// Adds the watch of engine x to the digest d.
+function addWatch(d, x) {
+  const v = x.watch();
+  d.add(x.time, v.owner, v.execBy, v.readBy, v.bump, v.origin, v.tWrite, v.tRead, v.tExec, v.territory, v.execCount, v.trace, x.events());
+}
+
+// Plays a match in random chunks on an engine with the watch and one
+// without; returns [what, digest of the watch after every chunk].
+function watchMatch(o, codes, seed, rounds) {
+  const w = createWasmMarsSync(o, module);
+  const x = createWasmMarsSync({ ...o, watch: true }, module);
   w.load(codes, { seed });
-  const where = `${JSON.stringify(o)} seed ${seed}`;
+  x.load(codes, { seed });
+  const where = `${JSON.stringify(o)} seed ${seed} warriors ${codes.map((c) => c.name).join(', ')}`;
+  const d = new Digest();
   for (let r = 0; r < rounds; r++) {
-    m.startRound();
     w.startRound();
-    compareWatch(m, w, `${where} round ${r + 1} start`);
-    while (!m.roundOver) {
+    x.startRound();
+    addWatch(d, x);
+    while (!x.roundOver) {
       // at most 1000 instructions: the watch keeps the last 1024 deaths
       const n = 1 + rand(rand(2) ? 5 : 1000);
-      assert.equal(w.run(n), m.run(n), `${where} round ${r + 1}: executed count`);
-      const at = `${where} round ${r + 1} time ${m.time}`;
-      assert.equal(w.time, m.time, `${at}: time`);
-      assert.deepEqual(w.events(), m.events, `${at}: events`);
-      m.events = [];
-      compareWatch(m, w, at);
+      assert.equal(x.run(n), w.run(n), `${where} round ${r + 1}: executed count`);
+      compareEngines(w, x, `${where} round ${r + 1} time ${x.time}`);
+      addWatch(d, x);
     }
   }
-  assert.deepEqual(w.results, m.results, `${where}: results`);
+  assert.deepEqual(x.results, w.results, `${where}: results`);
+  return [where, d.digest()];
 }
 
-test('the watch agrees with the bookkeeping of mars.js on random battles', () => {
-  let battles = 0;
+test('the watch gives the recorded bookkeeping on random battles', () => {
+  const got = [];
   for (let i = 0; i < 150; i++) {
     const o = RULES[i % RULES.length];
     const most = Math.max(1, Math.min(4, o.minDistance ? Math.floor(o.coreSize / o.minDistance) : 4));
     const nw = most === 1 ? 1 : 2 + rand(most - 1);
     const codes = randomCodes(o, nw);
     if (!codes) continue;
-    compareMatch(o, codes, rand(2147483646) + 1, 1 + rand(3));
-    battles++;
+    got.push(watchMatch(o, codes, rand(2147483646) + 1, 1 + rand(3)));
   }
-  assert.ok(battles > 100, `only ${battles} battles assembled`);
+  assert.ok(got.length > 100, `only ${got.length} battles assembled`);
+  check('random battles', got);
 });
 
-test('the watch agrees with mars.js on the sample warriors', () => {
+test('the watch gives the recorded bookkeeping on the sample warriors', () => {
   const all = ['dwarf', 'imp', 'lantern', 'origami', 'seeker'].map(sample);
-  for (let i = 0; i < all.length; i++) {
-    compareMatch({}, [all[i], all[(i + 1) % all.length]], 1000 + i, 2);
-  }
-  compareMatch({ warriors: 3 }, all.slice(0, 3), 77, 1);
+  const got = [];
+  for (let i = 0; i < all.length; i++) got.push(watchMatch({}, [all[i], all[(i + 1) % all.length]], 1000 + i, 2));
+  got.push(watchMatch({ warriors: 3 }, all.slice(0, 3), 77, 1));
+  check('sample warriors', got);
 });
 
-// Without mars.js: the flags of each trace entry against what the
+// The flags of each trace entry against what the
 // instruction did to its warrior's queue, one instruction at a time. The
 // queue loses its head and gains what the instruction queued: nothing when
 // the process died, the A pointer for a jump, pc + 2 for a skip, pc + 1 and

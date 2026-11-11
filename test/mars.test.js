@@ -1,12 +1,17 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 Martin Leitner-Ankerl
+//
+// The simulator of the library (wasm/42mars.js) on small warriors: pMARS's
+// rules, scoring, placement and p-space, and the watch.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, existsSync } from 'node:fs';
-import { assembleWasm as assemble } from '../wasm/42mars.js';
-import { Mars, rng } from '../js/mars.js';
+import { assembleWasm as assemble, createWasmMarsSync, rng } from '../wasm/42mars.js';
 import { formatInstruction } from '../js/opcodes.js';
+
+// An engine with the watch (watch(), events()).
+const engine = (opts = {}) => createWasmMarsSync({ ...opts, watch: true });
 
 function warrior(src, opts) {
   const w = assemble(src, opts);
@@ -16,7 +21,7 @@ function warrior(src, opts) {
 
 // Single warrior at address 0.
 function solo(src, opts = {}) {
-  const m = new Mars(opts);
+  const m = engine(opts);
   m.load([warrior(src, opts)], { positions: [0] });
   m.startRound();
   return m;
@@ -26,7 +31,7 @@ const cellText = (m, a) => {
   const c = m.cell(a);
   return formatInstruction(c.op, c.mod, c.aMode, c.aVal, c.bMode, c.bVal, m.coreSize);
 };
-const queue = (w) => Array.from({ length: w.tasks }, (_, k) => w.queue[(w.head + k) % w.queue.length]);
+const queue = (w) => w.processes();
 
 test('imp copies itself forward', () => {
   const m = solo('mov.i 0, 1\n');
@@ -118,7 +123,7 @@ test('A-field indirect modes', () => {
 });
 
 test('two survivors tie after warriors * MAXCYCLES cycles', () => {
-  const m = new Mars();
+  const m = engine();
   m.load([warrior('jmp 0\n'), warrior('jmp 0\n')], { seed: 0 });
   m.startRound();
   m.run(1e6);
@@ -129,7 +134,7 @@ test('two survivors tie after warriors * MAXCYCLES cycles', () => {
 });
 
 test('the last warrior standing wins, and death shortens the cycle budget', () => {
-  const m = new Mars();
+  const m = engine();
   m.load([warrior('jmp 0\n'), warrior('dat 0\n'), warrior('jmp 0\n')], { seed: 1 });
   m.startRound();
   m.run(2); // warrior 0 runs, warrior 1 dies
@@ -138,11 +143,11 @@ test('the last warrior standing wins, and death shortens the cycle budget', () =
   const before = 3 * 80000 - 1;
   const expected = before - 1 - Math.trunc((before - 1) / 3) - 1;
   assert.equal(m.cyclesLeft, expected);
-  assert.ok(m.events.some((e) => e.type === 'death' && e.warrior === 1));
+  assert.ok(m.events().some((e) => e.type === 'death' && e.warrior === 1));
 });
 
 test('placement of the second warrior follows pMARS for a given seed', () => {
-  const m = new Mars();
+  const m = engine();
   m.load([warrior('jmp 0\n'), warrior('jmp 0\n')], { seed: 5 });
   m.startRound();
   assert.equal(m.warriors[1].position, 105); // like pmars -F 105
@@ -153,7 +158,7 @@ test('placement of the second warrior follows pMARS for a given seed', () => {
 
 test('p-space: last result starts at CORESIZE-1 and survives into the next round', () => {
   const src = 'ldp.ab #0, res\nstp.ab #42, #1\nldp.ab #1, res2\njmp 0\nres dat 0, 0\nres2 dat 0, 0\n';
-  const m = new Mars({ maxCycles: 100 });
+  const m = engine({ maxCycles: 100 });
   m.load([warrior(src)], { positions: [0] });
   m.startRound();
   m.run(3);
@@ -165,22 +170,23 @@ test('p-space: last result starts at CORESIZE-1 and survives into the next round
   assert.equal(m.bv[4], 1, 'solo survivor sees 1 as the last result');
 });
 
-test('visualization bookkeeping: owner, origin and territory', () => {
-  const m = new Mars();
+test('the watch: owner, origin and territory', () => {
+  const m = engine();
   m.load([warrior('mov.i 0, 1\n'), warrior('jmp 0\n')], { positions: [0, 4000] });
   m.startRound();
   m.run(10);
-  assert.equal(m.owner[3], 0);
-  assert.equal(m.origin[3], 0); // copy of warrior 0, instruction 0
+  const v = m.watch();
+  assert.equal(v.owner[3], 1); // warrior 0, as index + 1
+  assert.equal(v.origin[3], 0); // copy of warrior 0, instruction 0
   assert.equal(m.warriors[0].territory, 1 + 5);
-  assert.ok(m.tExec[4000] > 0);
+  assert.ok(v.tExec[4000] > 0);
 });
 
 // pMARS ships validate.red (GPL, not in this repository). It loops forever on
 // a compliant MARS and kills itself otherwise. Point PMARS_VALIDATE at it.
 const validate = process.env.PMARS_VALIDATE;
 test('pMARS validate.red self-ties', { skip: !validate || !existsSync(validate) ? 'PMARS_VALIDATE not set' : false }, () => {
-  const m = new Mars();
+  const m = engine();
   m.load([warrior(readFileSync(validate, 'latin1'), { warriors: 1 })], { positions: [0] });
   m.startRound();
   m.run(1e6);
@@ -191,28 +197,30 @@ test('pMARS validate.red self-ties', { skip: !validate || !existsSync(validate) 
 // assemble() of a source without instructions returns such an object.
 const empty = (name) => ({ ok: true, instructions: [], start: 0, pin: null, name, author: 'nobody' });
 
-for (const headless of [false, true]) {
-  test(`a warrior without instructions runs whatever is at its position${headless ? ' (headless)' : ''}`, () => {
+for (const watch of [true, false]) {
+  test(`a warrior without instructions runs whatever is at its position${watch ? ' (watched)' : ''}`, () => {
     // Placed onto warrior 0's imp loop: it executes that code and survives.
-    let m = new Mars({ headless });
+    let m = createWasmMarsSync({ watch });
     m.load([warrior('jmp 0\n'), empty('ghost')], { positions: [0, 0] });
     m.startRound();
     const ghost = m.warriors[1];
-    assert.equal(ghost.execHeat.length, 0);
-    assert.equal(ghost.territory, 0);
+    if (watch) {
+      assert.equal(ghost.execCount.length, 0);
+      assert.equal(ghost.territory, 0);
+    }
     assert.deepEqual(queue(ghost), [0]);
     assert.equal(m.run(4), 4);
     assert.deepEqual(queue(ghost), [0]);
     assert.equal(ghost.alive, true);
-    if (!headless) {
-      assert.equal(m.warriors[0].execHeat[0], 4); // heat goes to the warrior whose code it is
-      assert.equal(m.execBy[0], 1);
+    if (watch) {
+      assert.equal(m.warriors[0].execCount[0], 4); // counted for the warrior whose code it is
+      assert.equal(m.watch().execBy[0], 2); // warrior 1, as index + 1
     }
     m.run(1e6);
     assert.deepEqual(m.roundResult.survivors, [0, 1]);
 
     // In an empty part of the core it executes DAT and dies.
-    m = new Mars({ headless });
+    m = createWasmMarsSync({ watch });
     m.load([warrior('jmp 0\n'), empty('ghost')], { positions: [0, 4000] });
     m.startRound();
     m.run(1e6);
@@ -221,7 +229,7 @@ for (const headless of [false, true]) {
     assert.equal(m.warriors[1].diedAt, 2);
 
     // Only empty warriors: two die, then the round ends with the third.
-    m = new Mars({ headless });
+    m = createWasmMarsSync({ watch, warriors: 3 });
     m.load([empty('a'), empty('b'), empty('c')], { positions: [0, 100, 200] });
     m.startRound();
     m.run(1e6);

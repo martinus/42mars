@@ -13,11 +13,9 @@ Setup: `O=${COREWAR_ORACLE:-$HOME/.local/share/corewar-theater}`, `SEED=$(date +
 3. pMARS differential, each must end with no differences (exit code 0):
    ```sh
    D="node tools/pmars-diff.mjs --pmars $O/bin/pmars --corpus $O/corpus --seed $SEED"
-   $D --pmars-trace $O/bin/pmars-trace              # mars.js with bookkeeping
-   $D --pmars-trace $O/bin/pmars-trace --headless   # mars.js headless
-   $D --pmars-trace $O/bin/pmars-trace --wasm       # wasm, round by round, core hash per round
-   $D --wasm-match                                  # wasm runMatch with early ties, scores only
-   $D --pmars-trace $O/bin/pmars-trace --watch --only battles,fuzz,multi   # wasm with a watch: the loop that records
+   $D --pmars-trace $O/bin/pmars-trace              # round by round, core hash per round
+   $D --pmars-trace $O/bin/pmars-trace --watch      # the same with a watch: the loop that records
+   $D --wasm-match                                  # runMatch with early ties, scores only
    ```
    Assembler-only change: `$D --only listings,exprs,sources` is enough. Use `--only battles,fuzz,multi` while iterating on the simulator and the full run at the end. `--scale 4` for a deeper run. Any difference is a bug in our engine unless the case is in section 4 of `docs/redcode-semantics.md`; reproduce it as a small test before fixing. A run without differences deletes its temporary folder; a run with differences keeps it and ends with `tmp files in <dir>`, which holds the generated warriors to reproduce them. `--tmp <dir>` is never deleted.
 4. Expression evaluator changed: `node tools/expr-fuzz.mjs --eval $O/bin/evalh --seed $SEED`: no differences except the known ones in the error kind (section 4 of the semantics doc).

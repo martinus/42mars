@@ -9,44 +9,17 @@
 // continuation lines, ;redcode and ;assert lines, and broken input.
 //
 // test/fixtures/asm-c.json holds a digest of the results per group of
-// cases. They were recorded where the C code gave the same results as the
-// JavaScript assembler it was ported from (js/assembler.js and js/expr.js,
-// removed on 11th November 2026; the C code adds only the warnings that
-// start with "pMARS"). For an intended change of the results, record them
-// again with `ASM_C_RECORD=1 node --test test/asm-c.test.js` and say why in
-// the commit.
+// cases (test/recorded.js). They were recorded where the C code gave the
+// same results as the JavaScript assembler it was ported from
+// (js/assembler.js and js/expr.js, removed on 11th November 2026; the C code
+// adds only the warnings that start with "pMARS").
 
-import { test, after } from 'node:test';
+import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createHash } from 'node:crypto';
-import { readFileSync, writeFileSync } from 'node:fs';
 import { assembleWasm, evaluateWasm } from '../wasm/42mars.js';
+import { recorded } from './recorded.js';
 
-const FIXTURE = new URL('./fixtures/asm-c.json', import.meta.url);
-const RECORD = Boolean(process.env.ASM_C_RECORD);
-const recorded = RECORD ? {} : JSON.parse(readFileSync(FIXTURE, 'utf8'));
-const recording = {};
-after(() => {
-  if (RECORD) writeFileSync(FIXTURE, `${JSON.stringify(recording, null, '\t')}\n`);
-});
-
-const digest = (value) => createHash('sha256').update(JSON.stringify(value, (k, v) => (typeof v === 'bigint' ? `${v}n` : v))).digest('hex').slice(0, 16);
-
-// Checks the digests of one group of results against the recorded ones (or
-// records them). `results` is a list of [what, result] pairs; a group of
-// `per` results shares one digest.
-function check(name, results, per = 1) {
-  const got = [];
-  for (let i = 0; i < results.length; i += per) got.push(digest(results.slice(i, i + per).map(([, r]) => r)));
-  if (RECORD) {
-    recording[name] = got;
-    return;
-  }
-  const want = recorded[name];
-  assert.equal(got.length, want.length, `${name}: number of groups`);
-  const k = got.findIndex((d, i) => d !== want[i]);
-  if (k >= 0) assert.fail(`${name}: results ${k * per} to ${k * per + per - 1} changed, the first of them: ${JSON.stringify(results[k * per][0])}`);
-}
+const check = recorded('asm-c.json');
 
 function generator(seed) {
   let s = seed >>> 0 || 1;
@@ -177,7 +150,7 @@ test('random sources give the recorded results', () => {
   for (let k = 0; k < 4000; k++) {
     const src = source(g);
     const opts = k % 7 === 0 ? { coreSize: 80, maxLength: 5 } : k % 3 === 0 ? { icws88: true } : {};
-    results.push([src, assembleWasm(src, opts)]);
+    results.push([JSON.stringify(src), assembleWasm(src, opts)]);
   }
   check('sources', results, 100);
 });
@@ -187,14 +160,14 @@ test('random expressions give the recorded results', () => {
   const results = [];
   for (let k = 0; k < 20000; k++) {
     const e = expr(g);
-    results.push([e, evaluateWasm(e)]);
+    results.push([JSON.stringify(e), evaluateWasm(e)]);
   }
   check('expressions', results, 100);
 });
 
 test('the C assembler on chosen cases', () => {
   const results = [];
-  const run = (src, opts) => results.push([src, assembleWasm(src, opts)]);
+  const run = (src, opts) => results.push([JSON.stringify(src), assembleWasm(src, opts)]);
   // registers to start with (the first warrior of a pMARS run)
   run(';assert s == 2 && W == 2\n dat #s, #w\n dat #x=x+1, #a\n', { registers: { s: 2, W: 2, x: -5, a: 7 } });
   run(';assert s == 2\n dat #s, #w\n');

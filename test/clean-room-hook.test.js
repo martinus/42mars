@@ -52,7 +52,7 @@ const allowed = [
   ['Bash', { command: 'git log --oneline --all' }],
   ['Read', { file_path: '/repo/tools/pmars-diff.mjs' }],
   ['Read', { file_path: '/repo/docs/performance-log.md' }],
-  ['Edit', { file_path: 'js/mars.js', old_string: 'a', new_string: 'b' }],
+  ['Edit', { file_path: 'js/opcodes.js', old_string: 'a', new_string: 'b' }],
   ['WebFetch', { url: 'https://corewar.co.uk/standards/icws94.htm', prompt: 'x' }],
   ['Read', { file_path: '/home/u/.claude/projects/-home-u-repo/memory/MEMORY.md' }],
 ];

@@ -6,7 +6,7 @@
 //
 //   node tools/pmars-diff.mjs --pmars path/to/pmars [--corpus dir] [--tmp dir]
 //        [--jobs 16] [--seed 1] [--scale 1] [--only listings,exprs,...]
-//        [--headless | --wasm | --wasm-match] [--permute] [--icws88]
+//        [--watch | --wasm-match] [--permute] [--icws88]
 //
 // Sections:
 //   listings   every .red file in --corpus: pMARS listing (pmars -r 0) vs
@@ -17,12 +17,12 @@
 //   battles    corpus pairs at fixed positions: wins/ties per warrior
 //   fuzz       random warriors on core sizes 80, 800 and 8000
 //   multi      3 and 4 warrior battles (random warriors)
-// --headless runs our simulator without the visualizer bookkeeping.
-// --wasm runs the battles, fuzz and multi sections on the wasm engine
-// (wasm/42mars.js) instead of mars.js, round by round.
-// --watch: --wasm with a watch attached (createWasmMars({ watch: true })),
-// so that the rounds run in the loop that records the visualizer
-// bookkeeping.
+// The battles, fuzz and multi sections run on the wasm engine
+// (wasm/42mars.js), round by round. --wasm says the same; it is accepted
+// because logged commands carry it from the time of the JavaScript
+// simulator (removed in #76, and --headless with it).
+// --watch: with a watch attached (createWasmMars({ watch: true })), so that
+// the rounds run in the loop that records the visualizer bookkeeping.
 // --wasm-match plays each battle with one runMatch() call with early tie
 // detection, which leaves the final core of some rounds different, so it
 // compares the scores only and does not go with --pmars-trace.
@@ -59,7 +59,6 @@ import { execFile } from 'node:child_process';
 import { mkdirSync, readFileSync, readdirSync, writeFileSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir, cpus } from 'node:os';
 import { join } from 'node:path';
-import { Mars } from '../js/mars.js';
 import { assembleWasm, compileWasmMars, createWasmMarsSync } from '../wasm/42mars.js';
 import { formatListing } from '../js/opcodes.js';
 
@@ -80,11 +79,14 @@ const TMP = arg('tmp') || mkdtempSync(join(tmpdir(), 'pmars-diff-'));
 const JOBS = Number(arg('jobs', Math.max(1, cpus().length - 2)));
 const SCALE = Number(arg('scale', 1));
 const ONLY = arg('only') ? new Set(arg('only').split(',')) : null;
-const HEADLESS = args.includes('--headless');
+if (args.includes('--headless')) {
+  console.error('--headless: the JavaScript simulator is gone (#76); the wasm engine is the default');
+  process.exit(2);
+}
 const WASM_MATCH = args.includes('--wasm-match');
 const PERMUTE = args.includes('--permute');
 const WATCH = args.includes('--watch');
-const WASM = args.includes('--wasm') || WASM_MATCH || WATCH ? await compileWasmMars() : null;
+const WASM = await compileWasmMars();
 // --icws88: every pMARS call gets -8 (rules()), every assembly icws88.
 const ICWS88 = args.includes('--icws88');
 const ourAssemble = ICWS88 ? (source, o = {}) => assembleWasm(source, { ...o, icws88: true }) : assembleWasm;
@@ -438,7 +440,7 @@ async function compareBattle(files, sources, o, pos, rounds) {
   const want = lines.map((l) => l.trim().split(/\s+/).map(Number));
   const ws = sources.map((s, i) => ourAssemble(s, { ...o, warriors: files.length, rounds, registers: i === 0 ? firstRegisters(files.length) : undefined }));
   if (ws.some((w) => !w.ok)) return `${files.join(' ')}: pMARS ran it, we do not assemble it`;
-  const m = WASM ? createWasmMarsSync({ ...o, rounds, watch: WATCH }, WASM) : new Mars({ ...o, rounds, headless: HEADLESS });
+  const m = createWasmMarsSync({ ...o, rounds, watch: WATCH }, WASM);
   const seed = (permute ? 2 : 1) * (pos - o.minDistance);
   if (WASM_MATCH) m.runMatch(ws, { rounds, seed, permute, earlyTie: true });
   else m.load(ws, { seed, permute });

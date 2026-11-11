@@ -3,10 +3,11 @@
 // Copyright (c) 2026 Martin Leitner-Ankerl
 // Simulator speed: 3 warrior pairs from a warrior folder, 200 rounds each (or argv[3]).
 // Usage: node tools/bench.mjs <dir with agony.red, bubbles.red, bomber.red, chalk.red, army.red, bananasplit.red> [rounds]
-//        [--headless | --wasm | --wasm-match [--early-tie]]
-//   (default)     mars.js with the visualizer bookkeeping
-//   --headless    mars.js without it
-//   --wasm        the wasm engine through the step API, run(1e6) from JS
+//        [--watch | --wasm-match [--early-tie]]
+//   (default)     the wasm engine through the step API, run(1e6) from JS
+//                 (--wasm, accepted for logged commands, says the same)
+//   --watch       the same with a watch attached: the loop that records the
+//                 visualizer bookkeeping
 //   --wasm-match  the wasm engine, whole match in one runMatch() call
 //   --early-tie   with --wasm-match: stop rounds that must end in a tie
 //                 early. Then the rate is the effective one: the instructions
@@ -16,19 +17,17 @@
 // the wasm module.
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { Mars } from '../js/mars.js';
 import { compileWasmMars, createWasmMarsSync, assembleWasm as assemble } from '../wasm/42mars.js';
 
-const flags = ['--headless', '--wasm', '--wasm-match'];
+const flags = ['--watch', '--wasm-match', '--wasm'];
 const earlyTie = process.argv.includes('--early-tie');
 const args = process.argv.slice(2).filter((a) => !flags.includes(a) && a !== '--early-tie');
-const mode = flags.find((f) => process.argv.includes(f)) ?? 'visual';
+const mode = flags.find((f) => process.argv.includes(f)) ?? '--wasm';
 const dir = args[0];
 const ROUNDS = Number(args[1] || 200);
 const pairs = [['agony.red', 'bubbles.red'], ['bomber.red', 'chalk.red'], ['army.red', 'bananasplit.red']];
-const compiled = await compileWasmMars(); // also the assembler
+const module = await compileWasmMars(); // also the assembler
 const codes = pairs.map((pair) => pair.map((f) => assemble(readFileSync(join(dir, f), 'latin1'))));
-const module = mode.startsWith('--wasm') ? compiled : null;
 let steps = 0;
 let executed = 0;
 const t0 = performance.now();
@@ -39,7 +38,7 @@ for (const pair of codes) {
     executed += r.instructions;
     continue;
   }
-  const m = module ? createWasmMarsSync({}, module) : new Mars({ headless: mode === '--headless' });
+  const m = createWasmMarsSync({ watch: mode === '--watch' }, module);
   m.load(pair, { seed: 1234 });
   for (let r = 0; r < ROUNDS; r++) {
     m.startRound();
@@ -47,6 +46,6 @@ for (const pair of codes) {
   }
 }
 const ms = performance.now() - t0;
-let label = mode === 'visual' ? '' : `, ${mode.slice(2)}`;
+let label = `, ${mode.slice(2)}`;
 if (earlyTie && mode === '--wasm-match') label += `, early tie (executed ${executed})`;
 console.log(`${(steps / ms / 1000).toFixed(1)}M instructions/s (${steps} instructions in ${ms.toFixed(0)} ms)${label}`);
