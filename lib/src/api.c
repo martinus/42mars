@@ -10,8 +10,9 @@ _Static_assert(sizeof(m42_instruction) == sizeof(AsmIns) && offsetof(m42_instruc
 _Static_assert(sizeof(m42_cell) == sizeof(Cell) && offsetof(m42_cell, word) == offsetof(Cell, ins),
                "m42_cell is the simulator's Cell");
 #ifdef __wasm__
-_Static_assert(sizeof(m42_rules) == 44 && sizeof(m42_match_options) == 32 && offsetof(m42_match_options, seed) == 16 &&
+_Static_assert(sizeof(m42_rules) == 44 && sizeof(m42_match_options) == 40 && offsetof(m42_match_options, seed) == 16 &&
                offsetof(m42_match_options, positions) == 24 && offsetof(m42_match_options, log) == 28 &&
+               offsetof(m42_match_options, permute) == 32 &&
                sizeof(m42_state) == 32 && offsetof(m42_state, time) == 16 && sizeof(m42_warrior_state) == 40 &&
                offsetof(m42_warrior_state, died_at) == 16 && offsetof(m42_warrior_state, score) == 24 &&
                sizeof(m42_instruction) == 16,
@@ -303,6 +304,8 @@ static usize heap_need(const m42_rules *r) {
   TAKE(nw * (psize ? psize : 1) * 4);
   TAKE(nw * (2 * nw - 1) * 4);
   for (usize i = 0; i < nw; i++) if (!STATIC_QUEUE(i, linear, qlen)) TAKE((usize)qlen * 2);
+  // The draw list of permute (load_warriors()), for two warriors.
+  if (nw >= 2 && 2 * (usize)r->min_distance <= r->core_size) TAKE(PERMUTATIONS((usize)r->core_size, (usize)r->min_distance) * 4);
   #undef TAKE
   return s;
 }
@@ -373,7 +376,7 @@ void m42_free(m42_ctx *m) {
 
 EXPORT(m42_match_options_default)
 m42_match_options m42_match_options_default(void) {
-  const m42_match_options o = {sizeof(m42_match_options), 1, 0, 1, 0, 0, 0};
+  const m42_match_options o = {sizeof(m42_match_options), 1, 0, 1, 0, 0, 0, 0};
   return o;
 }
 
@@ -397,6 +400,7 @@ static int load_warriors(Mars *m, const m42_warrior *const *ws, u32 n, const m42
   if (!ws || n < 1 || n > r->warriors) return M42_ERR_ARGUMENT;
   const uint32_t *positions = o->positions;
   if ((u64)n * r->min_distance > r->core_size) return M42_ERR_RULES;
+  if (o->permute && (n != 2 || positions)) return M42_ERR_ARGUMENT;
   u32 total = 0;
   for (u32 i = 0; i < n; i++) {
     if (!ws[i] || !RESULT(ws[i])->ok || RESULT(ws[i])->nIns > r->max_length) return M42_ERR_WARRIOR;
@@ -431,7 +435,9 @@ static int load_warriors(Mars *m, const m42_warrior *const *ws, u32 n, const m42
       *k++ = (i32)x->bVal;
     }
   }
-  load(m, o->seed, positions != 0);
+  u32 *perm = 0;
+  if (o->permute && !(perm = alloc(m, (usize)PERMUTATIONS(m->N, m->minDist) * 4))) return M42_ERR_MEMORY;
+  load(m, o->seed, positions != 0, perm);
   return M42_OK;
 }
 
@@ -494,7 +500,11 @@ static u32 *pspace_cell(const Mars *m, u32 w, u32 i) {
 EXPORT(m42_start_round)
 int m42_start_round(m42_ctx *ctx) {
   const int s = ready(ctx);
-  if (s == M42_OK) start_round(CTX_OF(ctx));
+  if (s == M42_OK) {
+    Mars *m = CTX_OF(ctx);
+    if (m->perm) draw_permuted(m);
+    start_round(m);
+  }
   return s;
 }
 

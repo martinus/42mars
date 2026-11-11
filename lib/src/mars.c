@@ -100,6 +100,8 @@ typedef struct Mars {
   u8 *heap_end;
   u32 loaded;         // warriors are loaded (42mars.h)
   m42_rules rules;    // as given to m42_ctx_init()
+  u32 *perm;          // 0, or the draw list of permute (draw_permuted())
+  u32 permLeft;       // its entries not drawn yet
 } Mars;
 
 // ---------------------------------------------------------------- memory
@@ -115,7 +117,10 @@ typedef struct Mars {
 // order. Both stay zero-filled (.bss).
 M42_USED static _Alignas(64) u16 queueMem[2][QSTATIC] = {{0}};
 M42_USED static _Alignas(64) Cell coreMem[65536] = {{0}};
-static Mars theMars = {.roundOver = 1};
+// 64-byte aligned: then the read-only data in front of it (strings, constants)
+// moves it, and the field addresses in the loops, only when it crosses a
+// multiple of 64; unaligned, a struct constant 32 bytes shorter moved them.
+static _Alignas(64) Mars theMars = {.roundOver = 1};
 #define CTX (&theMars)
 #define CORE(m) ((void)(m), coreMem)
 #define QUEUES(m) ((void)(m), queueMem)
@@ -167,6 +172,8 @@ M42_FORCE_INLINE u32 queue_len(u32 maxProcesses) {
 // Without wraparound the mask is all ones, which execute2_8000() leaves
 // out: +6% on the bench, -5% on t20 (docs/performance-log.md).
 #define LINEAR_QUEUES(warriors, cycles) ((warriors) == 2 && (cycles) <= LINEAR_CYCLES)
+// The (position, first mover) combinations of two warriors, permute.
+#define PERMUTATIONS(n, d) (2 * ((n) + 1 - 2 * (d)))
 // Warrior i's queue is one of the two static ones (QUEUES()), else allocated.
 #define STATIC_QUEUE(i, linear, qlen) ((i) < 2 && ((linear) || (qlen) <= QSTATIC))
 
@@ -213,8 +220,9 @@ static i32 *config(Mars *const m, u32 coreSize, u32 maxProcesses, u32 cycles, u3
 }
 
 // Starts the match after the load area was filled. seed: the generator
-// state (a non-negative integer); fixed: use the positions of the load area.
-static void load(Mars *const m, i64 seedValue, u32 fixed) {
+// state (a non-negative integer); fixed: use the positions of the load area;
+// perm: 0, or PERMUTATIONS() entries for permute (two warriors).
+static void load(Mars *const m, i64 seedValue, u32 fixed, u32 *perm) {
   i32 *in = m->input;
   Cell *code = m->codeBase;
   for (u32 i = 0; i < m->nw; i++) {
@@ -243,6 +251,8 @@ static void load(Mars *const m, i64 seedValue, u32 fixed) {
   m->hasStp = 0;
   for (Cell *c = m->codeBase; c < code; c++) m->hasStp |= (c->ins & 0xf8) == 0220;
   m->fixedPositions = fixed;
+  m->perm = perm;
+  m->permLeft = 0;
   m->seed = seedValue;
   m->round_ = 0;
   m->roundOver = 1;
@@ -291,7 +301,7 @@ static void place_spread(Mars *const m, u32 *pos) {
 }
 
 static void place_warriors(Mars *const m) {
-  if (m->fixedPositions) return; // positions stay as loaded
+  if (m->fixedPositions || m->perm) return; // positions stay as loaded or drawn
   u32 pos[255]; // m42_rules.warriors is at most 255
   for (u32 i = 0; i < m->nw; i++) pos[i] = 0;
   if (m->nw == 2) {
@@ -301,6 +311,25 @@ static void place_warriors(Mars *const m) {
     place_spread(m, pos);
   }
   for (u32 i = 0; i < m->nw; i++) m->war[i].position = pos[i];
+}
+
+// permute (pmars -P), two warriors: the positions and the first mover of
+// the next round, before start_round(). The PERMUTATIONS() combinations
+// c = 2 * (position - minDist) + (warrior 1 moves first) are drawn without
+// repeats, from a list in which a drawn entry is replaced by the last one;
+// a new list once all were drawn (semantics doc, 3.2). Inlined where it is
+// called: as a function of its own it moved the call indices of the loops.
+M42_FORCE_INLINE void draw_permuted(Mars *const m) {
+  if (!m->permLeft) {
+    m->permLeft = PERMUTATIONS(m->N, m->minDist);
+    for (u32 i = 0; i < m->permLeft; i++) m->perm[i] = i;
+  }
+  const u32 i = (u32)(m->seed % m->permLeft), c = m->perm[i];
+  m->perm[i] = m->perm[--m->permLeft];
+  m->seed = rng(m->seed);
+  m->war[0].position = 0;
+  m->war[1].position = m->minDist + c / 2;
+  m->starter = c & 1;
 }
 
 static void start_round(Mars *const m) {
@@ -924,13 +953,17 @@ static i64 tie_check(Mars *const m) {
 static u64 run_match(Mars *const m, u32 rounds, u32 earlyTie, u32 firstRound) {
   // The positions of the skipped rounds: the generator steps exactly as if
   // they were played (placement does not depend on the core).
-  for (u32 r = 0; r < firstRound; r++) place_warriors(m);
+  for (u32 r = 0; r < firstRound; r++) {
+    if (m->perm) draw_permuted(m);
+    else place_warriors(m);
+  }
   m->round_ = firstRound;
   m->starter = firstRound % m->nw;
   m->logFirst = firstRound;
   u64 total = 0;
   const int skip = earlyTie;
   for (u32 r = 0; r < rounds; r++) {
+    if (m->perm) draw_permuted(m);
     start_round(m);
     while (!m->roundOver) {
       if (!skip) { total += run_some(m, ~0ull); continue; }

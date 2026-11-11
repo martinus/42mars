@@ -599,7 +599,7 @@ export class Mars {
   time               // instructions executed in this round (1 for the first)
   cyclesLeft, warriorsLeft
   current            // index of the warrior that executes next
-  load(codes, { seed, positions })   // codes: assemble() results; starts a match
+  load(codes, { seed, positions, permute })   // codes: assemble() results; starts a match
   startRound()
   endRound()
   step()             // execute one instruction
@@ -626,8 +626,10 @@ diedAt (time of death or null)
 
 ### 3.1 Match and rounds
 
-- `load(codes, { seed, positions })`: throws if a code is not `ok`, is longer
-  than `maxLength`, or `codes.length * minDistance > coreSize`. Sets up the
+- `load(codes, { seed, positions, permute })`: throws if a code is not `ok`,
+  is longer than `maxLength`, or `codes.length * minDistance > coreSize`,
+  and (RangeError) `permute` with other than two warriors or with
+  `positions`. Sets up the
   warriors (scores 0), p-space, `round = 0`, `results = []`, `roundOver =
   true`. `seed` undefined: a random seed is drawn (`rng` of a random number in
   1 .. 2^31-2); otherwise `seed` is used directly as the generator state.
@@ -646,7 +648,7 @@ diedAt (time of death or null)
      execHeat zeroed, alive, diedAt null.
   5. The execution order is the warrior list order, starting with the
      "starter" warrior: warrior 0 in round 1, then warrior 1 in round 2, and
-     so on, cyclic.
+     so on, cyclic. With `permute` the draw of 3.2 chooses it instead.
 - Each `step()` executes one instruction of the current warrior, then the
   next living warrior in order becomes current.
 - After an instruction that did not kill the warrior: `cyclesLeft--`; when it
@@ -696,6 +698,20 @@ diedAt (time of death or null)
   otherwise move position[j] to j+1). Then add `minDistance * i` to
   position[i] for i = 1..n-1. Then for i = 1..n-1: `seed = rng(seed)`,
   `j = seed % (n - i) + i`, swap positions i and j.
+- `permute` (pMARS's `-P`), two warriors only: every combination of a
+  position of warrior 1 and a first mover comes once before any comes
+  again. There are `K = 2 * (coreSize + 1 - 2 * minDistance)` combinations
+  `c = 2 * (position - minDistance) + f`, f = 1 when warrior 1 moves first.
+  They are drawn from a list, initially `0, 1, .., K - 1`: per round `i =
+  seed % left`, `c = list[i]`, `list[i] = list[left - 1]`, `left--`, then
+  `seed = rng(seed)`; when nothing is left, the list starts again from `0 ..
+  K - 1`. Position and first mover come from `c`; the starter rule of 3.1 does
+  not apply. The seed is the same as without `permute` for `pmars -f`; for
+  `pmars -F pos` it is `2 * (pos - minDistance)`, which draws `pos` with
+  warrior 0 first in round 1. Found with warriors whose final core shows
+  both positions and the first mover, through the per-round core hash of
+  the trace build, and checked over 15,700 rounds with core 8000 (one full
+  list and a second begun) and for cores 100 and 801.
 
 ### 3.3 Instruction execution
 
@@ -823,9 +839,9 @@ about 83 KB, no imports; `wasm/build.sh` rebuilds it with
 export async function compileWasmMars() -> WebAssembly.Module   // cached
 export async function createWasmMars(options) -> engine        // Node and browsers
 export function createWasmMarsSync(options, module?) -> engine
-engine: opt, coreSize, load(codes, { seed, positions }), startRound(),
+engine: opt, coreSize, load(codes, { seed, positions, permute }), startRound(),
   run(n), step(), endRound(), runMatch(codes, { rounds, seed, positions,
-  earlyTie = true, firstRound = 0 }) -> { warriors: [{ name, wins, losses,
+  permute, earlyTie = true, firstRound = 0 }) -> { warriors: [{ name, wins, losses,
   ties, score }], results, instructions },
   round, roundOver, roundResult, results, time, cyclesLeft, warriorsLeft,
   current, op, am, bm, av, bv, cell(addr),
@@ -851,7 +867,9 @@ a warrior's tail stays at most `1 + 2 * (maxCycles + 1)`.
 `runMatch` plays all rounds inside wasm. `firstRound` k plays rounds k + 1
 to k + `rounds` of the match: the position generator steps k times first
 (placement does not depend on the core), the first mover is warrior k mod
-the number of warriors, and the round numbers in `results` start at k + 1.
+the number of warriors (with `permute`: the draws of the k rounds are made
+first, and the draw gives the first mover), and the round numbers in
+`results` start at k + 1.
 P-space and the last results start empty, as at the start of a match. Only
 LDP reads them, and opcodes are only copied, so when no warrior's code
 contains LDP every round gives the same result as in the whole match, and
@@ -993,6 +1011,9 @@ two on corpus warriors, `test/cli.test.js` holds recorded pMARS outputs.
   `0x10`, ` 4001`) as "no -F" and uses random positions; `42mars` exits 2.
   `-f` and `-F` together: exit 2.
 - Neither `-F` nor `-f`: random positions (pMARS's and ours differ).
+- `-P`: permuted positions and first movers (3.2); with `-F pos` the
+  generator starts at `2 * (pos - distance)`. Other than two warriors: exit
+  2 before anything is assembled.
 - `-f`, the fixed position series: the generator starts at `rng(sum)`,
   where `sum` adds `field XOR k` over all fields of all warriors in file
   order, five per instruction (op byte `op << 3 | mod`, A mode, B mode, A
@@ -1008,8 +1029,7 @@ two on corpus warriors, `test/cli.test.js` holds recorded pMARS outputs.
   to the next (`x=x+1` counts the evaluations). A warrior's score is the
   sum over s of (rounds it survived with s warriors alive) * formula.
 - `-e` (the debugger, off in the server build) is ignored.
-- Not supported by `42mars` (exit 2): `-R`, `-W` (#40), `-P` (#41), `-8`
-  (#42), `-V` (pMARS prints its internal assembler passes), and values
+- Not supported by `42mars` (exit 2): `-R`, `-W` (#40), `-8` (#42), `-V` (pMARS prints its internal assembler passes), and values
   beyond the engine: core size above 65536, more than 2^24 processes or
   p-space cells, more than 2^32-1 cycles.
 

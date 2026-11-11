@@ -96,6 +96,8 @@ export interface LoadOptions {
   seed?: number;
   /** Fixed positions, one per warrior: no random placement. */
   positions?: number[];
+  /** pmars -P, two warriors without fixed positions: each position and first mover once before any repeats. The seed of pmars -P -F x is 2 * (x - minDistance). */
+  permute?: boolean;
 }
 
 export interface MatchOptions extends LoadOptions {

@@ -173,6 +173,7 @@ export class Mars {
     this.starter = 0;
     this.seed = 1;
     this.fixedPositions = null;
+    this.permutation = null;
     this.lastDied = -1; // set by execute(): address where a warrior lost its last process
 
     // Per-match state of the hot loop: a record and the process queue of
@@ -238,8 +239,9 @@ export class Mars {
     this.tExec.fill(NEVER);
   }
 
-  load(codes, { seed, positions } = {}) {
+  load(codes, { seed, positions, permute = false } = {}) {
     const o = this.opt;
+    if (permute && (codes.length !== 2 || positions)) throw new RangeError('permute needs two warriors and no fixed positions');
     for (const c of codes) {
       if (!c.ok) throw new Error(`warrior '${c.name}' did not assemble`);
       if (c.instructions.length > o.maxLength) throw new Error(`warrior '${c.name}' is longer than ${o.maxLength}`);
@@ -281,6 +283,8 @@ export class Mars {
     });
     this.seed = seed === undefined ? rng(1 + Math.floor(Math.random() * 2147483646)) : seed;
     this.fixedPositions = positions ?? null;
+    // permute (pmars -P): the draw list of placeWarriors() and its entries left
+    this.permutation = permute ? { list: null, left: 0 } : null;
     this.round = 0;
     this.results = [];
     this.roundResult = null;
@@ -297,6 +301,10 @@ export class Mars {
       for (let i = 0; i < n; i++) ws[i].position = this.fixedPositions[i];
       return;
     }
+    if (this.permutation) {
+      this.drawPermuted();
+      return;
+    }
     const pos = new Array(n).fill(0);
     if (n === 2) {
       const { coreSize, minDistance } = this.opt;
@@ -306,6 +314,26 @@ export class Mars {
       this.placeSpread(pos);
     }
     for (let i = 0; i < n; i++) ws[i].position = pos[i];
+  }
+
+  // permute, two warriors: the 2 * (coreSize + 1 - 2 * minDistance)
+  // combinations c = 2 * (position - minDistance) + (warrior 1 moves first)
+  // are drawn without repeats, from a list in which a drawn entry is replaced
+  // by the last one; a new list once all were drawn (semantics doc, 3.2).
+  drawPermuted() {
+    const { coreSize, minDistance } = this.opt;
+    const p = this.permutation;
+    if (!p.left) {
+      p.left = 2 * (coreSize + 1 - 2 * minDistance);
+      p.list = Uint32Array.from({ length: p.left }, (_, i) => i);
+    }
+    const i = this.seed % p.left;
+    const c = p.list[i];
+    p.list[i] = p.list[--p.left];
+    this.seed = rng(this.seed);
+    this.warriors[0].position = 0;
+    this.warriors[1].position = minDistance + (c >> 1);
+    this.starter = c & 1;
   }
 
   // Method A: random positions, retried while too close to an earlier one.

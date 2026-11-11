@@ -9,7 +9,7 @@
 //        [--seed 1] [--size 8000 --cycles 80000 --processes 8000 --length 100
 //        --distance 100] [--engine js|wasm] [--matrix] [--json out.json]
 //        [--pmars path/to/pmars [--compare]] [--native-input file]
-//        [--bench warrior.red]
+//        [--bench warrior.red] [--permute]
 //
 // --bench plays one warrior against every warrior of the set instead of a
 // round robin, on the wasm engine unless --engine says otherwise, and lists
@@ -20,7 +20,9 @@
 // rounds follow from it like in pMARS (`pmars -F pos` uses the same
 // sequence), so results are reproducible and comparable with pMARS.
 // Score per pairing is 3 per win and 1 per tie; the table shows the sum over
-// all opponents and the average per 100 rounds.
+// all opponents and the average per 100 rounds. --permute is pMARS's -P:
+// each position and first mover once before any repeats (the seed of a
+// pairing is then 2 * (pos - distance), as for `pmars -P -F pos`).
 //
 // --pmars runs the same tournament with pMARS processes instead of the
 // engine (for timing), --compare runs both and checks that every pairing has
@@ -102,13 +104,13 @@ function drain(shared, opts, module) {
     if (wasm) {
       // The match, or a block of its rounds, runs inside WebAssembly, with
       // early tie detection.
-      const r = wasm.runMatch([code(a), code(b)], { rounds, seed, firstRound });
+      const r = wasm.runMatch([code(a), code(b)], { rounds, seed, firstRound, permute: opts.permute });
       [wa, wb] = r.warriors;
       instructions = r.instructions;
     } else {
       if (firstRound) throw new Error('--engine js plays whole matches only');
       const m = new Mars({ ...opts, headless: true });
-      m.load([code(a), code(b)], { seed });
+      m.load([code(a), code(b)], { seed, permute: opts.permute });
       instructions = 0;
       for (let r = 0; r < rounds; r++) {
         m.startRound();
@@ -152,6 +154,7 @@ function parseArgs(argv) {
     else if (a === '--compare') o.compare = true;
     else if (a === '--native-input') o.nativeInput = argv[++i];
     else if (a === '--bench') o.bench = argv[++i];
+    else if (a === '--permute') o.permute = true;
     else o.files.push(a);
   }
   if (o.bench && !argv.includes('--engine')) o.engine = 'wasm';
@@ -190,7 +193,7 @@ function makeTasks(o, codes, pairs) {
     const n = hasLdp[p.a] || hasLdp[p.b] ? 1 : Math.max(1, blocks);
     for (let i = 0; i < n; i++) {
       const firstRound = Math.floor((i * o.rounds) / n);
-      (n === 1 ? whole : split).push({ pairing: k, a: p.a, b: p.b, seed: p.pos - o.distance, firstRound, rounds: Math.floor(((i + 1) * o.rounds) / n) - firstRound });
+      (n === 1 ? whole : split).push({ pairing: k, a: p.a, b: p.b, seed: (o.permute ? 2 : 1) * (p.pos - o.distance), firstRound, rounds: Math.floor(((i + 1) * o.rounds) / n) - firstRound });
     }
   });
   return [...whole, ...split];
@@ -199,7 +202,7 @@ function makeTasks(o, codes, pairs) {
 async function runEngine(o, codes, pairs) {
   const module = o.engine === 'wasm' ? await compileWasmMars() : null;
   const tasks = makeTasks(o, codes, pairs);
-  const opts = { coreSize: o.size, maxCycles: o.cycles, maxProcesses: o.processes, maxLength: o.length, minDistance: o.distance, rounds: o.rounds };
+  const opts = { coreSize: o.size, maxCycles: o.cycles, maxProcesses: o.processes, maxLength: o.length, minDistance: o.distance, rounds: o.rounds, permute: Boolean(o.permute) };
   const shared = shareTasks(codes, tasks);
   const ctl = new Int32Array(shared.sab, 0, CTL);
   // The main thread is one of the jobs.
@@ -240,7 +243,7 @@ function runPmars(o, files, pairs) {
     const results = new Array(pairs.length);
     let next = 0;
     let done = 0;
-    const rules = ['-s', o.size, '-c', o.cycles, '-p', o.processes, '-l', o.length, '-d', o.distance, '-r', o.rounds].map(String);
+    const rules = ['-s', o.size, '-c', o.cycles, '-p', o.processes, '-l', o.length, '-d', o.distance, '-r', o.rounds, ...(o.permute ? ['-P'] : [])].map(String);
     if (pairs.length === 0) return resolve({ results });
     for (let k = 0; k < Math.min(o.jobs, pairs.length); k++) {
       const sh = spawn('/bin/sh', ['-c', PMARS_LOOP, o.pmars, ...rules], { stdio: ['pipe', 'pipe', 'pipe'] });
@@ -326,7 +329,7 @@ async function main() {
   const all = collectFiles(o.files);
   if (o.bench) all.unshift(o.bench);
   if (all.length < 2) {
-    console.error('usage: node tools/tournament.mjs <dir or .red files...> [--rounds N] [--jobs N] [--engine js|wasm] [--pmars path [--compare]] [--matrix] [--json file] [--bench warrior.red]');
+    console.error('usage: node tools/tournament.mjs <dir or .red files...> [--rounds N] [--jobs N] [--engine js|wasm] [--pmars path [--compare]] [--matrix] [--json file] [--bench warrior.red] [--permute]');
     process.exit(2);
   }
   const files = [];
@@ -350,6 +353,7 @@ async function main() {
     for (let b = a + 1; b < files.length; b++) pairs.push({ a, b, pos: pairPosition(o.seed, a, b, o) });
   }
   if (o.nativeInput) {
+    if (o.permute) throw new Error('--native-input: lib/tools/bench-native.c has no permute');
     const rules = { coreSize: o.size, maxProcesses: o.processes, maxCycles: o.cycles, minDistance: o.distance, pSpaceSize: Math.floor(o.size / 16) };
     writeFileSync(o.nativeInput, pairs.map((p) => nativeMatch([codes[p.a], codes[p.b]], rules, p.pos - o.distance, o.rounds)).join(''));
     return;

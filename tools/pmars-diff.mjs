@@ -6,7 +6,7 @@
 //
 //   node tools/pmars-diff.mjs --pmars path/to/pmars [--corpus dir] [--tmp dir]
 //        [--jobs 16] [--seed 1] [--scale 1] [--only listings,exprs,...]
-//        [--headless | --wasm | --wasm-match]
+//        [--headless | --wasm | --wasm-match] [--permute]
 //
 // Sections:
 //   listings   every .red file in --corpus: pMARS listing (pmars -r 0) vs
@@ -25,6 +25,9 @@
 // compares the scores only and does not go with --pmars-trace.
 // --wasm-asm assembles our side with the C assembler (lib/src/asm.c through
 // wasm/42mars.js) instead of js/assembler.js.
+// --permute runs the battles and fuzz sections with pMARS's -P and our
+// engines with `permute` (seed 2 * (-F position - distance)); multi is
+// skipped, -P takes two warriors only.
 // --cli path/to/42mars adds the section `cli`: the command line program
 // (make) and pMARS with the same arguments on corpus warriors,
 // stdout and exit code compared.
@@ -78,6 +81,7 @@ const SCALE = Number(arg('scale', 1));
 const ONLY = arg('only') ? new Set(arg('only').split(',')) : null;
 const HEADLESS = args.includes('--headless');
 const WASM_MATCH = args.includes('--wasm-match');
+const PERMUTE = args.includes('--permute');
 const WASM = args.includes('--wasm') || WASM_MATCH ? await compileWasmMars() : null;
 // --wasm-asm: our side assembles with the C assembler (lib/src/asm.c);
 // usable() keeps the JS one, whose evaluator it instruments.
@@ -442,15 +446,17 @@ async function sources() {
 
 // Runs one battle in pMARS and in our engine; returns a difference or null.
 async function compareBattle(files, sources, o, pos, rounds) {
-  const r = await pmars(['-b', '-k', ...rules(o), '-r', String(rounds), '-F', String(pos), ...files], TRACE || PMARS);
+  const permute = PERMUTE && files.length === 2;
+  const r = await pmars(['-b', '-k', ...rules(o), '-r', String(rounds), '-F', String(pos), ...(permute ? ['-P'] : []), ...files], TRACE || PMARS);
   const lines = r.out.trim().split('\n').filter(Boolean);
   if (lines.length !== files.length) return `${files.join(' ')}: unexpected pMARS output ${JSON.stringify(r.out + r.err).slice(0, 200)}`;
   const want = lines.map((l) => l.trim().split(/\s+/).map(Number));
   const ws = sources.map((s) => ourAssemble(s, { ...o, warriors: files.length, rounds }));
   if (ws.some((w) => !w.ok)) return `${files.join(' ')}: pMARS ran it, we do not assemble it`;
   const m = WASM ? createWasmMarsSync({ ...o, rounds }, WASM) : new Mars({ ...o, rounds, headless: HEADLESS });
-  if (WASM_MATCH) m.runMatch(ws, { rounds, seed: pos - o.minDistance, earlyTie: true });
-  else m.load(ws, { seed: pos - o.minDistance });
+  const seed = (permute ? 2 : 1) * (pos - o.minDistance);
+  if (WASM_MATCH) m.runMatch(ws, { rounds, seed, permute, earlyTie: true });
+  else m.load(ws, { seed, permute });
   const roundLines = [];
   for (let i = 0; i < (WASM_MATCH ? 0 : rounds); i++) {
     m.startRound();
@@ -530,6 +536,7 @@ async function fuzz() {
 }
 
 async function multi() {
+  if (PERMUTE) return console.log('multi: skipped (-P takes two warriors)');
   const n = 600 * SCALE;
   const cases = Array.from({ length: n }, (_, i) => {
     const o = FUZZ_RULES[1 + (i % 3)];
@@ -578,6 +585,7 @@ async function cli() {
     else if (ruleSet === 6 && rand(3) === 0) args.push(pick(['-s', '-p']), '0');
     if (rand(10) < 3) args.push('-f');
     else args.push('-F', String(d + rand(8000 + 1 - 2 * d)));
+    if (rand(5) === 0) args.push('-P'); // with other than two warriors: exit 2
     const ws = Array.from({ length: k }, () => pick(files));
     if (rand(20) === 0) {
       const at = join(TMP, `options${i}.txt`);

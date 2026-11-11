@@ -113,6 +113,8 @@ test('the C library through 42mars.h agrees with the JS assembler and the wasm e
   // no warriors, a core of 70000, three warriors with rules for two, no
   // context, assembling with core size 0, the broken warrior in a match
   assert.deepEqual(out.errors, [-3, 1, -3, -3, -2, -4]);
+  // permute: one warrior, two, two at fixed positions
+  assert.deepEqual(out.permute, [-3, 0, -3]);
   // the same PIN shares p-space cell 3, not the last result; another PIN
   // does not share
   assert.deepEqual(out.pin, [99, 4294967295 & 7999, 0]);
