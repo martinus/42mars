@@ -349,6 +349,15 @@ enum { OP_MOV, OP_ADD, OP_SUB, OP_MUL, OP_DIV, OP_MOD, OP_JMZ, OP_JMN, OP_DJN, O
 static const char *const MODIFIERS[] = {"A", "B", "AB", "BA", "F", "X", "I"};
 enum { MOD_A, MOD_B, MOD_AB, MOD_BA, MOD_F, MOD_X, MOD_I };
 static const char MODE_SYMBOLS[] = "#$@<>*{}";
+
+// ICWS'88 (icws88, pmars -8): the modes the A and the B operand of each
+// opcode may have; none for the opcodes it does not have (js/assembler.js,
+// ICWS88_MODES).
+static const char *const ICWS88_MODES[OP_ORG][2] = {
+  [OP_MOV] = {"#$@<", "$@<"}, [OP_ADD] = {"#$@<", "$@<"}, [OP_SUB] = {"#$@<", "$@<"}, [OP_CMP] = {"#$@<", "$@<"},
+  [OP_JMP] = {"$@<", "#$@<"}, [OP_JMZ] = {"$@<", "#$@<"}, [OP_JMN] = {"$@<", "#$@<"}, [OP_DJN] = {"$@<", "#$@<"},
+  [OP_SPL] = {"$@<", "#$@<"}, [OP_SLT] = {"#$@<", "#$@<"}, [OP_DAT] = {"#<", "#<"},
+};
 #define MAX_LABELS 7
 // FOR blocks nested deeper are an error (semantics doc, section 4). Each
 // level takes about 540 bytes of the 64 KB stack of the wasm build, which
@@ -435,6 +444,7 @@ typedef struct {
   i64 readLimit;  // 0: coreSize
   i64 writeLimit; // 0: coreSize
   u32 utf8;
+  u32 icws88;     // pmars -8
 } AsmOptions;
 
 // ---------------------------------------------------------------- state
@@ -1437,6 +1447,22 @@ static int st_operand(Asm *a, STokens *ts, int isA, i32 line, Operand *out) {
 
 static void st_finish(Asm *a, int op, int mod, Operand A, Operand B, i32 line) {
   if (failed(a)) return;
+  if (a->o.icws88) {
+    const char *const *modes = ICWS88_MODES[op];
+    if (!modes[0]) { error(a, line, msg3(a, "ICWS'88 has no ", S(OPCODES[op]), "")); return; }
+    if (find_byte(S(modes[0]), (u8)MODE_SYMBOLS[A.mode]) < 0 || find_byte(S(modes[1]), (u8)MODE_SYMBOLS[B.mode]) < 0) {
+      Buf b = {0};
+      putc_(&a->A, &b, "ICWS'88: ");
+      putc_(&a->A, &b, OPCODES[op]);
+      putc_(&a->A, &b, " takes [");
+      putc_(&a->A, &b, modes[0]);
+      putc_(&a->A, &b, "] [");
+      putc_(&a->A, &b, modes[1]);
+      putc_(&a->A, &b, "]");
+      error(a, line, buf_str(&b));
+      return;
+    }
+  }
   i64 aVal = 0, bVal = 0;
   if (A.hasExpr && !st_evaluate(a, A.expr, line, &aVal)) return;
   if (B.hasExpr && !st_evaluate(a, B.expr, line, &bVal)) return;
@@ -1485,7 +1511,9 @@ static void parse_statement(Asm *a, const Statement *stmt) {
     mod = -1;
     if (m.t == S_IDENT) for (int i = 0; i < 7; i++) if (ieq(m.text, MODIFIERS[i])) mod = i;
     if (mod < 0) { error(a, line, msg3(a, "bad modifier '", m.text, "'")); return; }
+    if (a->o.icws88) { error(a, line, S("ICWS'88 has no modifiers")); return; }
   }
+  if (a->o.icws88 && (op == OP_ORG || op == OP_PIN)) { error(a, line, msg3(a, "ICWS'88 has no ", S(OPCODES[op]), "")); return; }
 
   if (op >= OP_ORG) {
     if (mod != -2) { error(a, line, msg3(a, OPCODES[op], (Str){0, 0}, " takes no modifier")); return; }

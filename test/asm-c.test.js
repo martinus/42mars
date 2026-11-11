@@ -142,7 +142,7 @@ const same = (src, opts) => assert.deepEqual(assembleWasm(src, opts), assemble(s
 
 test('random sources give the same result in C and JS', () => {
   const g = generator(20261110);
-  for (let k = 0; k < 4000; k++) same(source(g), k % 7 === 0 ? { coreSize: 80, maxLength: 5 } : {});
+  for (let k = 0; k < 4000; k++) same(source(g), k % 7 === 0 ? { coreSize: 80, maxLength: 5 } : k % 3 === 0 ? { icws88: true } : {});
 });
 
 test('random expressions give the same result in C and JS', () => {

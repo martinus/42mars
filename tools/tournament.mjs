@@ -9,7 +9,7 @@
 //        [--seed 1] [--size 8000 --cycles 80000 --processes 8000 --length 100
 //        --distance 100] [--engine js|wasm] [--matrix] [--json out.json]
 //        [--pmars path/to/pmars [--compare]] [--native-input file]
-//        [--bench warrior.red] [--permute]
+//        [--bench warrior.red] [--permute] [--icws88]
 //
 // --bench plays one warrior against every warrior of the set instead of a
 // round robin, on the wasm engine unless --engine says otherwise, and lists
@@ -23,6 +23,7 @@
 // all opponents and the average per 100 rounds. --permute is pMARS's -P:
 // each position and first mover once before any repeats (the seed of a
 // pairing is then 2 * (pos - distance), as for `pmars -P -F pos`).
+// --icws88 assembles ICWS'88 only, pMARS's -8.
 //
 // --pmars runs the same tournament with pMARS processes instead of the
 // engine (for timing), --compare runs both and checks that every pairing has
@@ -155,6 +156,7 @@ function parseArgs(argv) {
     else if (a === '--native-input') o.nativeInput = argv[++i];
     else if (a === '--bench') o.bench = argv[++i];
     else if (a === '--permute') o.permute = true;
+    else if (a === '--icws88') o.icws88 = true;
     else o.files.push(a);
   }
   if (o.bench && !argv.includes('--engine')) o.engine = 'wasm';
@@ -243,7 +245,7 @@ function runPmars(o, files, pairs) {
     const results = new Array(pairs.length);
     let next = 0;
     let done = 0;
-    const rules = ['-s', o.size, '-c', o.cycles, '-p', o.processes, '-l', o.length, '-d', o.distance, '-r', o.rounds, ...(o.permute ? ['-P'] : [])].map(String);
+    const rules = ['-s', o.size, '-c', o.cycles, '-p', o.processes, '-l', o.length, '-d', o.distance, '-r', o.rounds, ...(o.permute ? ['-P'] : []), ...(o.icws88 ? ['-8'] : [])].map(String);
     if (pairs.length === 0) return resolve({ results });
     for (let k = 0; k < Math.min(o.jobs, pairs.length); k++) {
       const sh = spawn('/bin/sh', ['-c', PMARS_LOOP, o.pmars, ...rules], { stdio: ['pipe', 'pipe', 'pipe'] });
@@ -329,7 +331,7 @@ async function main() {
   const all = collectFiles(o.files);
   if (o.bench) all.unshift(o.bench);
   if (all.length < 2) {
-    console.error('usage: node tools/tournament.mjs <dir or .red files...> [--rounds N] [--jobs N] [--engine js|wasm] [--pmars path [--compare]] [--matrix] [--json file] [--bench warrior.red] [--permute]');
+    console.error('usage: node tools/tournament.mjs <dir or .red files...> [--rounds N] [--jobs N] [--engine js|wasm] [--pmars path [--compare]] [--matrix] [--json file] [--bench warrior.red] [--permute] [--icws88]');
     process.exit(2);
   }
   const files = [];
@@ -337,7 +339,7 @@ async function main() {
   const names = [];
   for (const f of all) {
     const src = readFileSync(f, 'latin1');
-    const w = assemble(src, { coreSize: o.size, maxLength: o.length, minDistance: o.distance, maxProcesses: o.processes, maxCycles: o.cycles, rounds: o.rounds, warriors: 2 });
+    const w = assemble(src, { coreSize: o.size, maxLength: o.length, minDistance: o.distance, maxProcesses: o.processes, maxCycles: o.cycles, rounds: o.rounds, warriors: 2, icws88: Boolean(o.icws88) });
     if (!w.ok || w.instructions.length === 0) {
       const why = w.ok ? 'no instructions' : w.errors[0].text;
       if (o.bench && files.length === 0) { console.error(`${f}: ${why}`); process.exit(2); }

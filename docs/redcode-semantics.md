@@ -192,6 +192,10 @@ export function defaultModifier(op, aMode, bMode) -> modifier index
 export function assemble(source, options = {}) -> result
 ```
 
+`options` takes the names of `DEFAULT_OPTIONS` and `icws88: true`, pMARS's
+`-8` (ICWS'88 only, end of 2.4). `formatListing()` of `opcodes.js` prints a
+result assembled with it in the ICWS'88 form.
+
 `result`:
 
 ```js
@@ -562,6 +566,35 @@ After pass 2:
   `ok` with no instructions.
 - If there is no error, there are instructions, and start is not in
   `0 .. length-1`: warning.
+
+ICWS'88 (`icws88`, pmars `-8`). Pass 1 is the same (EQU, FOR, `;assert`,
+expressions, predefined constants); in pass 2 each statement is checked
+after its EQU names are replaced, and these are errors:
+
+- a modifier (any `.` after the opcode), `ORG` and `PIN` (`END` stays);
+- an opcode that ICWS'88 does not have: `MUL DIV MOD SEQ SNE NOP LDP STP`;
+- an operand mode not in this table, checked after a single operand was
+  completed (`DAT x` gives A `#0`, `JMP x` and `SPL x` give B `$0`; other
+  opcodes need two operands anyway). No mode is `$`; `> * { }` are never
+  allowed.
+
+| Opcode | A modes | B modes |
+|---|---|---|
+| `DAT` | `# <` | `# <` |
+| `MOV ADD SUB CMP` | `# $ @ <` | `$ @ <` |
+| `JMP JMZ JMN DJN SPL` | `$ @ <` | `# $ @ <` |
+| `SLT` | `# $ @ <` | `# $ @ <` |
+
+The table is pMARS's: `pmars -8` accepted exactly these of 1710 sources
+(19 opcodes, the modes `'' # $ @ < > * { }` for A and B, and one operand),
+and says so in its own messages ("Proper format: 'MOV [#$@<] [$@<]'"). The
+instructions, modifiers included, are the same as without `icws88`, and so
+is the simulation: pmars-trace gave the same instruction counts and core
+hashes with and without `-8` for 300 corpus pairs and 1500 pairs of random
+ICWS'88 warriors. The listing (`pmars -8`, `formatListing()`) has no
+modifiers (`MOV    $     0, $     1`, the opcode padded to 7 characters) and
+no `ORG      START` line; instead `       END      START` follows the code
+when the start lies in it.
 
 ### 2.5 Line numbers
 
@@ -1028,8 +1061,12 @@ two on corpus warriors, `test/cli.test.js` holds recorded pMARS outputs.
   order and s = 1 .. warriors, with the registers kept from one evaluation
   to the next (`x=x+1` counts the evaluations). A warrior's score is the
   sum over s of (rounds it survived with s warriors alive) * formula.
+- `-8`: ICWS'88 only (section 2.4); listings and `-A` without modifiers,
+  `-A` prints `       END      START` before its `       END` when the
+  start lies in the code. The simulation is the same.
 - `-e` (the debugger, off in the server build) is ignored.
-- Not supported by `42mars` (exit 2): `-R`, `-W` (#40), `-8` (#42), `-V` (pMARS prints its internal assembler passes), and values
+- Not supported by `42mars` (exit 2): `-R`, `-W` (#40), `-V` (pMARS prints
+  its internal assembler passes), and values
   beyond the engine: core size above 65536, more than 2^24 processes or
   p-space cells, more than 2^32-1 cycles.
 

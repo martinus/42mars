@@ -74,7 +74,7 @@ int m42_assemble(const char *src, size_t len, const m42_rules *rules, unsigned f
   if ((!src && len) || !mem) return M42_ERR_ARGUMENT;
   const AsmOptions o = {rules->core_size, rules->max_processes, rules->max_cycles, rules->max_length,
                         rules->min_distance, rules->warriors, rules->rounds, pspace_of(rules),
-                        rules->read_limit, rules->write_limit, (flags & M42_UTF8) != 0};
+                        rules->read_limit, rules->write_limit, (flags & M42_UTF8) != 0, (flags & M42_ICWS88) != 0};
   AsmResult *r = assemble(mem, size, (const u8 *)(src ? src : ""), len, &o);
   if (!r) return M42_ERR_MEMORY;
   *out = (m42_warrior *)(void *)r;
