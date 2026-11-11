@@ -102,6 +102,7 @@ typedef struct Mars {
   m42_rules rules;    // as given to m42_ctx_init()
   u32 *perm;          // 0, or the draw list of permute (draw_permuted())
   u32 permLeft;       // its entries not drawn yet
+  u32 readLimit, writeLimit; // divisors of N; below N: execute_limited()
 } Mars;
 
 // ---------------------------------------------------------------- memory
@@ -463,91 +464,28 @@ static inline void set_cell(Cell *c, u64 v) { m42_memcpy(c, &v, 8); }
 // x mod n for x < 2n: one conditional subtraction.
 M42_FORCE_INLINE u32 wrap(u32 x, u32 n) { return x >= n ? x - n : x; }
 
-// Executes the instruction ir, fetched from pc, of warrior W, whose queue
-// is q with the counters *head and *tail (W's own fields, or local copies of
-// them in execute2()); the process is already taken off the queue. ins is
-// the instruction word of ir: when the caller passes a constant, clang
-// compiles a copy of this function without mode or opcode branches (see
-// step()). Returns 1 when the process died, else 0.
-M42_FORCE_INLINE int exec_ins(Mars *const m, Cell *const C, const u32 n, const u32 mask, const u32 limit,
-                                                          Warrior *const W, u16 *const q, u32 *const head, u32 *const tail,
-                                                          const u32 pc, const Cell ir, const u32 ins) {
-// Address arithmetic: both operands are below n.
+// An offset folded into the window of a read or write limit L (a divisor of
+// n) around the instruction: x mod L, as a negative offset above L / 2.
+M42_FORCE_INLINE u32 fold(u32 x, u32 L, u32 n) {
+  const u32 r = x % L;
+  return r > L / 2 ? r + n - L : r;
+}
+
+// Address arithmetic of the functions below: both operands are below n.
 #define WRAP(x) wrap((x), n)
 #define DEC(x) ((x) == 0 ? n - 1 : (u32)(x) - 1)
 #define INC(x) ((x) + 1 == n ? 0 : (x) + 1)
 
-  // A operand: pointer and a snapshot of the whole A cell, Acell, with the
-// A and B values in its low half (Aab, AA in the low half of that). The
-// modes are tested in the order of their measured frequency ($ # first,
-// then a switch); a dispatch on both modes at once and branch-free indirect
-// modes were slower (notes above execute()).
-  // The instruction word in Acell stays the one in the core until the
-  // instruction writes: the B operand's side effects change value fields
-  // only. So MOV.I stores Acell with one store, and CMP.I, SEQ.I and SNE.I
-  // compare its word.
-  u32 aPtr;
-  u64 Acell;
-#define READ_A(x) (Acell = cell_of(&C[x]))
-  const u32 am = (ins >> 8) & 7;
-  if (am == 1) {
-    aPtr = WRAP(pc + ir.a);
-    READ_A(aPtr);
-  } else if (am == 0) {
-    aPtr = pc;
-    m42_memcpy(&Acell, &ir, 8);
-  } else {
-    const u32 p = WRAP(pc + ir.a);
-    switch (am) {
-      case 1: aPtr = p; break;
-      case 2: aPtr = WRAP(p + C[p].b); break;
-      case 3: { u32 f = DEC(C[p].b); C[p].b = (u16)f; aPtr = WRAP(p + f); break; }
-      case 4: { u32 f = C[p].b; aPtr = WRAP(p + f); READ_A(aPtr); C[p].b = (u16)INC(f); goto a_done; }
-      case 5: aPtr = WRAP(p + C[p].a); break;
-      case 6: { u32 f = DEC(C[p].a); C[p].a = (u16)f; aPtr = WRAP(p + f); break; }
-      default: { u32 f = C[p].a; aPtr = WRAP(p + f); READ_A(aPtr); C[p].a = (u16)INC(f); goto a_done; }
-    }
-    READ_A(aPtr);
-  }
-a_done:;
-#ifdef TRACE_TIES
-  traceSource = aPtr;
-#endif
-#undef READ_A
-  const u32 Aab = (u32)Acell;
-  const u32 Ains = (u32)(Acell >> 32); // instruction word, padding 0
-
-  // B operand on the core as the A operand left it; $ < # are the
-// frequent modes here.
-  u32 bPtr, Bab = 0;
-  int eager = 0; // post-increment B mode: Bab holds the values read before it
-  const u32 bm = ins >> 11;
-  if (bm == 1) {
-    bPtr = WRAP(pc + ir.b);
-  } else if (bm == 3) {
-    const u32 p = WRAP(pc + ir.b);
-    const u32 f = DEC(C[p].b);
-    C[p].b = (u16)f;
-    bPtr = WRAP(p + f);
-  } else if (bm == 0) {
-    bPtr = pc;
-  } else {
-    const u32 p = WRAP(pc + ir.b);
-    switch (bm) {
-      case 1: bPtr = p; break;
-      case 2: bPtr = WRAP(p + C[p].b); break;
-      case 3: { u32 f = DEC(C[p].b); C[p].b = (u16)f; bPtr = WRAP(p + f); break; }
-      case 4: { u32 f = C[p].b; bPtr = WRAP(p + f); Bab = ab_of(&C[bPtr]); C[p].b = (u16)INC(f); eager = 1; break; }
-      case 5: bPtr = WRAP(p + C[p].a); break;
-      case 6: { u32 f = DEC(C[p].a); C[p].a = (u16)f; bPtr = WRAP(p + f); break; }
-      default: { u32 f = C[p].a; bPtr = WRAP(p + f); Bab = ab_of(&C[bPtr]); C[p].a = (u16)INC(f); eager = 1; break; }
-    }
-  }
-
-  Cell *const B = &C[bPtr];
-#ifdef TRACE_TIES
-  traceTarget = bPtr;
-#endif
+// The instruction itself, after its operands (exec_ins(), exec_ins_rw()):
+// aPtr and Acell are the A operand's address and cell (Aab its values, Ains
+// its instruction word, padding 0), B the cell the B
+// operand writes, Bab (with eager) its values read before a post-increment,
+// else read from B where used, and bins its instruction word for .I.
+// Returns 1 when the process died, else 0.
+M42_FORCE_INLINE int exec_core(Mars *const m, const u32 n, const u32 mask, const u32 limit, Warrior *const W,
+                               u16 *const q, u32 *const head, u32 *const tail, const u32 pc, const u32 ins,
+                               const u32 aPtr, const u64 Acell, const u32 Aab, const u32 Ains, Cell *const B,
+                               const u32 Bab, const int eager, const u16 *const bins) {
   // MOV.I, the most frequent instruction, before the dispatch.
   if ((ins & 0xff) == 006) {
     set_cell(B, Acell);
@@ -664,7 +602,7 @@ a_done:;
     case 0113: case 0163: if (BA == AB) next = INC(next); break;
     case 0114: case 0164: if (BAB == Aab) next = INC(next); break;
     case 0115: case 0165: if (BB == AA && BA == AB) next = INC(next); break;
-    case 0116: case 0166: if (BAB == Aab && B->ins == Ains) next = INC(next); break;
+    case 0116: case 0166: if (BAB == Aab && *bins == Ains) next = INC(next); break;
 
     // SNE: skip when not equal
     case 0170: if (BA != AA) next = INC(next); break;
@@ -673,7 +611,7 @@ a_done:;
     case 0173: if (BA != AB) next = INC(next); break;
     case 0174: if (BAB != Aab) next = INC(next); break;
     case 0175: if (BB != AA || BA != AB) next = INC(next); break;
-    case 0176: if (BAB != Aab || B->ins != Ains) next = INC(next); break;
+    case 0176: if (BAB != Aab || *bins != Ains) next = INC(next); break;
 
     // SLT: skip when less
     case 0120: if (AA < BA) next = INC(next); break;
@@ -730,11 +668,144 @@ a_done:;
   }
   q[(*tail)++ & mask] = (u16)next;
   return 0;
+#undef SUBM
+}
+
+// Executes the instruction ir, fetched from pc, of warrior W, whose queue
+// is q with the counters *head and *tail (W's own fields, or local copies of
+// them in execute2()); the process is already taken off the queue. ins is
+// the instruction word of ir: when the caller passes a constant, clang
+// compiles a copy of this function without mode or opcode branches (see
+// step()). Returns 1 when the process died, else 0.
+M42_FORCE_INLINE int exec_ins(Mars *const m, Cell *const C, const u32 n, const u32 mask, const u32 limit,
+                                                          Warrior *const W, u16 *const q, u32 *const head, u32 *const tail,
+                                                          const u32 pc, const Cell ir, const u32 ins) {
+
+  // A operand: pointer and a snapshot of the whole A cell, Acell, with the
+// A and B values in its low half (Aab, AA in the low half of that). The
+// modes are tested in the order of their measured frequency ($ # first,
+// then a switch); a dispatch on both modes at once and branch-free indirect
+// modes were slower (notes above execute()).
+  // The instruction word in Acell stays the one in the core until the
+  // instruction writes: the B operand's side effects change value fields
+  // only. So MOV.I stores Acell with one store, and CMP.I, SEQ.I and SNE.I
+  // compare its word.
+  u32 aPtr;
+  u64 Acell;
+#define READ_A(x) (Acell = cell_of(&C[x]))
+  const u32 am = (ins >> 8) & 7;
+  if (am == 1) {
+    aPtr = WRAP(pc + ir.a);
+    READ_A(aPtr);
+  } else if (am == 0) {
+    aPtr = pc;
+    m42_memcpy(&Acell, &ir, 8);
+  } else {
+    const u32 p = WRAP(pc + ir.a);
+    switch (am) {
+      case 1: aPtr = p; break;
+      case 2: aPtr = WRAP(p + C[p].b); break;
+      case 3: { u32 f = DEC(C[p].b); C[p].b = (u16)f; aPtr = WRAP(p + f); break; }
+      case 4: { u32 f = C[p].b; aPtr = WRAP(p + f); READ_A(aPtr); C[p].b = (u16)INC(f); goto a_done; }
+      case 5: aPtr = WRAP(p + C[p].a); break;
+      case 6: { u32 f = DEC(C[p].a); C[p].a = (u16)f; aPtr = WRAP(p + f); break; }
+      default: { u32 f = C[p].a; aPtr = WRAP(p + f); READ_A(aPtr); C[p].a = (u16)INC(f); goto a_done; }
+    }
+    READ_A(aPtr);
+  }
+a_done:;
+#ifdef TRACE_TIES
+  traceSource = aPtr;
+#endif
+#undef READ_A
+  const u32 Aab = (u32)Acell;
+  const u32 Ains = (u32)(Acell >> 32); // instruction word, padding 0
+
+  // B operand on the core as the A operand left it; $ < # are the
+// frequent modes here.
+  u32 bPtr, Bab = 0;
+  int eager = 0; // post-increment B mode: Bab holds the values read before it
+  const u32 bm = ins >> 11;
+  if (bm == 1) {
+    bPtr = WRAP(pc + ir.b);
+  } else if (bm == 3) {
+    const u32 p = WRAP(pc + ir.b);
+    const u32 f = DEC(C[p].b);
+    C[p].b = (u16)f;
+    bPtr = WRAP(p + f);
+  } else if (bm == 0) {
+    bPtr = pc;
+  } else {
+    const u32 p = WRAP(pc + ir.b);
+    switch (bm) {
+      case 1: bPtr = p; break;
+      case 2: bPtr = WRAP(p + C[p].b); break;
+      case 3: { u32 f = DEC(C[p].b); C[p].b = (u16)f; bPtr = WRAP(p + f); break; }
+      case 4: { u32 f = C[p].b; bPtr = WRAP(p + f); Bab = ab_of(&C[bPtr]); C[p].b = (u16)INC(f); eager = 1; break; }
+      case 5: bPtr = WRAP(p + C[p].a); break;
+      case 6: { u32 f = DEC(C[p].a); C[p].a = (u16)f; bPtr = WRAP(p + f); break; }
+      default: { u32 f = C[p].a; bPtr = WRAP(p + f); Bab = ab_of(&C[bPtr]); C[p].a = (u16)INC(f); eager = 1; break; }
+    }
+  }
+
+  Cell *const B = &C[bPtr];
+#ifdef TRACE_TIES
+  traceTarget = bPtr;
+#endif
+  return exec_core(m, n, mask, limit, W, q, head, tail, pc, ins, aPtr, Acell, Aab, Ains, B, Bab, eager, &B->ins);
+}
+
+// exec_ins() with read and write limits (execute_limited()). Each operand
+// has a read address, from which its values come (and the A operand's jump
+// target), and a write address, where the B operand's stores go. pMARS's
+// rules (semantics doc, 3.3): the offset is folded with each limit; @ and *
+// add the pointer cell at the read offset to both, < > { } change the
+// pointer cell at the write offset and add it to the write offset for both.
+// A function of its own, not a flag of exec_ins(): a branch on a flag that
+// was 0 there changed clang -O3's code of the other loops (#40).
+M42_FORCE_INLINE int exec_ins_rw(Mars *const m, Cell *const C, const u32 n, const u32 mask, const u32 limit,
+                                 Warrior *const W, u16 *const q, u32 *const head, u32 *const tail, const u32 pc,
+                                 const Cell ir, const u32 ins) {
+  const u32 R = m->readLimit, Wl = m->writeLimit;
+  u32 aPtr = pc, bRead = pc, bWrite = pc, Bab = 0;
+  u64 Acell;
+  m42_memcpy(&Acell, &ir, 8);
+  for (int k = 0; k < 2; k++) {
+    const u32 mode = k ? ins >> 11 : (ins >> 8) & 7, v = k ? ir.b : ir.a;
+    u32 rp = 0, wp = 0;
+    u16 *post = 0; // the field a post-increment mode increments after the read
+    if (mode != 0) {
+      rp = fold(v, R, n);
+      wp = fold(v, Wl, n);
+      if (mode == 2 || mode == 5) {
+        const u32 c = WRAP(pc + rp), f = mode == 2 ? C[c].b : C[c].a;
+        rp = fold(rp + f, R, n);
+        wp = fold(wp + f, Wl, n);
+      } else if (mode != 1) {
+        Cell *const c = &C[WRAP(pc + wp)];
+        u16 *const f = mode == 3 || mode == 4 ? &c->b : &c->a;
+        if (mode == 3 || mode == 6) *f = (u16)DEC(*f);
+        else post = f;
+        rp = fold(wp + *f, R, n);
+        wp = fold(wp + *f, Wl, n);
+      }
+    }
+    if (k == 0) {
+      aPtr = WRAP(pc + rp);
+      if (mode != 0) Acell = cell_of(&C[aPtr]);
+    } else {
+      bRead = WRAP(pc + rp);
+      bWrite = WRAP(pc + wp);
+      Bab = ab_of(&C[bRead]);
+    }
+    if (post) *post = (u16)INC((u32)*post);
+  }
+  return exec_core(m, n, mask, limit, W, q, head, tail, pc, ins, aPtr, Acell, (u32)Acell, (u32)(Acell >> 32), &C[bWrite], Bab, 1,
+                   &C[bRead].ins);
+}
 #undef WRAP
 #undef DEC
 #undef INC
-#undef SUBM
-}
 
 // Executes the next instruction of warrior W, see exec_ins(). The most
 // executed instruction words (tools/gen-dispatch.mjs, dispatch.h) have a
@@ -765,6 +836,13 @@ M42_FORCE_INLINE int step(Mars *const m, Cell *const C, const u32 n, const u32 m
   return EXEC(ins);
 #endif
 #undef EXEC
+}
+
+// step() with read and write limits: the generic code only.
+M42_FORCE_INLINE int step_rw(Mars *const m, Cell *const C, const u32 n, const u32 mask, const u32 limit,
+                             Warrior *const W, u16 *const q, u32 *const head, u32 *const tail) {
+  const u32 pc = q[(*head)++ & mask];
+  return exec_ins_rw(m, C, n, mask, limit, W, q, head, tail, pc, C[pc], C[pc].ins);
 }
 
 
@@ -889,9 +967,52 @@ static M42_NOINLINE u64 execute2_any(Mars *const m, u64 count) {
   return execute2(m, count, m->N, m->qmask, m->maxProc, m->war[0].q, m->war[1].q);
 }
 
+// execute() with read and write limits below the core size (exec_ins_rw()),
+// the same loop. Behind the other loops, so that they stay as they were.
+static M42_NOINLINE u64 execute_limited(Mars *const m, u64 count) {
+  Cell *const C = CORE(m);
+  const u32 n = m->N, mask = m->qmask, limit = m->maxProc;
+  Warrior *W = &m->war[m->current];
+  u64 total = 0;
+  for (;;) {
+    i64 budget = m->cyclesLeft < 1 ? 1 : m->cyclesLeft;
+    if (count - total < (u64)budget) budget = (i64)(count - total);
+    i64 left = budget;
+    for (;;) {
+      if (step_rw(m, C, n, mask, limit, W, W->q, &W->head, &W->tail) && W->tail == W->head) {
+        const i64 cycled = budget - left;
+        total += (u64)cycled + 1;
+        m->timeNow += cycled + 1;
+        m->cyclesLeft -= cycled;
+        m->current = (u32)(W - m->war);
+        warrior_died(m, m->current);
+        if (m->roundOver || total >= count) return total;
+        W = &m->war[m->current];
+        goto next_budget;
+      }
+      W = W->nextW;
+      if (--left == 0) break;
+    }
+    total += (u64)budget;
+    m->timeNow += budget;
+    m->cyclesLeft -= budget;
+    m->current = (u32)(W - m->war);
+    if (m->cyclesLeft <= 0) end_round(m);
+    return total;
+    next_budget:;
+  }
+}
+
+// execute_limited() comes last: clang emits a static function where it is
+// first referenced, and first it came in front of the loops. Behind them it
+// still moves the call index of warrior_died() by one (84 to 85, the same
+// size); every other place tried moved more (#40).
 static u64 run_some(Mars *const m, u64 count) {
-  if (m->nw != 2) return execute(m, count);
-  return m->N == 8000 && m->maxProc == 8000 && m->qmask == ~0u ? execute2_8000(m, count) : execute2_any(m, count);
+  if (m->readLimit == m->N && m->writeLimit == m->N) {
+    if (m->nw != 2) return execute(m, count);
+    return m->N == 8000 && m->maxProc == 8000 && m->qmask == ~0u ? execute2_8000(m, count) : execute2_any(m, count);
+  }
+  return execute_limited(m, count);
 }
 
 // ---------------------------------------------------------------- matches

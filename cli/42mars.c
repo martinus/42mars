@@ -11,8 +11,8 @@
 // stdout is pMARS's: listings, results, -k lines, -A output. Messages go to
 // stderr in our own words. Exit codes are pMARS's: 0 ok, 2 bad options, 3 a
 // warrior that does not assemble or cannot be read. Not supported, with a
-// clear error: -R and -W (read/write limits, #40), -V (pMARS's internal
-// assembler dump), and values beyond the engine's limits
+// clear error: -V (pMARS's internal assembler dump), and values beyond the
+// engine's limits
 // (core size 65536, 2^24 processes and p-space cells, 2^32-1 cycles). -e
 // (the debugger, off in pMARS's server version) is ignored, as pMARS does.
 // What pMARS does for each option is in docs/redcode-semantics.md,
@@ -40,6 +40,7 @@ static void usage(void) {
         "  -l # warrior length [100]  -f   fixed position series\n"
         "  -d # distance [length]     -F # position of warrior 2\n"
         "  -S # p-space [core/16]     -P   permuted positions\n"
+        "  -R # read limit [core]     -W # write limit [core]\n"
         "  -= $ score formula [(W*W-1)/S] -8   ICWS'88 only\n"
         "  -@ $ read options from file $\n",
         stderr);
@@ -89,7 +90,7 @@ typedef struct {
   List args, buffers; // the arguments, and the -@ files they point into
   const char *files[MAX_WARRIORS + 1];
   int nfiles;
-  long long rounds, size, cycles, processes, length, distance, pspace, position;
+  long long rounds, size, cycles, processes, length, distance, pspace, position, readLimit, writeLimit;
   int brief, koth, sorted, assemble, fixed, permute, hasDistance, hasPosition;
   const char *formula;
 } Args;
@@ -143,7 +144,7 @@ static int parse(int argc, char **argv, Args *a) {
     }
     for (const char *c = arg + 1; *c; c++) {
       const char *value = 0;
-      if (strchr("rscpldFS=", *c)) {
+      if (strchr("rscpldFSRW=", *c)) {
         if (i + 1 >= l.n) return fail(2, "missing value for", arg);
         value = l.v[++i];
       }
@@ -179,7 +180,10 @@ static int parse(int argc, char **argv, Args *a) {
           *(*c == 's' ? &a->size : *c == 'c' ? &a->cycles : *c == 'p' ? &a->processes : *c == 'l' ? &a->length : &a->pspace) = v;
           break;
         }
-        case 'R': case 'W': return fail(2, "read and write limits (-R, -W) are not supported yet (#40)", 0);
+        case 'R': case 'W':
+          if (!number(value, 1073741824, &v) || v < 1) return fail(2, "value out of range for the option", arg);
+          *(*c == 'R' ? &a->readLimit : &a->writeLimit) = v;
+          break;
         case 'P': a->permute = 1; break;
         case '8': icws88 = 1; break;
         case 'V': return fail(2, "-V (pMARS's verbose assembly) is not supported", 0);
@@ -273,6 +277,8 @@ static int play(Args *a, m42_warrior **w) {
   rules.max_length = (uint32_t)a->length;
   rules.min_distance = (uint32_t)a->distance;
   rules.pspace_size = (uint32_t)a->pspace; // 0: core size / 16
+  rules.read_limit = (uint32_t)a->readLimit;   // 0: core size
+  rules.write_limit = (uint32_t)a->writeLimit;
   rules.rounds = (uint32_t)a->rounds;
   rules.warriors = (uint32_t)a->nfiles;
 
@@ -391,6 +397,10 @@ static int check(const Args *a) {
   const int n = a->nfiles;
   if ((long long)n * a->distance > a->size) return fail(2, "the core size is too small for the warriors and the distance", 0);
   if (a->permute && n != 2) return fail(2, "-P needs exactly two warriors", 0);
+  for (int k = 0; k < 2; k++) {
+    const long long limit = k ? a->writeLimit : a->readLimit;
+    if (limit && (limit > a->size || a->size % limit)) return fail(2, "a read or write limit (-R, -W) must divide the core size", 0);
+  }
   // The score formula, for every number of survivors.
   for (int s = 1; s <= n; s++) {
     int64_t reg[26] = {0};

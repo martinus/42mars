@@ -179,7 +179,7 @@ function tmpFile(source) {
 // ---------------------------------------------------------------- listings
 
 function rules(o) {
-  return [...(ICWS88 ? ['-8'] : []), '-s', o.coreSize, '-c', o.maxCycles, '-p', o.maxProcesses, '-l', o.maxLength, '-d', o.minDistance].map(String);
+  return [...(ICWS88 ? ['-8'] : []), ...(o.readLimit ? ['-R', o.readLimit] : []), ...(o.writeLimit ? ['-W', o.writeLimit] : []), '-s', o.coreSize, '-c', o.maxCycles, '-p', o.maxProcesses, '-l', o.maxLength, '-d', o.minDistance].map(String);
 }
 const STANDARD = { coreSize: 8000, maxCycles: 80000, maxProcesses: 8000, maxLength: 100, minDistance: 100 };
 
@@ -542,6 +542,10 @@ const FUZZ_RULES = [
   { coreSize: 800, maxCycles: 8000, maxProcesses: 800, maxLength: 20, minDistance: 20 },
   { coreSize: 800, maxCycles: 4000, maxProcesses: 8, maxLength: 20, minDistance: 20 },
   { coreSize: 8000, maxCycles: 80000, maxProcesses: 8000, maxLength: 100, minDistance: 100 },
+  // read and write limits (pmars -R -W): each a divisor of the core size
+  { coreSize: 8000, maxCycles: 80000, maxProcesses: 8000, maxLength: 100, minDistance: 100, readLimit: 500, writeLimit: 500 },
+  { coreSize: 800, maxCycles: 8000, maxProcesses: 800, maxLength: 20, minDistance: 20, readLimit: 25, writeLimit: 160 },
+  { coreSize: 80, maxCycles: 800, maxProcesses: 80, maxLength: 5, minDistance: 5, readLimit: 16, writeLimit: 5 },
 ];
 
 async function fuzz() {
@@ -563,7 +567,7 @@ async function multi() {
   if (PERMUTE) return console.log('multi: skipped (-P takes two warriors)');
   const n = 600 * SCALE;
   const cases = Array.from({ length: n }, (_, i) => {
-    const o = FUZZ_RULES[1 + (i % 3)];
+    const o = FUZZ_RULES[[1, 2, 3, 4, 5][i % 5]]; // core 800 and 8000, two with limits
     const k = 3 + (i % 2);
     const srcs = Array.from({ length: k }, () => randomWarrior(1 + rand(Math.min(10, o.maxLength)), o.coreSize));
     return { o, srcs, pos: o.minDistance + rand(o.coreSize + 1 - 2 * o.minDistance), rounds: 1 + (i % 3) };

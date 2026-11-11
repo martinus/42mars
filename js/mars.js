@@ -65,6 +65,54 @@ function combine(opcode, target, source, n) {
 // MUL, DIV, MOD, NOP, LDP and STP: the opcodes that execute() does not
 // handle itself. Returns the trace flags, with TRACE_DIED when the process
 // dies.
+// Operands with read and write limits below the core size (pMARS's -R and
+// -W, semantics doc 3.3): each operand has a read address, where its values
+// come from (and the A operand's jump target), and a write address, where
+// the B operand's stores go. The offset is folded with each limit; @ and *
+// add the pointer cell at the read offset to both, < > { } change the
+// pointer cell at the write offset and add it to the write offset for both.
+// Returns the addresses in `out` (claimA and claimB: the cells the operands
+// incremented or decremented, -1: none).
+function limitedOperands(m, pc, aMode, irA, bMode, irB, out) {
+  const n = m.coreSize, R = m.opt.readLimit, W = m.opt.writeLimit, av = m.av, bv = m.bv;
+  const fold = (x, L) => { const r = x % L; return r > L >> 1 ? r + n - L : r; };
+  const operand = (mode, value) => {
+    let rp = fold(value, R), wp = fold(value, W), post = -1, cell = -1;
+    const onA = mode >= 5;
+    if (mode === 2 || mode === 5) {
+      const c = (pc + rp) % n, v = onA ? av[c] : bv[c];
+      rp = fold(rp + v, R);
+      wp = fold(wp + v, W);
+    } else if (mode !== 1) {
+      const c = (pc + wp) % n;
+      if (mode === 3 || mode === 6) { if (onA) av[c] = av[c] === 0 ? n - 1 : av[c] - 1; else bv[c] = bv[c] === 0 ? n - 1 : bv[c] - 1; } else post = c;
+      cell = c;
+      const v = onA ? av[c] : bv[c];
+      rp = fold(wp + v, R);
+      wp = fold(wp + v, W);
+    }
+    return { r: (pc + rp) % n, w: (pc + wp) % n, post, onA, cell };
+  };
+  const increment = (o) => {
+    if (o.post < 0) return;
+    if (o.onA) av[o.post] = av[o.post] + 1 === n ? 0 : av[o.post] + 1;
+    else bv[o.post] = bv[o.post] + 1 === n ? 0 : bv[o.post] + 1;
+  };
+  out.aPtr = pc; out.AA = irA; out.AB = irB; out.claimA = -1;
+  if (aMode !== 0) {
+    const a = operand(aMode, irA);
+    out.aPtr = a.r; out.AA = av[a.r]; out.AB = bv[a.r]; out.claimA = a.cell;
+    increment(a);
+  }
+  out.bPtr = pc; out.bW = pc; out.claimB = -1;
+  if (bMode !== 0) {
+    const b = operand(bMode, irB);
+    out.bPtr = b.r; out.bW = b.w; out.claimB = b.cell;
+    out.BA = av[b.r]; out.BB = bv[b.r];
+    increment(b);
+  } else { out.BA = av[pc]; out.BB = bv[pc]; }
+}
+
 function otherOpcode(m, W, ir, aPtr, bPtr, AA, AB, BA, BB) {
   const opcode = ir >> 3;
   const bits = MOD_BITS[ir & 7];
@@ -130,6 +178,10 @@ export class Mars {
     this.track = !this.opt.headless; // do the visualizer bookkeeping
 
     const n = (this.coreSize = this.opt.coreSize);
+    for (const k of ['readLimit', 'writeLimit']) {
+      const l = this.opt[k];
+      if (!Number.isInteger(l) || l < 1 || l > n || n % l !== 0) throw new RangeError(`${k} must divide the core size: ${l}`);
+    }
     const T = (this.traceSize = TRACE_SIZE);
     // The per-cell arrays of one element type are views into one buffer, and
     // execute() indexes that buffer at offsets. Each typed array the hot loop
@@ -173,6 +225,7 @@ export class Mars {
     this.starter = 0;
     this.seed = 1;
     this.fixedPositions = null;
+    this.limitedOut = { aPtr: 0, AA: 0, AB: 0, claimA: -1, bPtr: 0, bW: 0, BA: 0, BB: 0, claimB: -1 };
     this.permutation = null;
     this.lastDied = -1; // set by execute(): address where a warrior lost its last process
 
@@ -511,6 +564,9 @@ export class Mars {
     const EXECBY = n, READBY = 2 * n, BUMP = 3 * n; // in S, after owner
     const AV = 0, BV = n, ORIGIN = 2 * n, TWRITE = 3 * n, TREAD = 4 * n, TEXEC = 5 * n; // in I
     const TRACE = 6 * n; // in I: tracePc, traceA, traceB, traceMeta, each TRACE_SIZE long
+    // Read or write limits: the operands of limitedOperands(), into lo.
+    const limited = this.opt.readLimit < n || this.opt.writeLimit < n;
+    const lo = this.limitedOut;
     const heatStride = this.heatStride;
     const ws = this.warriors;
     const nw = ws.length;
@@ -569,6 +625,14 @@ export class Mars {
       // increments and decrements of the operands changed (-1: none), for
       // the bookkeeping below.
       let aPtr = pc, AA = irA, AB = irB, claimA = -1, claimB = -1;
+      // bPtr: the B read address; bW: where the stores go, bPtr without limits
+      let bPtr = pc, BA, BB, bW;
+      if (limited) {
+        limitedOperands(this, pc, aMode, irA, bMode, irB, lo);
+        aPtr = lo.aPtr; AA = lo.AA; AB = lo.AB; claimA = lo.claimA;
+        bPtr = lo.bPtr; bW = lo.bW; BA = lo.BA; BB = lo.BB; claimB = lo.claimB;
+        if (track && aMode !== 0) { I[TREAD + aPtr] = time; S[READBY + aPtr] = w; }
+      } else {
       if (aMode !== 0) {
         let p = pc + irA; if (p >= n) p -= n;
         switch (aMode) {
@@ -624,7 +688,6 @@ export class Mars {
       }
 
       // B operand, the same on the core as the A operand left it.
-      let bPtr = pc, BA, BB;
       if (bMode === 0) {
         BA = I[AV + pc]; BB = I[BV + pc];
       } else {
@@ -680,6 +743,9 @@ export class Mars {
         }
       }
 
+      bW = bPtr;
+      }
+
       // Execute, specialized on the opcode byte (opcode << 3 | modifier),
       // written in octal: the last digit is the modifier, A B AB BA F X I =
       // 0..6. `next` is the address queued afterwards; -1: the process dies,
@@ -691,48 +757,48 @@ export class Mars {
       let r;
       switch (ir) {
         // MOV
-        case 0o00: I[AV + bPtr] = AA; flags = STORED; break;
-        case 0o01: I[BV + bPtr] = AB; flags = STORED; break;
-        case 0o02: I[BV + bPtr] = AA; flags = STORED; break;
-        case 0o03: I[AV + bPtr] = AB; flags = STORED; break;
-        case 0o04: I[AV + bPtr] = AA; I[BV + bPtr] = AB; flags = STORED; break;
-        case 0o05: I[AV + bPtr] = AB; I[BV + bPtr] = AA; flags = STORED; break;
+        case 0o00: I[AV + bW] = AA; flags = STORED; break;
+        case 0o01: I[BV + bW] = AB; flags = STORED; break;
+        case 0o02: I[BV + bW] = AA; flags = STORED; break;
+        case 0o03: I[AV + bW] = AB; flags = STORED; break;
+        case 0o04: I[AV + bW] = AA; I[BV + bW] = AB; flags = STORED; break;
+        case 0o05: I[AV + bW] = AB; I[BV + bW] = AA; flags = STORED; break;
         case 0o06: // MOV.I also takes opcode and modes from the A cell as it is now
-          I[AV + bPtr] = AA; I[BV + bPtr] = AB;
-          U[OP + bPtr] = U[OP + aPtr]; U[AM + bPtr] = U[AM + aPtr]; U[BM + bPtr] = U[BM + aPtr];
-          if (track) I[ORIGIN + bPtr] = I[ORIGIN + aPtr];
+          I[AV + bW] = AA; I[BV + bW] = AB;
+          U[OP + bW] = U[OP + aPtr]; U[AM + bW] = U[AM + aPtr]; U[BM + bW] = U[BM + aPtr];
+          if (track) I[ORIGIN + bW] = I[ORIGIN + aPtr];
           flags = STORED;
           break;
 
         // ADD
-        case 0o10: r = BA + AA; I[AV + bPtr] = r >= n ? r - n : r; flags = STORED; break;
-        case 0o11: r = BB + AB; I[BV + bPtr] = r >= n ? r - n : r; flags = STORED; break;
-        case 0o12: r = BB + AA; I[BV + bPtr] = r >= n ? r - n : r; flags = STORED; break;
-        case 0o13: r = BA + AB; I[AV + bPtr] = r >= n ? r - n : r; flags = STORED; break;
+        case 0o10: r = BA + AA; I[AV + bW] = r >= n ? r - n : r; flags = STORED; break;
+        case 0o11: r = BB + AB; I[BV + bW] = r >= n ? r - n : r; flags = STORED; break;
+        case 0o12: r = BB + AA; I[BV + bW] = r >= n ? r - n : r; flags = STORED; break;
+        case 0o13: r = BA + AB; I[AV + bW] = r >= n ? r - n : r; flags = STORED; break;
         case 0o14: case 0o16:
-          r = BA + AA; I[AV + bPtr] = r >= n ? r - n : r;
-          r = BB + AB; I[BV + bPtr] = r >= n ? r - n : r;
+          r = BA + AA; I[AV + bW] = r >= n ? r - n : r;
+          r = BB + AB; I[BV + bW] = r >= n ? r - n : r;
           flags = STORED;
           break;
         case 0o15:
-          r = BA + AB; I[AV + bPtr] = r >= n ? r - n : r;
-          r = BB + AA; I[BV + bPtr] = r >= n ? r - n : r;
+          r = BA + AB; I[AV + bW] = r >= n ? r - n : r;
+          r = BB + AA; I[BV + bW] = r >= n ? r - n : r;
           flags = STORED;
           break;
 
         // SUB: target minus source
-        case 0o20: r = BA - AA; I[AV + bPtr] = r < 0 ? r + n : r; flags = STORED; break;
-        case 0o21: r = BB - AB; I[BV + bPtr] = r < 0 ? r + n : r; flags = STORED; break;
-        case 0o22: r = BB - AA; I[BV + bPtr] = r < 0 ? r + n : r; flags = STORED; break;
-        case 0o23: r = BA - AB; I[AV + bPtr] = r < 0 ? r + n : r; flags = STORED; break;
+        case 0o20: r = BA - AA; I[AV + bW] = r < 0 ? r + n : r; flags = STORED; break;
+        case 0o21: r = BB - AB; I[BV + bW] = r < 0 ? r + n : r; flags = STORED; break;
+        case 0o22: r = BB - AA; I[BV + bW] = r < 0 ? r + n : r; flags = STORED; break;
+        case 0o23: r = BA - AB; I[AV + bW] = r < 0 ? r + n : r; flags = STORED; break;
         case 0o24: case 0o26:
-          r = BA - AA; I[AV + bPtr] = r < 0 ? r + n : r;
-          r = BB - AB; I[BV + bPtr] = r < 0 ? r + n : r;
+          r = BA - AA; I[AV + bW] = r < 0 ? r + n : r;
+          r = BB - AB; I[BV + bW] = r < 0 ? r + n : r;
           flags = STORED;
           break;
         case 0o25:
-          r = BA - AB; I[AV + bPtr] = r < 0 ? r + n : r;
-          r = BB - AA; I[BV + bPtr] = r < 0 ? r + n : r;
+          r = BA - AB; I[AV + bW] = r < 0 ? r + n : r;
+          r = BB - AA; I[BV + bW] = r < 0 ? r + n : r;
           flags = STORED;
           break;
 
@@ -748,16 +814,16 @@ export class Mars {
 
         // DJN decrements the core cell; the jump test uses the values read before.
         case 0o100: case 0o103:
-          r = I[AV + bPtr]; I[AV + bPtr] = r === 0 ? n - 1 : r - 1;
+          r = I[AV + bW]; I[AV + bW] = r === 0 ? n - 1 : r - 1;
           if (BA !== 1) { next = aPtr; flags = STORED | NEW_PROCESS; } else flags = STORED;
           break;
         case 0o101: case 0o102:
-          r = I[BV + bPtr]; I[BV + bPtr] = r === 0 ? n - 1 : r - 1;
+          r = I[BV + bW]; I[BV + bW] = r === 0 ? n - 1 : r - 1;
           if (BB !== 1) { next = aPtr; flags = STORED | NEW_PROCESS; } else flags = STORED;
           break;
         case 0o104: case 0o105: case 0o106:
-          r = I[AV + bPtr]; I[AV + bPtr] = r === 0 ? n - 1 : r - 1;
-          r = I[BV + bPtr]; I[BV + bPtr] = r === 0 ? n - 1 : r - 1;
+          r = I[AV + bW]; I[AV + bW] = r === 0 ? n - 1 : r - 1;
+          r = I[BV + bW]; I[BV + bW] = r === 0 ? n - 1 : r - 1;
           if (BA !== 1 || BB !== 1) { next = aPtr; flags = STORED | NEW_PROCESS; } else flags = STORED;
           break;
 
@@ -820,7 +886,7 @@ export class Mars {
           break;
 
         default: // MUL, DIV, MOD, NOP, LDP, STP
-          flags = otherOpcode(this, ws[w], ir, aPtr, bPtr, AA, AB, BA, BB);
+          flags = otherOpcode(this, ws[w], ir, aPtr, bW, AA, AB, BA, BB);
           if ((flags & DIED) !== 0) { next = -1; flags -= DIED; }
           break;
       }
@@ -836,11 +902,11 @@ export class Mars {
         // < and {, 0 for a store of step 4, the last one wins.
         if (claimA >= 0) { claim(S, I, territory, TWRITE, claimA, w, time); S[BUMP + claimA] = aMode === 3 || aMode === 6 ? -1 : 1; }
         if (claimB >= 0) { claim(S, I, territory, TWRITE, claimB, w, time); S[BUMP + claimB] = bMode === 3 || bMode === 6 ? -1 : 1; }
-        if (flags & STORED) { claim(S, I, territory, TWRITE, bPtr, w, time); S[BUMP + bPtr] = 0; }
+        if (flags & STORED) { claim(S, I, territory, TWRITE, bW, w, time); S[BUMP + bW] = 0; }
         const slot = TRACE + (time & (TRACE_SIZE - 1));
         I[slot] = pc;
         I[slot + TRACE_SIZE] = aPtr;
-        I[slot + 2 * TRACE_SIZE] = bPtr;
+        I[slot + 2 * TRACE_SIZE] = bW;
         I[slot + 3 * TRACE_SIZE] = w | (ir << 8) | flags | (next === -1 ? DIED : 0);
       }
 

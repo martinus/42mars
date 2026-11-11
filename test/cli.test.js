@@ -42,7 +42,7 @@ for (const c of cases) {
 
 test('42mars rejects what the engine does not support', { skip }, () => {
   const w = [join(root, 'warriors/imp.red'), join(root, 'warriors/dwarf.red')];
-  for (const args of [['-V'], ['-R', '100'], ['-W', '100'], ['-s', '70000'], ['-F', '4000+1']]) {
+  for (const args of [['-V'], ['-s', '70000'], ['-F', '4000+1']]) {
     const r = spawnSync(bin, ['-b', ...args, ...w], { encoding: 'latin1' });
     assert.equal(r.status, 2, args.join(' '));
     assert.equal(r.stdout, '');
