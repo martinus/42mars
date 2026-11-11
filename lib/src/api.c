@@ -146,14 +146,19 @@ size_t m42_warrior_statement(const m42_warrior *w, uint32_t i, char *buf, size_t
   return copy_text(w && i < RESULT(w)->nExpanded ? RESULT(w)->expanded[i] : none, buf, n);
 }
 
-EXPORT(m42_evaluate)
-int m42_evaluate(const char *text, size_t len, int64_t *value) {
+EXPORT(m42_evaluate_registers)
+int m42_evaluate_registers(const char *text, size_t len, int64_t registers[26], int64_t *value) {
   Evaluator e = {0};
+  if (registers) for (int i = 0; i < 26; i++) e.registers[i] = registers[i];
   i64 v = 0;
   const int status = len > 0xffffffffu ? EVAL_BAD : evaluate(&e, (Str){(const u8 *)(text ? text : ""), (u32)len}, &v);
+  if (registers) for (int i = 0; i < 26; i++) registers[i] = e.registers[i];
   if (value) *value = v;
   return status;
 }
+
+EXPORT(m42_evaluate)
+int m42_evaluate(const char *text, size_t len, int64_t *value) { return m42_evaluate_registers(text, len, 0, value); }
 
 EXPORT(m42_warrior_make_size)
 size_t m42_warrior_make_size(uint32_t length) {

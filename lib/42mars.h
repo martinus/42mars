@@ -147,6 +147,9 @@ size_t m42_warrior_statement(const m42_warrior *w, uint32_t i, char *buf, size_t
 // Evaluates one Redcode expression (with fresh registers a..z) into *value.
 typedef enum { M42_EVAL_OK = 0, M42_EVAL_OVERFLOW = 1, M42_EVAL_BAD = -1, M42_EVAL_DIV_ZERO = -2 } m42_eval_status;
 int m42_evaluate(const char *text, size_t len, int64_t *value);
+// The same with the caller's registers a..z (registers[0] is a), which the
+// expression reads and may assign, e.g. a score formula over w and s.
+int m42_evaluate_registers(const char *text, size_t len, int64_t registers[26], int64_t *value);
 
 // The bytes a packed copy of w needs, and the copy: the result lives in
 // `dst` alone. Returns 0 when `size` is too small.

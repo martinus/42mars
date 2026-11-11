@@ -1,0 +1,20 @@
+[
+{"args":"-r 10 -F 4000 W/dwarf.red W/imp.red","code":0,"stdout":"Program \"Dwarf\" (length 4) by \"A. K. Dewdney\"\n\n       ORG      START\n       DAT.F  #     0, #     0     \nSTART  ADD.AB #     4, $    -1     \n       MOV.I  $    -2, @    -2     \n       JMP.B  $    -2, $     0     \n\nProgram \"Imp\" (length 1) by \"A. K. Dewdney\"\n\n       ORG      START\nSTART  MOV.I  $     0, $     1     \n\nDwarf by A. K. Dewdney scores 14\nImp by A. K. Dewdney scores 8\nResults: 2 0 8\n"},
+{"args":"-b -k -r 20 -F 3000 W/dwarf.red W/imp.red W/seeker.red","code":0,"stdout":"52 1 8 6 5\n80 4 9 6 1\n16 0 1 6 13\n"},
+{"args":"-b -o -r 20 -F 3000 W/dwarf.red W/imp.red W/seeker.red","code":0,"stdout":"Imp by A. K. Dewdney scores 80\n  Results: 4 9 6 1\nDwarf by A. K. Dewdney scores 52\n  Results: 1 8 6 5\nSeeker by 42mars sample scores 16\n  Results: 0 1 6 13\n"},
+{"args":"-b -r 20 -F 3000 -= x=x+S W/dwarf.red W/imp.red W/seeker.red","code":0,"stdout":"Dwarf by A. K. Dewdney scores 61\n  Results: 1 8 6 5\nImp by A. K. Dewdney scores 181\n  Results: 4 9 6 1\nSeeker by 42mars sample scores 123\n  Results: 0 1 6 13\n"},
+{"args":"-b -k -r 30 -f W/lantern.red W/origami.red","code":0,"stdout":"0 4\n26 4\n"},
+{"args":"-b -k -r 20 -f W/seeker.red W/dwarf.red W/imp.red","code":0,"stdout":"6 0 0 3 17\n74 2 13 3 2\n74 2 13 3 2\n"},
+{"args":"-A P/pinny.red W/imp.red","code":0,"stdout":"       ORG          2\n       DAT.F  $    -1, $    -1     \n       SPL.B  #    -3, }     5     \n       JMP.B  $     0, $     0     \n       PIN         77\n       END\n       ORG          0\n       MOV.I  $     0, $     1     \n       END\n"},
+{"args":"-b -k -r 3 W/imp.red","code":0,"stdout":"0 3 0\n"},
+{"args":"-bk -o -r 10 -F 4000 W/imp.red W/dwarf.red","code":0,"stdout":"0 9\n1 9\n"},
+{"args":"-b -o -r 10 -F 4000 W/imp.red W/dwarf.red","code":0,"stdout":"Dwarf by A. K. Dewdney scores 12\nImp by A. K. Dewdney scores 9\nResults: 1 0 9\n"},
+{"args":"-r 1 -F 4000 W/dwarf.red P/broken.red W/imp.red","code":3,"stdout":"Program \"Dwarf\" (length 4) by \"A. K. Dewdney\"\n\n       ORG      START\n       DAT.F  #     0, #     0     \nSTART  ADD.AB #     4, $    -1     \n       MOV.I  $    -2, @    -2     \n       JMP.B  $    -2, $     0     \n\n"},
+{"args":"-b -d 50 W/dwarf.red W/imp.red","code":2,"stdout":""},
+{"args":"-b -s 150 W/dwarf.red W/imp.red","code":2,"stdout":""},
+{"args":"-b -f -F 4000 W/dwarf.red W/imp.red","code":2,"stdout":""},
+{"args":"-b -= 1/0 P/broken.red W/imp.red","code":2,"stdout":""},
+{"args":"-b -r 5 -l 50 -F 4000 W/imp.red W/dwarf.red","code":0,"stdout":"Imp by A. K. Dewdney scores 5\nDwarf by A. K. Dewdney scores 5\nResults: 0 0 5\n"},
+{"args":"-b -k -r 3 P/die.red","code":0,"stdout":"0 3 0\n"},
+{"args":"-b -r 3 P/die.red","code":0,"stdout":"Unknown by Anonymous scores 0\n"}
+]
