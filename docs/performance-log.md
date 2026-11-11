@@ -1327,6 +1327,29 @@ that no new timing was needed:
 * New fields of `struct Mars` go to its end, so that the offsets the loops
   read stay the same.
 
+Second part (#55): `wasm/42mars.js` calls only the `m42_` functions, and
+the old exports are gone. The loops are byte-identical apart from data
+addresses: `api.c`'s strings lie in front, so the queues, the core and the
+context moved up by 256 bytes. The glue costs 0.3 µs more per
+`runMatch()` (14.8 against 14.6 µs for a 1-instruction match of 8 rounds,
+3 runs), because it writes the warriors with `m42_warrior_make()` and reads
+the scores through the API. Alternating runs of `main` and the branch,
+copies of both repositories (`git archive`), median and range:
+
+| Measure | `main` | branch |
+|---|---|---|
+| bench (n=7) | 370.0 (352.8–372.1) | 367.5 (353.0–371.6), -0.7% |
+| pairs (n=7) | 354.5 (344.9–355.8) | 353.1 (352.4–357.3), -0.4% |
+| t20 (n=7) | 3.01 (2.99–3.07) | 3.00 (2.98–3.01), -0.3% |
+| t80, 16 jobs (n=7) | 2.99 (2.98–3.03) | 2.99 (2.98–3.01), 0.0% |
+| t80, 31 jobs (n=5, 7, 9) | 2.75, 2.74, 2.75 | +1.1%, +1.1%, +0.7%, ranges overlapping |
+| t80, 1 round, 31 jobs, ms (n=5) | 241.6 (231.5–247.1) | 234.4 (232.1–250.3), -3.0% |
+
+`main` with 256 bytes of padding in front of its data (nothing else
+changed) against `main`: t80 with 31 jobs +0.4% (n=9, ranges
+overlapping). What is left at 31 jobs, up to 1%, I could not tell from
+noise; at 16 jobs and on one thread there is none.
+
 ## Ideas from other simulators
 
 exMARS (Martin Ankerl, 2003, based on exhaust and pMARS) and the exMARS fork

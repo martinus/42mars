@@ -45,21 +45,23 @@ if (INPUT) {
   for (const pair of pairs) text += nativeMatch(pair.map((f) => assemble(readFileSync(join(dir, f), 'latin1'))), o, 1234, rounds);
   writeFileSync(join(tmp, 'input.txt'), text);
 }
-let src = new URL('../lib/tools/bench-native.c', import.meta.url).pathname;
+let lib = fileURLToPath(new URL('../lib/', import.meta.url));
 if (SRC) {
-  // Another mars.c: build it next to copies of bench-native.c and dispatch.h
-  // (a dispatch.h next to it wins), so the repository's file stays as it is.
-  const libSrc = new URL('../lib/src/', import.meta.url).pathname;
-  const dispatch = existsSync(join(dirname(SRC), 'dispatch.h')) ? join(dirname(SRC), 'dispatch.h') : join(libSrc, 'dispatch.h');
-  mkdirSync(join(tmp, 'src'), { recursive: true });
-  copyFileSync(SRC, join(tmp, 'src', 'mars.c'));
-  copyFileSync(dispatch, join(tmp, 'src', 'dispatch.h'));
-  copyFileSync(src, join(tmp, 'src', 'bench-native.c'));
-  src = join(tmp, 'src', 'bench-native.c');
+  // Another mars.c: a copy of lib/ with it in place of src/mars.c (and a
+  // dispatch.h next to it, if there is one), so the repository stays as it is.
+  const copy = join(tmp, 'lib');
+  for (const f of ['42mars.h', '42mars.c', 'src/asm.c', 'src/api.c', 'src/dispatch.h', 'tools/bench-native.c', 'tools/input.h']) {
+    mkdirSync(dirname(join(copy, f)), { recursive: true });
+    copyFileSync(join(lib, f), join(copy, f));
+  }
+  copyFileSync(SRC, join(copy, 'src', 'mars.c'));
+  if (existsSync(join(dirname(SRC), 'dispatch.h'))) copyFileSync(join(dirname(SRC), 'dispatch.h'), join(copy, 'src', 'dispatch.h'));
+  lib = copy;
 }
+const src = join(lib, 'tools', 'bench-native.c');
 // -DM42_FIXED_CONTEXT: the one static context of the wasm build, so that
 // the native profile shows the code the wasm build runs (lib/42mars.h).
-execFileSync(CC, ['-O3', '-march=native', '-fno-strict-aliasing', '-ffp-contract=off', '-DM42_FIXED_CONTEXT', ...(COUNT ? ['-DCOUNT_INS'] : []), '-I', fileURLToPath(new URL('../lib/src/', import.meta.url)), '-o', join(tmp, 'bench'), src, '-lm'], { stdio: 'inherit' });
+execFileSync(CC, ['-O3', '-march=native', '-fno-strict-aliasing', '-ffp-contract=off', '-DM42_FIXED_CONTEXT', ...(COUNT ? ['-DCOUNT_INS'] : []), '-I', lib, '-o', join(tmp, 'bench'), src, '-lm'], { stdio: 'inherit' });
 const args = [join(tmp, 'input.txt'), ...(earlyTie ? ['early-tie'] : [])];
 let counts = '';
 for (let r = 0; r < RUNS; r++) {

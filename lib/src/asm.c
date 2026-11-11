@@ -1625,27 +1625,3 @@ static AsmResult *assemble(void *mem, usize size, const u8 *src, usize len, cons
   return r;
 }
 
-// ---------------------------------------------------------------- exports
-
-#ifdef __wasm__
-// For wasm/42mars.js: the source is at `src` and the working memory follows
-// it; the options come as numbers. Returns the result or 0 (memory too small
-// or a core size below 1).
-EXPORT(asm_assemble)
-AsmResult *asm_assemble(const u8 *src, u32 len, u8 *mem, u32 size, double coreSize, double maxProcesses,
-                        double maxCycles, double maxLength, double minDistance, double warriors, double rounds,
-                        double pSpaceSize, double readLimit, double writeLimit, u32 utf8) {
-  const AsmOptions o = {(i64)coreSize, (i64)maxProcesses, (i64)maxCycles, (i64)maxLength, (i64)minDistance,
-                        (i64)warriors, (i64)rounds, (i64)pSpaceSize, (i64)readLimit, (i64)writeLimit, utf8};
-  return assemble(mem, size, src, len, &o);
-}
-
-// Evaluates one expression with fresh registers (js/expr.js, for the
-// fixtures and tools/expr-fuzz.mjs). Writes the value to *value and returns
-// the status.
-EXPORT(asm_evaluate)
-i32 asm_evaluate(const u8 *text, u32 len, i64 *value) {
-  Evaluator e = {0};
-  return evaluate(&e, (Str){text, len}, value);
-}
-#endif

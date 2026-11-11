@@ -13,9 +13,19 @@ _Static_assert(sizeof(m42_instruction) == sizeof(AsmIns) && __builtin_offsetof(m
                "m42_instruction is the assembler's AsmIns");
 _Static_assert(sizeof(m42_cell) == sizeof(Cell) && __builtin_offsetof(m42_cell, word) == __builtin_offsetof(Cell, ins),
                "m42_cell is the simulator's Cell");
+#ifdef __wasm__
+_Static_assert(sizeof(m42_rules) == 44 && sizeof(m42_match_options) == 32 && __builtin_offsetof(m42_match_options, seed) == 16 &&
+               __builtin_offsetof(m42_match_options, positions) == 24 && __builtin_offsetof(m42_match_options, log) == 28 &&
+               sizeof(m42_state) == 32 && __builtin_offsetof(m42_state, time) == 16 && sizeof(m42_warrior_state) == 40 &&
+               __builtin_offsetof(m42_warrior_state, died_at) == 16 && __builtin_offsetof(m42_warrior_state, score) == 24 &&
+               sizeof(m42_instruction) == 16,
+               "wasm/42mars.js reads and writes these structs at these offsets");
+#endif
 
+EXPORT(m42_version)
 const char *m42_version(void) { return "0.1.0"; }
 
+EXPORT(m42_status_text)
 const char *m42_status_text(int status) {
   switch (status) {
     case M42_OK: return "ok";
@@ -34,6 +44,7 @@ static void set_status(int *status, int value) {
 
 // ---------------------------------------------------------------- rules
 
+EXPORT(m42_rules_94)
 m42_rules m42_rules_94(void) {
   const m42_rules r = {sizeof(m42_rules), 8000, 80000, 8000, 100, 100, 500, 0, 0, 1, 2};
   return r;
@@ -51,11 +62,13 @@ static int rules_ok(const m42_rules *r) {
 // An m42_warrior is the assembler's AsmResult.
 #define RESULT(w) ((const AsmResult *)(const void *)(w))
 
+EXPORT(m42_assemble)
 int m42_assemble(const char *src, size_t len, const m42_rules *rules, unsigned flags, void *mem, size_t size,
                  m42_warrior **out) {
   if (!out) return M42_ERR_ARGUMENT;
   *out = 0;
-  if (!rules_ok(rules)) return M42_ERR_RULES;
+  // The assembler needs a core size only; the simulator's limits do not apply.
+  if (!rules || rules->size < sizeof(m42_rules) || rules->core_size < 1) return M42_ERR_RULES;
   if ((!src && len) || !mem) return M42_ERR_ARGUMENT;
   const AsmOptions o = {rules->core_size, rules->max_processes, rules->max_cycles, rules->max_length,
                         rules->min_distance, rules->warriors, rules->rounds, pspace_of(rules),
@@ -66,16 +79,21 @@ int m42_assemble(const char *src, size_t len, const m42_rules *rules, unsigned f
   return M42_OK;
 }
 
+EXPORT(m42_warrior_ok)
 int m42_warrior_ok(const m42_warrior *w) { return w && RESULT(w)->ok; }
+EXPORT(m42_warrior_length)
 uint32_t m42_warrior_length(const m42_warrior *w) { return w ? RESULT(w)->nIns : 0; }
+EXPORT(m42_warrior_start)
 uint32_t m42_warrior_start(const m42_warrior *w) { return w ? RESULT(w)->start : 0; }
 
+EXPORT(m42_warrior_pin)
 int m42_warrior_pin(const m42_warrior *w, int64_t *pin) {
   if (!w || !RESULT(w)->hasPin) return 0;
   if (pin) *pin = RESULT(w)->pin;
   return 1;
 }
 
+EXPORT(m42_warrior_code)
 const m42_instruction *m42_warrior_code(const m42_warrior *w) {
   return w ? (const m42_instruction *)(const void *)RESULT(w)->ins : 0;
 }
@@ -89,6 +107,7 @@ static size_t copy_text(AsmText t, char *buf, size_t n) {
   return t.n;
 }
 
+EXPORT(m42_warrior_text)
 size_t m42_warrior_text(const m42_warrior *w, m42_text which, char *buf, size_t n) {
   const AsmText none = {(const u8 *)"", 0};
   if (!w) return copy_text(none, buf, n);
@@ -103,9 +122,12 @@ size_t m42_warrior_text(const m42_warrior *w, m42_text which, char *buf, size_t 
   }
 }
 
+EXPORT(m42_warrior_errors)
 uint32_t m42_warrior_errors(const m42_warrior *w) { return w ? RESULT(w)->nErrors : 0; }
+EXPORT(m42_warrior_warnings)
 uint32_t m42_warrior_warnings(const m42_warrior *w) { return w ? RESULT(w)->nWarnings : 0; }
 
+EXPORT(m42_warrior_message)
 size_t m42_warrior_message(const m42_warrior *w, uint32_t i, int32_t *line, int *is_error, char *buf, size_t n) {
   const AsmText none = {(const u8 *)"", 0};
   const AsmResult *r = w ? RESULT(w) : 0;
@@ -113,6 +135,48 @@ size_t m42_warrior_message(const m42_warrior *w, uint32_t i, int32_t *line, int 
   if (line) *line = msg ? msg->line : 0;
   if (is_error) *is_error = msg && i < r->nErrors;
   return copy_text(msg ? msg->text : none, buf, n);
+}
+
+EXPORT(m42_warrior_statements)
+uint32_t m42_warrior_statements(const m42_warrior *w) { return w ? RESULT(w)->nExpanded : 0; }
+
+EXPORT(m42_warrior_statement)
+size_t m42_warrior_statement(const m42_warrior *w, uint32_t i, char *buf, size_t n) {
+  const AsmText none = {(const u8 *)"", 0};
+  return copy_text(w && i < RESULT(w)->nExpanded ? RESULT(w)->expanded[i] : none, buf, n);
+}
+
+EXPORT(m42_evaluate)
+int m42_evaluate(const char *text, size_t len, int64_t *value) {
+  Evaluator e = {0};
+  i64 v = 0;
+  const int status = len > 0xffffffffu ? EVAL_BAD : evaluate(&e, (Str){(const u8 *)(text ? text : ""), (u32)len}, &v);
+  if (value) *value = v;
+  return status;
+}
+
+EXPORT(m42_warrior_make_size)
+size_t m42_warrior_make_size(uint32_t length) {
+  return 8 + sizeof(AsmResult) + (usize)length * sizeof(AsmIns);
+}
+
+EXPORT(m42_warrior_make)
+m42_warrior *m42_warrior_make(const m42_instruction *code, uint32_t length, uint32_t start, const int64_t *pin,
+                              void *mem, size_t size) {
+  if ((!code && length) || !mem || size < m42_warrior_make_size(length)) return 0;
+  AsmResult *r = (AsmResult *)(void *)(((usize)mem + 7) & ~(usize)7);
+  __builtin_memset(r, 0, sizeof(AsmResult));
+  r->ok = 1;
+  r->start = start;
+  r->hasPin = pin != 0;
+  r->pin = pin ? *pin : 0;
+  r->nIns = length;
+  r->ins = (AsmIns *)(void *)(r + 1);
+  if (length) __builtin_memcpy(r->ins, code, (usize)length * sizeof(AsmIns));
+  r->name = (AsmText){(const u8 *)"Unknown", 7};
+  r->author = (AsmText){(const u8 *)"Anonymous", 9};
+  r->date = r->version = r->strategy = (AsmText){(const u8 *)"", 0};
+  return (m42_warrior *)(void *)r;
 }
 
 // Every text of a result, for packing: calls fn(ctx, dst, src) with the
@@ -149,8 +213,10 @@ static usize packed_size(const AsmResult *r) {
          (usize)(r->nErrors + r->nWarnings) * sizeof(AsmMsg) + (usize)r->nExpanded * sizeof(AsmText) + texts;
 }
 
+EXPORT(m42_warrior_packed_size)
 size_t m42_warrior_packed_size(const m42_warrior *w) { return w ? packed_size(RESULT(w)) : 0; }
 
+EXPORT(m42_warrior_pack)
 m42_warrior *m42_warrior_pack(const m42_warrior *w, void *dst, size_t size) {
   if (!w || !dst) return 0;
   const AsmResult *r = RESULT(w);
@@ -175,6 +241,7 @@ m42_warrior *m42_warrior_pack(const m42_warrior *w, void *dst, size_t size) {
 }
 
 #ifndef M42_NO_LIBC
+EXPORT(m42_assemble_new)
 m42_warrior *m42_assemble_new(const char *src, size_t len, const m42_rules *rules, unsigned flags, int *status) {
   // Working memory from 1 MB or 64 bytes per source byte, times 4 per try.
   for (size_t size = len > (1u << 14) ? len * 64 : (1u << 20); size && size <= (size_t)-1 / 4; size *= 4) {
@@ -198,6 +265,7 @@ m42_warrior *m42_assemble_new(const char *src, size_t len, const m42_rules *rule
   return 0;
 }
 
+EXPORT(m42_warrior_free)
 void m42_warrior_free(m42_warrior *w) { free(w); }
 #endif
 
@@ -214,7 +282,6 @@ void m42_warrior_free(m42_warrior *w) { free(w); }
 #define CCTX_OF(m) ((const Mars *)(const void *)(m))
 #endif
 
-#ifndef M42_FIXED_CONTEXT
 // The heap mars.c's config() takes for rules->warriors warriors of
 // rules->max_length instructions each (fewer warriors take less).
 static usize heap_need(const m42_rules *r) {
@@ -233,33 +300,37 @@ static usize heap_need(const m42_rules *r) {
   #undef TAKE
   return s;
 }
+
+// The context's bytes in caller memory: none with M42_FIXED_CONTEXT.
+#ifdef M42_FIXED_CONTEXT
+#define CTX_BYTES 0
+#else
+#define CTX_BYTES sizeof(Mars)
 #endif
 
+EXPORT(m42_ctx_size)
 size_t m42_ctx_size(const m42_rules *rules) {
-#ifdef M42_FIXED_CONTEXT
-  (void)rules;
-  return 0;
-#else
-  return rules_ok(rules) ? 63 + sizeof(Mars) + heap_need(rules) : 0;
-#endif
+  return rules_ok(rules) ? 63 + CTX_BYTES + heap_need(rules) : 0;
 }
 
+EXPORT(m42_ctx_init)
 m42_ctx *m42_ctx_init(void *mem, size_t size, const m42_rules *rules, int *status) {
   if (!rules_ok(rules)) { set_status(status, M42_ERR_RULES); return 0; }
-#ifdef M42_FIXED_CONTEXT
-  (void)mem;
-  (void)size;
-  Mars *m = CTX;
-#else
   if (!mem) { set_status(status, M42_ERR_ARGUMENT); return 0; }
   if (size < m42_ctx_size(rules)) { set_status(status, M42_ERR_MEMORY); return 0; }
-  Mars *m = (Mars *)(((usize)mem + 63) & ~(usize)63);
+  u8 *const start = (u8 *)(((usize)mem + 63) & ~(usize)63);
+#ifdef M42_FIXED_CONTEXT
+  Mars *m = CTX;
+  u8 *const heap = start;
+#else
+  Mars *m = (Mars *)(void *)start;
+  u8 *const heap = start + sizeof(Mars);
+#endif
   // Not the core and queue arrays in front (1.1 MB): start_round() clears
   // the core, and every queue entry is written before it is read.
   __builtin_memset(&m->N, 0, sizeof(Mars) - __builtin_offsetof(Mars, N));
+  m->heap_start = m->heap_top = heap;
   m->heap_end = (u8 *)mem + size;
-  m->heap_top = HEAP_FIRST(m);
-#endif
   m->rules = *rules;
   m->loaded = 0;
   m->roundOver = 1;
@@ -268,11 +339,10 @@ m42_ctx *m42_ctx_init(void *mem, size_t size, const m42_rules *rules, int *statu
 }
 
 #ifndef M42_NO_LIBC
+EXPORT(m42_new)
 m42_ctx *m42_new(const m42_rules *rules, int *status) {
-#ifdef M42_FIXED_CONTEXT
-  return m42_ctx_init(0, 0, rules, status);
-#else
-  // 64-byte aligned, so that the context starts the block m42_free() frees.
+  // 64-byte aligned, so that the block starts with the context (or, with
+  // M42_FIXED_CONTEXT, with its heap): m42_free() frees it.
   const size_t size = (m42_ctx_size(rules) + 63) & ~(size_t)63;
   if (size < 64) { set_status(status, M42_ERR_RULES); return 0; }
   void *mem = aligned_alloc(64, size);
@@ -280,12 +350,13 @@ m42_ctx *m42_new(const m42_rules *rules, int *status) {
   m42_ctx *m = m42_ctx_init(mem, size, rules, status);
   if (!m) free(mem);
   return m;
-#endif
 }
 
+EXPORT(m42_free)
 void m42_free(m42_ctx *m) {
 #ifdef M42_FIXED_CONTEXT
-  (void)m;
+  // The context is static; its heap is the block m42_new() allocated.
+  if (m) free(CTX->heap_start);
 #else
   free(m);
 #endif
@@ -294,10 +365,16 @@ void m42_free(m42_ctx *m) {
 
 // ---------------------------------------------------------------- matches
 
+EXPORT(m42_match_options_default)
 m42_match_options m42_match_options_default(void) {
-  const m42_match_options o = {sizeof(m42_match_options), 1, 0, 1, 0, 0};
+  const m42_match_options o = {sizeof(m42_match_options), 1, 0, 1, 0, 0, 0};
   return o;
 }
+
+EXPORT(m42_log_stride)
+uint32_t m42_log_stride(uint32_t warriors) { return (8 + warriors + 7) & ~7u; }
+EXPORT(m42_log_size)
+size_t m42_log_size(uint32_t warriors, uint32_t rounds) { return (size_t)rounds * m42_log_stride(warriors); }
 
 // The options of a call, the defaults for 0; M42_OK or M42_ERR_ARGUMENT.
 static int get_options(const m42_match_options *options, m42_match_options *o) {
@@ -352,6 +429,7 @@ static int load_warriors(Mars *m, const m42_warrior *const *ws, u32 n, const m42
   return M42_OK;
 }
 
+EXPORT(m42_match)
 int m42_match(m42_ctx *ctx, const m42_warrior *const *warriors, uint32_t n, const m42_match_options *options,
               m42_score *scores, uint64_t *instructions) {
   m42_match_options o;
@@ -359,6 +437,10 @@ int m42_match(m42_ctx *ctx, const m42_warrior *const *warriors, uint32_t n, cons
   Mars *m = CTX_OF(ctx);
   const int s = load_warriors(m, warriors, n, &o);
   if (s != M42_OK) return s;
+  // end_round() writes a record per round into the log.
+  m->resultLog = o.log;
+  m->logStride = m42_log_stride(n);
+  m->logRounds = o.log ? o.rounds : 0;
   const u64 executed = run_match(m, o.rounds, o.early_tie != 0, o.first_round);
   if (instructions) *instructions = executed;
   if (scores) {
@@ -367,6 +449,7 @@ int m42_match(m42_ctx *ctx, const m42_warrior *const *warriors, uint32_t n, cons
   return M42_OK;
 }
 
+EXPORT(m42_bench)
 int m42_bench(m42_ctx *m, const m42_warrior *w, const m42_warrior *const *opponents, uint32_t n,
               const m42_match_options *options, m42_score *scores, uint64_t *instructions) {
   if (!opponents && n) return M42_ERR_ARGUMENT;
@@ -384,6 +467,7 @@ int m42_bench(m42_ctx *m, const m42_warrior *w, const m42_warrior *const *oppone
 
 // ---------------------------------------------------------------- stepping
 
+EXPORT(m42_load)
 int m42_load(m42_ctx *m, const m42_warrior *const *warriors, uint32_t n, const m42_match_options *options) {
   m42_match_options o;
   if (!m || get_options(options, &o) != M42_OK) return M42_ERR_ARGUMENT;
@@ -401,23 +485,27 @@ static u32 *pspace_cell(const Mars *m, u32 w, u32 i) {
   return i ? &m->war[w].pspace[i] : &m->war[w].lastResult;
 }
 
+EXPORT(m42_start_round)
 int m42_start_round(m42_ctx *ctx) {
   const int s = ready(ctx);
   if (s == M42_OK) start_round(CTX_OF(ctx));
   return s;
 }
 
+EXPORT(m42_run)
 uint64_t m42_run(m42_ctx *ctx, uint64_t count) {
   if (ready(ctx) != M42_OK || CTX_OF(ctx)->roundOver || !count) return 0;
   return run_some(CTX_OF(ctx), count);
 }
 
+EXPORT(m42_end_round)
 int m42_end_round(m42_ctx *ctx) {
   const int s = ready(ctx);
   if (s == M42_OK) end_round(CTX_OF(ctx));
   return s;
 }
 
+EXPORT(m42_get_state)
 int m42_get_state(const m42_ctx *ctx, m42_state *s) {
   const int r = s ? ready(ctx) : M42_ERR_ARGUMENT;
   if (r != M42_OK) return r;
@@ -426,6 +514,7 @@ int m42_get_state(const m42_ctx *ctx, m42_state *s) {
   return M42_OK;
 }
 
+EXPORT(m42_get_warrior)
 int m42_get_warrior(const m42_ctx *ctx, uint32_t w, m42_warrior_state *s) {
   const int r = s ? ready(ctx) : M42_ERR_ARGUMENT;
   if (r != M42_OK) return r;
@@ -437,11 +526,22 @@ int m42_get_warrior(const m42_ctx *ctx, uint32_t w, m42_warrior_state *s) {
   return M42_OK;
 }
 
+EXPORT(m42_warrior_scores)
+uint32_t m42_warrior_scores(const m42_ctx *ctx, uint32_t w, uint32_t *out, uint32_t max) {
+  if (ready(ctx) != M42_OK || w >= CCTX_OF(ctx)->nw) return 0;
+  const Mars *m = CCTX_OF(ctx);
+  const u32 count = 2 * m->nw - 1;
+  for (u32 k = 0; out && k < count && k < max; k++) out[k] = m->war[w].score[k];
+  return count;
+}
+
+EXPORT(m42_core)
 const m42_cell *m42_core(const m42_ctx *ctx) {
   const Mars *m = CCTX_OF(ctx);
   return ctx ? (const m42_cell *)(const void *)CORE(m) : 0;
 }
 
+EXPORT(m42_queue)
 uint32_t m42_queue(const m42_ctx *ctx, uint32_t w, uint32_t *out, uint32_t max) {
   if (ready(ctx) != M42_OK || w >= CCTX_OF(ctx)->nw) return 0;
   const Mars *m = CCTX_OF(ctx);
@@ -451,6 +551,7 @@ uint32_t m42_queue(const m42_ctx *ctx, uint32_t w, uint32_t *out, uint32_t max) 
   return tasks;
 }
 
+EXPORT(m42_pspace_get)
 int m42_pspace_get(const m42_ctx *ctx, uint32_t w, uint32_t i, uint32_t *value) {
   const int r = value ? ready(ctx) : M42_ERR_ARGUMENT;
   if (r != M42_OK) return r;
@@ -460,6 +561,7 @@ int m42_pspace_get(const m42_ctx *ctx, uint32_t w, uint32_t i, uint32_t *value) 
   return M42_OK;
 }
 
+EXPORT(m42_pspace_set)
 int m42_pspace_set(m42_ctx *ctx, uint32_t w, uint32_t i, uint32_t value) {
   const int r = ready(ctx);
   if (r != M42_OK) return r;

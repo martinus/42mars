@@ -76,6 +76,8 @@ Read this before proposing a speed idea; `docs/performance-log.md` has the numbe
 
 Three implementations must agree: `js/mars.js` (visualizer, per-cell bookkeeping; `headless: true` skips it), `lib/src/mars.c` (tournaments, via `wasm/42mars.js`), and pMARS. A behavior change goes into mars.js, into both wasm loops (`execute`, `execute2`), and into the semantics doc. `test/tournament.test.js` checks JS against wasm, `tools/pmars-diff.mjs` both against pMARS.
 
+`wasm/42mars.js` calls only the functions of `lib/42mars.h`; a feature the JS side needs goes into the header first.
+
 The assembler and the evaluator exist twice too, `js/assembler.js` + `js/expr.js` and their C port `lib/src/asm.c` (`assembleWasm`, `evaluateWasm`). A change goes into both; `test/asm-c.test.js` compares the whole result objects, `tools/pmars-diff.mjs --wasm-asm` the C one against pMARS.
 
 ## Conventions

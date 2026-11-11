@@ -6,7 +6,7 @@
 // tools/tie-ceiling.mjs from the input format of bench-native.c.
 //
 // Every round runs to its end. The driver notes when the early tie of
-// mars_run_match() would have stopped it (tie_check(), same schedule), and
+// run_match() would have stopped it (tie_check(), same schedule), and
 // for every instruction which warrior ran which address, and how it writes.
 // It also notes, per core cell, the last instruction that changed it (a
 // shadow core: an instruction changes at most its B target and the
@@ -35,7 +35,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include "mars.c" // lib/src, see tools/tie-ceiling.mjs (-I)
+#include "42mars.c" // lib/, see tools/tie-ceiling.mjs (-I)
+#include "input.h"
 
 static u8 *execW, *execKind;
 static u16 *execPc;
@@ -118,19 +119,20 @@ static void analyze(const Mars *m, u32 w, u8 *inS, i64 *t0of32) {
 int main(int argc, char **argv) {
   FILE *f = argc > 1 ? fopen(argv[1], "r") : 0;
   if (!f) { fprintf(stderr, "usage: tie-ceiling <input>\n"); return 2; }
-  unsigned cfg[9];
   double total = 0, rounds = 0;
   u32 match = 0, cap = 0;
   u8 *inS = malloc(65536);
-  while (fscanf(f, "%u %u %u %u %u %u %u %u %u", &cfg[0], &cfg[1], &cfg[2], &cfg[3], &cfg[4], &cfg[5], &cfg[6], &cfg[7], &cfg[8]) == 9) {
-    i32 *in = mars_config(cfg[0], cfg[1], cfg[2], cfg[3], cfg[4], cfg[5], cfg[6]);
-    if (!in) { fprintf(stderr, "match %u does not fit into the arena\n", match); return 2; }
-    Mars *const m = CTX;
-    for (unsigned k = 0; k < 4 * cfg[5] + 5 * cfg[6]; k++) {
-      if (fscanf(f, "%d", &in[k]) != 1) { fprintf(stderr, "bad input\n"); return 2; }
+  Match x;
+  for (int got; (got = read_match(f, &x)) != 0;) {
+    if (got < 0) { fprintf(stderr, "bad input\n"); return 2; }
+    int status;
+    m42_ctx *ctx = m42_new(&x.rules, &status);
+    if (!ctx || m42_load(ctx, (const m42_warrior *const *)x.w, x.n, &x.options) != M42_OK) {
+      fprintf(stderr, "match %u: %s\n", match, m42_status_text(ctx ? M42_ERR_MEMORY : status));
+      return 2;
     }
-    mars_load(cfg[7], 0);
-    const u32 len = cfg[5] * cfg[2] + 2;
+    Mars *const m = CTX;
+    const u32 len = x.n * x.rules.max_cycles + 2;
     if (len > cap) {
       cap = len;
       execW = realloc(execW, cap);
@@ -143,7 +145,7 @@ int main(int argc, char **argv) {
     lastBy[1] = realloc(lastBy[1], m->N * sizeof(i32));
     shadow = realloc(shadow, m->N * sizeof(u64));
     if (!execW || !execKind || !execPc || !execRead || !lastChange || !lastBy[0] || !lastBy[1] || !shadow || !inS) { fprintf(stderr, "out of memory\n"); return 2; }
-    for (u32 r = 0; r < cfg[8]; r++) { // as mars_run_match() with firstRound 0
+    for (u32 r = 0; r < x.options.rounds; r++) { // as run_match() with firstRound 0
       start_round(m);
       traceT = 0;
       traceL = (u32)m->cyclesLeft;
@@ -187,6 +189,8 @@ int main(int argc, char **argv) {
         printf(" %d %d\n", closed[0], closed[1]);
       }
     }
+    m42_free(ctx);
+    free_match(&x);
     match++;
   }
   printf("TOTAL %.0f %.0f\n", total, rounds);

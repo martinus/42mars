@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 Martin Leitner-Ankerl
 //
-// One match in the input format of lib/tools/bench-native.c: the
-// header line "coreSize maxProcesses maxCycles minDistance pSpaceSize
-// warriors instructions seed rounds", then the load area of mars_config().
+// One match in the input format of lib/tools/input.h (bench-native.c and
+// tie-ceiling.c): the header line "coreSize maxProcesses maxCycles
+// minDistance pSpaceSize warriors instructions seed rounds", then per
+// warrior "length start p-space-group 0" and 5 integers per instruction.
 // Used by tools/bench-native.mjs, and by tools/tournament.mjs and
 // tools/bench-pairs.mjs with --native-input, so that the native build can
 // run (and profile, and count) the same matches.

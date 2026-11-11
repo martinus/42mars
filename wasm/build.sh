@@ -11,14 +11,17 @@
 #   -nostdlib, --no-entry: a library module without libc and without main
 #   -fno-strict-aliasing: mars.c reads the cell fields through other types
 #   --strip-all: no names section, smaller module
+#   --export=__heap_base: where wasm/42mars.js may place the memory it gives
+#     the library (the context's heap, warriors, assembler memory)
 #   -DM42_FIXED_CONTEXT: one context with static storage (42mars.h, #53)
 #   -DM42_NO_LIBC: no malloc-based functions
-# The exports are the functions marked EXPORT() in mars.c, plus the memory.
+# The exports are the functions of lib/42mars.h (EXPORT() in api.c), the
+# memory and __heap_base.
 set -eu
 cd "$(dirname "$0")/../lib/src"
 node ../../tools/gen-dispatch.mjs -o dispatch.h
 CC=${CC:-clang}
 "$CC" --target=wasm32 -Os -nostdlib -fno-strict-aliasing -Wall -Wextra \
   -DM42_FIXED_CONTEXT -DM42_NO_LIBC \
-  -Wl,--no-entry -Wl,--strip-all -o ../../wasm/42mars.wasm ../42mars.c
+  -Wl,--no-entry -Wl,--strip-all -Wl,--export=__heap_base -o ../../wasm/42mars.wasm ../42mars.c
 ls -l ../../wasm/42mars.wasm

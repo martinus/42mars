@@ -811,10 +811,10 @@ The entry for the instruction executed at time t is at index
 ### 3.7 WebAssembly engine
 
 `lib/src/mars.c` is a second, headless implementation of 3.1 to 3.3
-in C, compiled to `wasm/42mars.wasm` (committed, about 51 KB, no
-imports; `wasm/build.sh` rebuilds it with `tools/gen-dispatch.mjs` and
-clang). `42mars.js` wraps
-it:
+in C. With the assembler it is compiled to `wasm/42mars.wasm` (committed,
+about 83 KB, no imports; `wasm/build.sh` rebuilds it with
+`tools/gen-dispatch.mjs` and clang), which exports the functions of
+`lib/42mars.h`. `42mars.js` wraps them:
 
 ```js
 export async function compileWasmMars() -> WebAssembly.Module   // cached

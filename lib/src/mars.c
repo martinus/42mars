@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 Martin Leitner-Ankerl
 
-// Headless MARS simulator, compiled to WebAssembly (see wasm/build.sh)
-// and driven by wasm/42mars.js. It implements section 3 of
-// docs/redcode-semantics.md without the visualizer bookkeeping of 3.4 and
-// 3.6, and gives the same core, queues, scores and round results as
-// js/mars.js with `headless: true`.
+// Headless MARS simulator, the simulator of lib/42mars.h (api.c has the
+// public functions; lib/42mars.c compiles all parts as one unit). It
+// implements section 3 of docs/redcode-semantics.md without the visualizer
+// bookkeeping of 3.4 and 3.6, and gives the same core, queues, scores and
+// round results as js/mars.js with `headless: true`.
 //
-// No libc: memory comes from a bump allocator on top of the linear memory.
-// The same file builds natively (for benchmarks) with a static arena.
+// No libc: a match's memory comes from a bump allocator on the context's
+// heap, which is caller memory.
 //
 // Data layout:
 // - A core cell is 8 bytes: A value, B value (16 bits each, so the core size
@@ -20,7 +20,7 @@
 //   whose length is a power of two, indexed by free-running 32-bit head and
 //   tail counters: the number of processes is tail - head. Two warriors with
 //   maxCycles up to LINEAR_CYCLES get linear queues instead, long enough for
-//   a whole round, so that no index needs a mask (see mars_config).
+//   a whole round, so that no index needs a mask (see config()).
 
 #include "../42mars.h"
 
@@ -70,7 +70,7 @@ typedef struct Warrior {
 } __attribute__((aligned(128))) Warrior; // a power of two: indexing is a shift
 
 #define LINEAR_CYCLES 80000
-#define QSTATIC ((2 + 2 * (LINEAR_CYCLES + 1) + 31) & ~31) // see mars_config
+#define QSTATIC ((2 + 2 * (LINEAR_CYCLES + 1) + 31) & ~31) // see config()
 
 // All state of one simulator (an m42_ctx of 42mars.h). The core and the
 // first two warriors' queues (when they are at most QSTATIC long) are at
@@ -103,33 +103,25 @@ typedef struct Mars {
   i64 seed;
   i64 timeNow, cyclesLeft;
   Warrior *war;
-  i32 *input;         // load area written by the JS glue, see mars_config
+  i32 *input;         // load area of config(), filled by load_warriors() (api.c)
   Cell *codeBase;     // all warriors' instructions
   u32 *pspaceBase;    // nw p-spaces, one per p-space group
-  u8 *resultLog;      // runMatch: per round 8 bytes time then nw alive flags
+  u8 *resultLog;      // m42_match: per round 8 bytes time (u64) then nw alive flags
   u8 *heap_top;       // bump allocator, see alloc()
   // Fields the loops do not read come last: a field in front moves the
   // offsets that execute2() uses.
-  u8 *heap_end;       // end of the context's memory (not with M42_FIXED_CONTEXT)
+  u8 *heap_start;     // the heap: caller memory, see m42_ctx_init()
+  u8 *heap_end;
   u32 loaded;         // warriors are loaded (42mars.h)
   m42_rules rules;    // as given to m42_ctx_init()
 } Mars;
 
 // ---------------------------------------------------------------- memory
 
-// With M42_FIXED_CONTEXT, the context is `theMars` and its heap is the rest
-// of the wasm linear memory (grown on demand) or, natively, a static arena.
-// Otherwise the caller gives one block: the context, then its heap.
+// With M42_FIXED_CONTEXT, the context is `theMars`, with static storage;
+// otherwise it is in caller memory. Either way its heap is caller memory
+// (m42_ctx_init()).
 #ifdef M42_FIXED_CONTEXT
-#ifdef __wasm__
-extern u8 __heap_base;
-#define HEAP_START (&__heap_base)
-static usize heap_limit; // end of the linear memory in bytes
-#else
-// Native build: a static arena; the pages are only mapped when touched.
-static _Alignas(64) u8 arena[1u << 28];
-#define HEAP_START arena
-#endif
 // The queues come first, then the core: the data layout the loops were
 // tuned on. clang emits a static array where the first function uses it
 // (without an initializer, at the end of the file), so the order would
@@ -141,30 +133,14 @@ static Mars theMars = {.roundOver = 1};
 #define CTX (&theMars)
 #define CORE(m) ((void)(m), coreMem)
 #define QUEUES(m) ((void)(m), queueMem)
-#define HEAP_FIRST(m) ((void)(m), HEAP_START)
 #else
 #define CORE(m) ((m)->core)
 #define QUEUES(m) ((m)->queueMem)
-#define HEAP_FIRST(m) ((u8 *)((m) + 1))
 #endif
 
-// Makes the heap reach `end`. Returns 0 when it cannot grow.
+// Whether the heap reaches `end`.
 static int reserve(Mars *const m, usize end) {
-#ifndef M42_FIXED_CONTEXT
   return end <= (usize)m->heap_end;
-#elif defined(__wasm__)
-  (void)m;
-  if (!heap_limit) heap_limit = __builtin_wasm_memory_size(0) << 16;
-  if (end > heap_limit) {
-    usize pages = (end - heap_limit + 65535) >> 16;
-    if (__builtin_wasm_memory_grow(0, pages) == (usize)-1) return 0;
-    heap_limit += pages << 16;
-  }
-  return 1;
-#else
-  (void)m;
-  return end <= (usize)arena + sizeof arena;
-#endif
 }
 
 // Bump allocation, 64-byte aligned, zero filled. Returns 0 when out of memory.
@@ -179,7 +155,7 @@ static void *alloc(Mars *const m, usize bytes) {
 }
 
 static void reset_heap(Mars *const m) {
-  m->heap_top = HEAP_FIRST(m);
+  m->heap_top = m->heap_start;
 }
 
 // ---------------------------------------------------------------- setup
@@ -200,8 +176,8 @@ static inline __attribute__((always_inline)) u32 queue_len(u32 maxProcesses) {
 // Linear queues: with two warriors a round runs at most max(2 * maxCycles,
 // 1) instructions and the turns alternate, so each warrior gets at most
 // maxCycles + 1 turns and pushes at most two entries per turn. A queue
-// starts at index 0 or 1 (mars_start_round()), so its tail stays at most
-// 2 + 2 * (maxCycles + 1), and mars_start_round() resets the counters.
+// starts at index 0 or 1 (start_round()), so its tail stays at most
+// 2 + 2 * (maxCycles + 1), and start_round() resets the counters.
 // Without wraparound the mask is all ones, which execute2_8000() leaves
 // out: +6% on the bench, -5% on t20 (docs/performance-log.md).
 #define LINEAR_QUEUES(warriors, cycles) ((warriors) == 2 && (cycles) <= LINEAR_CYCLES)
@@ -250,14 +226,6 @@ static i32 *config(Mars *const m, u32 coreSize, u32 maxProcesses, u32 cycles, u3
   return m->input;
 }
 
-#ifdef M42_FIXED_CONTEXT
-// The exports for wasm/42mars.js, on the one context.
-EXPORT(mars_config)
-i32 *mars_config(u32 coreSize, u32 maxProcesses, u32 cycles, u32 minDistance, u32 pSpaceSize, u32 warriors, u32 instructions) {
-  return config(CTX, coreSize, maxProcesses, cycles, minDistance, pSpaceSize, warriors, instructions);
-}
-#endif
-
 // Starts the match after the load area was filled. seed: the generator
 // state (a non-negative integer); fixed: use the positions of the load area.
 static void load(Mars *const m, i64 seedValue, u32 fixed) {
@@ -295,10 +263,6 @@ static void load(Mars *const m, i64 seedValue, u32 fixed) {
   m->starter = 0;
   m->loaded = 1;
 }
-
-#ifdef M42_FIXED_CONTEXT
-EXPORT(mars_load) void mars_load(double seed, u32 fixed) { load(CTX, (i64)seed, fixed); }
-#endif
 
 // Placement method A: random positions, retried while too close to an
 // earlier one. Returns 0 when it gives up.
@@ -379,10 +343,6 @@ static void start_round(Mars *const m) {
   m->blockerAt = 0;
 }
 
-#ifdef M42_FIXED_CONTEXT
-EXPORT(mars_start_round) void mars_start_round(void) { start_round(CTX); }
-#endif
-
 static __attribute__((noinline)) void end_round(Mars *const m) {
   if (m->roundOver) return;
   u32 survivors = 0;
@@ -402,19 +362,15 @@ static __attribute__((noinline)) void end_round(Mars *const m) {
     else if (m->nw > 1 && survivors == 1) w->wins++;
     else w->ties++;
   }
-  if (m->round_ - 1 - m->logFirst < m->logRounds) { // only the rounds of mars_run_match()
+  if (m->round_ - 1 - m->logFirst < m->logRounds) { // only the rounds of run_match() with a log
     u8 *e = m->resultLog + (usize)(m->round_ - 1 - m->logFirst) * m->logStride;
-    double t = (double)m->timeNow;
+    const u64 t = (u64)m->timeNow;
     __builtin_memcpy(e, &t, 8);
     for (u32 i = 0; i < m->nw; i++) e[8 + i] = (u8)m->war[i].alive;
   }
   m->starter = (m->starter + 1) % m->nw;
   m->roundOver = 1;
 }
-
-#ifdef M42_FIXED_CONTEXT
-EXPORT(mars_end_round) void mars_end_round(void) { end_round(CTX); }
-#endif
 
 // Warrior w lost its last process. cyclesLeft does not count the instruction
 // that killed it.
@@ -480,7 +436,7 @@ static inline void set_cell(Cell *c, u64 v) { __builtin_memcpy(c, &v, 8); }
 //   one turn per loop iteration, the generic code in its own function, two
 //   battles interleaved in one loop, wasm-opt -O3
 // - third round: MOV.I from one 64-bit snapshot of the A cell and linear
-//   queues for two warriors (mars_config()): 278 -> 294 on the bench, t20
+//   queues for two warriors (config()): 278 -> 294 on the bench, t20
 //   4.16 -> 3.84 s. Slower, not kept: one queue ring for both warriors
 //   with one head, specialized cases for classes of equal instruction words
 // - fourth round: one head for both linear queues and a loop over pairs of
@@ -846,7 +802,7 @@ static __attribute__((noinline)) u64 execute(Mars *const m, u64 count) {
 // local variables, and the loop body is unrolled into warrior 0's turn and
 // warrior 1's turn. With two warriors the turns alternate until one loses
 // its last process, which ends the round. Every turn pops one entry, and
-// mars_start_round() starts warrior 0's queue one entry later when warrior
+// start_round() starts warrior 0's queue one entry later when warrior
 // 1 moves first: both heads are equal whenever warrior 0 is to move. So the
 // loop runs pairs of turns with one head for both queues, which also counts
 // the pairs: 3 loop-carried counters (head, two tails) instead of 5 (two
@@ -923,34 +879,6 @@ static u64 run_some(Mars *const m, u64 count) {
 
 // ---------------------------------------------------------------- matches
 
-#ifdef M42_FIXED_CONTEXT
-// Executes up to `count` instructions, stops early when the round ends.
-// Returns the number executed.
-EXPORT(mars_run)
-double mars_run(double count) {
-  Mars *const m = CTX;
-  if (m->roundOver || !(count > 0)) return 0;
-  u64 c = count >= 1.8e19 ? ~0ull : (u64)count;
-  if ((double)c < count) c++; // a fraction rounds up, like mars.js
-  return (double)run_some(m, c);
-}
-
-// Reserves the result log for `rounds` rounds of mars_run_match. Returns its
-// address (0 when out of memory): per round logStride bytes, the instruction
-// count as a double, then one alive flag per warrior.
-EXPORT(mars_reserve_log)
-u8 *mars_reserve_log(u32 rounds) {
-  Mars *const m = CTX;
-  m->logStride = (8 + m->nw + 7) & ~7u;
-  m->resultLog = alloc(m, (usize)rounds * m->logStride);
-  m->logRounds = m->resultLog ? rounds : 0;
-  return m->resultLog;
-}
-
-EXPORT(mars_log_stride)
-u32 mars_log_stride(void) { Mars *const m = CTX; return m->logStride; }
-#endif
-
 // 1 for the opcodes that can kill a process (DAT, DIV and MOD with a zero
 // divisor) or change the p-space (STP), from an instruction word.
 #define BLOCKER(ins) ((0x41030u >> (((ins) & 0xff) >> 3)) & 1)
@@ -965,7 +893,7 @@ static int core_has_blocker(Mars *const m) {
   return 0;
 }
 
-// Early tie detection for mars_run_match. A process dies only when its
+// Early tie detection for run_match(). A process dies only when its
 // warrior executes, so a warrior loses at most one process per own turn.
 // While nobody dies, the round runs exactly max(cyclesLeft, 1) more
 // instructions (at least one, see execute()), and each living warrior gets
@@ -1030,40 +958,3 @@ static u64 run_match(Mars *const m, u32 rounds, u32 earlyTie, u32 firstRound) {
   }
   return total;
 }
-
-#ifdef M42_FIXED_CONTEXT
-// The interface of wasm/42mars.js, on the one context.
-EXPORT(mars_run_match)
-double mars_run_match(u32 rounds, u32 earlyTie, u32 firstRound) { return (double)run_match(CTX, rounds, earlyTie, firstRound); }
-EXPORT(mars_core) Cell *mars_core(void) { Mars *const m = CTX; return CORE(m); }
-EXPORT(mars_round) u32 mars_round(void) { Mars *const m = CTX; return m->round_; }
-EXPORT(mars_round_over) u32 mars_round_over(void) { Mars *const m = CTX; return m->roundOver; }
-EXPORT(mars_time) double mars_time(void) { Mars *const m = CTX; return (double)m->timeNow; }
-EXPORT(mars_cycles_left) double mars_cycles_left(void) { Mars *const m = CTX; return (double)m->cyclesLeft; }
-EXPORT(mars_warriors_left) u32 mars_warriors_left(void) { Mars *const m = CTX; return m->warriorsLeft; }
-EXPORT(mars_current) u32 mars_current(void) { Mars *const m = CTX; return m->current; }
-EXPORT(mars_starter) u32 mars_starter(void) { Mars *const m = CTX; return m->starter; }
-EXPORT(mars_seed) double mars_seed(void) { Mars *const m = CTX; return (double)m->seed; }
-EXPORT(mars_w_position) u32 mars_w_position(u32 i) { Mars *const m = CTX; return m->war[i].position; }
-EXPORT(mars_w_tasks) u32 mars_w_tasks(u32 i) { Mars *const m = CTX; return m->war[i].tail - m->war[i].head; }
-EXPORT(mars_w_alive) u32 mars_w_alive(u32 i) { Mars *const m = CTX; return m->war[i].alive; }
-EXPORT(mars_w_died_at) double mars_w_died_at(u32 i) { Mars *const m = CTX; return (double)m->war[i].diedAt; }
-EXPORT(mars_w_wins) u32 mars_w_wins(u32 i) { Mars *const m = CTX; return m->war[i].wins; }
-EXPORT(mars_w_losses) u32 mars_w_losses(u32 i) { Mars *const m = CTX; return m->war[i].losses; }
-EXPORT(mars_w_ties) u32 mars_w_ties(u32 i) { Mars *const m = CTX; return m->war[i].ties; }
-EXPORT(mars_w_last_result) u32 mars_w_last_result(u32 i) { Mars *const m = CTX; return m->war[i].lastResult; }
-EXPORT(mars_w_score) u32 *mars_w_score(u32 i) { Mars *const m = CTX; return m->war[i].score; }
-EXPORT(mars_w_pspace) u32 *mars_w_pspace(u32 i) { Mars *const m = CTX; return m->war[i].pspace; }
-// Address of the k-th process of warrior i (0: the next to run).
-EXPORT(mars_w_process) u32 mars_w_process(u32 i, u32 k) { Mars *const m = CTX; return m->war[i].q[(m->war[i].head + k) & m->qmask]; }
-
-// Memory for callers that need a working area between matches, e.g. the
-// assembler (asm.c): `bytes` at the end of the heap, valid until the next
-// mars_config() or mars_reserve_log(). Returns 0 when the memory cannot grow.
-EXPORT(mars_scratch)
-u8 *mars_scratch(u32 bytes) {
-  Mars *const m = CTX;
-  u8 *p = (u8 *)(((usize)(m->heap_top ? m->heap_top : HEAP_FIRST(m)) + 63) & ~(usize)63);
-  return reserve(m, (usize)p + bytes) ? p : 0;
-}
-#endif
