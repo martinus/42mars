@@ -207,10 +207,14 @@ typedef struct {
   uint8_t *log;               // 0, or m42_log_size() bytes for the round results of m42_match
   uint32_t permute;           // 1: pmars -P, every position and first mover once before
                               // any repeats; two warriors, no fixed positions
+  uint32_t *pspace;           // 0: p-space and last results start as in a new match;
+                              // else per warrior max(1, p-space size) cells, cell 0 the
+                              // last result: read before the first round, written after
+                              // the last (to play a match in blocks, also with LDP)
 } m42_match_options;
 
 // 1 round, first_round 0, early ties on, seed 0, no fixed positions, no log,
-// no permutation.
+// no permutation, no p-space given.
 M42_API m42_match_options m42_match_options_default(void);
 
 // The round log of m42_match: one record of m42_log_stride(warriors) bytes

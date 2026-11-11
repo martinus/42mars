@@ -12,7 +12,7 @@ _Static_assert(sizeof(m42_cell) == sizeof(Cell) && offsetof(m42_cell, word) == o
 #ifdef __wasm__
 _Static_assert(sizeof(m42_rules) == 44 && sizeof(m42_match_options) == 40 && offsetof(m42_match_options, seed) == 16 &&
                offsetof(m42_match_options, positions) == 24 && offsetof(m42_match_options, log) == 28 &&
-               offsetof(m42_match_options, permute) == 32 &&
+               offsetof(m42_match_options, permute) == 32 && offsetof(m42_match_options, pspace) == 36 &&
                sizeof(m42_state) == 32 && offsetof(m42_state, time) == 16 && sizeof(m42_warrior_state) == 40 &&
                offsetof(m42_warrior_state, died_at) == 16 && offsetof(m42_warrior_state, score) == 24 &&
                sizeof(m42_instruction) == 16,
@@ -380,7 +380,7 @@ void m42_free(m42_ctx *m) {
 
 EXPORT(m42_match_options_default)
 m42_match_options m42_match_options_default(void) {
-  const m42_match_options o = {sizeof(m42_match_options), 1, 0, 1, 0, 0, 0, 0};
+  const m42_match_options o = {sizeof(m42_match_options), 1, 0, 1, 0, 0, 0, 0, 0};
   return o;
 }
 
@@ -447,6 +447,24 @@ static int load_warriors(Mars *m, const m42_warrior *const *ws, u32 n, const m42
   return M42_OK;
 }
 
+static u32 *pspace_cell(const Mars *m, u32 w, u32 i);
+
+// Copies the p-space of each warrior (cell 0: the last result) between the
+// context and options->pspace: in before the first round, out after the
+// last. Warriors with the same PIN share cells 1 and up; the last one's
+// copy in wins. Inlined: a static function of its own moved the call indices
+// of the loops.
+M42_FORCE_INLINE void copy_pspace(Mars *m, u32 *pspace, int in) {
+  const u32 cells = m->psize ? m->psize : 1;
+  for (u32 w = 0; w < m->nw; w++) {
+    for (u32 i = 0; i < cells; i++) {
+      u32 *const c = pspace_cell(m, w, i);
+      if (in) *c = pspace[w * cells + i];
+      else pspace[w * cells + i] = *c;
+    }
+  }
+}
+
 EXPORT(m42_match)
 int m42_match(m42_ctx *ctx, const m42_warrior *const *warriors, uint32_t n, const m42_match_options *options,
               m42_score *scores, uint64_t *instructions) {
@@ -459,7 +477,9 @@ int m42_match(m42_ctx *ctx, const m42_warrior *const *warriors, uint32_t n, cons
   m->resultLog = o.log;
   m->logStride = m42_log_stride(n);
   m->logRounds = o.log ? o.rounds : 0;
+  if (o.pspace) copy_pspace(m, o.pspace, 1);
   const u64 executed = run_match(m, o.rounds, o.early_tie != 0, o.first_round);
+  if (o.pspace) copy_pspace(m, o.pspace, 0);
   if (instructions) *instructions = executed;
   if (scores) {
     for (u32 i = 0; i < n; i++) scores[i] = (m42_score){m->war[i].wins, m->war[i].losses, m->war[i].ties};

@@ -63,6 +63,36 @@ test('tournament: pairings with LDP are not split into blocks of rounds', () => 
   assert.deepEqual([...js.results[k].a].sort(), [0, 10, 10]);
 });
 
+// The score of every warrior, from a tournament's pairings.
+function scores(t) {
+  const s = t.names.map(() => 0);
+  t.pairs.forEach((p, k) => {
+    s[p.a] += 3 * t.results[k].a[0] + t.results[k].a[2];
+    s[p.b] += 3 * t.results[k].b[0] + t.results[k].b[2];
+  });
+  return s;
+}
+
+test('tournament: the standings after each round are those of a tournament of that many rounds, also with LDP', () => {
+  const warriors = join(dir, 'rounds');
+  mkdirSync(warriors);
+  writeFileSync(join(warriors, 'ldp.red'), ';name ldp\nldp.ab #0, flag\nsub.ab #2, flag\njmz.b die, flag\njmp 0\ndie dat 0, 0\nflag dat 0, 0\n');
+  for (const f of ['dwarf.red', 'imp.red', 'seeker.red']) copyFileSync(join(root, 'warriors', f), join(warriors, f));
+  const tournament = (name, rounds, args = []) => {
+    const out = join(dir, `${name}.json`);
+    const text = execFileSync(process.execPath, [join(root, 'tools/tournament.mjs'), warriors, '--rounds', String(rounds), '--jobs', '3', '--seed', '4',
+      '--engine', 'wasm', '--json', out, ...args], { stdio: ['ignore', 'pipe', 'ignore'], encoding: 'utf8' });
+    return { ...JSON.parse(readFileSync(out, 'utf8')), text };
+  };
+  // round by round (--progress) and in blocks of 8 rounds: the same standings
+  const byRound = tournament('by-round', 12, ['--progress']);
+  const blocks = tournament('blocks', 12);
+  assert.equal(byRound.progress.length, 12);
+  assert.deepEqual(blocks.progress, byRound.progress);
+  assert.equal((byRound.text.match(/^after round \d+:$/gm) ?? []).length, 12);
+  for (const k of [1, 2, 9, 12]) assert.deepEqual(byRound.progress[k - 1], scores(tournament(`k${k}`, k)), `after round ${k}`);
+});
+
 // --pmars with a stand-in script: it answers from its -F position, so each
 // pairing's result shows whether it reached the right pairing, and it logs
 // its arguments. One file name has a space in it.

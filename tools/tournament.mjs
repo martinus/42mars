@@ -10,7 +10,7 @@
 //        --distance 100 --read-limit N --write-limit N] [--engine js|wasm]
 //        [--matrix] [--json out.json]
 //        [--pmars path/to/pmars [--compare]] [--native-input file]
-//        [--bench warrior.red] [--permute] [--icws88]
+//        [--bench warrior.red] [--permute] [--icws88] [--progress]
 //
 // --bench plays one warrior against every warrior of the set instead of a
 // round robin, on the wasm engine unless --engine says otherwise, and lists
@@ -33,11 +33,17 @@
 //
 // --jobs is the number of threads, the main thread included (default: all
 // hardware threads). They take tasks from one shared list until it is empty.
-// With --engine wasm a task is a block of about 8 rounds of a pairing
-// (runMatch's firstRound), so the threads stay busy to the end with few
-// pairings and with many: rounds depend on each other only through p-space,
-// which only LDP reads, so the results are the same. A pairing with LDP in
-// one of its warriors is one task.
+// With --engine wasm a task is a block of 8 rounds of a pairing (runMatch's
+// firstRound; 1 round with --progress, see makeTasks()), and the tasks go
+// round by round: the first block of every pairing, then the second ...
+// Rounds depend on each other only through p-space, which only LDP reads, so
+// the results are those of whole matches. A pairing with LDP in one of its
+// warriors is one task, and these come first.
+//
+// --progress prints the standings after every round, as soon as every
+// pairing has played it: they equal a tournament of that many rounds. --json
+// has them too, as `progress`: the score of every warrior after every round
+// (without --progress they come in blocks of 8 rounds, but are the same).
 //
 // --native-input writes every pairing as a match in the input format of
 // lib/tools/bench-native.c and exits, for tools/bench-native.mjs --input.
@@ -65,28 +71,51 @@ import { nativeMatch } from './native-input.mjs';
 const CTL = 4;            // i32: next task, tasks done
 const TASK = 6;           // i32 per task: a, b, seed, firstRound, rounds, pairing
 const RESULT = 7;         // f64 per task: wins, losses, ties of a, of b, instructions
+// Per pairing and round, after the task that played it: OUTCOME_A (a won),
+// OUTCOME_B or OUTCOME_TIE; and per round the number of pairings that played it.
+const OUTCOME_A = 1, OUTCOME_B = 2, OUTCOME_TIE = 3;
 
-function shareTasks(codes, tasks) {
+// The buffer: i32 control, tasks, rounds done, then the warriors' instructions;
+// f64 results; u8 outcomes.
+function layout(tasks, rounds, pairs, instructions) {
+  const ints = CTL + TASK * tasks + rounds + 5 * instructions;
+  const results = Math.ceil(ints / 2) * 8;
+  const outcomes = results + 8 * RESULT * tasks;
+  return { ints, results, outcomes, bytes: outcomes + pairs * rounds, rounds, pairs, tasks };
+}
+
+function shareTasks(codes, tasks, rounds, pairs) {
   const instructions = codes.reduce((n, c) => n + c.instructions.length, 0);
-  const ints = CTL + TASK * tasks.length + 5 * instructions;
-  const sab = new SharedArrayBuffer(Math.ceil(ints / 2) * 8 + 8 * RESULT * tasks.length);
-  const i32 = new Int32Array(sab, 0, ints);
+  const at = layout(tasks.length, rounds, pairs, instructions);
+  const sab = new SharedArrayBuffer(at.bytes);
+  const i32 = new Int32Array(sab, 0, at.ints);
   let k = CTL;
   for (const t of tasks) { i32.set([t.a, t.b, t.seed, t.firstRound, t.rounds, t.pairing], k); k += TASK; }
+  k += rounds;
   // The warriors as packWarrior() makes them, the instructions in the buffer.
   const warriors = codes.map((c) => {
     const w = packWarrior({ ...c, name: '' }, i32.subarray(k, k + 5 * c.instructions.length));
     k += w.packed.length;
     return w;
   });
-  return { sab, tasks: tasks.length, warriors };
+  return { sab, at, warriors };
 }
 
-// Takes tasks until none is left. One engine per thread, reused for every task.
-function drain(shared, opts, module) {
-  const { sab, tasks, warriors } = shared;
-  const i32 = new Int32Array(sab, 0, CTL + TASK * tasks);
-  const res = new Float64Array(sab, sab.byteLength - 8 * RESULT * tasks, RESULT * tasks);
+function views(shared) {
+  const { sab, at } = shared;
+  return {
+    i32: new Int32Array(sab, 0, at.ints),
+    roundsDone: new Int32Array(sab, 4 * (CTL + TASK * at.tasks), at.rounds),
+    res: new Float64Array(sab, at.results, RESULT * at.tasks),
+    outcomes: new Uint8Array(sab, at.outcomes, at.pairs * at.rounds),
+  };
+}
+
+// Takes tasks until none is left. One engine per thread, reused for every
+// task. done() runs after each task (the main thread's progress).
+function drain(shared, opts, module, done = () => {}) {
+  const { warriors, at } = shared;
+  const { i32, roundsDone, res, outcomes } = views(shared);
   // The JS engine reads instruction objects: unpacked on first use.
   const unpacked = new Array(warriors.length);
   const code = (w) => {
@@ -100,15 +129,16 @@ function drain(shared, opts, module) {
   const wasm = module ? createWasmMarsSync(opts, module) : null;
   for (;;) {
     const id = Atomics.add(i32, 0, 1);
-    if (id >= tasks) return;
-    const [a, b, seed, firstRound, rounds] = i32.subarray(CTL + TASK * id, CTL + TASK * (id + 1));
-    let wa, wb, instructions;
+    if (id >= at.tasks) return;
+    const [a, b, seed, firstRound, rounds, pairing] = i32.subarray(CTL + TASK * id, CTL + TASK * (id + 1));
+    let wa, wb, instructions, played;
     if (wasm) {
       // The match, or a block of its rounds, runs inside WebAssembly, with
       // early tie detection.
       const r = wasm.runMatch([code(a), code(b)], { rounds, seed, firstRound, permute: opts.permute });
       [wa, wb] = r.warriors;
       instructions = r.instructions;
+      played = r.results;
     } else {
       if (firstRound) throw new Error('--engine js plays whole matches only');
       const m = new Mars({ ...opts, headless: true });
@@ -120,10 +150,16 @@ function drain(shared, opts, module) {
         instructions += m.time;
       }
       [wa, wb] = m.warriors;
+      played = m.results;
     }
     res.set([wa.wins, wa.losses, wa.ties, wb.wins, wb.losses, wb.ties, instructions], RESULT * id);
+    for (const { round, survivors } of played) {
+      outcomes[pairing * at.rounds + round - 1] = survivors.length === 2 ? OUTCOME_TIE : survivors[0] === 0 ? OUTCOME_A : OUTCOME_B;
+      Atomics.add(roundsDone, round - 1, 1);
+    }
     Atomics.add(i32, 1, 1);
     Atomics.notify(i32, 1);
+    done();
   }
 }
 
@@ -160,6 +196,7 @@ function parseArgs(argv) {
     else if (a === '--bench') o.bench = argv[++i];
     else if (a === '--permute') o.permute = true;
     else if (a === '--icws88') o.icws88 = true;
+    else if (a === '--progress') o.progress = true;
     else o.files.push(a);
   }
   if (o.bench && !argv.includes('--engine')) o.engine = 'wasm';
@@ -184,44 +221,68 @@ function pairPosition(seed, a, b, o) {
 }
 
 // The tasks: with the wasm engine a pairing whose warriors have no LDP is
-// split into blocks of about BLOCK rounds (see the header), so that all
-// threads stay busy to the end whatever the number of pairings. A call of
-// runMatch costs about 1 microsecond on top of its rounds. Whole pairings
-// come first: they are the longest tasks.
+// split into blocks of BLOCK rounds, ordered by round, so that the standings
+// after each round are there early and all threads stay busy to the end
+// whatever the number of pairings. Whole pairings come first: they are the
+// longest tasks. Blocks of 1 round (--progress, not with --permute) show
+// every round as it is done, but the many runMatch calls cost: t80 with 31
+// jobs took 3.02 s against 2.80 s with blocks of 8 (2 rounds: 2.93, 4:
+// 2.85; median of 3 each).
 const BLOCK = 8;
 function makeTasks(o, codes, pairs) {
   const hasLdp = codes.map((c) => c.instructions.some((x) => x.op === OP.LDP));
-  const blocks = o.engine === 'wasm' ? Math.ceil(o.rounds / BLOCK) : 1;
+  const block = o.engine !== 'wasm' ? o.rounds : o.progress && !o.permute ? 1 : BLOCK;
   const whole = [];
   const split = [];
   pairs.forEach((p, k) => {
-    const n = hasLdp[p.a] || hasLdp[p.b] ? 1 : Math.max(1, blocks);
-    for (let i = 0; i < n; i++) {
-      const firstRound = Math.floor((i * o.rounds) / n);
-      (n === 1 ? whole : split).push({ pairing: k, a: p.a, b: p.b, seed: (o.permute ? 2 : 1) * (p.pos - o.distance), firstRound, rounds: Math.floor(((i + 1) * o.rounds) / n) - firstRound });
-    }
+    const task = (firstRound, rounds) => ({ pairing: k, a: p.a, b: p.b, seed: (o.permute ? 2 : 1) * (p.pos - o.distance), firstRound, rounds });
+    if (hasLdp[p.a] || hasLdp[p.b] || block >= o.rounds) whole.push(task(0, o.rounds));
+    else for (let r = 0; r < o.rounds; r += block) split.push(task(r, Math.min(block, o.rounds - r)));
   });
+  split.sort((x, y) => x.firstRound - y.firstRound || x.pairing - y.pairing);
   return [...whole, ...split];
 }
 
-async function runEngine(o, codes, pairs) {
+// Runs the tournament on the engine. onRound(k, results) is called for k =
+// 1, 2 .. rounds as soon as every pairing has played round k, with the
+// results of rounds 1 .. k per pairing ({ a: [w, l, t], b: [w, l, t] }).
+async function runEngine(o, codes, pairs, onRound = null) {
   const module = o.engine === 'wasm' ? await compileWasmMars() : null;
   const tasks = makeTasks(o, codes, pairs);
   const opts = { coreSize: o.size, maxCycles: o.cycles, maxProcesses: o.processes, maxLength: o.length, minDistance: o.distance, rounds: o.rounds, readLimit: o.readLimit, writeLimit: o.writeLimit, permute: Boolean(o.permute) };
-  const shared = shareTasks(codes, tasks);
-  const ctl = new Int32Array(shared.sab, 0, CTL);
+  const shared = shareTasks(codes, tasks, o.rounds, pairs.length);
+  const { i32: ctl, roundsDone, res, outcomes } = views(shared);
+  // The rounds every pairing has played, and their results so far.
+  let shown = 0;
+  const sofar = pairs.map(() => ({ a: [0, 0, 0], b: [0, 0, 0] }));
+  const progress = () => {
+    while (onRound && shown < o.rounds && Atomics.load(roundsDone, shown) === pairs.length) {
+      pairs.forEach((_, k) => {
+        const r = sofar[k];
+        switch (outcomes[k * o.rounds + shown]) {
+          case OUTCOME_A: r.a[0]++; r.b[1]++; break;
+          case OUTCOME_B: r.a[1]++; r.b[0]++; break;
+          default: r.a[2]++; r.b[2]++;
+        }
+      });
+      onRound(++shown, sofar);
+    }
+  };
   // The main thread is one of the jobs.
   const workers = Array.from({ length: Math.max(0, Math.min(o.jobs, tasks.length) - 1) }, () => new Worker(fileURLToPath(import.meta.url), { workerData: { shared, opts, module } }));
   const failure = new Promise((_, reject) => { for (const w of workers) w.on('error', reject); });
   failure.catch(() => {});
   try {
-    drain(shared, opts, module);
-    for (let done; (done = Atomics.load(ctl, 1)) < tasks.length;) await Promise.race([Atomics.waitAsync(ctl, 1, done).value, failure]);
+    drain(shared, opts, module, progress);
+    for (let done; (done = Atomics.load(ctl, 1)) < tasks.length;) {
+      progress();
+      await Promise.race([Atomics.waitAsync(ctl, 1, done).value, failure]);
+    }
+    progress();
   } finally {
     for (const w of workers) w.terminate(); // the ones that started too late for a task, too
   }
   // Wins, losses and ties of the blocks of a pairing add up.
-  const res = new Float64Array(shared.sab, shared.sab.byteLength - 8 * RESULT * tasks.length, RESULT * tasks.length);
   const results = pairs.map((_, id) => ({ id, a: [0, 0, 0], b: [0, 0, 0], instructions: 0 }));
   let instructions = 0;
   tasks.forEach((t, id) => {
@@ -335,7 +396,7 @@ async function main() {
   const all = collectFiles(o.files);
   if (o.bench) all.unshift(o.bench);
   if (all.length < 2) {
-    console.error('usage: node tools/tournament.mjs <dir or .red files...> [--rounds N] [--jobs N] [--engine js|wasm] [--pmars path [--compare]] [--matrix] [--json file] [--bench warrior.red] [--permute] [--icws88]');
+    console.error('usage: node tools/tournament.mjs <dir or .red files...> [--rounds N] [--jobs N] [--engine js|wasm] [--pmars path [--compare]] [--matrix] [--json file] [--bench warrior.red] [--permute] [--icws88] [--progress]');
     process.exit(2);
   }
   const files = [];
@@ -368,8 +429,22 @@ async function main() {
 
   let report = {};
   if (!o.pmars || o.compare) {
+    // the standings after each round: printed with --progress, the scores in --json
+    const progress = [];
+    const onRound = o.progress || o.json ? (k, sofar) => {
+      if (o.progress) {
+        const ok = { ...o, rounds: k, matrix: false };
+        console.log(`after round ${k}:\n${(o.bench ? benchTable : table)(ok, names, pairs, sofar).text}\n`);
+      }
+      const scores = names.map(() => 0);
+      pairs.forEach((p, i) => {
+        scores[p.a] += 3 * sofar[i].a[0] + sofar[i].a[2];
+        scores[p.b] += 3 * sofar[i].b[0] + sofar[i].b[2];
+      });
+      progress.push(scores);
+    } : null;
     const t0 = performance.now();
-    const { results, instructions } = await runEngine(o, codes, pairs);
+    const { results, instructions } = await runEngine(o, codes, pairs, onRound);
     const s = (performance.now() - t0) / 1000;
     const t = o.bench ? benchTable(o, names, pairs, results) : table(o, names, pairs, results);
     console.log(t.text);
@@ -377,6 +452,7 @@ async function main() {
     report = o.bench
       ? { engine: o.engine, seconds: s, instructions, opponents: t.rows, total: t.total, results }
       : { engine: o.engine, seconds: s, instructions, ranking: t.rows, matrix: t.matrix, results };
+    if (onRound) report.progress = progress;
   }
   if (o.pmars) {
     const t0 = performance.now();
