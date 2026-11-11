@@ -22,9 +22,9 @@ export interface Options {
   warriors?: number;
   /** P-space cells (-S); 0 means coreSize / 16. */
   pSpaceSize?: number;
-  /** Read distance limit; 0 means coreSize. */
+  /** Read limit (-R), a divisor of coreSize; 0 means coreSize. */
   readLimit?: number;
-  /** Write distance limit; 0 means coreSize. */
+  /** Write limit (-W), a divisor of coreSize; 0 means coreSize. */
   writeLimit?: number;
   /** Assembler: ICWS'88 only (pmars -8): its opcodes and modes, no modifiers, ORG or PIN; the listing in its form. */
   icws88?: boolean;

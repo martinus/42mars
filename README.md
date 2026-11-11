@@ -51,7 +51,7 @@ In a browser without npm: `import { ... } from 'https://cdn.jsdelivr.net/npm/42m
 
 ```sh
 npm run serve          # http://127.0.0.1:8000/ (the visualizer in ui/)
-npm test               # 454 tests, Node 20 or newer, no dependencies
+npm test               # 461 tests, Node 20 or newer, no dependencies
 node tools/asm.mjs warriors/dwarf.red      # pMARS-style listing
 node tools/corpus.mjs path/to/warriors     # assemble a whole folder
 node tools/pmars-diff.mjs --pmars path/to/pmars --corpus path/to/warriors   # compare with pMARS

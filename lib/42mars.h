@@ -88,8 +88,8 @@ typedef struct {
   uint32_t max_length;    // instructions per warrior            (pmars -l)
   uint32_t min_distance;  // between the warriors' first cells   (pmars -d)
   uint32_t pspace_size;   // 0: core_size / 16, at most 2^24     (pmars -S)
-  uint32_t read_limit;    // 0: core_size; only the assembler's READLIMIT
-  uint32_t write_limit;   // 0: core_size; only the assembler's WRITELIMIT
+  uint32_t read_limit;    // 0: core_size, else a divisor of it   (pmars -R)
+  uint32_t write_limit;   // 0: core_size, else a divisor of it   (pmars -W)
   uint32_t rounds;        // the assembler's ROUNDS              (pmars -r)
   uint32_t warriors;      // most warriors per match, 1 .. 255; the assembler's WARRIORS
 } m42_rules;

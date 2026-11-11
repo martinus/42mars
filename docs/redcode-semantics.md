@@ -810,6 +810,33 @@ The current warrior W takes the process at the head of its queue: PC.
    itself), the next address is queued at the tail of W's queue: the jump
    target if a jump happened, PC+2 if a skip happened, else PC+1.
 
+Read and write limits (`readLimit` R and `writeLimit` W, pmars `-R` and
+`-W`): each a divisor of N (else a RangeError, exit 2 in `42mars`; 0 in the
+library is N). With both equal to N everything above holds. Below N, every
+operand has a read address and a write address instead of one pointer. An
+offset x (0..2N-2) is folded into the window of a limit L: `fold(x, L) = x
+mod L`, plus N - L when that is above `floor(L / 2)`. For an operand with
+value V that is not `#`:
+
+- `$`: read offset `r = fold(V, R)`, write offset `w = fold(V, W)`.
+- `@` and `*`: the pointer cell is PC + fold(V, R); its B (A) field F is
+  added to both: `r = fold(fold(V, R) + F, R)`, `w = fold(fold(V, W) + F, W)`.
+- `< > { }`: the pointer cell is PC + fold(V, W), so the decrement or
+  increment goes there; F is its field (after a decrement, before an
+  increment), and both offsets start from the write offset: `r =
+  fold(fold(V, W) + F, R)`, `w = fold(fold(V, W) + F, W)`.
+
+The read address is PC + r, the write address PC + w; `#` has both at PC.
+The values (AA, AB, BA, BB, the instruction word for `.I`) are read at the
+read addresses, the A operand's read address is the jump and `SPL` target,
+and every store of step 4 (`MOV`, the arithmetic, `DJN`'s decrement, `LDP`)
+goes to the B operand's write address. The ICWS'94 draft reads the pointer
+cell of `@` through the write offset for the write address, and starts the
+read address of `< >` from the read offset: pMARS does neither. Found by
+running single instructions on pmars-trace and finding the copy that gives
+its core hash (`test/limits.test.js`), then 4200 random battles with limits
+against it. `tools/pmars-diff.mjs` has three fuzz rule sets with limits.
+
 ### 3.4 Bookkeeping for the visualizer
 
 - `tExec[PC] = time` and `execBy[PC] = W` on fetch (time was incremented
@@ -1061,12 +1088,14 @@ two on corpus warriors, `test/cli.test.js` holds recorded pMARS outputs.
   order and s = 1 .. warriors, with the registers kept from one evaluation
   to the next (`x=x+1` counts the evaluations). A warrior's score is the
   sum over s of (rounds it survived with s warriors alive) * formula.
+- `-R #`, `-W #`: read and write limits (3.3), 1 .. 2^30 and a divisor of
+  the core size, else exit 2 before anything is assembled.
 - `-8`: ICWS'88 only (section 2.4); listings and `-A` without modifiers,
   `-A` prints `       END      START` before its `       END` when the
   start lies in the code. The simulation is the same.
 - `-e` (the debugger, off in the server build) is ignored.
-- Not supported by `42mars` (exit 2): `-R`, `-W` (#40), `-V` (pMARS prints
-  its internal assembler passes), and values
+- Not supported by `42mars` (exit 2): `-V` (pMARS prints its internal
+  assembler passes), and values
   beyond the engine: core size above 65536, more than 2^24 processes or
   p-space cells, more than 2^32-1 cycles.
 

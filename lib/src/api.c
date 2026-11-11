@@ -54,9 +54,13 @@ m42_rules m42_rules_94(void) {
 
 static u32 pspace_of(const m42_rules *r) { return r->pspace_size ? r->pspace_size : r->core_size / 16; }
 
+// A read or write limit: 0 (the core size) or a divisor of the core size, as pMARS wants.
+static int limit_ok(u32 limit, u32 coreSize) { return limit == 0 || (limit <= coreSize && coreSize % limit == 0); }
+
 static int rules_ok(const m42_rules *r) {
   return r && r->size >= sizeof(m42_rules) && r->core_size >= 1 && r->core_size <= 65536 &&
-         r->max_processes <= 1u << 24 && pspace_of(r) <= 1u << 24 && r->warriors >= 1 && r->warriors <= 255;
+         r->max_processes <= 1u << 24 && pspace_of(r) <= 1u << 24 && r->warriors >= 1 && r->warriors <= 255 &&
+         limit_ok(r->read_limit, r->core_size) && limit_ok(r->write_limit, r->core_size);
 }
 
 // ---------------------------------------------------------------- warriors
@@ -409,6 +413,8 @@ static int load_warriors(Mars *m, const m42_warrior *const *ws, u32 n, const m42
   }
   i32 *in = config(m, r->core_size, r->max_processes, r->max_cycles, r->min_distance, pspace_of(r), n, total);
   if (!in) return M42_ERR_MEMORY;
+  m->readLimit = r->read_limit ? r->read_limit : r->core_size;
+  m->writeLimit = r->write_limit ? r->write_limit : r->core_size;
   i32 *k = in;
   for (u32 i = 0; i < n; i++) {
     const AsmResult *w = RESULT(ws[i]);

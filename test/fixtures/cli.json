@@ -22,5 +22,8 @@
 {"args":"-P W/dwarf.red W/imp.red W/seeker.red","code":2,"stdout":""},
 {"args":"-8 -r 0 W/dwarf.red","code":0,"stdout":"Program \"Dwarf\" (length 4) by \"A. K. Dewdney\"\n\n       DAT    #     0, #     0     \nSTART  ADD    #     4, $    -1     \n       MOV    $    -2, @    -2     \n       JMP    $    -2, $     0     \n       END      START\n\n"},
 {"args":"-8 -A W/dwarf.red W/imp.red","code":3,"stdout":"       ORG          1\n       DAT    #     0, #     0     \n       ADD    #     4, $    -1     \n       MOV    $    -2, @    -2     \n       JMP    $    -2, $     0     \n       END      START\n       END\n"},
-{"args":"-8 -b -k -r 20 -F 3000 W/dwarf.red W/dwarf.red","code":0,"stdout":"9 3\n8 3\n"}
+{"args":"-8 -b -k -r 20 -F 3000 W/dwarf.red W/dwarf.red","code":0,"stdout":"9 3\n8 3\n"},
+{"args":"-b -k -r 50 -F 3000 -R 500 -W 400 W/dwarf.red W/lantern.red","code":0,"stdout":"49 0\n1 0\n"},
+{"args":"-b -R 3 W/imp.red W/dwarf.red","code":2,"stdout":""},
+{"args":"-b -k -r 50 -F 3000 -R 2000 W/seeker.red W/origami.red","code":0,"stdout":"33 2\n15 2\n"}
 ]

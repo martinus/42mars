@@ -7,7 +7,8 @@
 //
 //   node tools/tournament.mjs <dir or .red files...> [--rounds 100] [--jobs N]
 //        [--seed 1] [--size 8000 --cycles 80000 --processes 8000 --length 100
-//        --distance 100] [--engine js|wasm] [--matrix] [--json out.json]
+//        --distance 100 --read-limit N --write-limit N] [--engine js|wasm]
+//        [--matrix] [--json out.json]
 //        [--pmars path/to/pmars [--compare]] [--native-input file]
 //        [--bench warrior.red] [--permute] [--icws88]
 //
@@ -136,7 +137,7 @@ function workerMain() {
 
 function parseArgs(argv) {
   const o = { files: [], rounds: 100, jobs: availableParallelism(), seed: 1, engine: 'js',
-    size: 8000, cycles: 80000, processes: 8000, length: 100, distance: 100, matrix: false };
+    size: 8000, cycles: 80000, processes: 8000, length: 100, distance: 100, readLimit: 0, writeLimit: 0, matrix: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     const num = () => Number(argv[++i]);
@@ -148,6 +149,8 @@ function parseArgs(argv) {
     else if (a === '--processes') o.processes = num();
     else if (a === '--length') o.length = num();
     else if (a === '--distance') o.distance = num();
+    else if (a === '--read-limit') o.readLimit = num(); // pmars -R, 0: the core size
+    else if (a === '--write-limit') o.writeLimit = num(); // pmars -W
     else if (a === '--engine') o.engine = argv[++i];
     else if (a === '--matrix') o.matrix = true;
     else if (a === '--json') o.json = argv[++i];
@@ -204,7 +207,7 @@ function makeTasks(o, codes, pairs) {
 async function runEngine(o, codes, pairs) {
   const module = o.engine === 'wasm' ? await compileWasmMars() : null;
   const tasks = makeTasks(o, codes, pairs);
-  const opts = { coreSize: o.size, maxCycles: o.cycles, maxProcesses: o.processes, maxLength: o.length, minDistance: o.distance, rounds: o.rounds, permute: Boolean(o.permute) };
+  const opts = { coreSize: o.size, maxCycles: o.cycles, maxProcesses: o.processes, maxLength: o.length, minDistance: o.distance, rounds: o.rounds, readLimit: o.readLimit, writeLimit: o.writeLimit, permute: Boolean(o.permute) };
   const shared = shareTasks(codes, tasks);
   const ctl = new Int32Array(shared.sab, 0, CTL);
   // The main thread is one of the jobs.
@@ -245,7 +248,8 @@ function runPmars(o, files, pairs) {
     const results = new Array(pairs.length);
     let next = 0;
     let done = 0;
-    const rules = ['-s', o.size, '-c', o.cycles, '-p', o.processes, '-l', o.length, '-d', o.distance, '-r', o.rounds, ...(o.permute ? ['-P'] : []), ...(o.icws88 ? ['-8'] : [])].map(String);
+    const rules = ['-s', o.size, '-c', o.cycles, '-p', o.processes, '-l', o.length, '-d', o.distance, '-r', o.rounds,
+      ...(o.readLimit ? ['-R', o.readLimit] : []), ...(o.writeLimit ? ['-W', o.writeLimit] : []), ...(o.permute ? ['-P'] : []), ...(o.icws88 ? ['-8'] : [])].map(String);
     if (pairs.length === 0) return resolve({ results });
     for (let k = 0; k < Math.min(o.jobs, pairs.length); k++) {
       const sh = spawn('/bin/sh', ['-c', PMARS_LOOP, o.pmars, ...rules], { stdio: ['pipe', 'pipe', 'pipe'] });
@@ -339,7 +343,7 @@ async function main() {
   const names = [];
   for (const f of all) {
     const src = readFileSync(f, 'latin1');
-    const w = assemble(src, { coreSize: o.size, maxLength: o.length, minDistance: o.distance, maxProcesses: o.processes, maxCycles: o.cycles, rounds: o.rounds, warriors: 2, icws88: Boolean(o.icws88) });
+    const w = assemble(src, { coreSize: o.size, maxLength: o.length, minDistance: o.distance, maxProcesses: o.processes, maxCycles: o.cycles, rounds: o.rounds, warriors: 2, readLimit: o.readLimit, writeLimit: o.writeLimit, icws88: Boolean(o.icws88) });
     if (!w.ok || w.instructions.length === 0) {
       const why = w.ok ? 'no instructions' : w.errors[0].text;
       if (o.bench && files.length === 0) { console.error(`${f}: ${why}`); process.exit(2); }
@@ -355,7 +359,7 @@ async function main() {
     for (let b = a + 1; b < files.length; b++) pairs.push({ a, b, pos: pairPosition(o.seed, a, b, o) });
   }
   if (o.nativeInput) {
-    if (o.permute) throw new Error('--native-input: lib/tools/bench-native.c has no permute');
+    if (o.permute || o.readLimit || o.writeLimit) throw new Error('--native-input: lib/tools/bench-native.c has no permute and no limits');
     const rules = { coreSize: o.size, maxProcesses: o.processes, maxCycles: o.cycles, minDistance: o.distance, pSpaceSize: Math.floor(o.size / 16) };
     writeFileSync(o.nativeInput, pairs.map((p) => nativeMatch([codes[p.a], codes[p.b]], rules, p.pos - o.distance, o.rounds)).join(''));
     return;
