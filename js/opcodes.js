@@ -57,21 +57,27 @@ export function formatInstruction(op, mod, aMode, aVal, bMode, bVal, coreSize) {
 const pad = (s, n) => (s.length >= n ? s : ' '.repeat(n - s.length) + s);
 const padRight = (s, n) => (s.length >= n ? s : s + ' '.repeat(n - s.length));
 
-// Same layout as pMARS cellview(): "%3s%c%-2s %c%6d, %c%6d %4s".
-export function formatCell(op, mod, aMode, aVal, bMode, bVal, coreSize) {
-  return `${pad(OPCODES[op], 3)}.${padRight(MODIFIERS[mod], 2)} ` +
+// Same layout as pMARS cellview(): "%3s%c%-2s %c%6d, %c%6d %4s". ICWS'88
+// (pmars -8) leaves out the modifier.
+export function formatCell(op, mod, aMode, aVal, bMode, bVal, coreSize, icws88 = false) {
+  return `${pad(OPCODES[op], 3)}${icws88 ? '   ' : `.${padRight(MODIFIERS[mod], 2)}`} ` +
     `${MODE_SYMBOLS[aMode]}${pad(String(denormalize(aVal, coreSize)), 6)}, ` +
     `${MODE_SYMBOLS[bMode]}${pad(String(denormalize(bVal, coreSize)), 6)}     `;
 }
 
 // Same layout as the pMARS assembler listing (disasm() without -A).
+// A warrior assembled with `icws88` gets the ICWS'88 form: no modifiers, and
+// "END START" behind the code instead of "ORG START" in front.
 export function formatListing(warrior, coreSize) {
   const out = [`Program "${warrior.name}" (length ${warrior.instructions.length}) by "${warrior.author}"`, ''];
   const n = warrior.instructions.length;
-  if (warrior.start >= 0 && warrior.start < n) out.push(`${padRight('', 6)} ORG      START`);
+  const icws88 = Boolean(warrior.options?.icws88);
+  const hasStart = warrior.start >= 0 && warrior.start < n;
+  if (hasStart && !icws88) out.push(`${padRight('', 6)} ORG      START`);
   warrior.instructions.forEach((ins, i) => {
     out.push(`${padRight(i === warrior.start ? 'START' : '', 6)} ` +
-      formatCell(ins.op, ins.mod, ins.aMode, ins.aVal, ins.bMode, ins.bVal, coreSize));
+      formatCell(ins.op, ins.mod, ins.aMode, ins.aVal, ins.bMode, ins.bVal, coreSize, icws88));
   });
+  if (hasStart && icws88) out.push(`${padRight('', 6)} END      START`);
   return out.join('\n') + '\n';
 }

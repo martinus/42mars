@@ -19,6 +19,16 @@ export { DEFAULT_OPTIONS };
 export const PMARS_VERSION = 95;
 
 const MAX_LABELS = 7;
+
+// ICWS'88 (`icws88`, pmars -8): the opcodes it has, each with the modes its A
+// and its B operand may have (pMARS's table, found by running pmars -8 on
+// every opcode and mode pair, semantics doc 2.4).
+const ICWS88_MODES = new Map([
+  [OP.DAT, ['#<', '#<']],
+  ...[OP.MOV, OP.ADD, OP.SUB, OP.CMP].map((op) => [op, ['#$@<', '$@<']]),
+  ...[OP.JMP, OP.JMZ, OP.JMN, OP.DJN, OP.SPL].map((op) => [op, ['$@<', '#$@<']]),
+  [OP.SLT, ['#$@<', '#$@<']],
+]);
 const OPCODE_SET = new Set([...OPCODES, ...PSEUDO_OPS]);
 const PSEUDO_SET = new Set(PSEUDO_OPS);
 
@@ -666,6 +676,7 @@ class StatementTokens {
 class StatementParser {
   constructor(options, evaluator, symbols, messages) {
     this.coreSize = options.coreSize;
+    this.icws88 = Boolean(options.icws88);
     this.evaluator = evaluator;
     this.symbols = symbols;
     this.msg = messages;
@@ -760,7 +771,9 @@ class StatementParser {
       ts.raw = false;
       mod = m.t === 'ident' ? MODIFIERS.indexOf(m.text.toUpperCase()) : -1;
       if (mod < 0) { this.msg.error(line, `bad modifier '${m.text}'`); return; }
+      if (this.icws88) { this.msg.error(line, "ICWS'88 has no modifiers"); return; }
     }
+    if (this.icws88 && (opName === 'ORG' || opName === 'PIN')) { this.msg.error(line, `ICWS'88 has no ${opName}`); return; }
 
     if (PSEUDO_SET.has(opName)) {
       if (mod !== null) { this.msg.error(line, `${opName} takes no modifier`); return; }
@@ -805,6 +818,14 @@ class StatementParser {
 
   finish(op, mod, a, b, line) {
     if (this.msg.failed) return;
+    if (this.icws88) {
+      const modes = ICWS88_MODES.get(op);
+      if (!modes) { this.msg.error(line, `ICWS'88 has no ${OPCODES[op]}`); return; }
+      if (!modes[0].includes(MODE_SYMBOLS[a.mode]) || !modes[1].includes(MODE_SYMBOLS[b.mode])) {
+        this.msg.error(line, `ICWS'88: ${OPCODES[op]} takes [${modes[0]}] [${modes[1]}]`);
+        return;
+      }
+    }
     let aVal = 0n;
     let bVal = 0n;
     if (a.expr !== null) {

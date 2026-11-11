@@ -112,7 +112,9 @@ typedef struct {
   int32_t line;
 } m42_instruction;
 
-#define M42_UTF8 1u // m42_assemble flag: the source is UTF-8, not Latin-1
+#define M42_UTF8 1u   // m42_assemble flag: the source is UTF-8, not Latin-1
+#define M42_ICWS88 2u // m42_assemble flag: ICWS'88 only (pmars -8): its opcodes and
+                      // modes, no modifiers, ORG or PIN; the code runs the same
 
 // Assembles `len` bytes of Redcode with the predefined constants of `rules`
 // (CORESIZE, MAXLENGTH, ...; only core_size >= 1 is checked). `mem` is working memory of `size` bytes; the

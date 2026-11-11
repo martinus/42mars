@@ -26,6 +26,8 @@ export interface Options {
   readLimit?: number;
   /** Write distance limit; 0 means coreSize. */
   writeLimit?: number;
+  /** Assembler: ICWS'88 only (pmars -8): its opcodes and modes, no modifiers, ORG or PIN; the listing in its form. */
+  icws88?: boolean;
 }
 
 /** The rules of pMARS 0.9.5 without options (ICWS'94). */

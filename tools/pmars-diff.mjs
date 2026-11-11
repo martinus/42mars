@@ -6,7 +6,7 @@
 //
 //   node tools/pmars-diff.mjs --pmars path/to/pmars [--corpus dir] [--tmp dir]
 //        [--jobs 16] [--seed 1] [--scale 1] [--only listings,exprs,...]
-//        [--headless | --wasm | --wasm-match] [--permute]
+//        [--headless | --wasm | --wasm-match] [--permute] [--icws88]
 //
 // Sections:
 //   listings   every .red file in --corpus: pMARS listing (pmars -r 0) vs
@@ -28,6 +28,8 @@
 // --permute runs the battles and fuzz sections with pMARS's -P and our
 // engines with `permute` (seed 2 * (-F position - distance)); multi is
 // skipped, -P takes two warriors only.
+// --icws88 passes pMARS's -8 everywhere and assembles our side with
+// `icws88`; the generated sources and warriors are then mostly ICWS'88 code.
 // --cli path/to/42mars adds the section `cli`: the command line program
 // (make) and pMARS with the same arguments on corpus warriors,
 // stdout and exit code compared.
@@ -85,7 +87,10 @@ const PERMUTE = args.includes('--permute');
 const WASM = args.includes('--wasm') || WASM_MATCH ? await compileWasmMars() : null;
 // --wasm-asm: our side assembles with the C assembler (lib/src/asm.c);
 // usable() keeps the JS one, whose evaluator it instruments.
-const ourAssemble = args.includes('--wasm-asm') ? assembleWasm : assemble;
+const assembleWith = args.includes('--wasm-asm') ? assembleWasm : assemble;
+// --icws88: every pMARS call gets -8 (rules()), every assembly icws88.
+const ICWS88 = args.includes('--icws88');
+const ourAssemble = ICWS88 ? (source, o = {}) => assembleWith(source, { ...o, icws88: true }) : assembleWith;
 if (WASM_MATCH && TRACE) {
   console.error('--wasm-match compares scores only; leave out --pmars-trace');
   process.exit(2);
@@ -174,7 +179,7 @@ function tmpFile(source) {
 // ---------------------------------------------------------------- listings
 
 function rules(o) {
-  return ['-s', o.coreSize, '-c', o.maxCycles, '-p', o.maxProcesses, '-l', o.maxLength, '-d', o.minDistance].map(String);
+  return [...(ICWS88 ? ['-8'] : []), '-s', o.coreSize, '-c', o.maxCycles, '-p', o.maxProcesses, '-l', o.maxLength, '-d', o.minDistance].map(String);
 }
 const STANDARD = { coreSize: 8000, maxCycles: 80000, maxProcesses: 8000, maxLength: 100, minDistance: 100 };
 
@@ -291,9 +296,12 @@ async function exprs() {
 
 // ---------------------------------------------------------------- sources
 
-const OPS = ['mov', 'add', 'sub', 'mul', 'div', 'mod', 'jmz', 'jmn', 'djn', 'cmp', 'slt', 'spl', 'dat', 'jmp', 'seq', 'sne', 'nop', 'ldp', 'stp'];
-const MODS = ['', '', '', '.a', '.b', '.ab', '.ba', '.f', '.x', '.i'];
-const MODES = ['', '', '#', '$', '@', '<', '>', '*', '{', '}'];
+// With --icws88 mostly ICWS'88 code, with a few '94 tokens that it rejects.
+const OPS = ICWS88
+  ? ['mov', 'add', 'sub', 'jmz', 'jmn', 'djn', 'cmp', 'slt', 'spl', 'dat', 'jmp', 'mov', 'dat', 'jmp', 'spl', 'djn', 'mul', 'seq', 'nop']
+  : ['mov', 'add', 'sub', 'mul', 'div', 'mod', 'jmz', 'jmn', 'djn', 'cmp', 'slt', 'spl', 'dat', 'jmp', 'seq', 'sne', 'nop', 'ldp', 'stp'];
+const MODS = ICWS88 ? ['', '', '', '', '', '', '', '', '', '', '', '.i'] : ['', '', '', '.a', '.b', '.ab', '.ba', '.f', '.x', '.i'];
+const MODES = ICWS88 ? ['', '', '#', '$', '@', '<', '', '#', '<', '@', '>', '*'] : ['', '', '#', '$', '@', '<', '>', '*', '{', '}'];
 
 // Random source text: labels of different lengths, EQU, FOR/ROF (also
 // skipped blocks), CURLINE, ORG/END, metadata with trailing whitespace,
@@ -500,10 +508,26 @@ async function battles() {
 
 // ---------------------------------------------------------------- fuzz
 
+// The opcodes of ICWS'88 and the modes of their A and B operands (pmars -8).
+const LEGAL88 = {
+  dat: ['#<', '#<'], mov: ['#$@<', '$@<'], add: ['#$@<', '$@<'], sub: ['#$@<', '$@<'], cmp: ['#$@<', '$@<'],
+  jmp: ['$@<', '#$@<'], jmz: ['$@<', '#$@<'], jmn: ['$@<', '#$@<'], djn: ['$@<', '#$@<'], spl: ['$@<', '#$@<'], slt: ['#$@<', '#$@<'],
+};
+
 function randomWarrior(len, coreSize) {
   const small = () => String(rand(9) - 4);
   const wide = () => String(rand(coreSize) - (coreSize >> 1));
   const operand = () => `${pick(['#', '$', '@', '<', '>', '*', '{', '}'])}${rand(3) ? small() : wide()}`;
+  if (ICWS88) {
+    const lines = [`;name r${rand(1e6)}`, ';assert 1'];
+    for (let i = 0; i < len; i++) {
+      const op = rand(4) === 0 ? pick(['spl', 'mov', 'djn', 'jmp']) : pick(Object.keys(LEGAL88));
+      const [a, b] = LEGAL88[op];
+      lines.push(`${op} ${pick([...a])}${rand(3) ? small() : wide()}, ${pick([...b])}${rand(3) ? small() : wide()}`);
+    }
+    lines.push(`end ${rand(len)}`);
+    return lines.join('\n') + '\n';
+  }
   const lines = [';redcode-94', `;name r${rand(1e6)}`, ';assert 1'];
   for (let i = 0; i < len; i++) {
     const op = rand(4) === 0 ? pick(['spl', 'mov', 'djn', 'jmp']) : pick(OPS);
@@ -556,8 +580,8 @@ async function multi() {
 
 // --cli path/to/42mars: both programs with the same arguments on corpus
 // warriors, stdout and exit code compared. Arguments mix warrior counts,
-// listings, -b, -k, -o, -A, -=, -F or -f (never random positions), rule
-// changes, -@ files and some invalid options.
+// listings, -b, -k, -o, -A, -=, -F or -f (never random positions), -P, -8,
+// rule changes, -@ files and some invalid options.
 const CLI = arg('cli');
 const FORMULAS = ['(W*W-1)/S', '1', 'S', 'W*10+S', 'x=x+S', '10/S', '1/0', 'W-S'];
 
@@ -586,6 +610,7 @@ async function cli() {
     if (rand(10) < 3) args.push('-f');
     else args.push('-F', String(d + rand(8000 + 1 - 2 * d)));
     if (rand(5) === 0) args.push('-P'); // with other than two warriors: exit 2
+    if (rand(6) === 0) args.push('-8');
     const ws = Array.from({ length: k }, () => pick(files));
     if (rand(20) === 0) {
       const at = join(TMP, `options${i}.txt`);

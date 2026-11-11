@@ -616,7 +616,8 @@ function assembleWith(x, mem, source, options) {
     if (size > 2 ** 31) throw new Error('assembleWasm: out of memory');
     mem.mark = start;
     const work = mem.scratch(size);
-    const status = x.m42_assemble(src, bytes.length, rules, utf8 ? 1 : 0, work, size, out);
+    // flags: M42_UTF8 1, M42_ICWS88 2
+    const status = x.m42_assemble(src, bytes.length, rules, (utf8 ? 1 : 0) | (o.icws88 ? 2 : 0), work, size, out);
     if (status === M42_ERR_MEMORY) continue;
     check(x, mem, status);
     return readWarrior(x, mem, mem.views().dv.getUint32(out, true), utf8 ? utf8Decoder : latin1Decoder, o);

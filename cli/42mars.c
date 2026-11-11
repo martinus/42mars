@@ -11,8 +11,8 @@
 // stdout is pMARS's: listings, results, -k lines, -A output. Messages go to
 // stderr in our own words. Exit codes are pMARS's: 0 ok, 2 bad options, 3 a
 // warrior that does not assemble or cannot be read. Not supported, with a
-// clear error: -R and -W (read/write limits, #40), -8 (#42), -V (pMARS's
-// internal assembler dump), and values beyond the engine's limits
+// clear error: -R and -W (read/write limits, #40), -V (pMARS's internal
+// assembler dump), and values beyond the engine's limits
 // (core size 65536, 2^24 processes and p-space cells, 2^32-1 cycles). -e
 // (the debugger, off in pMARS's server version) is ignored, as pMARS does.
 // What pMARS does for each option is in docs/redcode-semantics.md,
@@ -27,6 +27,9 @@
 
 #define MAX_WARRIORS 36 // pMARS's limit
 
+// -8: ICWS'88 only, and listings without modifiers
+static int icws88;
+
 static void usage(void) {
   fputs("42mars: Core War simulator with the results of pMARS 0.9.5\n"
         "Usage: 42mars [options] file1 [files ..]   (- reads a warrior from stdin)\n"
@@ -37,7 +40,7 @@ static void usage(void) {
         "  -l # warrior length [100]  -f   fixed position series\n"
         "  -d # distance [length]     -F # position of warrior 2\n"
         "  -S # p-space [core/16]     -P   permuted positions\n"
-        "  -= $ score formula [(W*W-1)/S]\n"
+        "  -= $ score formula [(W*W-1)/S] -8   ICWS'88 only\n"
         "  -@ $ read options from file $\n",
         stderr);
 }
@@ -178,7 +181,7 @@ static int parse(int argc, char **argv, Args *a) {
         }
         case 'R': case 'W': return fail(2, "read and write limits (-R, -W) are not supported yet (#40)", 0);
         case 'P': a->permute = 1; break;
-        case '8': return fail(2, "-8 is not supported yet (#42)", 0);
+        case '8': icws88 = 1; break;
         case 'V': return fail(2, "-V (pMARS's verbose assembly) is not supported", 0);
         default: return fail(2, "unknown option", arg);
       }
@@ -202,8 +205,9 @@ static const char MODES[] = "#$@<>*{}";
 static long long signed_value(uint32_t v, uint32_t size) { return v > size / 2.0 ? (long long)v - size : v; }
 
 static void print_cell(const m42_instruction *x, uint32_t size) {
-  printf("%3s.%-2s %c%6lld, %c%6lld     \n", OPS[x->opcode], MODS[x->modifier], MODES[x->a_mode],
-         signed_value(x->a, size), MODES[x->b_mode], signed_value(x->b, size));
+  if (icws88) printf("%3s    ", OPS[x->opcode]);
+  else printf("%3s.%-2s ", OPS[x->opcode], MODS[x->modifier]);
+  printf("%c%6lld, %c%6lld     \n", MODES[x->a_mode], signed_value(x->a, size), MODES[x->b_mode], signed_value(x->b, size));
 }
 
 static void text(const m42_warrior *w, m42_text which, char *buf, size_t n) { m42_warrior_text(w, which, buf, n); }
@@ -214,11 +218,13 @@ static void print_listing(const m42_warrior *w, uint32_t size) {
   text(w, M42_AUTHOR, author, sizeof author);
   const uint32_t n = m42_warrior_length(w), start = m42_warrior_start(w);
   printf("Program \"%s\" (length %u) by \"%s\"\n\n", name, n, author);
-  if (start < n) printf("       ORG      START\n");
+  // -8: END START behind the code instead of ORG START in front
+  if (start < n && !icws88) printf("       ORG      START\n");
   for (uint32_t i = 0; i < n; i++) {
     printf("%-6s ", i == start ? "START" : "");
     print_cell(&m42_warrior_code(w)[i], size);
   }
+  if (start < n && icws88) printf("       END      START\n");
   printf("\n");
 }
 
@@ -230,6 +236,7 @@ static void print_assembly(const m42_warrior *w, uint32_t size) {
   }
   int64_t pin;
   if (m42_warrior_pin(w, &pin)) printf("       PIN %10lld\n", (long long)pin);
+  if (icws88 && m42_warrior_start(w) < m42_warrior_length(w)) printf("       END      START\n");
   printf("       END\n");
 }
 
@@ -277,7 +284,7 @@ static int play(Args *a, m42_warrior **w) {
     if (f && f != stdin) fclose(f);
     if (!src) return fail(3, "cannot read", path);
     int s;
-    w[i] = m42_assemble_new(src, len, &rules, 0, &s);
+    w[i] = m42_assemble_new(src, len, &rules, icws88 ? M42_ICWS88 : 0, &s);
     free(src);
     if (!w[i]) return fail(3, m42_status_text(s), path);
     for (uint32_t k = 0; k < m42_warrior_errors(w[i]) + m42_warrior_warnings(w[i]); k++) {
