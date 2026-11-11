@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 Martin Leitner-Ankerl
+//
+// The trace of the watch (semantics doc, 3.6 and 3.7): pc, A pointer, B
+// pointer and meta for the last 4096 instructions.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { assembleWasm as assemble } from '../wasm/42mars.js';
-import { Mars } from '../js/mars.js';
+import { assembleWasm as assemble, createWasmMarsSync } from '../wasm/42mars.js';
 import { OP, MOD } from '../js/opcodes.js';
 
 const STORED = 1 << 16;
@@ -14,7 +16,7 @@ const SKIPPED = 1 << 19;
 const FLAGS = STORED | NEW_PROCESS | DIED | SKIPPED;
 
 function battle(sources, opts = {}, positions = [0, 4000]) {
-  const m = new Mars(opts);
+  const m = createWasmMarsSync({ ...opts, watch: true });
   m.load(sources.map((s) => {
     const w = assemble(s, opts);
     assert.ok(w.ok, JSON.stringify(w.errors));
@@ -24,11 +26,14 @@ function battle(sources, opts = {}, positions = [0, 4000]) {
   return m;
 }
 
+const traceSize = (m) => m.watch().trace.length / 4;
+
 // Trace entry of the instruction executed at time t.
 function entry(m, t) {
-  const slot = t & (m.traceSize - 1);
-  const meta = m.traceMeta[slot];
-  return { pc: m.tracePc[slot], a: m.traceA[slot], b: m.traceB[slot], warrior: meta & 0xff, op: (meta >> 8) & 0xff, flags: meta & FLAGS };
+  const { trace } = m.watch();
+  const k = 4 * (t % traceSize(m));
+  const meta = trace[k + 3];
+  return { pc: trace[k], a: trace[k + 1], b: trace[k + 2], warrior: meta & 0xff, op: (meta >> 8) & 0xff, flags: meta & FLAGS };
 }
 
 test('trace: a store sets bit 16 and records the pointers', () => {
@@ -91,10 +96,11 @@ test('trace: entries carry the index of the executing warrior', () => {
   assert.deepEqual([1, 2, 3, 4].map((t) => entry(m, t).pc), [0, 4000, 0, 4000]);
 });
 
-test('trace: the slot is time & (traceSize - 1), older entries are overwritten', () => {
+test('trace: the entry is time % 4096, older entries are overwritten', () => {
   const m = battle(['mov.i 0, 1\n']);
-  const n = m.traceSize + 10;
+  assert.equal(traceSize(m), 4096);
+  const n = 4096 + 10;
   m.run(n);
   // a solo imp executes address t - 1 at time t
-  for (const t of [n, n - 1, m.traceSize + 1, 11]) assert.equal(entry(m, t).pc, t - 1, `time ${t}`);
+  for (const t of [n, n - 1, 4096 + 1, 11]) assert.equal(entry(m, t).pc, t - 1, `time ${t}`);
 });

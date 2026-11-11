@@ -2,9 +2,9 @@
 
 This document describes the observable behavior of the engine: the
 expression evaluator and the assembler in `lib/src/asm.c`, the simulator in
-`js/mars.js` and `lib/src/mars.c` (the C files built to
-`wasm/42mars.wasm`). The behavior matches pMARS 0.9.x, the reference Core War simulator, including some
-of its quirks, because existing warriors depend on them.
+`lib/src/mars.c` (the C files built to `wasm/42mars.wasm`). The behavior
+matches pMARS 0.9.x, the reference Core War simulator, including some of its
+quirks, because existing warriors depend on them.
 
 The engine was written from this description, without access to pMARS source
 code, and checked against reference outputs: 4031 expressions, 146 small
@@ -17,9 +17,10 @@ The expression evaluator and the assembler are C (`lib/src/asm.c`);
 `wasm/42mars.js` calls them as `evaluateWasm(text)` and
 `assembleWasm(source, options)`. They started as a port of a JavaScript
 assembler (`expr.js`, `assembler.js`), removed in November 2026 after the
-tools and the visualizer had moved to the C one. The simulator exists twice:
-`js/mars.js` for the visualizer (section 3) and `lib/src/mars.c` (section
-3.7). `js/opcodes.js` holds the opcode, modifier and mode tables and the
+tools and the visualizer had moved to the C one. The simulator is C too
+(`lib/src/mars.c`, section 3); the visualizer ran on a JavaScript copy of it,
+`js/mars.js`, until it moved to the library's watch (#75, #76).
+`js/opcodes.js` holds the opcode, modifier and mode tables and the
 formatting.
 
 The C library's interface is `lib/42mars.h`, documented in the header; its
@@ -606,56 +607,47 @@ definition. `instructions[i].line` is that number.
 
 ---------------------------------------------------------------------------
 
-## 3. mars.js
+## 3. The simulator
 
-### API (used by the UI and tests)
+`lib/src/mars.c`, in C through `lib/42mars.h` (`m42_load`,
+`m42_start_round`, `m42_run`, `m42_match` ...), in JS through
+`wasm/42mars.js`:
 
 ```js
-export function rng(seed) -> next seed     // Park-Miller, see below
-export class Mars {
-  constructor(options = {})   // same option names as DEFAULT_OPTIONS, plus
-                              // headless: true to skip the bookkeeping of 3.4,
-                              // the trace (3.6) and execHeat; default false
-  opt                // effective options
-  coreSize
-  op, am, bm         // Uint8Array(coreSize): op = opcode << 3 | modifier; modes 0..7
-  av, bv             // Int32Array(coreSize), values 0..coreSize-1
-  owner              // Int8Array, last warrior that wrote any part of the cell, -1 never
-  execBy             // Int8Array, last warrior that executed the cell, -1 never
-  origin             // Int32Array, (warrior << 16) | instruction index of the
-                     //   warrior instruction this cell is a copy of, -1 none
-  tWrite, tRead, tExec   // Int32Array, time of last write/read/execution, initially -0x40000000
-  warriors           // array, see below
-  events             // array of { type: 'kill' | 'death', addr, warrior, time }
+export function rng(seed) -> next seed     // Park-Miller, see 3.2
+export async function compileWasmMars() -> WebAssembly.Module   // cached
+export async function createWasmMars(options) -> engine        // Node and browsers
+export function createWasmMarsSync(options, module?) -> engine
+// options: the names of DEFAULT_OPTIONS (section 2), and watch: true for
+// the watch (3.4, 3.6)
+engine:
+  opt, coreSize
+  load(codes, { seed, positions, permute })   // assembleWasm() or packWarrior() results; starts a match
+  startRound(), endRound()
+  step()             // one instruction
+  run(n) -> executed count; stops early when the round ends; a fraction rounds up
+  runMatch(codes, { rounds, seed, positions, permute, earlyTie = true, firstRound = 0, pspace })
+    -> { warriors: [{ name, wins, losses, ties, score, pspace? }], results, instructions }  (3.7)
   round              // number of rounds started
   roundOver, roundResult, results
   time               // instructions executed in this round (1 for the first)
   cyclesLeft, warriorsLeft
   current            // index of the warrior that executes next
-  load(codes, { seed, positions, permute })   // codes: assemble() results; starts a match
-  startRound()
-  endRound()
-  step()             // execute one instruction
-  run(n) -> executed count, stops early when the round ends
+  core() -> { op, am, bm, av, bv }   // also as op, am, bm, av, bv: op = opcode << 3 |
+                     // modifier, modes 0..7, values 0..coreSize-1
   cell(addr) -> { op, mod, aMode, aVal, bMode, bVal }
-  // trace ring buffer, see 3.6
-  traceSize, tracePc, traceA, traceB, traceMeta
-}
+  watch(), events()  // with options.watch: 3.4, 3.6
+  warriors[i]: index, code, name, author, position, tasks, alive,
+    diedAt (time of death or null), score, wins, losses, ties, lastResult,
+    pspace, processes() (the queue, next first), queue() (the same as a view),
+    territory and execCount (with options.watch)
 ```
 
-Warrior object (keep these fields, the UI reads them):
-
-```
-index, code (the assemble() result), name, author, position,
-queue (Int32Array of length maxProcesses + 1, a ring buffer),
-head, tail, tasks (number of processes; the live entries are
-queue[(head + k) % queue.length] for k < tasks, between steps),
-alive, pspace, lastResult, score, wins, losses, ties,
-territory (number of cells with owner == index),
-execHeat (Float32Array(code.instructions.length): += 1 each time a cell whose
-origin points at that instruction of this warrior is executed, by anyone),
-diedAt (time of death or null)
-```
+`core()`'s arrays are a snapshot decoded from the wasm core, valid until the
+next call that runs or loads; warrior fields are getters, `score` and
+`pspace` copies, `queue()` a view of engine memory until the next call. The
+core size is at most 65536, there are at most 255 warriors, and `seed` must
+be a non-negative safe integer.
 
 ### 3.1 Match and rounds
 
@@ -672,13 +664,12 @@ diedAt (time of death or null)
   the same non-null number share one p-space (cells, not the last result).
 - `startRound()`:
   1. `round++`, positions are chosen (3.2).
-  2. The whole core becomes `DAT.F $0, $0`, owner/execBy/origin -1,
-     timestamps -0x40000000, events cleared, time 0.
+  2. The whole core becomes `DAT.F $0, $0`, time 0; a watch is reset
+     (3.4).
   3. `cyclesLeft = warriors * maxCycles`, `warriorsLeft = warriors`.
   4. Each warrior's instructions are copied to `position + i` (mod
-     coreSize), owner = warrior index, origin = (index << 16) | i,
-     territory = length. One process at `(position + start) % coreSize`.
-     execHeat zeroed, alive, diedAt null.
+     coreSize). One process at `(position + start) % coreSize`. alive,
+     diedAt null.
   5. The execution order is the warrior list order, starting with the
      "starter" warrior: warrior 0 in round 1, then warrior 1 in round 2, and
      so on, cyclic. With `permute` the draw of 3.2 chooses it instead.
@@ -700,9 +691,8 @@ diedAt (time of death or null)
   survivors get a tie and the dead a loss. `roundResult = { round, cycles:
   time, survivors: [indices] }`, appended to `results`. The starter advances.
   `roundOver = true`.
-- Events: every dying process pushes `{ type: 'kill', addr, warrior, time }`;
-  a warrior that is out additionally pushes `{ type: 'death', ... }` after it.
-  The UI clears `events` after reading.
+- With a watch, every dying process is recorded, and whether it was the
+  warrior's last one (3.6).
 
 ### 3.2 Positions
 
@@ -837,47 +827,55 @@ running single instructions on pmars-trace and finding the copy that gives
 its core hash (`test/limits.test.js`), then 4200 random battles with limits
 against it. `tools/pmars-diff.mjs` has three fuzz rule sets with limits.
 
-### 3.4 Bookkeeping for the visualizer
+### 3.4 The watch: bookkeeping for the visualizer
 
-- `tExec[PC] = time` and `execBy[PC] = W` on fetch (time was incremented
+With a watch attached (`m42_watch_attach()` in C, `createWasmMars({ watch:
+true })` in JS, `watch()` gives typed array views of it), `m42_run()`
+(`run()`) records per cell, in the time of the round mod 2^32 (0 for never)
+and with warriors as index + 1 (0 for none):
+
+- `t_exec[PC] = time` and `exec_by[PC] = W` on fetch (time was incremented
   before, so the first instruction of a round has time 1). If `origin[PC] >=
-  0`, the referenced warrior's `execHeat[instruction]` += 1.
+  0`, `exec_count` of the instruction it points at goes up by one (per
+  warrior, `code_stride` entries each; the visualizer decays it).
 - Every store into a cell (pre-decrement and post-increment of a pointer
-  field, all results in step 4 including `DJN` decrements) sets `tWrite` to
+  field, all results in step 4 including `DJN` decrements) sets `t_write` to
   the time and makes W the owner (adjust `territory` of the old and new owner
   when the owner changes).
 - `MOV.I` copies `origin` from the A pointer cell to the B pointer cell.
-  No other instruction changes `origin`.
-- `tRead` is set for the A pointer when the A mode is not `#`, and for the B
-  pointer for `CMP`, `SEQ`, `SNE`, `SLT`; `readBy` of that cell becomes W.
+  No other instruction changes `origin`; it is warrior << 16 | instruction,
+  so `max_length` is at most 65536 with a watch.
+- `t_read` is set for the A pointer when the A mode is not `#`, and for the B
+  pointer for `CMP`, `SEQ`, `SNE`, `SLT`; `read_by` of that cell becomes W.
 - `bump` holds the kind of the last store into a cell: +1 for the increment
   of a `>` or `}` operand, -1 for the decrement of a `<` or `{` operand, 0
   for a store of step 4 (including `DJN` decrements). Within one instruction
   the A operand's change comes first, then the B operand's, then step 4.
-- `readBy` is -1 and `bump` 0 for every cell at round start.
+
+`m42_start_round()` resets the watch: every cell untouched (`origin` -1,
+`bump` 0), each warrior owns its code with `origin` pointing at it,
+`territory` is its code length (warriors placed over each other each count
+their whole length), the counts, the trace and the deaths are empty.
+Attached during a round, it records from there. `m42_match()` and
+`runMatch()` play without it and leave it as it was.
 
 ### 3.5 Performance
 
-The instruction loop does not allocate: no closures or objects per step,
-typed arrays only. `tools/bench.mjs` measures it, `--headless` for the mode
-without visualizer bookkeeping, `--wasm` and `--wasm-match` for the
-WebAssembly engine (3.7); `tools/bench-native.mjs` runs the same C code
-natively. In headless mode the core, the queues, the
-events, the scores and all round results are the same as with bookkeeping;
-`owner`, `execBy`, `readBy`, `bump`, `origin`, the timestamps, `territory`,
-`execHeat` and the trace are not updated.
+The loops that do not record (`execute`, `execute2_8000`, `execute2_any`,
+`execute_limited`, 3.7) run without a watch; with one, `execute_watched`
+runs one instruction per iteration through the generic operand code of the
+limits and records around it. Both give the same core, queues, scores and
+round results (`test/wasm.test.js` compares them after every chunk of random
+battles, `tools/pmars-diff.mjs --watch` the watched one with pMARS).
+`tools/bench.mjs` measures both (`--watch`) and `runMatch` (`--wasm-match`),
+`tools/bench-native.mjs` the C code natively.
 
-### 3.6 Trace ring buffer
+### 3.6 Trace and process deaths
 
-For the visualizer, every executed instruction is recorded:
-
-```
-traceSize = 4096
-tracePc, traceA, traceB, traceMeta: Int32Array(traceSize)
-```
-
-The entry for the instruction executed at time t is at index
-`t & (traceSize - 1)`: PC, the A pointer, the B pointer, and `traceMeta`:
+With a watch, every executed instruction is recorded: `M42_TRACE_SIZE` =
+4096 entries of pc, A pointer, B pointer and meta (in JS `watch().trace`,
+4 numbers per entry), the instruction executed at time t at entry
+`t % 4096`. The trace is cleared at round start. `meta`:
 
 - bits 0..7: warrior index
 - bits 8..15: the IR opcode byte (opcode << 3 | modifier)
@@ -887,36 +885,21 @@ The entry for the instruction executed at time t is at index
 - bit 18: the process died
 - bit 19: a skip happened
 
-### 3.7 WebAssembly engine
+Process deaths: the last `M42_DEATH_SIZE` = 1024 of the round, each with
+address, warrior, time and whether it was the warrior's last process, and
+their count (`deaths`). `events()` returns those since its last call as
+`{ type: 'kill', addr, warrior, time }`, followed by a `'death'` with the
+same fields for a warrior's last process. A warrior's end also shows in its
+state (`alive`, `diedAt`).
 
-`lib/src/mars.c` is a second, headless implementation of 3.1 to 3.3
-in C. With the assembler it is compiled to `wasm/42mars.wasm` (committed,
-about 83 KB, no imports; `wasm/build.sh` rebuilds it with
+### 3.7 Inside the engine
+
+`lib/src/mars.c` implements 3.1 to 3.6. With the assembler it is compiled to
+`wasm/42mars.wasm` (committed, no imports; `wasm/build.sh` rebuilds it with
 `tools/gen-dispatch.mjs` and clang), which exports the functions of
-`lib/42mars.h`. `42mars.js` wraps them:
-
-```js
-export async function compileWasmMars() -> WebAssembly.Module   // cached
-export async function createWasmMars(options) -> engine        // Node and browsers
-export function createWasmMarsSync(options, module?) -> engine
-engine: opt, coreSize, load(codes, { seed, positions, permute }), startRound(),
-  run(n), step(), endRound(), runMatch(codes, { rounds, seed, positions,
-  permute, earlyTie = true, firstRound = 0, pspace }) -> { warriors: [{ name, wins, losses,
-  ties, score }], results, instructions },
-  round, roundOver, roundResult, results, time, cyclesLeft, warriorsLeft,
-  current, op, am, bm, av, bv, cell(addr),
-  warriors[i]: index, code, name, author, position, tasks, alive, diedAt,
-    score, wins, losses, ties, lastResult, pspace, processes()
-  with options.watch: watch(), events(), warriors[i].territory, .execCount
-```
-
-The core, the queues, the scores, the p-space and the round results are the
-same as `new Mars({ headless: true })` (`test/wasm.test.js`; `pmars-diff.mjs
---wasm` against pMARS). Differences: the core size is at most 65536, there
-are at most 255 warriors, `seed` must be a non-negative safe integer, no
-events. `op`, `am`, `bm`, `av`, `bv` are snapshots decoded from the wasm
-core, valid until the next call that runs or loads; warrior fields are
-getters, `score` and `pspace` copies.
+`lib/42mars.h`; `wasm/42mars.js` wraps them (API above).
+`tools/pmars-diff.mjs` compares the core, the instruction count and the
+scores of every round with pMARS.
 
 A core cell is 8 bytes: A and B value (16 bits each) and a 16-bit word with
 the op byte and both modes. Each warrior has a ring buffer of 16-bit
@@ -942,36 +925,6 @@ coreSize - 1), an array per warrior (pSpaceSize cells, at least 1, cell 0
 the last result) continues from a previous call, and the result's warriors
 then have `pspace` after the last round (`m42_match_options.pspace` in C).
 Warriors with the same PIN share cells 1 and up; the last one's copy wins.
-
-#### The watch
-
-With a watch attached (`m42_watch_attach()` in C, `createWasmMars({ watch:
-true })` in JS), `m42_run()` (`run()`) records what 3.4 and 3.6 describe for
-mars.js, the same values (`test/watch.test.js`) in this form:
-
-- `owner`, `exec_by`, `read_by` (`execBy`, `readBy`): the warrior's index
-  + 1, 0 for none (mars.js: the index, -1).
-- `t_write`, `t_read`, `t_exec`: the time mod 2^32, 0 for never (mars.js:
-  -0x40000000).
-- `bump`, `origin`, `territory`: as in mars.js.
-- `exec_count` (`execCount`): a count per instruction of each warrior's
-  code instead of mars.js's `execHeat`, which the visualizer halves; the
-  caller decays it.
-- The trace: one entry of pc, A pointer, B pointer and meta per
-  instruction, `M42_TRACE_SIZE` = 4096 of them, cleared at round start
-  (mars.js keeps the previous round's).
-- Process deaths instead of events: the last `M42_DEATH_SIZE` = 1024 of the
-  round, each with address, warrior, time and whether it was the warrior's
-  last process, and their count (a warrior's end also shows in its state).
-- `max_length` at most 65536: `origin` has 16 bits for the instruction. `events()` turns them into mars.js's
-  events: a kill for each, followed by a death for a last process.
-
-`m42_start_round()` resets the watch: every cell untouched, each warrior
-owns its code with `origin` pointing at it, `territory` its code length
-(warriors placed over each other each count their whole length, as in
-mars.js). The watched loop runs one instruction per iteration through the
-generic operand code; the other loops do not record. `m42_match()` and
-`runMatch()` play without it and leave the watch as it was.
 
 `packWarrior(code)` returns the warrior with its instructions as an
 `Int32Array` `packed`, 5 integers per instruction (op byte, A mode, A

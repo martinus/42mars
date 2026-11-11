@@ -1,6 +1,6 @@
 ---
 name: perf-experiment
-description: Measure a simulator speed idea against the current engine and record it in docs/performance-log.md, kept or rejected. Use for any change made to make mars.c, 42mars.js, mars.js or tools/tournament.mjs faster, and for re-measuring the speed numbers in PLAN.md and README.md.
+description: Measure a simulator speed idea against the current engine and record it in docs/performance-log.md, kept or rejected. Use for any change made to make mars.c, 42mars.js or tools/tournament.mjs faster, and for re-measuring the speed numbers in PLAN.md and README.md.
 ---
 # Speed experiment
 
@@ -18,7 +18,7 @@ Setup: `O=${COREWAR_ORACLE:-$HOME/.local/share/corewar-theater}`.
    | t20 | `node tools/tournament.mjs $O/sets/t20 --rounds 100 --seed 1 --jobs 1 --engine wasm` (time on stderr: `engine (wasm): N s`) | 7 |
    | t80 | same with `$O/sets/t80`, `--jobs 16` and `--jobs 31` | 5 each |
    | fixed cost | t80 with `--rounds 1 --jobs 31` (worker start, assembly, compile) | 5 |
-   | JS | `node tools/bench.mjs $O/corpus --headless` (only for mars.js changes) | 7 |
+   | watch | `node tools/bench.mjs $O/corpus --watch` (only for changes to the watched loop, which the visualizer runs) | 7 |
    References, when re-measuring the summary: `node $O/cwbench/benchpairs.mjs` (bench pairs warmed up, ours vs corewar.dev exMARS: the fair single-thread comparison), `node $O/cwbench/split.mjs` (t20 split into pairings with and without tie rounds), `node $O/cwbench/single.mjs exmars` (short run like `tools/bench.mjs`, includes warm-up), `node $O/cwbench/tournament.mjs 31 $O/sets/t80.json`, `node tools/tournament.mjs $O/sets/t80 --rounds 100 --seed 1 --jobs 31 --pmars $O/bin/pmars` (native pMARS), and `node $O/cwbench/perpair.mjs $O/sets/t20.json` from the repo root to find pairings where we lose to exMARS.
    Tournament workloads for a change to scheduling or start-up, all with `--engine wasm --seed 1`: t80 with 16 and 32 jobs, t20 with 1 and 32 jobs, `$O/corpus --bench $O/corpus/agony.red --rounds 200` with 16 and 32 jobs (565 pairings), t80 with `--rounds 1`, and one pairing with `--rounds 1000`. The output tables must be byte-identical (`md5sum` of stdout) for every job count.
 5. Keep only if t20 and bench are faster beyond noise (ranges do not overlap or a clear median shift over 7+7 runs), nothing else gets slower by more than 1%, and the `engine-check` skill passes. Otherwise restore the code and rebuild.

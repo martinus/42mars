@@ -51,7 +51,7 @@ In a browser without npm: `import { ... } from 'https://cdn.jsdelivr.net/npm/42m
 
 ```sh
 npm run serve          # http://127.0.0.1:8000/ (the visualizer in ui/)
-npm test               # 325 tests, Node 20 or newer, no dependencies
+npm test               # 326 tests, Node 20 or newer, no dependencies
 node tools/asm.mjs warriors/dwarf.red      # pMARS-style listing
 node tools/corpus.mjs path/to/warriors     # assemble a whole folder
 node tools/pmars-diff.mjs --pmars path/to/pmars --corpus path/to/warriors   # compare with pMARS
@@ -63,9 +63,9 @@ wasm/build.sh          # rebuild wasm/42mars.wasm (Node, clang with the wasm32 t
 make                   # build/: the library and 42mars, e.g. build/42mars -b -k -r 100 -f a.red b.red
 ```
 
-Layout: `lib/` is the 42mars C library: the header `lib/42mars.h` and one file to compile with your program, `lib/42mars.c`, which includes its parts: the simulator `lib/src/mars.c`, the assembler `lib/src/asm.c` and the header's functions `lib/src/api.c`, with what differs between compilers in `lib/src/platform.h`. `wasm/` is its WebAssembly build and JavaScript interface, `ui/` the Core War Theater visualizer on top. `js/` holds the JavaScript simulator the visualizer runs on; it goes once the visualizer runs on the library (roadmap L3).
+Layout: `lib/` is the 42mars C library: the header `lib/42mars.h` and one file to compile with your program, `lib/42mars.c`, which includes its parts: the simulator `lib/src/mars.c`, the assembler `lib/src/asm.c` and the header's functions `lib/src/api.c`, with what differs between compilers in `lib/src/platform.h`. `wasm/` is its WebAssembly build and JavaScript interface, `ui/` the Core War Theater visualizer on top of it (`js/opcodes.js` has the opcode tables and the listing format).
 
-`wasm/42mars.js` is a headless WebAssembly simulator with the same results as `js/mars.js` and pMARS, for tournaments: about 310M instructions/s in a single thread, against 61M for mars.js headless, 91M for native pMARS and, warmed up, about 1.8 times the exMARS build on corewar.dev. An 80-warrior round robin (3,160 pairings, 100 rounds) takes 2.96 s on 16 cores, against 5.4 s with corewar.dev's exMARS; on rmars's own start positions ours takes 3.1 s and rmars 5.9 s. Details in [PLAN.md](PLAN.md#speed).
+`wasm/42mars.js` runs the library in WebAssembly, with pMARS's results: about 310M instructions/s in a single thread for tournaments (46M with the watch the visualizer reads), against 91M for native pMARS and, warmed up, about 1.8 times the exMARS build on corewar.dev. An 80-warrior round robin (3,160 pairings, 100 rounds) takes 2.96 s on 16 cores, against 5.4 s with corewar.dev's exMARS; on rmars's own start positions ours takes 3.1 s and rmars 5.9 s. Details in [PLAN.md](PLAN.md#speed).
 
 New to Core War? Press `?` in the app for a short guide, then press **learn**: every instruction gets explained while it runs. The rules `nano · 80` show the instruction text inside the cells.
 

@@ -67,7 +67,7 @@ Read this before proposing a speed idea; `docs/performance-log.md` has the numbe
 
 ## Where things are
 
-- Layout, library first: `lib/` the C library (public header `lib/42mars.h`, `lib/42mars.c` the one translation unit that includes `lib/src/mars.c` simulator, `lib/src/asm.c` assembler and `lib/src/api.c` the header's functions, `lib/src/platform.h` the compiler specifics; `lib/example.c`; `lib/tools/` native drivers built by `tools/bench-native.mjs` and `tools/tie-ceiling.mjs`), `wasm/` its WebAssembly build (`build.sh`, `42mars.wasm`) and JS interface (`42mars.js`, types `42mars.d.ts`; the npm package), `cli/` the pMARS-compatible command line program, `Makefile` and `build-msvc.bat` the native builds (into `build/`, not committed), `ui/` the visualizer, `js/` the JS simulator `mars.js` and the opcode tables and listing format (`opcodes.js`). `mars.js` is transitional: it goes once the visualizer runs on the library's step interface (L3). New engine work goes into `lib/`.
+- Layout, library first: `lib/` the C library (public header `lib/42mars.h`, `lib/42mars.c` the one translation unit that includes `lib/src/mars.c` simulator, `lib/src/asm.c` assembler and `lib/src/api.c` the header's functions, `lib/src/platform.h` the compiler specifics; `lib/example.c`; `lib/tools/` native drivers built by `tools/bench-native.mjs` and `tools/tie-ceiling.mjs`), `wasm/` its WebAssembly build (`build.sh`, `42mars.wasm`) and JS interface (`42mars.js`, types `42mars.d.ts`; the npm package), `cli/` the pMARS-compatible command line program, `Makefile` and `build-msvc.bat` the native builds (into `build/`, not committed), `ui/` the visualizer (on the library's watch), `js/opcodes.js` the opcode tables and listing format. All engine work goes into `lib/`.
 - `tools/ab-wasm.mjs`, `tools/ab-native.mjs`, `tools/ab-tool.mjs`: alternating A/B runs of two wasm builds, two `mars.c` versions natively, two versions of a tool. Use them instead of timing by hand.
 - `PLAN.md`: status, validation results, speed summary, roadmap (M1 to M4), open decisions. Update it when a roadmap item lands.
 - `docs/redcode-semantics.md`: exact assembler and simulator behavior, pMARS quirks, deviations from pMARS (section 4). The spec: change it together with the code.
@@ -77,11 +77,11 @@ Read this before proposing a speed idea; `docs/performance-log.md` has the numbe
 
 ## Engines
 
-Three implementations must agree: `js/mars.js` (visualizer, per-cell bookkeeping; `headless: true` skips it), `lib/src/mars.c` (tournaments, via `wasm/42mars.js`), and pMARS. A behavior change goes into mars.js, into both wasm loops (`execute`, `execute2`), and into the semantics doc. `test/tournament.test.js` checks JS against wasm, `tools/pmars-diff.mjs` both against pMARS. The library's watch (`m42_watch_attach`, `createWasmMars({ watch: true })`) records mars.js's bookkeeping in C; `test/watch.test.js` compares both until mars.js goes (#75, #76).
+The simulator exists once, `lib/src/mars.c`, and must agree with pMARS. A behavior change goes into `exec_core()` or the operand code (`exec_ins()` and `exec_ins_rw()`, which the watched loop runs too), `trace_flags()` when it changes what step 4 does, and the semantics doc. Checks without pMARS: `test/wasm.test.js` steps an engine without a watch (the specialized loops) and one with a watch (the generic operand code) through the same chunks and compares them, and compares their states with digests recorded where they were those of the JavaScript simulator that the visualizer ran on until #76 (`test/recorded.js`; an intended change records them again with `RECORD_FIXTURES=1`); `test/watch.test.js` does the same for the watch. `tools/pmars-diff.mjs` compares with pMARS.
 
 `wasm/42mars.js` calls only the functions of `lib/42mars.h`; a feature the JS side needs goes into the header first.
 
-The assembler and the evaluator exist once, in `lib/src/asm.c` (`assembleWasm`, `evaluateWasm` in JS). `tools/pmars-diff.mjs` (sections `listings`, `exprs`, `sources`) and `tools/expr-fuzz.mjs` compare them with pMARS; `test/asm-c.test.js` holds digests of their whole result objects on 24000 random cases (an intended change records them again, see the test). Where pMARS has no defined result or takes very long, the assembler warns with a text that starts with `pMARS` (semantics doc, section 4); the tools skip such sources.
+The assembler and the evaluator exist once, in `lib/src/asm.c` (`assembleWasm`, `evaluateWasm` in JS). `tools/pmars-diff.mjs` (sections `listings`, `exprs`, `sources`) and `tools/expr-fuzz.mjs` compare them with pMARS; `test/asm-c.test.js` holds digests of their whole result objects on 24000 random cases (`test/recorded.js`). Where pMARS has no defined result or takes very long, the assembler warns with a text that starts with `pMARS` (semantics doc, section 4); the tools skip such sources.
 
 ## Conventions
 
@@ -100,7 +100,7 @@ The assembler and the evaluator exist once, in `lib/src/asm.c` (`assembleWasm`, 
 - Read large files with the Read tool in parts (`offset`, `limit`), not `cat`: Bash output over the size limit is saved in the session's tool-results folder, and the clean-room hook blocks reading it back. The same for a background command: the hook blocks its `tasks/*.output` file, so redirect its output into a file in the scratchpad.
 - Edit and read our own files with the Edit and Read tools when the command would mention pMARS: the hook refused `sed -i`, `sed -n` and a Python edit of `tools/pmars-diff.mjs`, `PLAN.md` and the semantics doc because their text held `pmars` or `--pmars`.
 - `wasm/42mars.wasm` is committed and the tests load it. Without a rebuild, the tests run the old C code.
-- `Mars.current` is an index, 0 is a valid warrior: test `m.current >= 0`, not `m.current &&`.
+- The engine's `current` is an index, 0 is a valid warrior: test `m.current >= 0`, not `m.current &&`.
 - pMARS never returns on some inputs (semantics doc, section 4). Always call it with a timeout.
 - Timings only count from an idle machine: check `uptime` and running `node`/`clang` processes, including other agents.
 - Never compare a timing with a number from the log or from another session: the same `42mars.wasm` ran the bench at 310M/s in one session and at 359M/s in the next on the same day (10th November 2026). Measure the baseline again and alternate, every time.

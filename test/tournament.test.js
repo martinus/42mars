@@ -8,37 +8,50 @@ import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, 
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { assembleWasm, createWasmMarsSync } from '../wasm/42mars.js';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
 const dir = mkdtempSync(join(tmpdir(), 'tournament-test-'));
 after(() => rmSync(dir, { recursive: true, force: true }));
 
-function run(engine, seed, name, warriors = join(root, 'warriors')) {
+function run(seed, name, warriors = join(root, 'warriors')) {
   const out = join(dir, `${name}.json`);
   execFileSync(process.execPath, [join(root, 'tools/tournament.mjs'), warriors,
-    '--rounds', '20', '--jobs', '3', '--seed', String(seed), '--engine', engine, '--json', out], { stdio: 'ignore' });
+    '--rounds', '20', '--jobs', '3', '--seed', String(seed), '--json', out], { stdio: 'ignore' });
   return JSON.parse(readFileSync(out, 'utf8'));
 }
 
 const pairings = (t) => t.results.map((r) => [r.a, r.b]);
 
-test('tournament: js and wasm engines give the same result for every pairing', () => {
-  const js = run('js', 5, 'js');
-  const wasm = run('wasm', 5, 'wasm');
-  assert.equal(js.pairs.length, 10); // 5 sample warriors
-  assert.deepEqual(js.pairs, wasm.pairs);
-  assert.deepEqual(pairings(js), pairings(wasm));
-  for (const [a, b] of pairings(js)) {
+// Each pairing as one runMatch() call over all its rounds.
+function wholeMatches(t, rounds) {
+  const code = (f) => assembleWasm(readFileSync(f, 'latin1'));
+  const m = createWasmMarsSync();
+  return t.pairs.map((p) => {
+    const r = m.runMatch([code(t.files[p.a]), code(t.files[p.b])], { rounds, seed: p.pos - 100 });
+    return r.warriors.map((w) => [w.wins, w.losses, w.ties]);
+  });
+}
+
+test('tournament: every pairing plays all rounds, as one runMatch() of the whole match', () => {
+  const t = run(5, 'whole');
+  assert.equal(t.pairs.length, 10); // 5 sample warriors
+  for (const [a, b] of pairings(t)) {
     assert.equal(a[0] + a[1] + a[2], 20);
     assert.deepEqual([a[0], a[1], a[2]], [b[1], b[0], b[2]]);
   }
-  assert.deepEqual(js.ranking.map((r) => [r.name, r.score]), wasm.ranking.map((r) => [r.name, r.score]));
+  assert.deepEqual(pairings(t), wholeMatches(t, 20));
+});
+
+test('tournament: --engine takes only wasm', () => {
+  const tool = join(root, 'tools/tournament.mjs');
+  assert.throws(() => execFileSync(process.execPath, [tool, join(root, 'warriors'), '--engine', 'js'], { stdio: 'pipe' }), /only wasm/);
 });
 
 test('tournament: the same seed gives the same results, another seed other positions', () => {
-  const a = run('wasm', 9, 'a');
-  const b = run('wasm', 9, 'b');
-  const c = run('wasm', 10, 'c');
+  const a = run(9, 'a');
+  const b = run(9, 'b');
+  const c = run(10, 'c');
   assert.deepEqual(pairings(a), pairings(b));
   assert.deepEqual(a.pairs, b.pairs);
   assert.notDeepEqual(a.pairs.map((p) => p.pos), c.pairs.map((p) => p.pos));
@@ -54,13 +67,12 @@ test('tournament: pairings with LDP are not split into blocks of rounds', () => 
   writeFileSync(join(warriors, 'ldp.red'), ';name ldp\nldp.ab #0, flag\nsub.ab #2, flag\njmz.b die, flag\njmp 0\ndie dat 0, 0\nflag dat 0, 0\n');
   writeFileSync(join(warriors, 'wait.red'), ';name wait\njmp 0\n');
   copyFileSync(join(root, 'warriors/dwarf.red'), join(warriors, 'dwarf.red'));
-  const js = run('js', 3, 'ldp-js', warriors);
-  const wasm = run('wasm', 3, 'ldp-wasm', warriors);
-  assert.equal(js.pairs.length, 3);
-  assert.deepEqual(pairings(wasm), pairings(js));
+  const t = run(3, 'ldp', warriors);
+  assert.equal(t.pairs.length, 3);
+  assert.deepEqual(pairings(t), wholeMatches(t, 20));
   // ldp against wait: a tie, then a loss, and so on.
-  const k = js.pairs.findIndex((p) => [js.names[p.a], js.names[p.b]].sort().join() === 'ldp (ldp.red),wait (wait.red)');
-  assert.deepEqual([...js.results[k].a].sort(), [0, 10, 10]);
+  const k = t.pairs.findIndex((p) => [t.names[p.a], t.names[p.b]].sort().join() === 'ldp (ldp.red),wait (wait.red)');
+  assert.deepEqual([...t.results[k].a].sort(), [0, 10, 10]);
 });
 
 // The score of every warrior, from a tournament's pairings.
@@ -81,7 +93,7 @@ test('tournament: the standings after each round are those of a tournament of th
   const tournament = (name, rounds, args = []) => {
     const out = join(dir, `${name}.json`);
     const text = execFileSync(process.execPath, [join(root, 'tools/tournament.mjs'), warriors, '--rounds', String(rounds), '--jobs', '3', '--seed', '4',
-      '--engine', 'wasm', '--json', out, ...args], { stdio: ['ignore', 'pipe', 'ignore'], encoding: 'utf8' });
+      '--json', out, ...args], { stdio: ['ignore', 'pipe', 'ignore'], encoding: 'utf8' });
     return { ...JSON.parse(readFileSync(out, 'utf8')), text };
   };
   // round by round (--progress) and in blocks of 8 rounds: the same standings
@@ -102,10 +114,8 @@ test('tournament: the first warrior of a pairing starts with the registers w = s
   writeFileSync(join(warriors, 'a-wait.red'), ';name wait\njmp 0\n');
   writeFileSync(join(warriors, 'b-sw.red'), ';name sw\njmp s\njmp 0\ndat 0, 0\n');
   writeFileSync(join(warriors, 'c-wait.red'), ';name wait2\njmp 0\n');
-  for (const engine of ['js', 'wasm']) {
-    const t = run(engine, 2, `registers-${engine}`, warriors);
-    assert.deepEqual(pairings(t), [[[0, 0, 20], [0, 0, 20]], [[0, 0, 20], [0, 0, 20]], [[0, 20, 0], [20, 0, 0]]], engine);
-  }
+  const t = run(2, 'registers', warriors);
+  assert.deepEqual(pairings(t), [[[0, 0, 20], [0, 0, 20]], [[0, 0, 20], [0, 0, 20]], [[0, 20, 0], [20, 0, 0]]]);
 });
 
 // --pmars with a stand-in script: it answers from its -F position, so each
@@ -183,7 +193,7 @@ test('tournament: --pmars stops on output it cannot read', () => {
 test('tournament: --bench plays one warrior against each of the set, like its row of the round robin', () => {
   const tool = join(root, 'tools/tournament.mjs');
   const seeker = join(root, 'warriors/seeker.red');
-  const opts = ['--rounds', '20', '--jobs', '3', '--seed', '4', '--engine', 'wasm'];
+  const opts = ['--rounds', '20', '--jobs', '3', '--seed', '4'];
   const rrFile = join(dir, 'rr.json');
   const benchFile = join(dir, 'bench.json');
   execFileSync(process.execPath, [tool, seeker, join(root, 'warriors'), ...opts, '--json', rrFile], { stdio: 'ignore' });
