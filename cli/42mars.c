@@ -5,7 +5,7 @@
 // 0.9.5 (the server version, without debugger), so that tools that call
 // pMARS can call it instead. It uses only lib/42mars.h.
 //
-//   cc -O2 -o build/42mars cli/42mars.c lib/42mars.c     (cli/build.sh)
+//   cc -O2 -o build/42mars cli/42mars.c lib/42mars.c     (or make)
 //   42mars [options] file1 [files ..]
 //
 // stdout is pMARS's: listings, results, -k lines, -A output. Messages go to

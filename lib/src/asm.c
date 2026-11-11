@@ -17,19 +17,7 @@
 // JS's String.prototype.trim() trims; without it, every byte is a character
 // (Latin-1, as the tools read warrior files), and the trim includes 0xA0.
 
-typedef unsigned char u8;
-typedef unsigned short u16;
-typedef unsigned int u32;
-typedef int i32;
-typedef long long i64;
-typedef unsigned long long u64;
-typedef unsigned long usize;
-
-#ifdef __wasm__
-#define EXPORT(name) __attribute__((export_name(#name)))
-#else
-#define EXPORT(name)
-#endif
+#include "platform.h"
 
 #define I64_MAX 0x7fffffffffffffffll
 
@@ -52,7 +40,7 @@ static void *aalloc(Arena *A, usize n) {
 
 static void *azalloc(Arena *A, usize n) {
   u8 *p = aalloc(A, n);
-  if (p) __builtin_memset(p, 0, n);
+  if (p) m42_memset(p, 0, n);
   return p;
 }
 
@@ -63,7 +51,7 @@ static void *grow(Arena *A, void *a, u32 n, u32 *cap, usize elem) {
   u32 c = *cap ? *cap * 2 : 8;
   void *b = aalloc(A, (usize)c * elem);
   if (!b) return 0;
-  if (n) __builtin_memcpy(b, a, (usize)n * elem);
+  if (n) m42_memcpy(b, a, (usize)n * elem);
   *cap = c;
   return b;
 }
@@ -77,9 +65,7 @@ typedef struct {
 
 // no_builtin: clang would turn the loop into a call to strlen, which the
 // wasm build (no libc) does not have.
-#ifdef __clang__
-__attribute__((no_builtin("strlen")))
-#endif
+M42_NO_BUILTIN_STRLEN
 static u32 cstrlen(const char *s) {
   u32 n = 0;
   while (s[n]) n++;
@@ -116,11 +102,11 @@ static void put(Arena *A, Buf *b, Str s) {
     while (c < b->n + s.n) c *= 2;
     u8 *q = aalloc(A, c);
     if (!q) return;
-    if (b->n) __builtin_memcpy(q, b->p, b->n);
+    if (b->n) m42_memcpy(q, b->p, b->n);
     b->p = q;
     b->cap = c;
   }
-  if (s.n) __builtin_memcpy(b->p + b->n, s.p, s.n);
+  if (s.n) m42_memcpy(b->p + b->n, s.p, s.n);
   b->n += s.n;
 }
 static void putc_(Arena *A, Buf *b, const char *s) { put(A, b, S(s)); }
@@ -185,7 +171,7 @@ static i64 ev_fail(Evaluator *e, int status) {
 // __multi3 from compiler-rt, which the wasm build does not link.
 static u64 umulh(u64 a, u64 b) {
   u64 b1 = b >> 32;
-  __asm__("" : "+r"(b1));
+  M42_OPAQUE(b1);
   const u64 a0 = (u32)a, a1 = a >> 32, b0 = (u32)b;
   const u64 p00 = a0 * b0, p01 = a0 * b1, p10 = a1 * b0, p11 = a1 * b1;
   const u64 mid = (p00 >> 32) + (u32)p01 + (u32)p10;
@@ -208,8 +194,8 @@ static i64 ev_apply(Evaluator *e, int op, i64 a, i64 b) {
   switch (op) {
     case IDENTITY: return b;
     case MUL: if (mul_overflow(a, b, &r) && e->status == EVAL_OK) e->status = EVAL_OVERFLOW; return r;
-    case ADD: if (__builtin_add_overflow(a, b, &r) && e->status == EVAL_OK) e->status = EVAL_OVERFLOW; return r;
-    case SUB: if (__builtin_sub_overflow(a, b, &r) && e->status == EVAL_OK) e->status = EVAL_OVERFLOW; return r;
+    case ADD: if (m42_add_overflow(a, b, &r) && e->status == EVAL_OK) e->status = EVAL_OVERFLOW; return r;
+    case SUB: if (m42_sub_overflow(a, b, &r) && e->status == EVAL_OK) e->status = EVAL_OVERFLOW; return r;
     case DIV:
     case MOD:
       if (b == 0) return ev_fail(e, EVAL_DIV_ZERO);
@@ -438,8 +424,8 @@ typedef struct {
 } AsmResult;            // 96
 
 #ifdef __wasm__
-_Static_assert(sizeof(AsmResult) == 96 && __builtin_offsetof(AsmResult, ins) == 40 &&
-               __builtin_offsetof(AsmResult, name) == 56 && sizeof(AsmMsg) == 12 && sizeof(AsmIns) == 16,
+_Static_assert(sizeof(AsmResult) == 96 && offsetof(AsmResult, ins) == 40 &&
+               offsetof(AsmResult, name) == 56 && sizeof(AsmMsg) == 12 && sizeof(AsmIns) == 16,
                "wasm/42mars.js reads this layout");
 #endif
 
@@ -616,11 +602,11 @@ static void scratch_write(Asm *a, Str text, u32 at, int terminate) {
     while (c < need) c *= 2;
     u8 *q = azalloc(&a->A, c);
     if (!q) return;
-    if (a->scratchCap) __builtin_memcpy(q, a->scratch, a->scratchCap);
+    if (a->scratchCap) m42_memcpy(q, a->scratch, a->scratchCap);
     a->scratch = q;
     a->scratchCap = c;
   }
-  if (text.n) __builtin_memcpy(a->scratch + at, text.p, text.n);
+  if (text.n) m42_memcpy(a->scratch + at, text.p, text.n);
   if (terminate) a->scratch[at + text.n] = 0;
 }
 
@@ -776,7 +762,7 @@ static void read_source(Asm *a, Str src, Lines *out) {
     // The line text must outlive `text`, which is reused.
     u8 *copy = aalloc(&a->A, text.n ? text.n : 1);
     if (!copy) return;
-    if (text.n) __builtin_memcpy(copy, text.p, text.n);
+    if (text.n) m42_memcpy(copy, text.p, text.n);
     const Str body = trim_start((Str){copy, text.n});
     if (!body.n) continue;
     if (body.p[0] != ';') {
@@ -796,8 +782,7 @@ static void read_source(Asm *a, Str src, Lines *out) {
     }
     const Str word = slice(body, ws, p);
     const Str rest = slice(body, p, body.n);
-    #define WORD_IS(w) (word.n == sizeof(w) - 1 && ({ int eq_ = 1; for (u32 q_ = 0; q_ < word.n; q_++) eq_ &= lower(word.p[q_]) == (w)[q_]; eq_; }))
-    if (WORD_IS("redcode") && !gap) {
+    if (ieq(word, "REDCODE") && !gap) {
       // The first ;redcode starts the warrior, the second one ends it and
       // stops reading the source.
       if (++redcode == 2) return;
@@ -806,18 +791,17 @@ static void read_source(Asm *a, Str src, Lines *out) {
     }
     // pMARS keeps trailing whitespace in the metadata values.
     const Str value = trim_start(rest);
-    if (WORD_IS("name")) a->name = value.n ? value : S("Unknown");
-    else if (WORD_IS("author")) a->author = value.n ? value : S("Anonymous");
-    else if (WORD_IS("date")) a->date = value;
-    else if (WORD_IS("version")) a->version = value;
-    else if (WORD_IS("strategy")) {
+    if (ieq(word, "NAME")) a->name = value.n ? value : S("Unknown");
+    else if (ieq(word, "AUTHOR")) a->author = value.n ? value : S("Anonymous");
+    else if (ieq(word, "DATE")) a->date = value;
+    else if (ieq(word, "VERSION")) a->version = value;
+    else if (ieq(word, "STRATEGY")) {
       if (a->nStrategy++) putc_(&a->A, &a->strategy, "\n");
       put(&a->A, &a->strategy, trim_end(value));
-    } else if (WORD_IS("assert")) {
+    } else if (ieq(word, "ASSERT")) {
       const int semi = find_byte(rest, ';');
       push_line(a, out, semi < 0 ? rest : slice(rest, 0, (u32)semi), lineNo, 1);
     }
-    #undef WORD_IS
   }
   #undef RAW
   // At the end of the file, the failed read clears the first byte.

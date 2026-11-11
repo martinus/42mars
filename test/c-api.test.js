@@ -2,23 +2,24 @@
 // Copyright (c) 2026 Martin Leitner-Ankerl
 //
 // The C library through its public header (lib/42mars.h), built natively
-// with `cc`: test/c/api-test.c drives the functions and prints JSON, which
-// must agree with js/assembler.js and the wasm engine. Also builds
-// lib/example.c. Skipped when there is no `cc`.
+// (test/native.js): test/c/api-test.c drives the functions and prints JSON,
+// which must agree with js/assembler.js and the wasm engine. Also runs
+// lib/example.c.
 
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { execFile, execFileSync, spawnSync } from 'node:child_process';
+import { execFile, execFileSync } from 'node:child_process';
 import { promisify } from 'node:util';
 import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { assemble } from '../js/assembler.js';
-import { createWasmMarsSync } from '../wasm/42mars.js';
+import { createWasmMarsSync, evaluateWasm } from '../wasm/42mars.js';
+import { hasCc, lines, prebuilt, program, skip } from './native.js';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
-const hasCc = spawnSync('cc', ['--version']).status === 0;
+const version = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).version;
 const tmp = mkdtempSync(join(tmpdir(), 'c-api-'));
 after(() => rmSync(tmp, { recursive: true, force: true }));
 
@@ -26,13 +27,13 @@ after(() => rmSync(tmp, { recursive: true, force: true }));
 // program, the example with the plain command of 42mars.h, and a syntax
 // check of the M42_FIXED_CONTEXT build with libc, which nothing else builds.
 const run = promisify(execFile);
-const apiTest = join(tmp, 'api-test');
-const example = join(tmp, 'example');
+const apiTest = program(prebuilt ?? tmp, 'api-test');
+const example = program(prebuilt ?? tmp, 'example');
 before(() => {
   if (!hasCc) return undefined;
   return Promise.all([
-    run('cc', ['-std=c11', '-O2', '-Wall', '-Wextra', '-o', apiTest, join(root, 'test/c/api-test.c'), join(root, 'lib/42mars.c')]),
-    run('cc', ['-o', example, 'example.c', '42mars.c'], { cwd: join(root, 'lib') }),
+    prebuilt ? null : run('cc', ['-std=c11', '-O2', '-Wall', '-Wextra', '-o', apiTest, join(root, 'test/c/api-test.c'), join(root, 'lib/42mars.c')]),
+    prebuilt ? null : run('cc', ['-o', example, 'example.c', '42mars.c'], { cwd: join(root, 'lib') }),
     run('cc', ['-std=c11', '-fsyntax-only', '-Wall', '-Wextra', '-Werror=implicit-function-declaration', '-DM42_FIXED_CONTEXT', join(root, 'lib/42mars.c')]),
   ]);
 });
@@ -45,9 +46,9 @@ writeFileSync(broken, ';name Broken\nloop mov 0\n jmp loop, x\nloop dat 1\n', 'l
 const files = [...repo, broken];
 const codes = files.map((f) => assemble(readFileSync(f, 'latin1')));
 
-test('the C library through 42mars.h agrees with the JS assembler and the wasm engine', { skip: !hasCc && 'no cc' }, () => {
+test('the C library through 42mars.h agrees with the JS assembler and the wasm engine', { skip }, () => {
   const out = JSON.parse(execFileSync(apiTest, files, { encoding: 'latin1' }));
-  assert.equal(out.version, '0.1.0');
+  assert.equal(out.version, version);
 
   // assembling, with working memory too small at first, then packed
   out.warriors.forEach((w, i) => {
@@ -117,12 +118,22 @@ test('the C library through 42mars.h agrees with the JS assembler and the wasm e
   assert.deepEqual(out.pin, [99, 4294967295 & 7999, 0]);
   // two warriors of max_length fit into a context of m42_ctx_size()
   assert.deepEqual(out.full, [100, 0]);
+  // the evaluator at the edges of 64 bits, against the wasm build
+  const expressions = [
+    '9223372036854775807+1', '9223372036854775806+1', '-9223372036854775807-1', '-9223372036854775807-2',
+    '9223372036854775807-(-1)', '(0-9223372036854775807)-(1)', '1-9223372036854775807-3', '5-7',
+    '4611686018427387904+4611686018427387904', '-4611686018427387904+-4611686018427387904', '3037000500*3037000500',
+  ];
+  assert.deepEqual(out.evaluate, expressions.map((e) => {
+    const r = evaluateWasm(e);
+    return [r.status, String(r.value)];
+  }));
+  assert.deepEqual(out.evaluate.map((e) => e[0]), [1, 0, 0, 1, 1, 0, 1, 0, 1, 0, 1]);
 });
 
-test('lib/example.c builds with cc example.c 42mars.c and plays a match', { skip: !hasCc && 'no cc' }, () => {
-  const bin = example;
+test('lib/example.c builds with cc example.c 42mars.c and plays a match', { skip }, () => {
   const lantern = join(warriorDir, 'lantern.red'), origami = join(warriorDir, 'origami.red');
-  const out = execFileSync(bin, ['-r', '100', '-F', '4000', lantern, origami], { encoding: 'utf8' });
+  const out = lines(execFileSync(example, ['-r', '100', '-F', '4000', lantern, origami], { encoding: 'utf8' }));
   // pmars -b -k -r 100 -F 4000 lantern.red origami.red prints "1 9" and "90 9"
   // (wins ties); the same match on the wasm engine:
   const r = createWasmMarsSync().runMatch([codes[files.indexOf(lantern)], codes[files.indexOf(origami)]], { rounds: 100, seed: 3900 });

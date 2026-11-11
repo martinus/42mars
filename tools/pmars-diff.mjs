@@ -26,7 +26,7 @@
 // --wasm-asm assembles our side with the C assembler (lib/src/asm.c through
 // wasm/42mars.js) instead of js/assembler.js.
 // --cli path/to/42mars adds the section `cli`: the command line program
-// (cli/build.sh) and pMARS with the same arguments on corpus warriors,
+// (make) and pMARS with the same arguments on corpus warriors,
 // stdout and exit code compared.
 // Exit code 1 when anything differs.
 //

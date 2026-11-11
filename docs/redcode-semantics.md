@@ -966,7 +966,7 @@ except on input where the JS code runs out of stack or throws:
 
 ## 5. The command line program
 
-`cli/42mars.c` (built by `cli/build.sh` to `build/42mars`) takes pMARS
+`cli/42mars.c` (built by `make` to `build/42mars`) takes pMARS
 0.9.5's options and writes pMARS's stdout and exit codes, so that tools that
 run pMARS can run it instead. It uses only `lib/42mars.h`. Everything below
 was found by running the pMARS server build (`$O/bin/pmars`, and the trace

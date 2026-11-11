@@ -70,6 +70,13 @@ static unsigned core_hash(const m42_ctx *m, uint32_t n) {
   return h;
 }
 
+// Kept in step with the list in test/c-api.test.js.
+static const char *const EXPRESSIONS[] = {
+  "9223372036854775807+1", "9223372036854775806+1", "-9223372036854775807-1", "-9223372036854775807-2",
+  "9223372036854775807-(-1)", "(0-9223372036854775807)-(1)", "1-9223372036854775807-3", "5-7",
+  "4611686018427387904+4611686018427387904", "-4611686018427387904+-4611686018427387904", "3037000500*3037000500",
+};
+
 int main(int argc, char **argv) {
   const m42_rules r = m42_rules_94();
   const int n = argc - 1;
@@ -210,7 +217,16 @@ int main(int argc, char **argv) {
   const m42_warrior *bigs[2] = {big, big};
   m42_score sc[2];
   printf(",\"full\":[%u,%d]", m42_warrior_length(big), m42_match(m2, bigs, 2, &o, sc, 0));
-  printf("}\n");
+
+  // the evaluator at the edges of 64 bits (platform.h has its own overflow
+  // checks for compilers other than gcc and clang); values as strings
+  printf(",\"evaluate\":[");
+  for (int i = 0; i < (int)(sizeof EXPRESSIONS / sizeof *EXPRESSIONS); i++) {
+    int64_t v = 0;
+    const int s = m42_evaluate(EXPRESSIONS[i], strlen(EXPRESSIONS[i]), &v);
+    printf("%s[%d,\"%lld\"]", i ? "," : "", s, (long long)v);
+  }
+  printf("]}\n");
   for (int i = 0; i < n; i++) free(w[i]);
   m42_warrior_free(p7a);
   m42_warrior_free(p7b);

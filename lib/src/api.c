@@ -4,26 +4,27 @@
 // The functions of 42mars.h, over the simulator (mars.c) and the assembler
 // (asm.c). Included by lib/42mars.c after both.
 
-#ifndef M42_NO_LIBC
-#include <stdlib.h>
-#endif
-
-_Static_assert(sizeof(m42_instruction) == sizeof(AsmIns) && __builtin_offsetof(m42_instruction, b) == __builtin_offsetof(AsmIns, bVal) &&
-               __builtin_offsetof(m42_instruction, line) == __builtin_offsetof(AsmIns, line),
+_Static_assert(sizeof(m42_instruction) == sizeof(AsmIns) && offsetof(m42_instruction, b) == offsetof(AsmIns, bVal) &&
+               offsetof(m42_instruction, line) == offsetof(AsmIns, line),
                "m42_instruction is the assembler's AsmIns");
-_Static_assert(sizeof(m42_cell) == sizeof(Cell) && __builtin_offsetof(m42_cell, word) == __builtin_offsetof(Cell, ins),
+_Static_assert(sizeof(m42_cell) == sizeof(Cell) && offsetof(m42_cell, word) == offsetof(Cell, ins),
                "m42_cell is the simulator's Cell");
 #ifdef __wasm__
-_Static_assert(sizeof(m42_rules) == 44 && sizeof(m42_match_options) == 32 && __builtin_offsetof(m42_match_options, seed) == 16 &&
-               __builtin_offsetof(m42_match_options, positions) == 24 && __builtin_offsetof(m42_match_options, log) == 28 &&
-               sizeof(m42_state) == 32 && __builtin_offsetof(m42_state, time) == 16 && sizeof(m42_warrior_state) == 40 &&
-               __builtin_offsetof(m42_warrior_state, died_at) == 16 && __builtin_offsetof(m42_warrior_state, score) == 24 &&
+_Static_assert(sizeof(m42_rules) == 44 && sizeof(m42_match_options) == 32 && offsetof(m42_match_options, seed) == 16 &&
+               offsetof(m42_match_options, positions) == 24 && offsetof(m42_match_options, log) == 28 &&
+               sizeof(m42_state) == 32 && offsetof(m42_state, time) == 16 && sizeof(m42_warrior_state) == 40 &&
+               offsetof(m42_warrior_state, died_at) == 16 && offsetof(m42_warrior_state, score) == 24 &&
                sizeof(m42_instruction) == 16,
                "wasm/42mars.js reads and writes these structs at these offsets");
 #endif
 
+#define M42_STR_(x) #x
+#define M42_STR(x) M42_STR_(x)
+
 EXPORT(m42_version)
-const char *m42_version(void) { return "0.1.0"; }
+const char *m42_version(void) {
+  return M42_STR(M42_VERSION_MAJOR) "." M42_STR(M42_VERSION_MINOR) "." M42_STR(M42_VERSION_PATCH);
+}
 
 EXPORT(m42_status_text)
 const char *m42_status_text(int status) {
@@ -101,7 +102,7 @@ const m42_instruction *m42_warrior_code(const m42_warrior *w) {
 static size_t copy_text(AsmText t, char *buf, size_t n) {
   if (buf && n) {
     const size_t k = t.n < n - 1 ? t.n : n - 1;
-    if (k) __builtin_memcpy(buf, t.p, k);
+    if (k) m42_memcpy(buf, t.p, k);
     buf[k] = 0;
   }
   return t.n;
@@ -170,14 +171,14 @@ m42_warrior *m42_warrior_make(const m42_instruction *code, uint32_t length, uint
                               void *mem, size_t size) {
   if ((!code && length) || !mem || size < m42_warrior_make_size(length)) return 0;
   AsmResult *r = (AsmResult *)(void *)(((usize)mem + 7) & ~(usize)7);
-  __builtin_memset(r, 0, sizeof(AsmResult));
+  m42_memset(r, 0, sizeof(AsmResult));
   r->ok = 1;
   r->start = start;
   r->hasPin = pin != 0;
   r->pin = pin ? *pin : 0;
   r->nIns = length;
   r->ins = (AsmIns *)(void *)(r + 1);
-  if (length) __builtin_memcpy(r->ins, code, (usize)length * sizeof(AsmIns));
+  if (length) m42_memcpy(r->ins, code, (usize)length * sizeof(AsmIns));
   r->name = (AsmText){(const u8 *)"Unknown", 7};
   r->author = (AsmText){(const u8 *)"Anonymous", 9};
   r->date = r->version = r->strategy = (AsmText){(const u8 *)"", 0};
@@ -206,7 +207,7 @@ static void count_text(usize *n, const AsmText *dst, const AsmText *src) {
 static void move_text(u8 **at, AsmText *dst, const AsmText *src) {
   dst->p = *at;
   dst->n = src->n;
-  if (src->n) __builtin_memcpy(*at, src->p, src->n);
+  if (src->n) m42_memcpy(*at, src->p, src->n);
   *at += src->n;
 }
 
@@ -231,7 +232,7 @@ m42_warrior *m42_warrior_pack(const m42_warrior *w, void *dst, size_t size) {
   *q = *r;
   p += sizeof(AsmResult);
   q->ins = (AsmIns *)(void *)p;
-  if (r->nIns) __builtin_memcpy(p, r->ins, (usize)r->nIns * sizeof(AsmIns));
+  if (r->nIns) m42_memcpy(p, r->ins, (usize)r->nIns * sizeof(AsmIns));
   p += (usize)r->nIns * sizeof(AsmIns);
   q->errors = (AsmMsg *)(void *)p;
   p += (usize)r->nErrors * sizeof(AsmMsg);
@@ -333,7 +334,7 @@ m42_ctx *m42_ctx_init(void *mem, size_t size, const m42_rules *rules, int *statu
 #endif
   // Not the core and queue arrays in front (1.1 MB): start_round() clears
   // the core, and every queue entry is written before it is read.
-  __builtin_memset(&m->N, 0, sizeof(Mars) - __builtin_offsetof(Mars, N));
+  m42_memset(&m->N, 0, sizeof(Mars) - offsetof(Mars, N));
   m->heap_start = m->heap_top = heap;
   m->heap_end = (u8 *)mem + size;
   m->rules = *rules;
@@ -350,10 +351,10 @@ m42_ctx *m42_new(const m42_rules *rules, int *status) {
   // M42_FIXED_CONTEXT, with its heap): m42_free() frees it.
   const size_t size = (m42_ctx_size(rules) + 63) & ~(size_t)63;
   if (size < 64) { set_status(status, M42_ERR_RULES); return 0; }
-  void *mem = aligned_alloc(64, size);
+  void *mem = m42_aligned_alloc(64, size);
   if (!mem) { set_status(status, M42_ERR_MEMORY); return 0; }
   m42_ctx *m = m42_ctx_init(mem, size, rules, status);
-  if (!m) free(mem);
+  if (!m) m42_aligned_free(mem);
   return m;
 }
 
@@ -361,9 +362,9 @@ EXPORT(m42_free)
 void m42_free(m42_ctx *m) {
 #ifdef M42_FIXED_CONTEXT
   // The context is static; its heap is the block m42_new() allocated.
-  if (m) free(CTX->heap_start);
+  if (m) m42_aligned_free(CTX->heap_start);
 #else
-  free(m);
+  m42_aligned_free(m);
 #endif
 }
 #endif

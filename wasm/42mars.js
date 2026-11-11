@@ -27,8 +27,20 @@
 //   to run first.
 // - runMatch() stops tie rounds early by default, see there.
 
-import { DEFAULT_OPTIONS } from '../js/assembler.js';
-import { rng } from '../js/mars.js';
+// The rules of pMARS 0.9.5 without options (ICWS'94), as option names.
+export const DEFAULT_OPTIONS = Object.freeze({
+  coreSize: 8000, maxProcesses: 8000, maxCycles: 80000, maxLength: 100,
+  minDistance: 100, rounds: 1, warriors: 2,
+  pSpaceSize: 0, // 0 means floor(coreSize / 16)
+  readLimit: 0, // 0 means coreSize
+  writeLimit: 0, // 0 means coreSize
+});
+
+// Park-Miller minimal standard generator, used for warrior placement.
+export function rng(seed) {
+  const t = 16807 * (seed % 127773) - 2836 * Math.trunc(seed / 127773);
+  return t < 0 ? t + 2147483647 : t;
+}
 
 const WASM_URL = new URL('./42mars.wasm', import.meta.url);
 const MAX_CORE = 65536;
