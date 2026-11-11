@@ -75,13 +75,11 @@ static inline int m42_sub_overflow(long long a, long long b, long long *r) {
 
 #endif
 
-// The functions of 42mars.h: exports of the WebAssembly module and of a
-// Windows DLL (built with -DM42_DLL). Elsewhere every function that is not
-// static is one of them.
+// The functions of 42mars.h are the exports of the WebAssembly module
+// (those of a Windows DLL: M42_API in 42mars.h). Natively every function
+// that is not static is one of them.
 #ifdef __wasm__
 #define EXPORT(name) __attribute__((export_name(#name)))
-#elif defined(_WIN32) && defined(M42_DLL)
-#define EXPORT(name) __declspec(dllexport)
 #else
 #define EXPORT(name)
 #endif
