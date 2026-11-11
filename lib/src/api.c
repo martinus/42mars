@@ -480,12 +480,7 @@ int m42_match(m42_ctx *ctx, const m42_warrior *const *warriors, uint32_t n, cons
   m->logStride = m42_log_stride(n);
   m->logRounds = o.log ? o.rounds : 0;
   if (o.pspace) copy_pspace(m, o.pspace, 1);
-  // A match does not record: run_some() takes execute_watched() while a
-  // watch is attached.
-  m42_watch *const watch = m->watch;
-  m->watch = 0;
   const u64 executed = run_match(m, o.rounds, o.early_tie != 0, o.first_round);
-  m->watch = watch;
   if (o.pspace) copy_pspace(m, o.pspace, 0);
   if (instructions) *instructions = executed;
   if (scores) {
@@ -545,7 +540,7 @@ int m42_start_round(m42_ctx *ctx) {
 EXPORT(m42_run)
 uint64_t m42_run(m42_ctx *ctx, uint64_t count) {
   if (ready(ctx) != M42_OK || CTX_OF(ctx)->roundOver || !count) return 0;
-  return run_some(CTX_OF(ctx), count);
+  return run_some(CTX_OF(ctx), count, CTX_OF(ctx)->watch != 0);
 }
 
 EXPORT(m42_end_round)
@@ -645,21 +640,23 @@ static usize watch_layout(const m42_rules *r, u8 *at, m42_watch *x) {
 
 EXPORT(m42_watch_size)
 size_t m42_watch_size(const m42_rules *rules) {
-  return rules_ok(rules) ? 63 + watch_layout(rules, 0, 0) : 0;
+  return rules_ok(rules) && rules->max_length <= 65536 ? 63 + watch_layout(rules, 0, 0) : 0;
 }
 
 EXPORT(m42_watch_attach)
 const m42_watch *m42_watch_attach(m42_ctx *ctx, void *mem, size_t size, int *status) {
   if (!ctx) { set_status(status, M42_ERR_ARGUMENT); return 0; }
   Mars *m = CTX_OF(ctx);
-  if (!mem) { m->watch = 0; set_status(status, M42_OK); return 0; }
-  if (size < m42_watch_size(&m->rules)) { set_status(status, M42_ERR_MEMORY); return 0; }
+  m->watch = 0;
+  if (!mem) { set_status(status, M42_OK); return 0; }
+  const usize need = m42_watch_size(&m->rules);
+  if (!need) { set_status(status, M42_ERR_RULES); return 0; }
+  if (size < need) { set_status(status, M42_ERR_MEMORY); return 0; }
   u8 *const start = (u8 *)(((usize)mem + 63) & ~(usize)63);
   m42_watch *x = (m42_watch *)(void *)start;
   watch_layout(&m->rules, start, x);
   // Empty until the next m42_start_round(): attached during a round, it records from there.
-  m42_memset(x->owner, 0, (usize)(x->death + M42_DEATH_SIZE) - (usize)x->owner);
-  for (u32 a = 0; a < x->core_size; a++) x->origin[a] = -1;
+  watch_clear(x);
   m->watch = x;
   set_status(status, M42_OK);
   return x;

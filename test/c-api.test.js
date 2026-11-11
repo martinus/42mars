@@ -45,6 +45,9 @@ writeFileSync(broken, ';name Broken\nloop mov 0\n jmp loop, x\nloop dat 1\n', 'l
 const files = [...repo, broken];
 const codes = files.map((f) => assemble(readFileSync(f, 'latin1')));
 
+// One FNV-1a step, as fnv() of test/c/api-test.c.
+const fnv = (h, v) => Math.imul(h ^ v, 16777619) >>> 0;
+
 test('the C library through 42mars.h agrees with the JS assembler and the wasm engine', { skip }, () => {
   const out = JSON.parse(execFileSync(apiTest, files, { encoding: 'latin1' }));
   assert.equal(out.version, version);
@@ -95,7 +98,7 @@ test('the C library through 42mars.h agrees with the JS assembler and the wasm e
     const c = m.core();
     let h = 2166136261;
     for (let i = 0; i < m.coreSize; i++) {
-      for (const v of [c.av[i], c.bv[i], c.op[i] | (c.am[i] << 8) | (c.bm[i] << 11), 0]) h = Math.imul(h ^ v, 16777619) >>> 0;
+      for (const v of [c.av[i], c.bv[i], c.op[i] | (c.am[i] << 8) | (c.bm[i] << 11), 0]) h = fnv(h, v);
     }
     assert.deepEqual(s[`r${round}`], {
       executed, time: m.time, round: m.round, hash: h,
@@ -118,9 +121,7 @@ test('the C library through 42mars.h agrees with the JS assembler and the wasm e
   const v = wm.watch();
   let h = 2166136261;
   for (let a = 0; a < wm.coreSize; a++) {
-    for (const x of [v.owner[a], v.execBy[a], v.readBy[a], v.bump[a], v.origin[a], v.tWrite[a], v.tRead[a], v.tExec[a]]) {
-      h = Math.imul(h ^ x, 16777619) >>> 0;
-    }
+    for (const x of [v.owner[a], v.execBy[a], v.readBy[a], v.bump[a], v.origin[a], v.tWrite[a], v.tRead[a], v.tExec[a]]) h = fnv(h, x);
   }
   const trace = [];
   for (let t = wm.time - 7; t <= wm.time; t++) trace.push(Array.from(v.trace.subarray(4 * (t & 4095), 4 * (t & 4095) + 4)));

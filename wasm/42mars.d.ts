@@ -197,8 +197,8 @@ export interface Watch {
   codeStride: number;
   /** 4096 entries of 4 numbers, instruction t at entry t % 4096: pc, A pointer, B pointer, meta (warrior | op byte << 8 | flags: 0x10000 stored at B, 0x20000 new process at A, 0x40000 died, 0x80000 skipped). */
   trace: Uint32Array;
-  /** Process deaths this round; death k is entry k % 1024 of `death`. */
-  deaths: number;
+  /** Process deaths this round, read from the engine on each access; death k is entry k % 1024 of `death`. */
+  readonly deaths: number;
   /** 1024 entries of 4 numbers: address, warrior, time, 1 when it was the warrior's last process. */
   death: Uint32Array;
 }
@@ -249,7 +249,7 @@ export interface WasmMars {
   cell(addr: number): Cell;
   /** With { watch: true }: the views of the watch, new ones after the memory grew. */
   watch(): Watch;
-  /** With { watch: true }: the process deaths since the last call in this round (at most the last 1024): a 'kill' for each, then a 'death' when it was the warrior's last process. */
+  /** With { watch: true }: the process deaths since the last call in this round (at most the last 1024; a warrior's end also shows in its alive and diedAt): a 'kill' for each, then a 'death' when it was the warrior's last process. */
   events(): Event[];
 }
 

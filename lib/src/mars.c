@@ -109,6 +109,9 @@ typedef struct Mars {
   u32 readLimit, writeLimit; // divisors of N; below N: execute_limited()
   m42_watch *watch;   // 0, or the attached watch: m42_run() records into it
 } Mars;
+#if defined(M42_FIXED_CONTEXT) && defined(__wasm__)
+_Static_assert(sizeof(Mars) <= 192, "the core and the queues behind theMars move when it grows past 192 bytes (#74)");
+#endif
 
 // ---------------------------------------------------------------- memory
 
@@ -472,6 +475,7 @@ M42_FORCE_INLINE u32 wrap(u32 x, u32 n) { return x >= n ? x - n : x; }
 // An offset folded into the window of a read or write limit L (a divisor of
 // n) around the instruction: x mod L, as a negative offset above L / 2.
 M42_FORCE_INLINE u32 fold(u32 x, u32 L, u32 n) {
+  if (L == n) return x >= n ? x - n : x; // no limit (execute_watched()); x < 2n there
   const u32 r = x % L;
   return r > L / 2 ? r + n - L : r;
 }
@@ -511,7 +515,8 @@ M42_FORCE_INLINE int exec_core(Mars *const m, const u32 n, const u32 mask, const
 
   // Opcode byte in octal: the last digit is the modifier, A B AB BA F X I
   // = 0..6. Cases `break` to queue `next`, `goto died` when the process
-  // dies, and `goto queued` when they queued already (SPL).
+  // dies, and `goto queued` when they queued already (SPL). trace_flags()
+  // repeats the tests of this switch for the watch: change both together.
   switch (ins & 0xff) {
     // MOV
     case 000: B->a = (u16)AA; break;
@@ -1037,12 +1042,13 @@ static M42_NOINLINE u64 execute_limited(Mars *const m, u64 count) {
 // reason: called from m42_run() it came in front of the loops, and took
 // warrior_died() along (#74).
 static u64 execute_watched(Mars *const m, u64 count);
-static u64 run_some(Mars *const m, u64 count) {
-  if (m->readLimit == m->N && m->writeLimit == m->N && !m->watch) {
+// watched: record into the attached watch (m42_run(); run_match() passes 0).
+static u64 run_some(Mars *const m, u64 count, const int watched) {
+  if (m->readLimit == m->N && m->writeLimit == m->N && !watched) {
     if (m->nw != 2) return execute(m, count);
     return m->N == 8000 && m->maxProc == 8000 && m->qmask == ~0u ? execute2_8000(m, count) : execute2_any(m, count);
   }
-  if (!m->watch) return execute_limited(m, count);
+  if (!watched) return execute_limited(m, count);
   return execute_watched(m, count);
 }
 
@@ -1118,7 +1124,7 @@ static u64 run_match(Mars *const m, u32 rounds, u32 earlyTie, u32 firstRound) {
     if (m->perm) draw_permuted(m);
     start_round(m);
     while (!m->roundOver) {
-      if (!skip) { total += run_some(m, ~0ull); continue; }
+      if (!skip) { total += run_some(m, ~0ull, 0); continue; }
       i64 chunk = tie_check(m);
       if (chunk == 0) {
         m->timeNow += m->cyclesLeft < 1 ? 1 : m->cyclesLeft;
@@ -1126,7 +1132,7 @@ static u64 run_match(Mars *const m, u32 rounds, u32 earlyTie, u32 firstRound) {
         end_round(m);
         break;
       }
-      total += run_some(m, (u64)chunk);
+      total += run_some(m, (u64)chunk, 0);
     }
   }
   return total;
@@ -1136,34 +1142,35 @@ static u64 run_match(Mars *const m, u32 rounds, u32 earlyTie, u32 firstRound) {
 
 // The rest of this file records what a visualizer shows (42mars.h, "watching";
 // semantics doc, 3.4 and 3.6) in an extra loop, execute_watched(). It comes
-// last, and run_some() takes it only while a watch is attached (m42_match()
-// takes the watch away while it plays): the other loops stay as they are.
+// last, and run_some() takes it only for m42_run() with a watch attached:
+// the other loops stay as they are.
 
 // The trace flags of an instruction that exec_core() ran, from what it
 // read: the instruction word, the A cell and the B values as the operands
 // read them, the word of the B cell, and whether it queued a second process
 // (SPL). STORED for the opcodes whose step 4 stores at the B pointer: MOV,
 // ADD, SUB, MUL, DJN and LDP always, DIV and MOD when a divisor they use is
-// not 0.
+// not 0. It repeats the tests of exec_core(): change both together. The
+// test "the trace flags agree with what each instruction did to its queue"
+// (test/watch.test.js) checks the jump, skip, split and death flags against
+// exec_core()'s queue.
 static u32 trace_flags(const u32 ins, const u64 Acell, const u32 Bab, const u32 Bins, const int split) {
   const u32 mod = ins & 7;
   const u32 AA = (u32)Acell & 0xffff, AB = (u32)Acell >> 16, Ains = (u32)(Acell >> 32);
   const u32 BA = Bab & 0xffff, BB = Bab >> 16;
   // The fields of the B target the modifier uses, and the A operand value
   // each pairs with: .A A<-A, .B B<-B, .AB B<-A, .BA A<-B, .F .I both, .X
-  // both crossed.
+  // both crossed. JMZ, JMN and DJN test the same fields.
   const int useA = mod != 1 && mod != 2, useB = mod != 0 && mod != 3;
   const u32 srcA = mod == 3 || mod == 5 ? AB : AA, srcB = mod == 2 || mod == 5 ? AA : AB;
-  // The fields JMZ, JMN and DJN test: .A .BA the A field, .B .AB the B
-  // field, the others both.
-  const int testA = mod != 1 && mod != 2, testB = mod != 0 && mod != 3;
   const int equal = (!useA || BA == srcA) && (!useB || BB == srcB) && (mod != 6 || Bins == Ains);
+  const int zero = (!useA || BA == 0) && (!useB || BB == 0);
   switch ((ins & 0xff) >> 3) {
     case 0: case 1: case 2: case 3: case 17: return M42_TRACE_STORED; // MOV ADD SUB MUL LDP
     case 4: case 5: return (useA && srcA) || (useB && srcB) ? M42_TRACE_STORED : 0; // DIV MOD
-    case 6: return (!testA || BA == 0) && (!testB || BB == 0) ? M42_TRACE_NEW_PROCESS : 0; // JMZ
-    case 7: return (!testA || BA == 0) && (!testB || BB == 0) ? 0 : M42_TRACE_NEW_PROCESS; // JMN
-    case 8: return M42_TRACE_STORED | ((!testA || BA == 1) && (!testB || BB == 1) ? 0 : M42_TRACE_NEW_PROCESS); // DJN
+    case 6: return zero ? M42_TRACE_NEW_PROCESS : 0; // JMZ
+    case 7: return zero ? 0 : M42_TRACE_NEW_PROCESS; // JMN
+    case 8: return M42_TRACE_STORED | ((!useA || BA == 1) && (!useB || BB == 1) ? 0 : M42_TRACE_NEW_PROCESS); // DJN
     case 9: case 14: return equal ? M42_TRACE_SKIPPED : 0; // CMP SEQ
     case 15: return equal ? 0 : M42_TRACE_SKIPPED; // SNE
     case 10: return (!useA || srcA < BA) && (!useB || srcB < BB) ? M42_TRACE_SKIPPED : 0; // SLT
@@ -1185,17 +1192,27 @@ M42_FORCE_INLINE void watch_store(m42_watch *const x, const u32 a, const u32 w1,
   x->bump[a] = bump;
 }
 
-// The watch after start_round(): nothing seen yet, each warrior owns its
-// code. Warriors placed over each other each count their whole length.
-// Inlined: as a function of its own it came in front of the loops.
-M42_FORCE_INLINE void watch_start_round(Mars *const m) {
-  m42_watch *const x = m->watch;
-  for (u32 a = 0; a < m->N; a++) {
+// Nothing seen: every cell untouched, no territory, no executions, no
+// trace, no deaths (also m42_watch_attach()).
+M42_FORCE_INLINE void watch_clear(m42_watch *const x) {
+  for (u32 a = 0; a < x->core_size; a++) {
     x->owner[a] = x->exec_by[a] = x->read_by[a] = 0;
     x->bump[a] = 0;
     x->origin[a] = -1;
     x->t_write[a] = x->t_read[a] = x->t_exec[a] = 0;
   }
+  for (u32 i = 0; i < x->warriors; i++) x->territory[i] = 0;
+  for (usize k = 0; k < (usize)x->warriors * x->code_stride; k++) x->exec_count[k] = 0;
+  for (u32 k = 0; k < M42_TRACE_SIZE; k++) x->trace[k] = (m42_trace_entry){0, 0, 0, 0};
+  x->deaths = 0;
+}
+
+// The watch after start_round(): nothing seen yet, each warrior owns its
+// code. Warriors placed over each other each count their whole length.
+// Inlined: as a function of its own it came in front of the loops.
+M42_FORCE_INLINE void watch_start_round(Mars *const m) {
+  m42_watch *const x = m->watch;
+  watch_clear(x);
   for (u32 i = 0; i < m->nw; i++) {
     const Warrior *w = &m->war[i];
     for (u32 k = 0; k < w->len; k++) {
@@ -1204,10 +1221,7 @@ M42_FORCE_INLINE void watch_start_round(Mars *const m) {
       x->origin[a] = (i32)(i << 16 | k);
     }
     x->territory[i] = w->len;
-    for (u32 k = 0; k < x->code_stride; k++) x->exec_count[(usize)i * x->code_stride + k] = 0;
   }
-  for (u32 k = 0; k < M42_TRACE_SIZE; k++) x->trace[k] = (m42_trace_entry){0, 0, 0, 0};
-  x->deaths = 0;
 }
 
 // execute() with the watch: one instruction per iteration, the generic code

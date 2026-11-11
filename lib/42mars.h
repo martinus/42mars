@@ -304,11 +304,11 @@ M42_API int m42_pspace_set(m42_ctx *m, uint32_t w, uint32_t i, uint32_t value);
 // each cell and when, the last instructions, the processes that died. With a
 // watch attached, m42_start_round() resets it and m42_run() records into it,
 // one instruction at a time and slower than without; m42_match() and
-// m42_bench() do not record. docs/redcode-semantics.md, 3.4 and 3.6.
+// m42_bench() do not record. docs/redcode-semantics.md, 3.7 ("The watch").
 //
 // Times are the instruction's number in the round, the first is 1, mod
-// 2^32; 0 is never. Warriors in owner, exec_by and read_by are index + 1,
-// 0 is none.
+// 2^32; 0 is never. The per-cell arrays owner, exec_by and read_by hold a
+// warrior as index + 1, 0 for none; everywhere else a warrior is its index.
 
 #define M42_TRACE_SIZE 4096 // instructions in the trace, a power of two
 #define M42_DEATH_SIZE 1024 // process deaths kept, a power of two
@@ -338,6 +338,7 @@ typedef struct {
   uint32_t code_stride;         // max_length of those rules
   uint32_t pad;
   uint64_t deaths;              // process deaths this round; death k is death[k % M42_DEATH_SIZE]
+                                // (a warrior's end also shows in m42_get_warrior())
   // per cell
   uint8_t *owner;               // the last warrior that stored anything in the cell
   uint8_t *exec_by, *read_by;   // the last warrior that executed it, read it
@@ -354,12 +355,13 @@ typedef struct {
   m42_death *death;
 } m42_watch;
 
-// Bytes for a watch that fits every match of these rules.
+// Bytes for a watch that fits every match of these rules; 0 when a rule is
+// out of range, also max_length above 65536 (origin has 16 bits for it).
 M42_API size_t m42_watch_size(const m42_rules *rules);
 // Attaches a watch in caller memory (any alignment) to m, made for m's
-// rules, and returns its header; 0 on failure, *status says why. Attach it
-// before m42_start_round(). mem 0 detaches the watch and returns 0 with
-// M42_OK.
+// rules, and returns its header; 0 on failure, *status says why, and m has
+// no watch then. Attach it before m42_start_round(). mem 0 detaches the
+// watch and returns 0 with M42_OK.
 M42_API const m42_watch *m42_watch_attach(m42_ctx *m, void *mem, size_t size, int *status);
 
 #ifdef __cplusplus

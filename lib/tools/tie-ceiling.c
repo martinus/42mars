@@ -156,9 +156,9 @@ int main(int argc, char **argv) {
         if (stopped < 0) {
           const i64 chunk = tie_check(m);
           if (chunk == 0) { stopped = traceT; continue; }
-          run_some(m, (u64)chunk);
+          run_some(m, (u64)chunk, 0);
         } else {
-          run_some(m, ~0ull);
+          run_some(m, ~0ull, 0);
         }
       }
       // trace_step() checks only the cells an instruction can change (its

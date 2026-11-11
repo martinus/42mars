@@ -60,12 +60,15 @@ static m42_warrior *assemble(const char *path, const m42_rules *r, int *tries) {
   }
 }
 
+// One FNV-1a step over a 32-bit value (2166136261 to start).
+static uint32_t fnv(uint32_t h, uint32_t v) { return (h ^ v) * 16777619u; }
+
 static unsigned core_hash(const m42_ctx *m, uint32_t n) {
   const m42_cell *c = m42_core(m);
-  unsigned h = 2166136261u;
+  uint32_t h = 2166136261u;
   for (uint32_t i = 0; i < n; i++) {
-    const unsigned v[4] = {c[i].a, c[i].b, c[i].word, c[i].pad};
-    for (int k = 0; k < 4; k++) h = (h ^ v[k]) * 16777619u;
+    const uint32_t v[4] = {c[i].a, c[i].b, c[i].word, c[i].pad};
+    for (int k = 0; k < 4; k++) h = fnv(h, v[k]);
   }
   return h;
 }
@@ -195,16 +198,15 @@ int main(int argc, char **argv) {
   m42_state wst;
   for (m42_get_state(m, &wst); !wst.round_over && wst.time < 3000; m42_get_state(m, &wst)) m42_run(m, 300);
   uint32_t h = 2166136261u;
-#define MIX(v) (h = (h ^ (uint32_t)(v)) * 16777619u)
   for (uint32_t a = 0; a < r.core_size; a++) {
-    MIX(x->owner[a]); MIX(x->exec_by[a]); MIX(x->read_by[a]); MIX(x->bump[a]); MIX(x->origin[a]);
-    MIX(x->t_write[a]); MIX(x->t_read[a]); MIX(x->t_exec[a]);
+    const uint32_t v[8] = {x->owner[a], x->exec_by[a], x->read_by[a], (uint32_t)x->bump[a], (uint32_t)x->origin[a],
+                           x->t_write[a], x->t_read[a], x->t_exec[a]};
+    for (int k = 0; k < 8; k++) h = fnv(h, v[k]);
   }
   uint64_t counts = 0;
   for (uint32_t k = 0; k < 2 * x->code_stride; k++) counts += x->exec_count[k];
   printf(",\"watch\":{\"status\":[%d,%d],\"time\":%llu,\"hash\":%u,\"territory\":[%u,%u],\"counts\":%llu,\"trace\":[",
          small ? 1 : ws1, ws2, (unsigned long long)wst.time, h, x->territory[0], x->territory[1], (unsigned long long)counts);
-#undef MIX
   for (uint64_t t = wst.time - 7; t <= wst.time; t++) {
     const m42_trace_entry *e = &x->trace[t % M42_TRACE_SIZE];
     printf("%s[%u,%u,%u,%u]", t + 7 == wst.time ? "" : ",", e->pc, e->a, e->b, e->meta);

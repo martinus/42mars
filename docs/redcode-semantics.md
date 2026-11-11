@@ -962,7 +962,8 @@ mars.js, the same values (`test/watch.test.js`) in this form:
   (mars.js keeps the previous round's).
 - Process deaths instead of events: the last `M42_DEATH_SIZE` = 1024 of the
   round, each with address, warrior, time and whether it was the warrior's
-  last process, and their count. `events()` turns them into mars.js's
+  last process, and their count (a warrior's end also shows in its state).
+- `max_length` at most 65536: `origin` has 16 bits for the instruction. `events()` turns them into mars.js's
   events: a kill for each, followed by a death for a last process.
 
 `m42_start_round()` resets the watch: every cell untouched, each warrior
