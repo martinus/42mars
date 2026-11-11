@@ -189,11 +189,32 @@ static i64 rng(i64 s) {
   return t < 0 ? t + 2147483647 : t;
 }
 
+// The queue length for a process limit: the next power of two, at most 2^30
+// (the callers limit maxProcesses to 2^24).
+static inline __attribute__((always_inline)) u32 queue_len(u32 maxProcesses) {
+  u32 qlen = 1;
+  while (qlen < maxProcesses && qlen < 1u << 30) qlen <<= 1;
+  return qlen;
+}
+
+// Linear queues: with two warriors a round runs at most max(2 * maxCycles,
+// 1) instructions and the turns alternate, so each warrior gets at most
+// maxCycles + 1 turns and pushes at most two entries per turn. A queue
+// starts at index 0 or 1 (mars_start_round()), so its tail stays at most
+// 2 + 2 * (maxCycles + 1), and mars_start_round() resets the counters.
+// Without wraparound the mask is all ones, which execute2_8000() leaves
+// out: +6% on the bench, -5% on t20 (docs/performance-log.md).
+#define LINEAR_QUEUES(warriors, cycles) ((warriors) == 2 && (cycles) <= LINEAR_CYCLES)
+// Warrior i's queue is one of the two static ones (QUEUES()), else allocated.
+#define STATIC_QUEUE(i, linear, qlen) ((i) < 2 && ((linear) || (qlen) <= QSTATIC))
+
 // Prepares a match. Returns the address of the load area, an i32 array:
 // per warrior 4 ints (length, start, p-space group, fixed position), then all
 // instructions, 5 ints each (op byte, A mode, A value, B mode, B value).
 // Warriors with the same p-space group share the p-space cells; the groups
-// are numbered 0 .. nw-1. Returns 0 when the memory cannot grow.
+// are numbered 0 .. nw-1. Returns 0 when the memory cannot grow. The
+// allocations are added up in heap_need() (api.c) for m42_ctx_size(): change
+// both together.
 static i32 *config(Mars *const m, u32 coreSize, u32 maxProcesses, u32 cycles, u32 minDistance, u32 pSpaceSize,
                    u32 warriors, u32 instructions) {
   m->loaded = 0;
@@ -204,17 +225,9 @@ static i32 *config(Mars *const m, u32 coreSize, u32 maxProcesses, u32 cycles, u3
   m->minDist = minDistance;
   m->psize = pSpaceSize;
   m->nw = warriors;
-  u32 qlen = 1;
-  while (qlen < maxProcesses && qlen < 1u << 30) qlen <<= 1; // the glue limits maxProcesses
+  const u32 qlen = queue_len(maxProcesses);
   m->qmask = qlen - 1;
-  // Linear queues: with two warriors a round runs at most max(2 * maxCycles,
-  // 1) instructions and the turns alternate, so each warrior gets at most
-  // maxCycles + 1 turns and pushes at most two entries per turn. A queue
-  // starts at index 0 or 1 (mars_start_round()), so its tail stays at most
-  // 2 + 2 * (maxCycles + 1), and mars_start_round() resets the counters.
-  // Without wraparound the mask is all ones, which execute2_8000() leaves
-  // out: +6% on the bench, -5% on t20 (docs/performance-log.md).
-  const int linear = m->nw == 2 && cycles <= LINEAR_CYCLES;
+  const int linear = LINEAR_QUEUES(m->nw, cycles);
   if (linear) m->qmask = ~0u;
   m->war = alloc(m, (usize)m->nw * sizeof(Warrior));
   m->input = alloc(m, (usize)(4 * m->nw + 5 * instructions) * 4);
@@ -224,7 +237,7 @@ static i32 *config(Mars *const m, u32 coreSize, u32 maxProcesses, u32 cycles, u3
   u32 *scores = alloc(m, (usize)m->nw * (2 * m->nw - 1) * 4);
   if (!code || !ps || !scores) return 0;
   for (u32 i = 0; i < m->nw; i++) {
-    m->war[i].q = i < 2 && (linear || qlen <= QSTATIC) ? QUEUES(m)[i] : alloc(m, (usize)qlen * 2);
+    m->war[i].q = STATIC_QUEUE(i, linear, qlen) ? QUEUES(m)[i] : alloc(m, (usize)qlen * 2);
     if (!m->war[i].q) return 0;
     m->war[i].score = scores + (usize)i * (2 * m->nw - 1);
   }
@@ -238,10 +251,7 @@ static i32 *config(Mars *const m, u32 coreSize, u32 maxProcesses, u32 cycles, u3
 }
 
 #ifdef M42_FIXED_CONTEXT
-// The exports for wasm/42mars.js stay where they were: clang emits a static
-// array when the first emitted function uses it, and mars_config(), first in
-// the file, uses the queues before the core. That puts the queues in front
-// of the core, the data layout the loops were tuned on.
+// The exports for wasm/42mars.js, on the one context.
 EXPORT(mars_config)
 i32 *mars_config(u32 coreSize, u32 maxProcesses, u32 cycles, u32 minDistance, u32 pSpaceSize, u32 warriors, u32 instructions) {
   return config(CTX, coreSize, maxProcesses, cycles, minDistance, pSpaceSize, warriors, instructions);

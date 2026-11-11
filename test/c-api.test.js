@@ -6,9 +6,10 @@
 // must agree with js/assembler.js and the wasm engine. Also builds
 // lib/example.c. Skipped when there is no `cc`.
 
-import { test, after } from 'node:test';
+import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync, spawnSync } from 'node:child_process';
+import { execFile, execFileSync, spawnSync } from 'node:child_process';
+import { promisify } from 'node:util';
 import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -21,6 +22,21 @@ const hasCc = spawnSync('cc', ['--version']).status === 0;
 const tmp = mkdtempSync(join(tmpdir(), 'c-api-'));
 after(() => rmSync(tmp, { recursive: true, force: true }));
 
+// The builds take seconds each, so they run at the same time: the test
+// program, the example with the plain command of 42mars.h, and a syntax
+// check of the M42_FIXED_CONTEXT build with libc, which nothing else builds.
+const run = promisify(execFile);
+const apiTest = join(tmp, 'api-test');
+const example = join(tmp, 'example');
+before(() => {
+  if (!hasCc) return undefined;
+  return Promise.all([
+    run('cc', ['-std=c11', '-O2', '-Wall', '-Wextra', '-o', apiTest, join(root, 'test/c/api-test.c'), join(root, 'lib/42mars.c')]),
+    run('cc', ['-o', example, 'example.c', '42mars.c'], { cwd: join(root, 'lib') }),
+    run('cc', ['-std=c11', '-fsyntax-only', '-Wall', '-Wextra', '-Werror=implicit-function-declaration', '-DM42_FIXED_CONTEXT', join(root, 'lib/42mars.c')]),
+  ]);
+});
+
 const warriorDir = join(root, 'warriors');
 const repo = readdirSync(warriorDir).filter((f) => f.endsWith('.red')).sort().map((f) => join(warriorDir, f));
 // Last, a source with errors and warnings: it does not assemble.
@@ -30,9 +46,7 @@ const files = [...repo, broken];
 const codes = files.map((f) => assemble(readFileSync(f, 'latin1')));
 
 test('the C library through 42mars.h agrees with the JS assembler and the wasm engine', { skip: !hasCc && 'no cc' }, () => {
-  const bin = join(tmp, 'api-test');
-  execFileSync('cc', ['-std=c11', '-O2', '-Wall', '-Wextra', '-o', bin, join(root, 'test/c/api-test.c'), join(root, 'lib/42mars.c')], { stdio: 'pipe' });
-  const out = JSON.parse(execFileSync(bin, files, { encoding: 'latin1' }));
+  const out = JSON.parse(execFileSync(apiTest, files, { encoding: 'latin1' }));
   assert.equal(out.version, '0.1.0');
 
   // assembling, with working memory too small at first, then packed
@@ -104,8 +118,7 @@ test('the C library through 42mars.h agrees with the JS assembler and the wasm e
 });
 
 test('lib/example.c builds with cc example.c 42mars.c and plays a match', { skip: !hasCc && 'no cc' }, () => {
-  const bin = join(tmp, 'example');
-  execFileSync('cc', ['-o', bin, 'example.c', '42mars.c'], { cwd: join(root, 'lib'), stdio: 'pipe' });
+  const bin = example;
   const lantern = join(warriorDir, 'lantern.red'), origami = join(warriorDir, 'origami.red');
   const out = execFileSync(bin, ['-r', '100', '-F', '4000', lantern, origami], { encoding: 'utf8' });
   // pmars -b -k -r 100 -F 4000 lantern.red origami.red prints "1 9" and "90 9"
