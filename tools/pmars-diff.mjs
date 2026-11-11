@@ -20,6 +20,9 @@
 // --headless runs our simulator without the visualizer bookkeeping.
 // --wasm runs the battles, fuzz and multi sections on the wasm engine
 // (wasm/42mars.js) instead of mars.js, round by round.
+// --watch: --wasm with a watch attached (createWasmMars({ watch: true })),
+// so that the rounds run in the loop that records the visualizer
+// bookkeeping.
 // --wasm-match plays each battle with one runMatch() call with early tie
 // detection, which leaves the final core of some rounds different, so it
 // compares the scores only and does not go with --pmars-trace.
@@ -80,7 +83,8 @@ const ONLY = arg('only') ? new Set(arg('only').split(',')) : null;
 const HEADLESS = args.includes('--headless');
 const WASM_MATCH = args.includes('--wasm-match');
 const PERMUTE = args.includes('--permute');
-const WASM = args.includes('--wasm') || WASM_MATCH ? await compileWasmMars() : null;
+const WATCH = args.includes('--watch');
+const WASM = args.includes('--wasm') || WASM_MATCH || WATCH ? await compileWasmMars() : null;
 // --icws88: every pMARS call gets -8 (rules()), every assembly icws88.
 const ICWS88 = args.includes('--icws88');
 const ourAssemble = ICWS88 ? (source, o = {}) => assembleWasm(source, { ...o, icws88: true }) : assembleWasm;
@@ -434,7 +438,7 @@ async function compareBattle(files, sources, o, pos, rounds) {
   const want = lines.map((l) => l.trim().split(/\s+/).map(Number));
   const ws = sources.map((s, i) => ourAssemble(s, { ...o, warriors: files.length, rounds, registers: i === 0 ? firstRegisters(files.length) : undefined }));
   if (ws.some((w) => !w.ok)) return `${files.join(' ')}: pMARS ran it, we do not assemble it`;
-  const m = WASM ? createWasmMarsSync({ ...o, rounds }, WASM) : new Mars({ ...o, rounds, headless: HEADLESS });
+  const m = WASM ? createWasmMarsSync({ ...o, rounds, watch: WATCH }, WASM) : new Mars({ ...o, rounds, headless: HEADLESS });
   const seed = (permute ? 2 : 1) * (pos - o.minDistance);
   if (WASM_MATCH) m.runMatch(ws, { rounds, seed, permute, earlyTie: true });
   else m.load(ws, { seed, permute });

@@ -179,7 +179,41 @@ int main(int argc, char **argv) {
   const int s2 = m42_pspace_get(m, 0, 7, &v);
   const int s3 = m42_pspace_set(m, 0, r.pspace_size, 1);
   const int s4 = m42_pspace_get(m, 5, 0, &v);
-  printf(",\"pspace\":[%d,%d,%u,%d,%d]}", s1, s2, v, s3, s4);
+  printf(",\"pspace\":[%d,%d,%u,%d,%d]", s1, s2, v, s3, s4);
+
+  // A watch: too small, then attached; a round of warriors 0 and 1 in steps
+  // of 300 up to time 3000, then a hash over the cells' bookkeeping, the
+  // territories, the execution counts, the last 8 trace entries and the
+  // deaths; then detached.
+  const size_t wsize = m42_watch_size(&r);
+  void *wmem = malloc(wsize);
+  int ws1 = 0, ws2 = 0, ws3 = 0;
+  const m42_watch *small = m42_watch_attach(m, wmem, wsize - 64, &ws1);
+  const m42_watch *x = m42_watch_attach(m, wmem, wsize, &ws2);
+  if (!x || m42_load(m, pair, 2, &o) != M42_OK) exit(8);
+  m42_start_round(m);
+  m42_state wst;
+  for (m42_get_state(m, &wst); !wst.round_over && wst.time < 3000; m42_get_state(m, &wst)) m42_run(m, 300);
+  uint32_t h = 2166136261u;
+#define MIX(v) (h = (h ^ (uint32_t)(v)) * 16777619u)
+  for (uint32_t a = 0; a < r.core_size; a++) {
+    MIX(x->owner[a]); MIX(x->exec_by[a]); MIX(x->read_by[a]); MIX(x->bump[a]); MIX(x->origin[a]);
+    MIX(x->t_write[a]); MIX(x->t_read[a]); MIX(x->t_exec[a]);
+  }
+  uint64_t counts = 0;
+  for (uint32_t k = 0; k < 2 * x->code_stride; k++) counts += x->exec_count[k];
+  printf(",\"watch\":{\"status\":[%d,%d],\"time\":%llu,\"hash\":%u,\"territory\":[%u,%u],\"counts\":%llu,\"trace\":[",
+         small ? 1 : ws1, ws2, (unsigned long long)wst.time, h, x->territory[0], x->territory[1], (unsigned long long)counts);
+#undef MIX
+  for (uint64_t t = wst.time - 7; t <= wst.time; t++) {
+    const m42_trace_entry *e = &x->trace[t % M42_TRACE_SIZE];
+    printf("%s[%u,%u,%u,%u]", t + 7 == wst.time ? "" : ",", e->pc, e->a, e->b, e->meta);
+  }
+  printf("],\"deaths\":%llu", (unsigned long long)x->deaths);
+  const m42_watch *gone = m42_watch_attach(m, 0, 0, &ws3);
+  m42_start_round(m);
+  printf(",\"detached\":[%d,%d,%llu]}}", gone ? 1 : 0, ws3, (unsigned long long)m42_run(m, 10));
+  free(wmem);
 
   // Errors: no warriors, a bad rule, too many warriors, no context,
   // assembling with the bad rule, a warrior that did not assemble.
