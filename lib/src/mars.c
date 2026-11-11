@@ -22,6 +22,8 @@
 //   maxCycles up to LINEAR_CYCLES get linear queues instead, long enough for
 //   a whole round, so that no index needs a mask (see mars_config).
 
+#include "../42mars.h"
+
 typedef unsigned char u8;
 typedef unsigned short u16;
 typedef unsigned int u32;
@@ -70,14 +72,15 @@ typedef struct Warrior {
 #define LINEAR_CYCLES 80000
 #define QSTATIC ((2 + 2 * (LINEAR_CYCLES + 1) + 31) & ~31) // see mars_config
 
-// All state of one simulator. The core and the first two warriors' queues
-// (when they are at most QSTATIC long) are at fixed addresses, outside the
-// struct, when there is one context per module (see CTX): the loops then
-// address them with constant offsets instead of base registers (+4% on the
-// bench), and clang keeps them apart from each other and from the struct.
-// The pointer build has them in the struct; CORE() and QUEUES() reach them.
+// All state of one simulator (an m42_ctx of 42mars.h). The core and the
+// first two warriors' queues (when they are at most QSTATIC long) are at
+// fixed addresses, outside the struct, when there is one context with
+// static storage (M42_FIXED_CONTEXT, the wasm build): the loops then address
+// them with constant offsets instead of base registers (+4% on the bench),
+// and clang keeps them apart from each other and from the struct. A context
+// in caller memory has them in the struct; CORE() and QUEUES() reach them.
 typedef struct Mars {
-#ifdef MARS_CONTEXT_POINTER
+#ifndef M42_FIXED_CONTEXT
   // The queues before the core: the other order made clang address
   // warrior 0's queue from warrior 1's with a negative offset, one more
   // add per instruction in execute2_8000().
@@ -105,10 +108,19 @@ typedef struct Mars {
   u32 *pspaceBase;    // nw p-spaces, one per p-space group
   u8 *resultLog;      // runMatch: per round 8 bytes time then nw alive flags
   u8 *heap_top;       // bump allocator, see alloc()
+  // Fields the loops do not read come last: a field in front moves the
+  // offsets that execute2() uses.
+  u8 *heap_end;       // end of the context's memory (not with M42_FIXED_CONTEXT)
+  u32 loaded;         // warriors are loaded (42mars.h)
+  m42_rules rules;    // as given to m42_ctx_init()
 } Mars;
 
 // ---------------------------------------------------------------- memory
 
+// With M42_FIXED_CONTEXT, the context is `theMars` and its heap is the rest
+// of the wasm linear memory (grown on demand) or, natively, a static arena.
+// Otherwise the caller gives one block: the context, then its heap.
+#ifdef M42_FIXED_CONTEXT
 #ifdef __wasm__
 extern u8 __heap_base;
 #define HEAP_START (&__heap_base)
@@ -118,30 +130,30 @@ static usize heap_limit; // end of the linear memory in bytes
 static _Alignas(64) u8 arena[1u << 28];
 #define HEAP_START arena
 #endif
-
-// The context. MARS_CONTEXT_POINTER (an experiment, #53) puts it at the
-// start of the heap and reads its address from a volatile, so that the
-// compiler cannot see that it is a constant, as for a library whose caller
-// passes the context in. Otherwise there is one at a fixed address.
-#ifdef MARS_CONTEXT_POINTER
-static Mars *volatile ctx;
-#define CTX ctx
-#define CORE(m) ((m)->core)
-#define QUEUES(m) ((m)->queueMem)
-#define HEAP_FIRST ((u8 *)(ctx + 1))
-#else
-static _Alignas(64) Cell coreMem[65536];
-static _Alignas(64) u16 queueMem[2][QSTATIC];
+// The queues come first, then the core: the data layout the loops were
+// tuned on. clang emits a static array where the first function uses it
+// (without an initializer, at the end of the file), so the order would
+// depend on the code; `used` with an initializer emits them here, in this
+// order. Both stay zero-filled (.bss).
+__attribute__((used)) static _Alignas(64) u16 queueMem[2][QSTATIC] = {{0}};
+__attribute__((used)) static _Alignas(64) Cell coreMem[65536] = {{0}};
 static Mars theMars = {.roundOver = 1};
 #define CTX (&theMars)
 #define CORE(m) ((void)(m), coreMem)
 #define QUEUES(m) ((void)(m), queueMem)
-#define HEAP_FIRST HEAP_START
+#define HEAP_FIRST(m) ((void)(m), HEAP_START)
+#else
+#define CORE(m) ((m)->core)
+#define QUEUES(m) ((m)->queueMem)
+#define HEAP_FIRST(m) ((u8 *)((m) + 1))
 #endif
 
-// Makes the linear memory reach `end`. Returns 0 when it cannot grow.
-static int reserve(usize end) {
-#ifdef __wasm__
+// Makes the heap reach `end`. Returns 0 when it cannot grow.
+static int reserve(Mars *const m, usize end) {
+#ifndef M42_FIXED_CONTEXT
+  return end <= (usize)m->heap_end;
+#elif defined(__wasm__)
+  (void)m;
   if (!heap_limit) heap_limit = __builtin_wasm_memory_size(0) << 16;
   if (end > heap_limit) {
     usize pages = (end - heap_limit + 65535) >> 16;
@@ -150,6 +162,7 @@ static int reserve(usize end) {
   }
   return 1;
 #else
+  (void)m;
   return end <= (usize)arena + sizeof arena;
 #endif
 }
@@ -159,14 +172,14 @@ static void *alloc(Mars *const m, usize bytes) {
   u8 *p = (u8 *)(((usize)m->heap_top + 63) & ~(usize)63);
   if (bytes > (usize)-1 - (usize)p) return 0;
   usize end = (usize)p + bytes;
-  if (!reserve(end)) return 0;
+  if (!reserve(m, end)) return 0;
   m->heap_top = (u8 *)end;
   for (u8 *q = p; q < (u8 *)end; q++) *q = 0;
   return p;
 }
 
 static void reset_heap(Mars *const m) {
-  m->heap_top = HEAP_FIRST;
+  m->heap_top = HEAP_FIRST(m);
 }
 
 // ---------------------------------------------------------------- setup
@@ -181,16 +194,9 @@ static i64 rng(i64 s) {
 // instructions, 5 ints each (op byte, A mode, A value, B mode, B value).
 // Warriors with the same p-space group share the p-space cells; the groups
 // are numbered 0 .. nw-1. Returns 0 when the memory cannot grow.
-EXPORT(mars_config)
-i32 *mars_config(u32 coreSize, u32 maxProcesses, u32 cycles, u32 minDistance, u32 pSpaceSize, u32 warriors, u32 instructions) {
-#ifdef MARS_CONTEXT_POINTER
-  if (!ctx) {
-    Mars *c = (Mars *)(((usize)HEAP_START + 63) & ~(usize)63);
-    if (!reserve((usize)(c + 1))) return 0;
-    ctx = c;
-  }
-#endif
-  Mars *const m = CTX;
+static i32 *config(Mars *const m, u32 coreSize, u32 maxProcesses, u32 cycles, u32 minDistance, u32 pSpaceSize,
+                   u32 warriors, u32 instructions) {
+  m->loaded = 0;
   reset_heap(m);
   m->N = coreSize;
   m->maxProc = maxProcesses;
@@ -231,11 +237,20 @@ i32 *mars_config(u32 coreSize, u32 maxProcesses, u32 cycles, u32 minDistance, u3
   return m->input;
 }
 
-// Starts the match after the glue filled the load area. seed: the generator
+#ifdef M42_FIXED_CONTEXT
+// The exports for wasm/42mars.js stay where they were: clang emits a static
+// array when the first emitted function uses it, and mars_config(), first in
+// the file, uses the queues before the core. That puts the queues in front
+// of the core, the data layout the loops were tuned on.
+EXPORT(mars_config)
+i32 *mars_config(u32 coreSize, u32 maxProcesses, u32 cycles, u32 minDistance, u32 pSpaceSize, u32 warriors, u32 instructions) {
+  return config(CTX, coreSize, maxProcesses, cycles, minDistance, pSpaceSize, warriors, instructions);
+}
+#endif
+
+// Starts the match after the load area was filled. seed: the generator
 // state (a non-negative integer); fixed: use the positions of the load area.
-EXPORT(mars_load)
-void mars_load(double seedValue, u32 fixed) {
-  Mars *const m = CTX;
+static void load(Mars *const m, i64 seedValue, u32 fixed) {
   i32 *in = m->input;
   Cell *code = m->codeBase;
   for (u32 i = 0; i < m->nw; i++) {
@@ -264,11 +279,16 @@ void mars_load(double seedValue, u32 fixed) {
   m->hasStp = 0;
   for (Cell *c = m->codeBase; c < code; c++) m->hasStp |= (c->ins & 0xf8) == 0220;
   m->fixedPositions = fixed;
-  m->seed = (i64)seedValue;
+  m->seed = seedValue;
   m->round_ = 0;
   m->roundOver = 1;
   m->starter = 0;
+  m->loaded = 1;
 }
+
+#ifdef M42_FIXED_CONTEXT
+EXPORT(mars_load) void mars_load(double seed, u32 fixed) { load(CTX, (i64)seed, fixed); }
+#endif
 
 // Placement method A: random positions, retried while too close to an
 // earlier one. Returns 0 when it gives up.
@@ -349,7 +369,9 @@ static void start_round(Mars *const m) {
   m->blockerAt = 0;
 }
 
+#ifdef M42_FIXED_CONTEXT
 EXPORT(mars_start_round) void mars_start_round(void) { start_round(CTX); }
+#endif
 
 static __attribute__((noinline)) void end_round(Mars *const m) {
   if (m->roundOver) return;
@@ -380,7 +402,9 @@ static __attribute__((noinline)) void end_round(Mars *const m) {
   m->roundOver = 1;
 }
 
+#ifdef M42_FIXED_CONTEXT
 EXPORT(mars_end_round) void mars_end_round(void) { end_round(CTX); }
+#endif
 
 // Warrior w lost its last process. cyclesLeft does not count the instruction
 // that killed it.
@@ -887,8 +911,9 @@ static u64 run_some(Mars *const m, u64 count) {
   return m->N == 8000 && m->maxProc == 8000 && m->qmask == ~0u ? execute2_8000(m, count) : execute2_any(m, count);
 }
 
-// ---------------------------------------------------------------- API
+// ---------------------------------------------------------------- matches
 
+#ifdef M42_FIXED_CONTEXT
 // Executes up to `count` instructions, stops early when the round ends.
 // Returns the number executed.
 EXPORT(mars_run)
@@ -914,6 +939,7 @@ u8 *mars_reserve_log(u32 rounds) {
 
 EXPORT(mars_log_stride)
 u32 mars_log_stride(void) { Mars *const m = CTX; return m->logStride; }
+#endif
 
 // 1 for the opcodes that can kill a process (DAT, DIV and MOD with a zero
 // divisor) or change the p-space (STP), from an instruction word.
@@ -969,9 +995,7 @@ static i64 tie_check(Mars *const m) {
 // the match: the positions and the first mover are those of that round,
 // but p-space and the last results start empty, as at the start of a
 // match. Returns the number of instructions executed.
-EXPORT(mars_run_match)
-double mars_run_match(u32 rounds, u32 earlyTie, u32 firstRound) {
-  Mars *const m = CTX;
+static u64 run_match(Mars *const m, u32 rounds, u32 earlyTie, u32 firstRound) {
   // The positions of the skipped rounds: the generator steps exactly as if
   // they were played (placement does not depend on the core).
   for (u32 r = 0; r < firstRound; r++) place_warriors(m);
@@ -994,10 +1018,13 @@ double mars_run_match(u32 rounds, u32 earlyTie, u32 firstRound) {
       total += run_some(m, (u64)chunk);
     }
   }
-  return (double)total;
+  return total;
 }
 
-// Read access for the glue.
+#ifdef M42_FIXED_CONTEXT
+// The interface of wasm/42mars.js, on the one context.
+EXPORT(mars_run_match)
+double mars_run_match(u32 rounds, u32 earlyTie, u32 firstRound) { return (double)run_match(CTX, rounds, earlyTie, firstRound); }
 EXPORT(mars_core) Cell *mars_core(void) { Mars *const m = CTX; return CORE(m); }
 EXPORT(mars_round) u32 mars_round(void) { Mars *const m = CTX; return m->round_; }
 EXPORT(mars_round_over) u32 mars_round_over(void) { Mars *const m = CTX; return m->roundOver; }
@@ -1026,6 +1053,7 @@ EXPORT(mars_w_process) u32 mars_w_process(u32 i, u32 k) { Mars *const m = CTX; r
 EXPORT(mars_scratch)
 u8 *mars_scratch(u32 bytes) {
   Mars *const m = CTX;
-  u8 *p = (u8 *)(((usize)(m->heap_top ? m->heap_top : HEAP_FIRST) + 63) & ~(usize)63);
-  return reserve((usize)p + bytes) ? p : 0;
+  u8 *p = (u8 *)(((usize)(m->heap_top ? m->heap_top : HEAP_FIRST(m)) + 63) & ~(usize)63);
+  return reserve(m, (usize)p + bytes) ? p : 0;
 }
+#endif

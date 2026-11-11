@@ -8,9 +8,9 @@
 // side.
 //
 // No libc and no global state. All memory comes from the caller: one block,
-// used as a bump arena. When it is too small, m42_assemble() returns 0 and
-// the caller tries again with a larger one (wasm/42mars.js starts with 1 MB
-// and grows by 4).
+// used as a bump arena. When it is too small, assemble() returns 0 and the
+// caller tries again with a larger one (m42_assemble_new() and
+// wasm/42mars.js start with 1 MB and grow by 4).
 //
 // Source text is bytes. With `utf8` set, a byte sequence of one UTF-8
 // character is one token and the message texts trim the Unicode spaces that
@@ -77,7 +77,10 @@ typedef struct {
 
 // no_builtin: clang would turn the loop into a call to strlen, which the
 // wasm build (no libc) does not have.
-__attribute__((no_builtin("strlen"))) static u32 cstrlen(const char *s) {
+#ifdef __clang__
+__attribute__((no_builtin("strlen")))
+#endif
+static u32 cstrlen(const char *s) {
   u32 n = 0;
   while (s[n]) n++;
   return n;
@@ -1624,11 +1627,12 @@ static AsmResult *assemble(void *mem, usize size, const u8 *src, usize len, cons
 
 // ---------------------------------------------------------------- exports
 
+#ifdef __wasm__
 // For wasm/42mars.js: the source is at `src` and the working memory follows
 // it; the options come as numbers. Returns the result or 0 (memory too small
 // or a core size below 1).
-EXPORT(m42_assemble)
-AsmResult *m42_assemble(const u8 *src, u32 len, u8 *mem, u32 size, double coreSize, double maxProcesses,
+EXPORT(asm_assemble)
+AsmResult *asm_assemble(const u8 *src, u32 len, u8 *mem, u32 size, double coreSize, double maxProcesses,
                         double maxCycles, double maxLength, double minDistance, double warriors, double rounds,
                         double pSpaceSize, double readLimit, double writeLimit, u32 utf8) {
   const AsmOptions o = {(i64)coreSize, (i64)maxProcesses, (i64)maxCycles, (i64)maxLength, (i64)minDistance,
@@ -1639,8 +1643,9 @@ AsmResult *m42_assemble(const u8 *src, u32 len, u8 *mem, u32 size, double coreSi
 // Evaluates one expression with fresh registers (js/expr.js, for the
 // fixtures and tools/expr-fuzz.mjs). Writes the value to *value and returns
 // the status.
-EXPORT(m42_evaluate)
-i32 m42_evaluate(const u8 *text, u32 len, i64 *value) {
+EXPORT(asm_evaluate)
+i32 asm_evaluate(const u8 *text, u32 len, i64 *value) {
   Evaluator e = {0};
   return evaluate(&e, (Str){text, len}, value);
 }
+#endif

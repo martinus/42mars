@@ -417,7 +417,7 @@ function assembleWith(x, source, options) {
     if (!base) throw new Error('assembleWasm: out of memory');
     new Uint8Array(x.memory.buffer, base, bytes.length).set(bytes);
     const mem = (base + bytes.length + 7) & ~7;
-    const r = x.m42_assemble(base, bytes.length, mem, size, o.coreSize, o.maxProcesses, o.maxCycles, o.maxLength,
+    const r = x.asm_assemble(base, bytes.length, mem, size, o.coreSize, o.maxProcesses, o.maxCycles, o.maxLength,
       o.minDistance, o.warriors, o.rounds, o.pSpaceSize, o.readLimit, o.writeLimit, utf8 ? 1 : 0);
     if (!r) {
       if (!(o.coreSize >= 1)) throw new RangeError('assembleWasm: coreSize must be at least 1');
@@ -474,6 +474,6 @@ function evaluateWith(x, text) {
   if (!base) throw new Error('evaluateWasm: out of memory');
   new Uint8Array(x.memory.buffer, base, bytes.length).set(bytes);
   const at = (base + bytes.length + 7) & ~7;
-  const status = x.m42_evaluate(base, bytes.length, at);
+  const status = x.asm_evaluate(base, bytes.length, at);
   return { status, value: new DataView(x.memory.buffer).getBigInt64(at, true) };
 }
