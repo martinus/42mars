@@ -190,6 +190,14 @@ int main(int argc, char **argv) {
          m42_match(m, (const m42_warrior *const *)w, 3, &o, 0, 0), m42_start_round(0),
          m42_assemble("dat 0", 5, &zero, 0, mem, size, &w[63]), m42_match(m, (const m42_warrior *const *)w + n - 2, 2, &o, 0, 0));
 
+  // permute: two warriors, no fixed positions
+  m42_match_options po = o;
+  po.permute = 1;
+  const int permuteOne = m42_match(m, pair, 1, &po, 0, 0), permuteTwo = m42_match(m, pair, 2, &po, 0, 0);
+  const uint32_t fixedAt[2] = {0, 4000};
+  po.positions = fixedAt;
+  printf(",\"permute\":[%d,%d,%d]", permuteOne, permuteTwo, m42_match(m, pair, 2, &po, 0, 0));
+
   // PIN: warriors with the same PIN share p-space cells 1 and up.
   int st;
   m42_warrior *p7a = m42_assemble_new(" pin 7\n dat 0\n", 14, &r, 0, &st);

@@ -11,8 +11,8 @@
 // stdout is pMARS's: listings, results, -k lines, -A output. Messages go to
 // stderr in our own words. Exit codes are pMARS's: 0 ok, 2 bad options, 3 a
 // warrior that does not assemble or cannot be read. Not supported, with a
-// clear error: -R and -W (read/write limits, #40), -P (#41), -8 (#42), -V
-// (pMARS's internal assembler dump), and values beyond the engine's limits
+// clear error: -R and -W (read/write limits, #40), -8 (#42), -V (pMARS's
+// internal assembler dump), and values beyond the engine's limits
 // (core size 65536, 2^24 processes and p-space cells, 2^32-1 cycles). -e
 // (the debugger, off in pMARS's server version) is ignored, as pMARS does.
 // What pMARS does for each option is in docs/redcode-semantics.md,
@@ -36,7 +36,8 @@ static void usage(void) {
         "  -p # processes [8000]      -A   assemble only\n"
         "  -l # warrior length [100]  -f   fixed position series\n"
         "  -d # distance [length]     -F # position of warrior 2\n"
-        "  -S # p-space [core/16]     -= $ score formula [(W*W-1)/S]\n"
+        "  -S # p-space [core/16]     -P   permuted positions\n"
+        "  -= $ score formula [(W*W-1)/S]\n"
         "  -@ $ read options from file $\n",
         stderr);
 }
@@ -86,7 +87,7 @@ typedef struct {
   const char *files[MAX_WARRIORS + 1];
   int nfiles;
   long long rounds, size, cycles, processes, length, distance, pspace, position;
-  int brief, koth, sorted, assemble, fixed, hasDistance, hasPosition;
+  int brief, koth, sorted, assemble, fixed, permute, hasDistance, hasPosition;
   const char *formula;
 } Args;
 
@@ -176,7 +177,7 @@ static int parse(int argc, char **argv, Args *a) {
           break;
         }
         case 'R': case 'W': return fail(2, "read and write limits (-R, -W) are not supported yet (#40)", 0);
-        case 'P': return fail(2, "-P is not supported yet (#41)", 0);
+        case 'P': a->permute = 1; break;
         case '8': return fail(2, "-8 is not supported yet (#42)", 0);
         case 'V': return fail(2, "-V (pMARS's verbose assembly) is not supported", 0);
         default: return fail(2, "unknown option", arg);
@@ -302,7 +303,11 @@ static int play(Args *a, m42_warrior **w) {
   if (!m) return fail(3, m42_status_text(s), 0);
   m42_match_options o = m42_match_options_default();
   o.rounds = (uint32_t)a->rounds;
-  o.seed = a->hasPosition ? a->position - a->distance
+  // -F under -P: the generator starts at 2 * (position - distance), which
+  // draws that position with the first warrior moving first (semantics
+  // doc, 3.2).
+  o.permute = (uint32_t)a->permute;
+  o.seed = a->hasPosition ? (a->permute ? 2 : 1) * (a->position - a->distance)
          : a->fixed       ? series_seed(w, n)
                           : (int64_t)(((uint64_t)time(0) * 2654435761u) % 2147483646u) + 1;
   s = m42_match(m, (const m42_warrior *const *)w, (uint32_t)n, &o, 0, 0);
@@ -378,6 +383,7 @@ static int run(Args *a) {
 static int check(const Args *a) {
   const int n = a->nfiles;
   if ((long long)n * a->distance > a->size) return fail(2, "the core size is too small for the warriors and the distance", 0);
+  if (a->permute && n != 2) return fail(2, "-P needs exactly two warriors", 0);
   // The score formula, for every number of survivors.
   for (int s = 1; s <= n; s++) {
     int64_t reg[26] = {0};

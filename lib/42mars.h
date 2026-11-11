@@ -199,12 +199,16 @@ typedef struct {
   uint32_t first_round;       // play rounds first_round+1 .. first_round+rounds of the match
   uint32_t early_tie;         // 1: stop rounds that must end in a tie early (same scores)
   int64_t seed;               // position generator state, >= 0 (two warriors: seed =
-                              // pmars -F position - min_distance)
+                              // pmars -F position - min_distance; with permute,
+                              // 2 * (position - min_distance))
   const uint32_t *positions;  // 0: from the seed; else fixed, one per warrior
   uint8_t *log;               // 0, or m42_log_size() bytes for the round results of m42_match
+  uint32_t permute;           // 1: pmars -P, every position and first mover once before
+                              // any repeats; two warriors, no fixed positions
 } m42_match_options;
 
-// 1 round, first_round 0, early ties on, seed 0, no fixed positions, no log.
+// 1 round, first_round 0, early ties on, seed 0, no fixed positions, no log,
+// no permutation.
 M42_API m42_match_options m42_match_options_default(void);
 
 // The round log of m42_match: one record of m42_log_stride(warriors) bytes

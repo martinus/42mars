@@ -197,10 +197,10 @@ function check(x, mem, status) {
 // ---------------------------------------------------------------- simulator
 
 // Offsets in the struct area of an instance: m42_rules, m42_match_options
-// (32 bytes: size, rounds, first_round, early_tie, int64 seed at 16,
-// positions at 24, log at 28), m42_state (32 bytes), m42_warrior_state (40
-// bytes), and room for single values.
-const S_RULES = 0, S_OPTIONS = 48, S_STATE = 80, S_WARRIOR = 112, S_VALUE = 160, S_SIZE = 192;
+// (40 bytes: size, rounds, first_round, early_tie, int64 seed at 16,
+// positions at 24, log at 28, permute at 32), m42_state (32 bytes),
+// m42_warrior_state (40 bytes), and room for single values.
+const S_RULES = 0, S_OPTIONS = 48, S_STATE = 88, S_WARRIOR = 120, S_VALUE = 160, S_SIZE = 192;
 
 class WasmMars {
   constructor(instance, options) {
@@ -253,7 +253,7 @@ class WasmMars {
   // Checks the warriors and writes them, their pointers and the options
   // into scratch memory: m42_warrior_make() per warrior. Returns the
   // address of the pointer array.
-  prepare(codes, { seed, positions, rounds = 1, firstRound = 0, earlyTie = true, log = 0 }) {
+  prepare(codes, { seed, positions, permute = false, rounds = 1, firstRound = 0, earlyTie = true, log = 0 }) {
     const o = this.opt;
     for (const c of codes) {
       if (!c.ok) throw new Error(`warrior '${c.name}' did not assemble`);
@@ -265,6 +265,7 @@ class WasmMars {
     if (positions && (positions.length < codes.length || !positions.every((p) => isCount(p) && p < 2 ** 31))) {
       throw new RangeError('positions must be non-negative integers, one per warrior');
     }
+    if (permute && (codes.length !== 2 || positions)) throw new RangeError('permute needs two warriors and no fixed positions');
     const n = codes.length;
     this.context(n);
     const x = this.x;
@@ -303,15 +304,16 @@ class WasmMars {
     const s = seed === undefined ? rng(1 + Math.floor(Math.random() * 2147483646)) : seed;
     const { dv } = mem.views();
     const opt = this.structs + S_OPTIONS;
-    [32, rounds, firstRound, earlyTie ? 1 : 0].forEach((v, i) => dv.setUint32(opt + 4 * i, v, true));
+    [40, rounds, firstRound, earlyTie ? 1 : 0].forEach((v, i) => dv.setUint32(opt + 4 * i, v, true));
     dv.setBigInt64(opt + 16, BigInt(s), true);
     dv.setUint32(opt + 24, pos, true);
     dv.setUint32(opt + 28, log, true);
+    dv.setUint32(opt + 32, permute ? 1 : 0, true);
     return ws;
   }
 
-  load(codes, { seed, positions } = {}) {
-    const ws = this.prepare(codes, { seed, positions });
+  load(codes, { seed, positions, permute } = {}) {
+    const ws = this.prepare(codes, { seed, positions, permute });
     check(this.x, this.mem, this.x.m42_load(this.ctx, ws, codes.length, this.structs + S_OPTIONS));
     this.warriors = codes.map((code, index) => new WarriorView(this, index, code));
     this.results = [];
@@ -374,14 +376,18 @@ class WasmMars {
   // reads them, so for warriors without LDP in their code the result of
   // every round is the same as in the whole match, and the rounds can run
   // in blocks on several engines (tools/tournament.mjs does that).
-  runMatch(codes, { rounds = this.opt.rounds, seed, positions, earlyTie = true, firstRound = 0 } = {}) {
+  //
+  // permute (default false, also for load()): pmars -P, two warriors only.
+  // Each position and first mover comes once before any of them repeats
+  // (semantics doc, 3.2); the seed of pmars -P -F x is 2 * (x - minDistance).
+  runMatch(codes, { rounds = this.opt.rounds, seed, positions, permute, earlyTie = true, firstRound = 0 } = {}) {
     if (!isCount(rounds) || !isCount(firstRound) || rounds + firstRound > 0xffffffff) {
       throw new RangeError(`bad rounds or firstRound: ${rounds}, ${firstRound}`);
     }
     const x = this.x;
     const nw = codes.length;
     // The log goes behind the warriors in scratch memory; prepare() resets it.
-    const ws = this.prepare(codes, { seed, positions, rounds, firstRound, earlyTie });
+    const ws = this.prepare(codes, { seed, positions, permute, rounds, firstRound, earlyTie });
     const log = this.mem.scratch(x.m42_log_size(nw, rounds));
     const scores = this.mem.scratch(12 * nw); // m42_score: wins, losses, ties
     const counters = this.mem.scratch(4 * (2 * nw - 1));

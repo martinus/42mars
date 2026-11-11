@@ -16,5 +16,8 @@
 {"args":"-b -= 1/0 P/broken.red W/imp.red","code":2,"stdout":""},
 {"args":"-b -r 5 -l 50 -F 4000 W/imp.red W/dwarf.red","code":0,"stdout":"Imp by A. K. Dewdney scores 5\nDwarf by A. K. Dewdney scores 5\nResults: 0 0 5\n"},
 {"args":"-b -k -r 3 P/die.red","code":0,"stdout":"0 3 0\n"},
-{"args":"-b -r 3 P/die.red","code":0,"stdout":"Unknown by Anonymous scores 0\n"}
+{"args":"-b -r 3 P/die.red","code":0,"stdout":"Unknown by Anonymous scores 0\n"},
+{"args":"-b -k -r 200 -P -F 4000 W/lantern.red W/origami.red","code":0,"stdout":"0 24\n176 24\n"},
+{"args":"-b -r 300 -P -f W/seeker.red W/dwarf.red","code":0,"stdout":"Seeker by 42mars sample scores 457\nDwarf by A. K. Dewdney scores 424\nResults: 146 135 19\n"},
+{"args":"-P W/dwarf.red W/imp.red W/seeker.red","code":2,"stdout":""}
 ]
