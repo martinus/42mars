@@ -22,6 +22,9 @@ Three modules, plain JavaScript ES modules, no dependencies:
 
 `opcodes.js` holds the opcode, modifier and mode tables and the formatting.
 
+The C library's interface is `lib/42mars.h`, documented in the header; its
+functions have the behavior described here.
+
 `lib/src/asm.c` is a port of `expr.js` and `assembler.js` to C with the same
 results: the same result object, messages and expanded statements included
 (`test/asm-c.test.js`, `test/golden.test.js`). `wasm/42mars.js` calls it as

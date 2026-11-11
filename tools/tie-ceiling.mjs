@@ -61,7 +61,7 @@ async function run(file) {
   try {
     const bin = join(tmp, 'tie-ceiling');
     const src = fileURLToPath(new URL('../lib/tools/tie-ceiling.c', import.meta.url));
-    execFileSync(CC, ['-O2', '-march=native', '-fno-strict-aliasing', '-ffp-contract=off', '-I', fileURLToPath(new URL('../lib/src/', import.meta.url)), '-o', bin, src, '-lm'], { stdio: 'inherit' });
+    execFileSync(CC, ['-O2', '-march=native', '-fno-strict-aliasing', '-ffp-contract=off', '-DM42_FIXED_CONTEXT', '-I', fileURLToPath(new URL('../lib/src/', import.meta.url)), '-o', bin, src, '-lm'], { stdio: 'inherit' });
     const shards = Math.min(JOBS, matches.length);
     const outputs = await Promise.all(Array.from({ length: shards }, (_, s) => {
       const part = join(tmp, `in${s}.txt`);

@@ -1304,6 +1304,29 @@ against 226 ms, about 5 ms more for compiling the larger module. Splitting the a
 module of its own would save that for callers that only simulate; not done,
 it is 0.2% of a t80 tournament.
 
+### The public header: the wasm loops stay byte-identical (11th November 2026, #55)
+
+`lib/42mars.c` compiles the simulator, the assembler and the functions of
+`lib/42mars.h` as one translation unit. Natively a context now lives in
+caller memory (the pointer build of #53, 1 to 3% slower); the wasm build
+and `tools/bench-native.mjs` use `-DM42_FIXED_CONTEXT`. Three things had to
+be right before `execute()`, `execute2_8000()` and `execute2_any()` were
+byte-identical to the previous module again, data addresses included, so
+that no new timing was needed:
+
+* The API functions get a handle. Passed on as it is, the loops took the
+  context as a parameter (8 more wasm instructions each, a base register
+  for every access). Even `m ? CTX : 0` keeps the address from being a
+  constant; with `M42_FIXED_CONTEXT` every handle now is `CTX`.
+* clang emits a static array without an initializer where the first
+  function uses it (or at the end of the file). With the exports moved,
+  the core came before the queues in memory, a layout that was never
+  timed (layouts moved the loops by 1 to 2% before).
+  `__attribute__((used))` alone did not change it; `used` with a zero
+  initializer emits both arrays where they are defined.
+* New fields of `struct Mars` go to its end, so that the offsets the loops
+  read stay the same.
+
 ## Ideas from other simulators
 
 exMARS (Martin Ankerl, 2003, based on exhaust and pMARS) and the exMARS fork

@@ -57,7 +57,9 @@ if (SRC) {
   copyFileSync(src, join(tmp, 'src', 'bench-native.c'));
   src = join(tmp, 'src', 'bench-native.c');
 }
-execFileSync(CC, ['-O3', '-march=native', '-fno-strict-aliasing', '-ffp-contract=off', ...(COUNT ? ['-DCOUNT_INS'] : []), '-I', fileURLToPath(new URL('../lib/src/', import.meta.url)), '-o', join(tmp, 'bench'), src, '-lm'], { stdio: 'inherit' });
+// -DM42_FIXED_CONTEXT: the one static context of the wasm build, so that
+// the native profile shows the code the wasm build runs (lib/42mars.h).
+execFileSync(CC, ['-O3', '-march=native', '-fno-strict-aliasing', '-ffp-contract=off', '-DM42_FIXED_CONTEXT', ...(COUNT ? ['-DCOUNT_INS'] : []), '-I', fileURLToPath(new URL('../lib/src/', import.meta.url)), '-o', join(tmp, 'bench'), src, '-lm'], { stdio: 'inherit' });
 const args = [join(tmp, 'input.txt'), ...(earlyTie ? ['early-tie'] : [])];
 let counts = '';
 for (let r = 0; r < RUNS; r++) {

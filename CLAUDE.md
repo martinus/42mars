@@ -33,6 +33,7 @@ node tools/asm.mjs warriors/dwarf.red      # pMARS-style listing
 node tools/tournament.mjs $O/sets/t20 --rounds 100 --engine wasm --pmars $O/bin/pmars --compare
 node tools/tournament.mjs $O/corpus --bench warriors/seeker.red   # one warrior against a folder
 node tools/wasm-functions.mjs old.wasm wasm/42mars.wasm  # which functions of the module changed
+node tools/example-check.mjs $O/sets/t20 --pmars $O/bin/pmars   # lib/example.c (the C library) against pMARS
 ```
 
 `tools/tournament.mjs --jobs N` is N threads with the main thread as one of them (default: all hardware threads). Results do not depend on N.
@@ -63,7 +64,7 @@ Read this before proposing a speed idea; `docs/performance-log.md` has the numbe
 
 ## Where things are
 
-- Layout, library first: `lib/` the C library (`lib/src/mars.c` simulator, `lib/src/asm.c` assembler; `lib/tools/` native drivers built by `tools/bench-native.mjs` and `tools/tie-ceiling.mjs`), `wasm/` its WebAssembly build (`build.sh`, `42mars.wasm`) and JS interface (`42mars.js`), `ui/` the visualizer, `js/` the JS assembler and simulator. `js/` is transitional: the JS assembler goes once the tools and the UI assemble through wasm (the C one is done, L2), `mars.js` once the visualizer runs on the library's step interface (L3). New engine work goes into `lib/`.
+- Layout, library first: `lib/` the C library (public header `lib/42mars.h`, `lib/42mars.c` the one translation unit that includes `lib/src/mars.c` simulator, `lib/src/asm.c` assembler and `lib/src/api.c` the header's functions; `lib/example.c`; `lib/tools/` native drivers built by `tools/bench-native.mjs` and `tools/tie-ceiling.mjs`), `wasm/` its WebAssembly build (`build.sh`, `42mars.wasm`) and JS interface (`42mars.js`), `ui/` the visualizer, `js/` the JS assembler and simulator. `js/` is transitional: the JS assembler goes once the tools and the UI assemble through wasm (the C one is done, L2), `mars.js` once the visualizer runs on the library's step interface (L3). New engine work goes into `lib/`.
 - `tools/ab-wasm.mjs`, `tools/ab-native.mjs`, `tools/ab-tool.mjs`: alternating A/B runs of two wasm builds, two `mars.c` versions natively, two versions of a tool. Use them instead of timing by hand.
 - `PLAN.md`: status, validation results, speed summary, roadmap (M1 to M4), open decisions. Update it when a roadmap item lands.
 - `docs/redcode-semantics.md`: exact assembler and simulator behavior, pMARS quirks, deviations from pMARS (section 4). The spec: change it together with the code.

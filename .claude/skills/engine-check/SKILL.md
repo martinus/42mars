@@ -24,6 +24,8 @@ Setup: `O=${COREWAR_ORACLE:-$HOME/.local/share/corewar-theater}`, `SEED=$(date +
 4. Expression evaluator changed: `node tools/expr-fuzz.mjs --eval $O/bin/evalh --seed $SEED`, and the same with `--wasm` for the C evaluator. Both print the same counts; the known kind and overflow differences are in section 4 of the semantics doc.
 5. Tournament against pMARS, prints `SAME`:
    `node tools/tournament.mjs $O/sets/t20 --rounds 100 --seed $SEED --engine wasm --pmars $O/bin/pmars --compare`
+   and the C library natively through `lib/42mars.h` (`lib/example.c`), also `SAME`:
+   `node tools/example-check.mjs $O/sets/t20 --pmars $O/bin/pmars --seed $SEED`
 6. Mutation proof for each new regression test: make the smallest change that brings the defect back, check that the mutant built (for C: rebuild, `md5sum` of `42mars.wasm` changed), see the test fail for the expected reason, restore, rebuild, check that `md5sum` is back to the original. No mutant may stay behind.
 7. Docs: behavior change → `docs/redcode-semantics.md`; speed change → `docs/performance-log.md` (`perf-experiment` skill).
 
