@@ -1,9 +1,30 @@
 {
   "name": "42mars",
   "version": "0.1.0",
-  "private": true,
-  "description": "Fast Core War simulator (MARS) and Redcode assembler with pMARS 0.9.5 results, and the Core War Theater visualizer",
+  "description": "Fast Core War simulator (MARS) and Redcode assembler with the results of pMARS 0.9.5, in WebAssembly",
+  "keywords": ["corewar", "core war", "redcode", "mars", "pmars", "webassembly"],
+  "license": "MIT",
+  "author": "Martin Leitner-Ankerl",
+  "homepage": "https://github.com/martinus/42mars#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/martinus/42mars.git"
+  },
+  "bugs": "https://github.com/martinus/42mars/issues",
   "type": "module",
+  "exports": {
+    ".": {
+      "types": "./wasm/42mars.d.ts",
+      "default": "./wasm/42mars.js"
+    },
+    "./42mars.wasm": "./wasm/42mars.wasm"
+  },
+  "types": "./wasm/42mars.d.ts",
+  "files": [
+    "wasm/42mars.js",
+    "wasm/42mars.d.ts",
+    "wasm/42mars.wasm"
+  ],
   "scripts": {
     "test": "node --test test/*.test.js",
     "serve": "node tools/serve.mjs",

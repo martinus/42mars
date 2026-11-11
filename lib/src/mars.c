@@ -23,23 +23,7 @@
 //   a whole round, so that no index needs a mask (see config()).
 
 #include "../42mars.h"
-
-typedef unsigned char u8;
-typedef unsigned short u16;
-typedef unsigned int u32;
-typedef int i32;
-typedef long long i64;
-typedef unsigned long long u64;
-typedef unsigned long usize;
-
-#ifdef __wasm__
-#define EXPORT(name) __attribute__((export_name(#name)))
-#else
-#define EXPORT(name)
-#endif
-
-#define LIKELY(x) __builtin_expect(!!(x), 1)
-#define UNLIKELY(x) __builtin_expect(!!(x), 0)
+#include "platform.h"
 
 // ---------------------------------------------------------------- state
 
@@ -52,7 +36,8 @@ typedef struct {
 #define EMPTY_INS ((12u << 3) | 4u | (1u << 8) | (1u << 11)) // DAT.F $0, $0
 
 typedef struct Warrior {
-  u32 head, tail; // free-running queue counters; tasks = tail - head
+  _Alignas(128) u32 head; // the struct's alignment
+  u32 tail;       // free-running queue counters; tasks = tail - head
   u16 *q;         // ring buffer, qmask + 1 entries
   u32 next;       // execution order: next living warrior
   struct Warrior *nextW; // the same as a pointer: execute() follows it, an
@@ -67,7 +52,8 @@ typedef struct Warrior {
   i64 diedAt;     // -1: alive
   u32 len, start; // code length and start offset
   Cell *code;     // the warrior's instructions
-} __attribute__((aligned(128))) Warrior; // a power of two: indexing is a shift
+} Warrior;
+_Static_assert(sizeof(Warrior) == 128, "a power of two: indexing is a shift");
 
 #define LINEAR_CYCLES 80000
 #define QSTATIC ((2 + 2 * (LINEAR_CYCLES + 1) + 31) & ~31) // see config()
@@ -127,8 +113,8 @@ typedef struct Mars {
 // (without an initializer, at the end of the file), so the order would
 // depend on the code; `used` with an initializer emits them here, in this
 // order. Both stay zero-filled (.bss).
-__attribute__((used)) static _Alignas(64) u16 queueMem[2][QSTATIC] = {{0}};
-__attribute__((used)) static _Alignas(64) Cell coreMem[65536] = {{0}};
+M42_USED static _Alignas(64) u16 queueMem[2][QSTATIC] = {{0}};
+M42_USED static _Alignas(64) Cell coreMem[65536] = {{0}};
 static Mars theMars = {.roundOver = 1};
 #define CTX (&theMars)
 #define CORE(m) ((void)(m), coreMem)
@@ -167,7 +153,7 @@ static i64 rng(i64 s) {
 
 // The queue length for a process limit: the next power of two, at most 2^30
 // (the callers limit maxProcesses to 2^24).
-static inline __attribute__((always_inline)) u32 queue_len(u32 maxProcesses) {
+M42_FORCE_INLINE u32 queue_len(u32 maxProcesses) {
   u32 qlen = 1;
   while (qlen < maxProcesses && qlen < 1u << 30) qlen <<= 1;
   return qlen;
@@ -306,7 +292,7 @@ static void place_spread(Mars *const m, u32 *pos) {
 
 static void place_warriors(Mars *const m) {
   if (m->fixedPositions) return; // positions stay as loaded
-  u32 pos[m->nw];
+  u32 pos[255]; // m42_rules.warriors is at most 255
   for (u32 i = 0; i < m->nw; i++) pos[i] = 0;
   if (m->nw == 2) {
     pos[1] = m->minDist + (u32)(m->seed % (m->N + 1 - 2 * m->minDist));
@@ -343,7 +329,7 @@ static void start_round(Mars *const m) {
   m->blockerAt = 0;
 }
 
-static __attribute__((noinline)) void end_round(Mars *const m) {
+static M42_NOINLINE void end_round(Mars *const m) {
   if (m->roundOver) return;
   u32 survivors = 0;
   for (u32 i = 0; i < m->nw; i++) {
@@ -365,7 +351,7 @@ static __attribute__((noinline)) void end_round(Mars *const m) {
   if (m->round_ - 1 - m->logFirst < m->logRounds) { // only the rounds of run_match() with a log
     u8 *e = m->resultLog + (usize)(m->round_ - 1 - m->logFirst) * m->logStride;
     const u64 t = (u64)m->timeNow;
-    __builtin_memcpy(e, &t, 8);
+    m42_memcpy(e, &t, 8);
     for (u32 i = 0; i < m->nw; i++) e[8 + i] = (u8)m->war[i].alive;
   }
   m->starter = (m->starter + 1) % m->nw;
@@ -374,7 +360,7 @@ static __attribute__((noinline)) void end_round(Mars *const m) {
 
 // Warrior w lost its last process. cyclesLeft does not count the instruction
 // that killed it.
-static __attribute__((noinline)) void warrior_died(Mars *const m, u32 w) {
+static M42_NOINLINE void warrior_died(Mars *const m, u32 w) {
   Warrior *W = &m->war[w];
   W->alive = 0;
   W->diedAt = m->timeNow;
@@ -402,10 +388,10 @@ static u32 traceTarget, traceSource; // B and A target
 static void trace_step(const Mars *m, const Warrior *W, u32 pc, Cell ir, u32 tasks);
 #endif
 
-static inline u32 ab_of(const Cell *c) { u32 v; __builtin_memcpy(&v, c, 4); return v; }
-static inline void set_ab(Cell *c, u32 v) { __builtin_memcpy(c, &v, 4); }
-static inline u64 cell_of(const Cell *c) { u64 v; __builtin_memcpy(&v, c, 8); return v; }
-static inline void set_cell(Cell *c, u64 v) { __builtin_memcpy(c, &v, 8); }
+static inline u32 ab_of(const Cell *c) { u32 v; m42_memcpy(&v, c, 4); return v; }
+static inline void set_ab(Cell *c, u32 v) { m42_memcpy(c, &v, 4); }
+static inline u64 cell_of(const Cell *c) { u64 v; m42_memcpy(&v, c, 8); return v; }
+static inline void set_cell(Cell *c, u64 v) { m42_memcpy(c, &v, 8); }
 
 // Notes on speed, from tools/bench.mjs --wasm-match (M instructions/s in
 // Node 22; first version 125):
@@ -445,18 +431,20 @@ static inline void set_cell(Cell *c, u64 v) { __builtin_memcpy(c, &v, 8); }
 //   kept: every core store as a store of the whole cell, the instruction
 //   fetched with three 16-bit loads, queue counters as byte offsets
 
+// x mod n for x < 2n: one conditional subtraction.
+M42_FORCE_INLINE u32 wrap(u32 x, u32 n) { return x >= n ? x - n : x; }
+
 // Executes the instruction ir, fetched from pc, of warrior W, whose queue
 // is q with the counters *head and *tail (W's own fields, or local copies of
 // them in execute2()); the process is already taken off the queue. ins is
 // the instruction word of ir: when the caller passes a constant, clang
 // compiles a copy of this function without mode or opcode branches (see
 // step()). Returns 1 when the process died, else 0.
-static inline __attribute__((always_inline)) int exec_ins(Mars *const m, Cell *const C, const u32 n, const u32 mask, const u32 limit,
+M42_FORCE_INLINE int exec_ins(Mars *const m, Cell *const C, const u32 n, const u32 mask, const u32 limit,
                                                           Warrior *const W, u16 *const q, u32 *const head, u32 *const tail,
                                                           const u32 pc, const Cell ir, const u32 ins) {
-// Address arithmetic: both operands are below n, so one conditional
-// subtraction reduces the sum.
-#define WRAP(x) ({ u32 x_ = (x); x_ >= n ? x_ - n : x_; })
+// Address arithmetic: both operands are below n.
+#define WRAP(x) wrap((x), n)
 #define DEC(x) ((x) == 0 ? n - 1 : (u32)(x) - 1)
 #define INC(x) ((x) + 1 == n ? 0 : (x) + 1)
 
@@ -478,7 +466,7 @@ static inline __attribute__((always_inline)) int exec_ins(Mars *const m, Cell *c
     READ_A(aPtr);
   } else if (am == 0) {
     aPtr = pc;
-    __builtin_memcpy(&Acell, &ir, 8);
+    m42_memcpy(&Acell, &ir, 8);
   } else {
     const u32 p = WRAP(pc + ir.a);
     switch (am) {
@@ -727,7 +715,7 @@ a_done:;
 // compares; that was faster than a table indexed by the word (one indirect
 // jump that is harder to predict), and 32 cases were faster than 16, 24,
 // 40, 48 or 64.
-static inline __attribute__((always_inline)) int step(Mars *const m, Cell *const C, const u32 n, const u32 mask, const u32 limit,
+M42_FORCE_INLINE int step(Mars *const m, Cell *const C, const u32 n, const u32 mask, const u32 limit,
                                                       Warrior *const W, u16 *const q, u32 *const head, u32 *const tail) {
   const u32 pc = q[(*head)++ & mask];
   const Cell ir = C[pc];
@@ -753,7 +741,7 @@ static inline __attribute__((always_inline)) int step(Mars *const m, Cell *const
 
 // Executes up to `count` instructions (at least one) of the running round
 // and returns how many it executed. Stops early when the round ends.
-static __attribute__((noinline)) u64 execute(Mars *const m, u64 count) {
+static M42_NOINLINE u64 execute(Mars *const m, u64 count) {
   Cell *const C = CORE(m);
   const u32 n = m->N;
   const u32 mask = m->qmask;
@@ -809,7 +797,7 @@ static __attribute__((noinline)) u64 execute(Mars *const m, u64 count) {
 // heads, two tails, countdown). n, mask and limit are the core size, queue
 // mask and process limit, q0 and q1 the two queues: constants in
 // execute2_8000().
-static inline __attribute__((always_inline)) u64 execute2(Mars *const m, u64 count, const u32 n, const u32 mask, const u32 limit,
+M42_FORCE_INLINE u64 execute2(Mars *const m, u64 count, const u32 n, const u32 mask, const u32 limit,
                                                           u16 *const q0, u16 *const q1) {
   // When it is warrior 1's turn, execute() runs that one instruction, so that
   // the loop has a single entry. A jump into the second half of the loop
@@ -865,10 +853,10 @@ static inline __attribute__((always_inline)) u64 execute2(Mars *const m, u64 cou
 // immediates, and the queue mask goes away, which frees registers. Separate functions, so that V8 compiles
 // only the one in use with its optimizing compiler (it tiers up per
 // function, and a smaller function gets there sooner).
-static __attribute__((noinline)) u64 execute2_8000(Mars *const m, u64 count) {
+static M42_NOINLINE u64 execute2_8000(Mars *const m, u64 count) {
   return execute2(m, count, 8000, ~0u, 8000, QUEUES(m)[0], QUEUES(m)[1]);
 }
-static __attribute__((noinline)) u64 execute2_any(Mars *const m, u64 count) {
+static M42_NOINLINE u64 execute2_any(Mars *const m, u64 count) {
   return execute2(m, count, m->N, m->qmask, m->maxProc, m->war[0].q, m->war[1].q);
 }
 

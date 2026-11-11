@@ -7,7 +7,9 @@
 //
 // Build: compile lib/42mars.c together with your program, e.g.
 //   cc -O2 example.c 42mars.c
-// It needs gcc or clang (it uses their builtins). Defines:
+//   cl /O2 /std:c11 example.c 42mars.c
+// or link the library that `make install` installs (pkg-config 42mars). C11;
+// gcc, clang and MSVC (lib/src/platform.h has what differs). Defines:
 //   M42_NO_LIBC        no <stdlib.h>: leaves out m42_new, m42_free,
 //                      m42_assemble_new and m42_warrior_free
 //   M42_FIXED_CONTEXT  one context with static storage, at a fixed address:
@@ -15,6 +17,7 @@
 //                      given is its heap. The WebAssembly build uses it; a
 //                      context through a pointer is 4 to 6% slower in
 //                      WebAssembly, 1 to 3% natively (#53).
+//   M42_DLL            Windows: export the functions from a DLL.
 //
 // Use:
 //   m42_rules r = m42_rules_94();
@@ -43,11 +46,13 @@
 extern "C" {
 #endif
 
+// The version of the library, of the command line program and of the npm
+// package (package.json); a release is tagged v<major>.<minor>.<patch>.
 #define M42_VERSION_MAJOR 0
 #define M42_VERSION_MINOR 1
 #define M42_VERSION_PATCH 0
 
-// "0.1.0"
+// "0.1.0": the three numbers above.
 const char *m42_version(void);
 
 typedef enum {

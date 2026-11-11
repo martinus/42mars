@@ -13,14 +13,9 @@
 
 import { OPCODES, PSEUDO_OPS, MODIFIERS, MODE_SYMBOLS, OP, MOD } from './opcodes.js';
 import { Evaluator, EVAL_OK, EVAL_OVERFLOW } from './expr.js';
+import { DEFAULT_OPTIONS } from '../wasm/42mars.js';
 
-export const DEFAULT_OPTIONS = Object.freeze({
-  coreSize: 8000, maxProcesses: 8000, maxCycles: 80000, maxLength: 100,
-  minDistance: 100, rounds: 1, warriors: 2,
-  pSpaceSize: 0, // 0 means floor(coreSize / 16)
-  readLimit: 0, // 0 means coreSize
-  writeLimit: 0, // 0 means coreSize
-});
+export { DEFAULT_OPTIONS };
 export const PMARS_VERSION = 95;
 
 const MAX_LABELS = 7;

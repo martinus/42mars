@@ -9,13 +9,9 @@
 // trace buffer.
 
 import { OP, MOD } from './opcodes.js';
-import { DEFAULT_OPTIONS } from './assembler.js';
+import { DEFAULT_OPTIONS, rng } from '../wasm/42mars.js';
 
-// Park-Miller minimal standard generator, used for warrior placement.
-export function rng(seed) {
-  const t = 16807 * (seed % 127773) - 2836 * Math.trunc(seed / 127773);
-  return t < 0 ? t + 2147483647 : t;
-}
+export { rng };
 
 const NEVER = -0x40000000; // initial timestamp: "long ago"
 const EMPTY_CELL = (OP.DAT << 3) | MOD.F;
