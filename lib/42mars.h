@@ -298,6 +298,70 @@ M42_API uint32_t m42_queue(const m42_ctx *m, uint32_t w, uint32_t *out, uint32_t
 M42_API int m42_pspace_get(const m42_ctx *m, uint32_t w, uint32_t i, uint32_t *value);
 M42_API int m42_pspace_set(m42_ctx *m, uint32_t w, uint32_t i, uint32_t value);
 
+// ---------------------------------------------------------------- watching
+
+// What a visualizer shows besides the core: who wrote, read and executed
+// each cell and when, the last instructions, the processes that died. With a
+// watch attached, m42_start_round() resets it and m42_run() records into it,
+// one instruction at a time and slower than without; m42_match() and
+// m42_bench() do not record. docs/redcode-semantics.md, 3.4 and 3.6.
+//
+// Times are the instruction's number in the round, the first is 1, mod
+// 2^32; 0 is never. Warriors in owner, exec_by and read_by are index + 1,
+// 0 is none.
+
+#define M42_TRACE_SIZE 4096 // instructions in the trace, a power of two
+#define M42_DEATH_SIZE 1024 // process deaths kept, a power of two
+
+// The trace flags in m42_trace_entry.meta, above the warrior (bits 0..7)
+// and the op byte, opcode << 3 | modifier (bits 8..15).
+#define M42_TRACE_STORED 0x10000u      // step 4 stored something at the B pointer
+#define M42_TRACE_NEW_PROCESS 0x20000u // a jump to, or SPL of, the A pointer
+#define M42_TRACE_DIED 0x40000u        // the process died
+#define M42_TRACE_SKIPPED 0x80000u     // the next instruction was skipped
+
+typedef struct {
+  uint32_t pc, a, b; // the instruction's address, the A pointer, the B pointer (where B writes)
+  uint32_t meta;     // warrior | op byte << 8 | M42_TRACE_* flags
+} m42_trace_entry;
+
+typedef struct {
+  uint32_t addr, warrior, time;
+  uint32_t last; // 1: it was the warrior's last process, the warrior is out
+} m42_death;
+
+// The header of a watch, in the memory given to m42_watch_attach(); the
+// arrays follow it. Pointers and sizes stay fixed while it is attached, the
+// arrays and `deaths` change with every m42_run().
+typedef struct {
+  uint32_t core_size, warriors; // of the rules the watch was made for
+  uint32_t code_stride;         // max_length of those rules
+  uint32_t pad;
+  uint64_t deaths;              // process deaths this round; death k is death[k % M42_DEATH_SIZE]
+  // per cell
+  uint8_t *owner;               // the last warrior that stored anything in the cell
+  uint8_t *exec_by, *read_by;   // the last warrior that executed it, read it
+  int8_t *bump;                 // the last store: +1 an increment of > or }, -1 a
+                                // decrement of < or {, 0 a store of the instruction
+  int32_t *origin;              // warrior << 16 | instruction of the warrior's code that
+                                // this cell is a copy of (MOV.I copies it), -1 none
+  uint32_t *t_write, *t_read, *t_exec;
+  // per warrior
+  uint32_t *territory;          // cells it owns (owner); its code length at round start
+  uint32_t *exec_count;         // executions of copies of each instruction of warrior w's
+                                // code, by anyone: exec_count[w * code_stride + i]
+  m42_trace_entry *trace;       // instruction t of the round at trace[t % M42_TRACE_SIZE]
+  m42_death *death;
+} m42_watch;
+
+// Bytes for a watch that fits every match of these rules.
+M42_API size_t m42_watch_size(const m42_rules *rules);
+// Attaches a watch in caller memory (any alignment) to m, made for m's
+// rules, and returns its header; 0 on failure, *status says why. Attach it
+// before m42_start_round(). mem 0 detaches the watch and returns 0 with
+// M42_OK.
+M42_API const m42_watch *m42_watch_attach(m42_ctx *m, void *mem, size_t size, int *status);
+
 #ifdef __cplusplus
 }
 #endif

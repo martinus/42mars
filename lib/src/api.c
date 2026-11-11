@@ -15,7 +15,8 @@ _Static_assert(sizeof(m42_rules) == 44 && sizeof(m42_match_options) == 40 && off
                offsetof(m42_match_options, permute) == 32 && offsetof(m42_match_options, pspace) == 36 &&
                sizeof(m42_state) == 32 && offsetof(m42_state, time) == 16 && sizeof(m42_warrior_state) == 40 &&
                offsetof(m42_warrior_state, died_at) == 16 && offsetof(m42_warrior_state, score) == 24 &&
-               sizeof(m42_instruction) == 16,
+               sizeof(m42_instruction) == 16 && sizeof(m42_watch) == 72 && offsetof(m42_watch, deaths) == 16 &&
+               offsetof(m42_watch, owner) == 24 && offsetof(m42_watch, death) == 68,
                "wasm/42mars.js reads and writes these structs at these offsets");
 #endif
 
@@ -479,7 +480,12 @@ int m42_match(m42_ctx *ctx, const m42_warrior *const *warriors, uint32_t n, cons
   m->logStride = m42_log_stride(n);
   m->logRounds = o.log ? o.rounds : 0;
   if (o.pspace) copy_pspace(m, o.pspace, 1);
+  // A match does not record: run_some() takes execute_watched() while a
+  // watch is attached.
+  m42_watch *const watch = m->watch;
+  m->watch = 0;
   const u64 executed = run_match(m, o.rounds, o.early_tie != 0, o.first_round);
+  m->watch = watch;
   if (o.pspace) copy_pspace(m, o.pspace, 0);
   if (instructions) *instructions = executed;
   if (scores) {
@@ -531,6 +537,7 @@ int m42_start_round(m42_ctx *ctx) {
     Mars *m = CTX_OF(ctx);
     if (m->perm) draw_permuted(m);
     start_round(m);
+    if (m->watch) watch_start_round(m);
   }
   return s;
 }
@@ -612,4 +619,48 @@ int m42_pspace_set(m42_ctx *ctx, uint32_t w, uint32_t i, uint32_t value) {
   if (!cell) return M42_ERR_ARGUMENT;
   *cell = value;
   return M42_OK;
+}
+
+// ---------------------------------------------------------------- watching
+
+// The parts of a watch for these rules, each 64-byte aligned: the header,
+// then the arrays in the order of m42_watch. Returns their bytes from an
+// aligned start; with x, also writes x: its arrays in the block at `at`.
+static usize watch_layout(const m42_rules *r, u8 *at, m42_watch *x) {
+  const usize n = r->core_size, nw = r->warriors, stride = r->max_length ? r->max_length : 1;
+  const usize bytes[] = {sizeof(m42_watch), n, n, n, n, 4 * n, 4 * n, 4 * n, 4 * n, 4 * nw, 4 * nw * stride,
+                         M42_TRACE_SIZE * sizeof(m42_trace_entry), M42_DEATH_SIZE * sizeof(m42_death)};
+  void *part[sizeof(bytes) / sizeof(bytes[0])] = {0};
+  usize s = 0;
+  for (usize k = 0; k < sizeof(bytes) / sizeof(bytes[0]); k++) {
+    if (x) part[k] = at + s;
+    s += (bytes[k] + 63) & ~(usize)63;
+  }
+  if (x) {
+    *x = (m42_watch){r->core_size, r->warriors, (u32)stride, 0, 0, part[1], part[2], part[3], part[4], part[5], part[6], part[7],
+                     part[8], part[9], part[10], part[11], part[12]};
+  }
+  return s;
+}
+
+EXPORT(m42_watch_size)
+size_t m42_watch_size(const m42_rules *rules) {
+  return rules_ok(rules) ? 63 + watch_layout(rules, 0, 0) : 0;
+}
+
+EXPORT(m42_watch_attach)
+const m42_watch *m42_watch_attach(m42_ctx *ctx, void *mem, size_t size, int *status) {
+  if (!ctx) { set_status(status, M42_ERR_ARGUMENT); return 0; }
+  Mars *m = CTX_OF(ctx);
+  if (!mem) { m->watch = 0; set_status(status, M42_OK); return 0; }
+  if (size < m42_watch_size(&m->rules)) { set_status(status, M42_ERR_MEMORY); return 0; }
+  u8 *const start = (u8 *)(((usize)mem + 63) & ~(usize)63);
+  m42_watch *x = (m42_watch *)(void *)start;
+  watch_layout(&m->rules, start, x);
+  // Empty until the next m42_start_round(): attached during a round, it records from there.
+  m42_memset(x->owner, 0, (usize)(x->death + M42_DEATH_SIZE) - (usize)x->owner);
+  for (u32 a = 0; a < x->core_size; a++) x->origin[a] = -1;
+  m->watch = x;
+  set_status(status, M42_OK);
+  return x;
 }

@@ -169,6 +169,50 @@ export interface WarriorView {
   readonly pspace: Int32Array;
   /** Queued addresses, the next one to run first. */
   processes(): number[];
+  /** With { watch: true }: the cells it owns (watch().owner); its code length at round start. */
+  readonly territory: number;
+  /** With { watch: true }: executions of copies of each instruction of its code, by any warrior (a live view). */
+  readonly execCount: Uint32Array;
+}
+
+/** The watch of an engine created with { watch: true } (m42_watch in 42mars.h): live views, changed in place by run(). */
+export interface Watch {
+  /** Per cell: the last warrior that stored anything there, as index + 1; 0 none. */
+  owner: Uint8Array;
+  /** Per cell: the last warrior that executed it, read it (index + 1, 0 none). */
+  execBy: Uint8Array;
+  readBy: Uint8Array;
+  /** Per cell, the last store: +1 an increment of > or }, -1 a decrement of < or {, 0 a store of the instruction. */
+  bump: Int8Array;
+  /** Per cell: warrior << 16 | instruction of the code it is a copy of (MOV.I copies it), -1 none. */
+  origin: Int32Array;
+  /** Per cell: the time of the last store, read, execution in this round (the first instruction is 1); 0 never. */
+  tWrite: Uint32Array;
+  tRead: Uint32Array;
+  tExec: Uint32Array;
+  /** Per warrior: cells owned. */
+  territory: Uint32Array;
+  /** execCount[w * codeStride + i]: executions of copies of instruction i of warrior w. */
+  execCount: Uint32Array;
+  codeStride: number;
+  /** 4096 entries of 4 numbers, instruction t at entry t % 4096: pc, A pointer, B pointer, meta (warrior | op byte << 8 | flags: 0x10000 stored at B, 0x20000 new process at A, 0x40000 died, 0x80000 skipped). */
+  trace: Uint32Array;
+  /** Process deaths this round; death k is entry k % 1024 of `death`. */
+  deaths: number;
+  /** 1024 entries of 4 numbers: address, warrior, time, 1 when it was the warrior's last process. */
+  death: Uint32Array;
+}
+
+export interface Event {
+  type: 'kill' | 'death';
+  addr: number;
+  warrior: number;
+  time: number;
+}
+
+export interface EngineOptions extends Options {
+  /** Record what a visualizer shows (watch(), events()); run() is then slower. */
+  watch?: boolean;
 }
 
 /** One simulator: an instance of the WebAssembly module. */
@@ -203,15 +247,19 @@ export interface WasmMars {
   readonly av: Int32Array;
   readonly bv: Int32Array;
   cell(addr: number): Cell;
+  /** With { watch: true }: the views of the watch, new ones after the memory grew. */
+  watch(): Watch;
+  /** With { watch: true }: the process deaths since the last call in this round (at most the last 1024): a 'kill' for each, then a 'death' when it was the warrior's last process. */
+  events(): Event[];
 }
 
 /** Compiles 42mars.wasm once (fetch in browsers, the file system in Node). */
 export function compileWasmMars(): Promise<WebAssembly.Module>;
 
-export function createWasmMars(options?: Options): Promise<WasmMars>;
+export function createWasmMars(options?: EngineOptions): Promise<WasmMars>;
 
 /** With a module from compileWasmMars(), or in Node 20.16+ / 22.3+ without one. */
-export function createWasmMarsSync(options?: Options, module?: WebAssembly.Module): WasmMars;
+export function createWasmMarsSync(options?: EngineOptions, module?: WebAssembly.Module): WasmMars;
 
 export function packWarrior(code: Warrior, packed?: Int32Array): PackedWarrior;
 

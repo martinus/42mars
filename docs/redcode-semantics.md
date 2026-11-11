@@ -907,6 +907,7 @@ engine: opt, coreSize, load(codes, { seed, positions, permute }), startRound(),
   current, op, am, bm, av, bv, cell(addr),
   warriors[i]: index, code, name, author, position, tasks, alive, diedAt,
     score, wins, losses, ties, lastResult, pspace, processes()
+  with options.watch: watch(), events(), warriors[i].territory, .execCount
 ```
 
 The core, the queues, the scores, the p-space and the round results are the
@@ -941,6 +942,35 @@ coreSize - 1), an array per warrior (pSpaceSize cells, at least 1, cell 0
 the last result) continues from a previous call, and the result's warriors
 then have `pspace` after the last round (`m42_match_options.pspace` in C).
 Warriors with the same PIN share cells 1 and up; the last one's copy wins.
+
+#### The watch
+
+With a watch attached (`m42_watch_attach()` in C, `createWasmMars({ watch:
+true })` in JS), `m42_run()` (`run()`) records what 3.4 and 3.6 describe for
+mars.js, the same values (`test/watch.test.js`) in this form:
+
+- `owner`, `exec_by`, `read_by` (`execBy`, `readBy`): the warrior's index
+  + 1, 0 for none (mars.js: the index, -1).
+- `t_write`, `t_read`, `t_exec`: the time mod 2^32, 0 for never (mars.js:
+  -0x40000000).
+- `bump`, `origin`, `territory`: as in mars.js.
+- `exec_count` (`execCount`): a count per instruction of each warrior's
+  code instead of mars.js's `execHeat`, which the visualizer halves; the
+  caller decays it.
+- The trace: one entry of pc, A pointer, B pointer and meta per
+  instruction, `M42_TRACE_SIZE` = 4096 of them, cleared at round start
+  (mars.js keeps the previous round's).
+- Process deaths instead of events: the last `M42_DEATH_SIZE` = 1024 of the
+  round, each with address, warrior, time and whether it was the warrior's
+  last process, and their count. `events()` turns them into mars.js's
+  events: a kill for each, followed by a death for a last process.
+
+`m42_start_round()` resets the watch: every cell untouched, each warrior
+owns its code with `origin` pointing at it, `territory` its code length
+(warriors placed over each other each count their whole length, as in
+mars.js). The watched loop runs one instruction per iteration through the
+generic operand code; the other loops do not record. `m42_match()` and
+`runMatch()` play without it and leave the watch as it was.
 
 `packWarrior(code)` returns the warrior with its instructions as an
 `Int32Array` `packed`, 5 integers per instruction (op byte, A mode, A

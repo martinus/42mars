@@ -3,9 +3,10 @@
 
 // Headless MARS simulator, the simulator of lib/42mars.h (api.c has the
 // public functions; lib/42mars.c compiles all parts as one unit). It
-// implements section 3 of docs/redcode-semantics.md without the visualizer
-// bookkeeping of 3.4 and 3.6, and gives the same core, queues, scores and
-// round results as js/mars.js with `headless: true`.
+// implements section 3 of docs/redcode-semantics.md and gives the same core,
+// queues, scores and round results as js/mars.js. With a watch attached
+// (end of the file) it also records the visualizer bookkeeping of 3.4 and
+// 3.6.
 //
 // No libc: a match's memory comes from a bump allocator on the context's
 // heap, which is caller memory.
@@ -86,6 +87,10 @@ typedef struct Mars {
   u32 round_, starter, current, warriorsLeft;
   u32 logStride, logRounds, logFirst; // logFirst: round_ of the entry before the first
   u8 roundOver;
+  u8 loaded;          // warriors are loaded (42mars.h); in the padding behind
+                      // roundOver, so that `watch` fits without making the
+                      // struct longer (in wasm, 192 bytes: the core and the
+                      // queues behind it stay where they are)
   i64 seed;
   i64 timeNow, cyclesLeft;
   Warrior *war;
@@ -98,11 +103,11 @@ typedef struct Mars {
   // offsets that execute2() uses.
   u8 *heap_start;     // the heap: caller memory, see m42_ctx_init()
   u8 *heap_end;
-  u32 loaded;         // warriors are loaded (42mars.h)
   m42_rules rules;    // as given to m42_ctx_init()
   u32 *perm;          // 0, or the draw list of permute (draw_permuted())
   u32 permLeft;       // its entries not drawn yet
   u32 readLimit, writeLimit; // divisors of N; below N: execute_limited()
+  m42_watch *watch;   // 0, or the attached watch: m42_run() records into it
 } Mars;
 
 // ---------------------------------------------------------------- memory
@@ -755,21 +760,34 @@ a_done:;
   return exec_core(m, n, mask, limit, W, q, head, tail, pc, ins, aPtr, Acell, Aab, Ains, B, Bab, eager, &B->ins);
 }
 
+// What exec_ins_rw() read and changed, for the bookkeeping of
+// execute_watched(): the A pointer and the A cell as read, the B operand's
+// read and write address and its values, and the pointer cell each operand
+// decremented or incremented (~0u: none).
+typedef struct {
+  u32 aPtr, bRead, bWrite, Bab;
+  u64 Acell;
+  u32 changed[2];
+} Operands;
+
 // exec_ins() with read and write limits (execute_limited()). Each operand
 // has a read address, from which its values come (and the A operand's jump
 // target), and a write address, where the B operand's stores go. pMARS's
 // rules (semantics doc, 3.3): the offset is folded with each limit; @ and *
 // add the pointer cell at the read offset to both, < > { } change the
 // pointer cell at the write offset and add it to the write offset for both.
+// With both limits at the core size the folding changes nothing, so
+// execute_watched() runs it too, with `o` to fill (0 in execute_limited()).
 // A function of its own, not a flag of exec_ins(): a branch on a flag that
 // was 0 there changed clang -O3's code of the other loops (#40).
 M42_FORCE_INLINE int exec_ins_rw(Mars *const m, Cell *const C, const u32 n, const u32 mask, const u32 limit,
                                  Warrior *const W, u16 *const q, u32 *const head, u32 *const tail, const u32 pc,
-                                 const Cell ir, const u32 ins) {
+                                 const Cell ir, const u32 ins, Operands *const o) {
   const u32 R = m->readLimit, Wl = m->writeLimit;
   u32 aPtr = pc, bRead = pc, bWrite = pc, Bab = 0;
   u64 Acell;
   m42_memcpy(&Acell, &ir, 8);
+  if (o) o->changed[0] = o->changed[1] = ~0u;
   for (int k = 0; k < 2; k++) {
     const u32 mode = k ? ins >> 11 : (ins >> 8) & 7, v = k ? ir.b : ir.a;
     u32 rp = 0, wp = 0;
@@ -783,6 +801,7 @@ M42_FORCE_INLINE int exec_ins_rw(Mars *const m, Cell *const C, const u32 n, cons
         wp = fold(wp + f, Wl, n);
       } else if (mode != 1) {
         Cell *const c = &C[WRAP(pc + wp)];
+        if (o) o->changed[k] = WRAP(pc + wp);
         u16 *const f = mode == 3 || mode == 4 ? &c->b : &c->a;
         if (mode == 3 || mode == 6) *f = (u16)DEC(*f);
         else post = f;
@@ -799,6 +818,13 @@ M42_FORCE_INLINE int exec_ins_rw(Mars *const m, Cell *const C, const u32 n, cons
       Bab = ab_of(&C[bRead]);
     }
     if (post) *post = (u16)INC((u32)*post);
+  }
+  if (o) {
+    o->aPtr = aPtr;
+    o->bRead = bRead;
+    o->bWrite = bWrite;
+    o->Bab = Bab;
+    o->Acell = Acell;
   }
   return exec_core(m, n, mask, limit, W, q, head, tail, pc, ins, aPtr, Acell, (u32)Acell, (u32)(Acell >> 32), &C[bWrite], Bab, 1,
                    &C[bRead].ins);
@@ -842,7 +868,7 @@ M42_FORCE_INLINE int step(Mars *const m, Cell *const C, const u32 n, const u32 m
 M42_FORCE_INLINE int step_rw(Mars *const m, Cell *const C, const u32 n, const u32 mask, const u32 limit,
                              Warrior *const W, u16 *const q, u32 *const head, u32 *const tail) {
   const u32 pc = q[(*head)++ & mask];
-  return exec_ins_rw(m, C, n, mask, limit, W, q, head, tail, pc, C[pc], C[pc].ins);
+  return exec_ins_rw(m, C, n, mask, limit, W, q, head, tail, pc, C[pc], C[pc].ins, 0);
 }
 
 
@@ -1007,12 +1033,17 @@ static M42_NOINLINE u64 execute_limited(Mars *const m, u64 count) {
 // first referenced, and first it came in front of the loops. Behind them it
 // still moves the call index of warrior_died() by one (84 to 85, the same
 // size); every other place tried moved more (#40).
+// execute_watched() (at the end of the file) comes after it, for the same
+// reason: called from m42_run() it came in front of the loops, and took
+// warrior_died() along (#74).
+static u64 execute_watched(Mars *const m, u64 count);
 static u64 run_some(Mars *const m, u64 count) {
-  if (m->readLimit == m->N && m->writeLimit == m->N) {
+  if (m->readLimit == m->N && m->writeLimit == m->N && !m->watch) {
     if (m->nw != 2) return execute(m, count);
     return m->N == 8000 && m->maxProc == 8000 && m->qmask == ~0u ? execute2_8000(m, count) : execute2_any(m, count);
   }
-  return execute_limited(m, count);
+  if (!m->watch) return execute_limited(m, count);
+  return execute_watched(m, count);
 }
 
 // ---------------------------------------------------------------- matches
@@ -1100,3 +1131,130 @@ static u64 run_match(Mars *const m, u32 rounds, u32 earlyTie, u32 firstRound) {
   }
   return total;
 }
+
+// ---------------------------------------------------------------- watching
+
+// The rest of this file records what a visualizer shows (42mars.h, "watching";
+// semantics doc, 3.4 and 3.6) in an extra loop, execute_watched(). It comes
+// last, and run_some() takes it only while a watch is attached (m42_match()
+// takes the watch away while it plays): the other loops stay as they are.
+
+// The trace flags of an instruction that exec_core() ran, from what it
+// read: the instruction word, the A cell and the B values as the operands
+// read them, the word of the B cell, and whether it queued a second process
+// (SPL). STORED for the opcodes whose step 4 stores at the B pointer: MOV,
+// ADD, SUB, MUL, DJN and LDP always, DIV and MOD when a divisor they use is
+// not 0.
+static u32 trace_flags(const u32 ins, const u64 Acell, const u32 Bab, const u32 Bins, const int split) {
+  const u32 mod = ins & 7;
+  const u32 AA = (u32)Acell & 0xffff, AB = (u32)Acell >> 16, Ains = (u32)(Acell >> 32);
+  const u32 BA = Bab & 0xffff, BB = Bab >> 16;
+  // The fields of the B target the modifier uses, and the A operand value
+  // each pairs with: .A A<-A, .B B<-B, .AB B<-A, .BA A<-B, .F .I both, .X
+  // both crossed.
+  const int useA = mod != 1 && mod != 2, useB = mod != 0 && mod != 3;
+  const u32 srcA = mod == 3 || mod == 5 ? AB : AA, srcB = mod == 2 || mod == 5 ? AA : AB;
+  // The fields JMZ, JMN and DJN test: .A .BA the A field, .B .AB the B
+  // field, the others both.
+  const int testA = mod != 1 && mod != 2, testB = mod != 0 && mod != 3;
+  const int equal = (!useA || BA == srcA) && (!useB || BB == srcB) && (mod != 6 || Bins == Ains);
+  switch ((ins & 0xff) >> 3) {
+    case 0: case 1: case 2: case 3: case 17: return M42_TRACE_STORED; // MOV ADD SUB MUL LDP
+    case 4: case 5: return (useA && srcA) || (useB && srcB) ? M42_TRACE_STORED : 0; // DIV MOD
+    case 6: return (!testA || BA == 0) && (!testB || BB == 0) ? M42_TRACE_NEW_PROCESS : 0; // JMZ
+    case 7: return (!testA || BA == 0) && (!testB || BB == 0) ? 0 : M42_TRACE_NEW_PROCESS; // JMN
+    case 8: return M42_TRACE_STORED | ((!testA || BA == 1) && (!testB || BB == 1) ? 0 : M42_TRACE_NEW_PROCESS); // DJN
+    case 9: case 14: return equal ? M42_TRACE_SKIPPED : 0; // CMP SEQ
+    case 15: return equal ? 0 : M42_TRACE_SKIPPED; // SNE
+    case 10: return (!useA || srcA < BA) && (!useB || srcB < BB) ? M42_TRACE_SKIPPED : 0; // SLT
+    case 11: return split ? M42_TRACE_NEW_PROCESS : 0; // SPL
+    case 13: return M42_TRACE_NEW_PROCESS; // JMP
+    default: return 0; // DAT NOP STP
+  }
+}
+
+// A store into cell a by warrior w1 (index + 1) at time t.
+M42_FORCE_INLINE void watch_store(m42_watch *const x, const u32 a, const u32 w1, const u32 t, const int8_t bump) {
+  x->t_write[a] = t;
+  const u32 o = x->owner[a];
+  if (o != w1) {
+    if (o) x->territory[o - 1]--;
+    x->territory[w1 - 1]++;
+    x->owner[a] = (u8)w1;
+  }
+  x->bump[a] = bump;
+}
+
+// The watch after start_round(): nothing seen yet, each warrior owns its
+// code. Warriors placed over each other each count their whole length.
+// Inlined: as a function of its own it came in front of the loops.
+M42_FORCE_INLINE void watch_start_round(Mars *const m) {
+  m42_watch *const x = m->watch;
+  for (u32 a = 0; a < m->N; a++) {
+    x->owner[a] = x->exec_by[a] = x->read_by[a] = 0;
+    x->bump[a] = 0;
+    x->origin[a] = -1;
+    x->t_write[a] = x->t_read[a] = x->t_exec[a] = 0;
+  }
+  for (u32 i = 0; i < m->nw; i++) {
+    const Warrior *w = &m->war[i];
+    for (u32 k = 0; k < w->len; k++) {
+      const u32 a = (w->position + k) % m->N;
+      x->owner[a] = (u8)(i + 1);
+      x->origin[a] = (i32)(i << 16 | k);
+    }
+    x->territory[i] = w->len;
+    for (u32 k = 0; k < x->code_stride; k++) x->exec_count[(usize)i * x->code_stride + k] = 0;
+  }
+  for (u32 k = 0; k < M42_TRACE_SIZE; k++) x->trace[k] = (m42_trace_entry){0, 0, 0, 0};
+  x->deaths = 0;
+}
+
+// execute() with the watch: one instruction per iteration, the generic code
+// of the limits (exec_ins_rw()), and the bookkeeping around it.
+static M42_NOINLINE u64 execute_watched(Mars *const m, u64 count) {
+  Cell *const C = CORE(m);
+  m42_watch *const x = m->watch;
+  const u32 n = m->N, mask = m->qmask, limit = m->maxProc;
+  u64 done = 0;
+  while (done < count && !m->roundOver) {
+    const u32 w = m->current, w1 = w + 1;
+    Warrior *const W = &m->war[w];
+    const u32 t = (u32)(m->timeNow + 1);
+    const u32 pc = W->q[W->head++ & mask];
+    const Cell ir = C[pc];
+    const u32 ins = ir.ins;
+    x->t_exec[pc] = t;
+    x->exec_by[pc] = (u8)w1;
+    const i32 org = x->origin[pc];
+    if (org >= 0) x->exec_count[(usize)(org >> 16) * x->code_stride + (u32)(org & 0xffff)]++;
+
+    const u32 tail = W->tail;
+    Operands o;
+    const int died = exec_ins_rw(m, C, n, mask, limit, W, W->q, &W->head, &W->tail, pc, ir, ins, &o);
+
+    const u32 am = (ins >> 8) & 7, bm = ins >> 11, opcode = (ins & 0xff) >> 3;
+    if (am != 0) { x->t_read[o.aPtr] = t; x->read_by[o.aPtr] = (u8)w1; }
+    const u32 flags = trace_flags(ins, o.Acell, o.Bab, C[o.bRead].ins, W->tail - tail == 2);
+    if (opcode == 9 || opcode == 10 || opcode == 14 || opcode == 15) { x->t_read[o.bRead] = t; x->read_by[o.bRead] = (u8)w1; }
+    if ((ins & 0xff) == 006) x->origin[o.bWrite] = x->origin[o.aPtr]; // MOV.I
+    // The A operand's change, the B operand's, then step 4: the last one
+    // gives bump.
+    if (o.changed[0] != ~0u) watch_store(x, o.changed[0], w1, t, am == 3 || am == 6 ? -1 : 1);
+    if (o.changed[1] != ~0u) watch_store(x, o.changed[1], w1, t, bm == 3 || bm == 6 ? -1 : 1);
+    if (flags & M42_TRACE_STORED) watch_store(x, o.bWrite, w1, t, 0);
+    x->trace[t & (M42_TRACE_SIZE - 1)] = (m42_trace_entry){pc, o.aPtr, o.bWrite, w | (ins & 0xff) << 8 | flags | (died ? M42_TRACE_DIED : 0)};
+
+    m->timeNow++;
+    done++;
+    if (died) {
+      const int last = W->tail == W->head;
+      x->death[x->deaths++ & (M42_DEATH_SIZE - 1)] = (m42_death){pc, w, t, (u32)last};
+      if (last) { warrior_died(m, w); continue; } // the instruction uses no cycle
+    }
+    m->current = W->next;
+    if (--m->cyclesLeft <= 0) end_round(m);
+  }
+  return done;
+}
+

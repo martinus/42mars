@@ -228,6 +228,11 @@ class WasmMars {
     this.version = 0; // bumped by everything that can change the core
     this.snapshot = null;
     this.snapshotVersion = -1;
+    // options.watch: a watch (42mars.h) attached to the context, see watch()
+    this.watching = Boolean(options.watch);
+    this.watchAt = 0; // its m42_watch header
+    this.watchViews = null;
+    this.deathsRead = 0; // deaths of the round that events() returned
   }
 
   // Byte view of the linear memory, renewed after it grew.
@@ -248,6 +253,13 @@ class WasmMars {
     if (!ctx) check(x, this.mem, this.mem.views().dv.getInt32(this.structs + S_VALUE, true));
     this.ctx = ctx;
     this.capacity = n;
+    if (this.watching) {
+      const wsize = x.m42_watch_size(this.structs + S_RULES);
+      const block = this.mem.keep(wsize);
+      this.watchAt = x.m42_watch_attach(ctx, block, wsize, this.structs + S_VALUE);
+      if (!this.watchAt) check(x, this.mem, this.mem.views().dv.getInt32(this.structs + S_VALUE, true));
+      this.watchViews = null;
+    }
   }
 
   // Checks the warriors and writes them, their pointers and the options
@@ -326,6 +338,7 @@ class WasmMars {
     this.x.m42_start_round(this.ctx);
     this.roundResult = null;
     this.version++;
+    this.deathsRead = 0;
   }
 
   // Executes up to n instructions; returns how many. Stops early when the
@@ -505,6 +518,62 @@ class WasmMars {
     const c = this.core();
     return { op: c.op[a] >> 3, mod: c.op[a] & 7, aMode: c.am[a], aVal: c.av[a], bMode: c.bm[a], bVal: c.bv[a] };
   }
+
+  // With options.watch: typed array views of the watch (42mars.h,
+  // m42_watch), live: run() changes them in place. New views after the
+  // memory grew. Per cell owner, execBy, readBy (warrior + 1, 0 none), bump,
+  // origin, tWrite, tRead, tExec (time in the round, 0 never); territory
+  // per warrior; execCount[w * codeStride + i]; trace, 4 numbers per entry
+  // (pc, A pointer, B pointer, meta), instruction t at entry t % 4096;
+  // death, 4 numbers per entry (address, warrior, time, last), the
+  // deaths-th death of the round at entry deaths % 1024.
+  watch() {
+    if (!this.watchAt) throw new Error('wasm engine: created without { watch: true }');
+    const { buffer } = this.memory;
+    let v = this.watchViews;
+    if (!v || v.buffer !== buffer) {
+      // m42_watch in wasm32: uint32 core_size, warriors, code_stride, pad,
+      // uint64 deaths at 16, then 12 pointers from 24 (api.c checks them)
+      const dv = new DataView(buffer);
+      const h = this.watchAt;
+      const n = dv.getUint32(h, true), nw = dv.getUint32(h + 4, true), stride = dv.getUint32(h + 8, true);
+      const ptr = (k) => dv.getUint32(h + 24 + 4 * k, true);
+      v = this.watchViews = {
+        buffer, codeStride: stride,
+        owner: new Uint8Array(buffer, ptr(0), n),
+        execBy: new Uint8Array(buffer, ptr(1), n),
+        readBy: new Uint8Array(buffer, ptr(2), n),
+        bump: new Int8Array(buffer, ptr(3), n),
+        origin: new Int32Array(buffer, ptr(4), n),
+        tWrite: new Uint32Array(buffer, ptr(5), n),
+        tRead: new Uint32Array(buffer, ptr(6), n),
+        tExec: new Uint32Array(buffer, ptr(7), n),
+        territory: new Uint32Array(buffer, ptr(8), nw),
+        execCount: new Uint32Array(buffer, ptr(9), nw * stride),
+        trace: new Uint32Array(buffer, ptr(10), 4 * 4096),
+        death: new Uint32Array(buffer, ptr(11), 4 * 1024),
+        deathsAt: h + 16,
+      };
+    }
+    v.deaths = Number(new DataView(buffer).getBigUint64(v.deathsAt, true));
+    return v;
+  }
+
+  // The process deaths since the last call in this round, as mars.js's
+  // events: { type: 'kill', addr, warrior, time } for each, and a 'death'
+  // after the kill of a warrior's last process. At most the last 1024.
+  events() {
+    const v = this.watch();
+    const out = [];
+    for (let k = Math.max(this.deathsRead, v.deaths - 1024); k < v.deaths; k++) {
+      const e = 4 * (k & 1023);
+      const [addr, warrior, time, last] = v.death.subarray(e, e + 4);
+      out.push({ type: 'kill', addr, warrior, time });
+      if (last) out.push({ type: 'death', addr, warrior, time });
+    }
+    this.deathsRead = v.deaths;
+    return out;
+  }
 }
 
 class WarriorView {
@@ -545,6 +614,13 @@ class WarriorView {
   get losses() { return this.state().losses; }
   get ties() { return this.state().ties; }
   get lastResult() { return this.state().lastResult; }
+  // With the watch: the cells it owns, and executions of copies of each of
+  // its instructions (a view, live).
+  get territory() { return this.mars.watch().territory[this.index]; }
+  get execCount() {
+    const v = this.mars.watch();
+    return v.execCount.subarray(this.index * v.codeStride, this.index * v.codeStride + lengthOf(this.code));
+  }
 
   get score() {
     const m = this.mars;

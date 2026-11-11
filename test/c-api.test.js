@@ -109,6 +109,25 @@ test('the C library through 42mars.h agrees with the JS assembler and the wasm e
 
   // p-space: set and get cell 7, then cell 500 (out of range) and warrior 5
   assert.deepEqual(s.pspace, [0, 0, 4242, -3, -3]);
+  // the watch: too small, attached, a round up to time 3000 in steps of
+  // 300, against the wasm build's watch; detached, it records nothing
+  const wm = createWasmMarsSync({ watch: true });
+  wm.load([codes[0], codes[1]], { seed: 1234 });
+  wm.startRound();
+  while (!wm.roundOver && wm.time < 3000) wm.run(300);
+  const v = wm.watch();
+  let h = 2166136261;
+  for (let a = 0; a < wm.coreSize; a++) {
+    for (const x of [v.owner[a], v.execBy[a], v.readBy[a], v.bump[a], v.origin[a], v.tWrite[a], v.tRead[a], v.tExec[a]]) {
+      h = Math.imul(h ^ x, 16777619) >>> 0;
+    }
+  }
+  const trace = [];
+  for (let t = wm.time - 7; t <= wm.time; t++) trace.push(Array.from(v.trace.subarray(4 * (t & 4095), 4 * (t & 4095) + 4)));
+  assert.deepEqual(s.watch, {
+    status: [-1, 0], time: wm.time, hash: h, territory: [v.territory[0], v.territory[1]],
+    counts: v.execCount.reduce((a, b) => a + b, 0), trace, deaths: v.deaths, detached: [0, 0, 10],
+  });
   // no warriors, a core of 70000, three warriors with rules for two, no
   // context, assembling with core size 0, the broken warrior in a match
   assert.deepEqual(out.errors, [-3, 1, -3, -3, -2, -4]);

@@ -77,7 +77,7 @@ Read this before proposing a speed idea; `docs/performance-log.md` has the numbe
 
 ## Engines
 
-Three implementations must agree: `js/mars.js` (visualizer, per-cell bookkeeping; `headless: true` skips it), `lib/src/mars.c` (tournaments, via `wasm/42mars.js`), and pMARS. A behavior change goes into mars.js, into both wasm loops (`execute`, `execute2`), and into the semantics doc. `test/tournament.test.js` checks JS against wasm, `tools/pmars-diff.mjs` both against pMARS.
+Three implementations must agree: `js/mars.js` (visualizer, per-cell bookkeeping; `headless: true` skips it), `lib/src/mars.c` (tournaments, via `wasm/42mars.js`), and pMARS. A behavior change goes into mars.js, into both wasm loops (`execute`, `execute2`), and into the semantics doc. `test/tournament.test.js` checks JS against wasm, `tools/pmars-diff.mjs` both against pMARS. The library's watch (`m42_watch_attach`, `createWasmMars({ watch: true })`) records mars.js's bookkeeping in C; `test/watch.test.js` compares both until mars.js goes (#75, #76).
 
 `wasm/42mars.js` calls only the functions of `lib/42mars.h`; a feature the JS side needs goes into the header first.
 
