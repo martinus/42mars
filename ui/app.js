@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 Martin Leitner-Ankerl
 
-import { assembleWasm as assemble, compileWasmMars } from '../wasm/42mars.js';
-import { Mars } from '../js/mars.js';
+import { assembleWasm as assemble, compileWasmMars, createWasmMarsSync } from '../wasm/42mars.js';
 import { formatInstruction, formatListing, OP, OPCODES } from '../js/opcodes.js';
 import { Renderer, TEX_W } from './renderer.js';
 import { computeLayout, addressAt, cellCenter, LAYOUT_GRID, LAYOUT_RING } from './layout.js';
@@ -10,9 +9,11 @@ import { Timeline } from './timeline.js';
 import { Overlay } from './overlay.js';
 import { ActivityTracker, ACTIVITIES, ACTIVITY_LABELS, ACTIVITY_SENTENCES, OPCODE_DOCS, explainStep, traceEntry, pad4 } from './explain.js';
 
-// The assembler is the C one in 42mars.wasm: compiled once before anything
-// assembles (in a browser it cannot be loaded synchronously).
-await compileWasmMars();
+// The assembler and the simulator are the library in 42mars.wasm: compiled
+// once before anything assembles or runs (in a browser it cannot be loaded
+// synchronously). The simulator runs with a watch, which records what the
+// visualizer shows (semantics doc, 3.7).
+const wasmModule = await compileWasmMars();
 
 // ------------------------------------------------------------------ config
 
@@ -142,7 +143,7 @@ function restartMatch() {
   }
   const opts = options();
   try {
-    state.mars = new Mars(opts);
+    state.mars = createWasmMarsSync({ ...opts, watch: true }, wasmModule);
     state.mars.load(state.slots.map((s) => s.result));
   } catch (e) {
     state.mars = null;
@@ -169,6 +170,9 @@ function nextRound() {
     return;
   }
   m.startRound();
+  // execution heat per instruction of each warrior's code: the watch counts,
+  // the source panel halves what it shows each time (updateSourceHeat())
+  state.execHeat = m.warriors.map((w) => ({ heat: new Float32Array(w.code.instructions.length), seen: new Uint32Array(w.code.instructions.length) }));
   state.heatW.fill(0);
   state.heatE.fill(0);
   state.heatR.fill(0);
@@ -248,7 +252,8 @@ function consumeEvents(now) {
   const m = state.mars;
   if (!m) return;
   let kills = 0;
-  for (const e of m.events) {
+  const { owner } = m.watch();
+  for (const e of m.events()) {
     if (e.type === 'death') {
       state.shocks.push({ addr: e.addr, warrior: e.warrior, born: now, dur: 1.8, big: true });
       timeline.mark(e.time, e.warrior);
@@ -262,14 +267,13 @@ function consumeEvents(now) {
       kills++;
       state.shocks.push({ addr: e.addr, warrior: e.warrior, born: now, dur: 0.6, big: false });
     }
-    const killer = m.op[e.addr] >> 3 === OP.DAT ? m.owner[e.addr] : -1;
+    const killer = m.op[e.addr] >> 3 === OP.DAT ? owner[e.addr] - 1 : -1;
     const key = `${killer}>${e.warrior}`;
     if (killer >= 0 && killer !== e.warrior && !state.firstHits.has(key)) {
       state.firstHits.add(key);
       story(`${who(killer)} hits ${who(e.warrior)} for the first time: a process ran into its DAT at ${pad4(e.addr)}.`, killer, e.addr);
     }
   }
-  m.events.length = 0;
   state.shocks = state.shocks.filter((s) => (now - s.born) / 1000 < s.dur).slice(-24);
 }
 
@@ -279,35 +283,35 @@ function updateTextures() {
   const { heatW, heatE, heatR, dataA: A, dataB: B } = state;
   const t = m.time;
   const prev = state.lastTime;
+  // owner, execBy and readBy are warrior + 1 (0 none); a time is 0 for never
+  const { owner, execBy, readBy, bump, tWrite, tExec, tRead } = m.watch();
+  const op = m.core().op;
   if (t !== prev) {
     const d = state.decay;
     for (let i = 0; i < n; i++) {
-      heatW[i] = m.tWrite[i] > prev ? 1 : heatW[i] * d;
-      heatE[i] = m.tExec[i] > prev ? 1 : heatE[i] * d;
-      heatR[i] = m.tRead[i] > prev ? 1 : heatR[i] * d;
+      heatW[i] = tWrite[i] > prev ? 1 : heatW[i] * d;
+      heatE[i] = tExec[i] > prev ? 1 : heatE[i] * d;
+      heatR[i] = tRead[i] > prev ? 1 : heatR[i] * d;
     }
     state.lastTime = t;
   }
   for (let i = 0, j = 0; i < n; i++, j += 4) {
-    A[j] = m.owner[i] + 1;
-    A[j + 1] = m.op[i];
+    A[j] = owner[i];
+    A[j + 1] = op[i];
     A[j + 2] = heatW[i] * 255;
     A[j + 3] = heatE[i] * 255;
     B[j] = heatR[i] * 255;
-    B[j + 1] = m.execBy[i] + 1;
+    B[j + 1] = execBy[i];
     B[j + 2] = 0;
-    B[j + 3] = (m.readBy[i] + 1) | ((m.bump[i] + 1) << 4) | (state.footprints ? 64 : 0);
+    B[j + 3] = readBy[i] | ((bump[i] + 1) << 4) | (state.footprints ? 64 : 0);
   }
   for (const w of m.warriors) {
-    if (!w.tasks) continue;
-    const cap = w.queue.length;
-    for (let k = 0, q = w.head; k < w.tasks; k++, q = q + 1 === cap ? 0 : q + 1) {
-      B[w.queue[q] * 4 + 2] = w.index + 1;
-    }
+    for (const a of w.queue()) B[a * 4 + 2] = w.index + 1;
   }
-  if (!m.roundOver && m.current >= 0) {
+  if (!m.roundOver) {
     const c = m.warriors[m.current];
-    B[c.queue[c.head] * 4 + 2] = (c.index + 1) | 128;
+    const next = c.queue();
+    if (next.length) B[next[0] * 4 + 2] = (c.index + 1) | 128;
   }
   renderer.upload(A, B, n);
 }
@@ -354,14 +358,15 @@ const who = (i) => `<b style="color:${PALETTE_HEX[i % 8]}">${esc(state.mars.warr
 // tracker and creates arcs for the newest instructions.
 function consumeTrace(now) {
   const m = state.mars;
-  if (!m.traceSize) return;
-  if (m.time < state.lastTrace) state.lastTrace = 0;
-  const from = Math.max(state.lastTrace + 1, m.time - m.traceSize + 1, 1);
+  const time = m.time;
+  const size = m.watch().trace.length / 4;
+  if (time < state.lastTrace) state.lastTrace = 0;
+  const from = Math.max(state.lastTrace + 1, time - size + 1, 1);
   const speed = SPEEDS[state.speedIdx];
   const slow = speed <= SLOW || !state.running;
   const life = slow ? 1.8 : speed <= 2500 ? 0.9 : 0.45;
-  const arcStart = Math.max(from, m.time - (slow ? 59 : 24));
-  for (let t = from; t <= m.time; t++) {
+  const arcStart = Math.max(from, time - (slow ? 59 : 24));
+  for (let t = from; t <= time; t++) {
     const e = traceEntry(m, t);
     state.tracker.add(m, e);
     if (t < arcStart) continue;
@@ -374,7 +379,7 @@ function consumeTrace(now) {
       if (far(e.b)) arc(e.b, 'read');
     }
   }
-  state.lastTrace = m.time;
+  state.lastTrace = time;
   state.tracker.decay(0.985);
   state.arcs = state.arcs.filter((a) => held(a, m) || now - a.born < a.life * 1000).slice(-260);
 }
@@ -421,7 +426,7 @@ function drawOverlay(now) {
 function deathCause(m, e) {
   const op = m.op[e.addr] >> 3;
   if (op === OP.DIV || op === OP.MOD) return `divided by zero at ${pad4(e.addr)}`;
-  const owner = m.owner[e.addr];
+  const owner = m.watch().owner[e.addr] - 1;
   if (owner < 0) return `ran into empty core at ${pad4(e.addr)}`;
   if (owner === e.warrior) return `executed its own DAT at ${pad4(e.addr)}`;
   return `ran into a DAT from ${who(owner)} at ${pad4(e.addr)}`;
@@ -435,13 +440,13 @@ function checkStances() {
     const st = state.stances[i];
     if (!w.tasks) return;
     for (const level of [8, 64, 512, 4096]) {
-      if (st.tasks < level && w.tasks >= level) story(`${who(i)} now runs ${fmt(level)} processes.`, i, w.queue[w.head]);
+      if (st.tasks < level && w.tasks >= level) story(`${who(i)} now runs ${fmt(level)} processes.`, i, w.queue()[0]);
     }
     st.tasks = Math.max(st.tasks, w.tasks);
     const s = state.tracker.stance(i);
     if (!s || s === st.reported) { st.candidate = null; return; }
     if (st.candidate === s) {
-      story(`${who(i)} is ${st.reported ? 'now ' : ''}${ACTIVITY_LABELS[s]}: it ${ACTIVITY_SENTENCES[s]}.`, i, w.queue[w.head]);
+      story(`${who(i)} is ${st.reported ? 'now ' : ''}${ACTIVITY_LABELS[s]}: it ${ACTIVITY_SENTENCES[s]}.`, i, w.queue()[0]);
       st.reported = s;
       st.candidate = null;
     } else {
@@ -498,8 +503,9 @@ function updateTooltip() {
     return;
   }
   const c = m.cell(a);
-  const owner = m.owner[a];
-  const org = m.origin[a];
+  const v = m.watch();
+  const owner = v.owner[a] - 1;
+  const org = v.origin[a];
   let from = '';
   if (org >= 0) {
     const w = m.warriors[org >> 16];
@@ -510,20 +516,18 @@ function updateTooltip() {
   }
   const ago = (arr) => (arr[a] > 0 ? `${fmt(m.time - arr[a])} cycles ago` : 'never');
   let procs = 0;
-  for (const w of m.warriors) {
-    const cap = w.queue.length;
-    for (let k = 0, q = w.head; k < w.tasks; k++, q = q + 1 === cap ? 0 : q + 1) if (w.queue[q] === a) procs++;
-  }
   const procAt = new Set();
   for (const w of m.warriors) {
-    const cap = w.queue.length;
-    for (let k = 0, q = w.head; k < w.tasks; k++, q = q + 1 === cap ? 0 : q + 1) procAt.add(w.queue[q]);
+    for (const q of w.queue()) {
+      if (q === a) procs++;
+      procAt.add(q);
+    }
   }
   const rows = [];
   for (let d = -4; d <= 4; d++) {
     const x = (a + d + m.coreSize) % m.coreSize;
     const cx = m.cell(x);
-    const o = m.owner[x];
+    const o = v.owner[x] - 1;
     rows.push(`<div class="${d === 0 ? 'cur' : ''}"><span class="own" style="background:${o >= 0 ? PALETTE_HEX[o % 8] : 'transparent'}"></span>` +
       `<span class="addr">${pad4(x)}</span><span>${esc(formatInstruction(cx.op, cx.mod, cx.aMode, cx.aVal, cx.bMode, cx.bVal, m.coreSize))}</span>` +
       `${procAt.has(x) ? '<span style="color:#ffc53d">●</span>' : ''}</div>`);
@@ -533,7 +537,7 @@ function updateTooltip() {
     `<div class="ins">${esc(formatInstruction(c.op, c.mod, c.aMode, c.aVal, c.bMode, c.bVal, m.coreSize))}</div>` +
     `<div class="doc">${esc(OPCODE_DOCS[OPCODES[c.op]])}</div>` +
     from +
-    `<div><span class="k">write</span> ${ago(m.tWrite)} <span class="k">· exec</span> ${ago(m.tExec)}</div>` +
+    `<div><span class="k">write</span> ${ago(v.tWrite)} <span class="k">· exec</span> ${ago(v.tExec)}</div>` +
     (procs ? `<div><span class="k">processes here</span> ${procs}</div>` : '') +
     `<div class="listing">${rows.join('')}</div>`;
   const stage = $('stage').getBoundingClientRect();
@@ -649,21 +653,28 @@ function updateSourceHeat() {
   const m = state.mars;
   if (!m) return;
   const cards = $('cards').children;
+  const { origin } = m.watch();
   m.warriors.forEach((w, i) => {
     const card = cards[i];
-    if (!card) return;
+    if (!card || !state.execHeat) return;
     const ins = w.code.instructions;
     const byLine = new Map();
     let max = 0;
+    // the executions since the last call, added to the halved heat
+    const { heat, seen } = state.execHeat[i];
+    const count = w.execCount;
     for (let k = 0; k < ins.length; k++) {
-      const v = (byLine.get(ins[k].line) || 0) + w.execHeat[k];
+      heat[k] += count[k] - seen[k];
+      seen[k] = count[k];
+      const v = (byLine.get(ins[k].line) || 0) + heat[k];
       byLine.set(ins[k].line, v);
       if (v > max) max = v;
-      w.execHeat[k] *= 0.5;
+      heat[k] *= 0.5;
     }
     let pcLine = -1;
-    if (w.tasks) {
-      const org = m.origin[w.queue[w.head]];
+    const next = w.queue();
+    if (next.length) {
+      const org = origin[next[0]];
       if (org >= 0 && org >> 16 === w.index) pcLine = ins[org & 0xffff].line;
     }
     const rgb = PALETTE_RGB[i % 8];

@@ -63,16 +63,18 @@ function distance(a, b, n) {
   return Math.min(d, n - d);
 }
 
-// One trace entry as an object.
+// One trace entry of the engine's watch as an object: 4 numbers per entry
+// (pc, A pointer, B pointer, meta), instruction t at entry t % entries.
 export function traceEntry(m, t) {
-  const slot = t & (m.traceSize - 1);
-  const meta = m.traceMeta[slot];
+  const { trace } = m.watch();
+  const k = 4 * (t % (trace.length / 4));
+  const meta = trace[k + 3];
   const opByte = (meta >> 8) & 0xff;
   return {
     time: t,
-    pc: m.tracePc[slot],
-    a: m.traceA[slot],
-    b: m.traceB[slot],
+    pc: trace[k],
+    a: trace[k + 1],
+    b: trace[k + 2],
     warrior: meta & 0xff,
     op: opByte >> 3,
     mod: opByte & 7,
@@ -191,8 +193,8 @@ export class ActivityTracker {
           // Copying moves through the source, bombing reuses one source cell.
           const sameSource = e.a === this.lastSource[e.warrior];
           this.lastSource[e.warrior] = e.a;
-          const isDat = m.op[e.b] >> 3 === OP.DAT;
-          const org = m.origin[e.a];
+          const isDat = m.core().op[e.b] >> 3 === OP.DAT;
+          const org = m.watch().origin[e.a];
           const ownCode = org >= 0 && (org >> 16) === e.warrior && distance(e.a, e.pc, n) <= 100;
           if (e.mod === 6 && !isDat && ownCode && !sameSource) return ACT.copy;
           return near ? ACT.clear : ACT.bomb;

@@ -639,6 +639,7 @@ class WarriorView {
   get score() {
     const m = this.mars;
     const count = this.x.m42_warrior_scores(m.ctx, this.index, 0, 0);
+    m.mem.reset(); // scratch memory for this call only
     const at = m.mem.scratch(4 * count);
     this.x.m42_warrior_scores(m.ctx, this.index, at, count);
     return Array.from(new Uint32Array(m.bytes().buffer, at, count));
@@ -656,12 +657,21 @@ class WarriorView {
     return out;
   }
 
-  processes() {
+  // The queued addresses, the next one first, as a view of engine memory:
+  // no copy, valid until the next call into the engine (for a visualizer
+  // that reads the queues every frame).
+  queue() {
     const m = this.mars;
     const count = this.x.m42_queue(m.ctx, this.index, 0, 0);
+    m.mem.reset(); // scratch memory for this call only
     const at = m.mem.scratch(4 * count);
     this.x.m42_queue(m.ctx, this.index, at, count);
-    return Array.from(new Uint32Array(m.bytes().buffer, at, count));
+    return new Uint32Array(m.bytes().buffer, at, count);
+  }
+
+  // The queued addresses as an array, the next one first.
+  processes() {
+    return Array.from(this.queue());
   }
 }
 

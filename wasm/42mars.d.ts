@@ -169,6 +169,8 @@ export interface WarriorView {
   readonly pspace: Int32Array;
   /** Queued addresses, the next one to run first. */
   processes(): number[];
+  /** The same as a view of engine memory, without a copy: valid until the next call into the engine. */
+  queue(): Uint32Array;
   /** With { watch: true }: the cells it owns (watch().owner); its code length at round start. */
   readonly territory: number;
   /** With { watch: true }: executions of copies of each instruction of its code, by any warrior (a live view). */
