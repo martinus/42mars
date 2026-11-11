@@ -3,7 +3,7 @@
 //
 // The C library through its public header (lib/42mars.h), built natively
 // (test/native.js): test/c/api-test.c drives the functions and prints JSON,
-// which must agree with js/assembler.js and the wasm engine. Also runs
+// which must agree with the wasm build of the library. Also runs
 // lib/example.c.
 
 import { test, before, after } from 'node:test';
@@ -14,8 +14,7 @@ import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'n
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { assemble } from '../js/assembler.js';
-import { createWasmMarsSync, evaluateWasm } from '../wasm/42mars.js';
+import { createWasmMarsSync, evaluateWasm, assembleWasm as assemble } from '../wasm/42mars.js';
 import { hasCc, lines, prebuilt, program, skip } from './native.js';
 
 const root = fileURLToPath(new URL('..', import.meta.url));

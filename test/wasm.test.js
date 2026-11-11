@@ -8,9 +8,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, existsSync } from 'node:fs';
-import { assemble } from '../js/assembler.js';
 import { Mars, rng } from '../js/mars.js';
-import { compileWasmMars, createWasmMars, createWasmMarsSync, packWarrior } from '../wasm/42mars.js';
+import { compileWasmMars, createWasmMars, createWasmMarsSync, packWarrior, assembleWasm as assemble } from '../wasm/42mars.js';
 
 const module = await compileWasmMars();
 

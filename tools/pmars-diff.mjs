@@ -23,8 +23,6 @@
 // --wasm-match plays each battle with one runMatch() call with early tie
 // detection, which leaves the final core of some rounds different, so it
 // compares the scores only and does not go with --pmars-trace.
-// --wasm-asm assembles our side with the C assembler (lib/src/asm.c through
-// wasm/42mars.js) instead of js/assembler.js.
 // --permute runs the battles and fuzz sections with pMARS's -P and our
 // engines with `permute` (seed 2 * (-F position - distance)); multi is
 // skipped, -P takes two warriors only.
@@ -58,8 +56,6 @@ import { execFile } from 'node:child_process';
 import { mkdirSync, readFileSync, readdirSync, writeFileSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir, cpus } from 'node:os';
 import { join } from 'node:path';
-import { assemble } from '../js/assembler.js';
-import { Evaluator } from '../js/expr.js';
 import { Mars } from '../js/mars.js';
 import { assembleWasm, compileWasmMars, createWasmMarsSync } from '../wasm/42mars.js';
 import { formatListing } from '../js/opcodes.js';
@@ -85,12 +81,9 @@ const HEADLESS = args.includes('--headless');
 const WASM_MATCH = args.includes('--wasm-match');
 const PERMUTE = args.includes('--permute');
 const WASM = args.includes('--wasm') || WASM_MATCH ? await compileWasmMars() : null;
-// --wasm-asm: our side assembles with the C assembler (lib/src/asm.c);
-// usable() keeps the JS one, whose evaluator it instruments.
-const assembleWith = args.includes('--wasm-asm') ? assembleWasm : assemble;
 // --icws88: every pMARS call gets -8 (rules()), every assembly icws88.
 const ICWS88 = args.includes('--icws88');
-const ourAssemble = ICWS88 ? (source, o = {}) => assembleWith(source, { ...o, icws88: true }) : assembleWith;
+const ourAssemble = ICWS88 ? (source, o = {}) => assembleWasm(source, { ...o, icws88: true }) : assembleWasm;
 if (WASM_MATCH && TRACE) {
   console.error('--wasm-match compares scores only; leave out --pmars-trace');
   process.exit(2);
@@ -222,44 +215,18 @@ async function listings() {
 
 // ---------------------------------------------------------------- usable cases
 
-// While our assembler runs, these hooks record what pMARS cannot handle: the
-// largest absolute expression value (pMARS takes about |value| / coreSize
-// steps to reduce it), a lone `!`, `=`, `&` or `|` where an operator is
-// expected (pMARS reads an uninitialized variable then) and -2^63 divided by
-// -1 (pMARS crashes).
-let largest = 0n;
-let undefinedCase = false;
-const MIN_INT = -(1n << 63n);
-const hooks = Evaluator.prototype;
-const plain = { evaluate: hooks.evaluate, operator: hooks.operator, apply: hooks.apply };
-hooks.evaluate = function evaluate(text) {
-  const r = plain.evaluate.call(this, text);
-  const a = r.value < 0n ? -r.value : r.value;
-  if (a > largest) largest = a;
-  return r;
-};
-hooks.operator = function operator() {
-  const c = this.peek();
-  if ('!=&|'.includes(c) && this.peek(1) !== (c === '!' ? '=' : c)) undefinedCase = true;
-  return plain.operator.call(this);
-};
-hooks.apply = function apply(op, a, b) {
-  if (a === MIN_INT && b === -1n) undefinedCase = true;
-  return plain.apply.call(this, op, a, b);
-};
-
 // False for a source on which pMARS would not terminate (or take very long)
 // or has an undefined result: a line longer than 255 characters, a `\` at
-// the end of the last line, a huge operand value, or the expression cases
-// above.
+// the end of the last line, and the expressions our assembler warns about
+// with a text that starts with "pMARS": a value of 2^40 or more (pMARS takes
+// about |value| / coreSize steps to reduce it), a lone `!`, `=`, `&` or `|`
+// where an operator is expected (pMARS reads an uninitialized variable then)
+// and -2^63 divided by -1 (pMARS crashes).
 function usable(src) {
   const lines = src.split('\n');
   if (lines.some((l) => l.length > 240)) return false;
   if (/\\\r?$/.test(lines[lines.length - 1] || lines[lines.length - 2] || '')) return false;
-  largest = 0n;
-  undefinedCase = false;
-  assemble(src, { ...STANDARD, warriors: 1, rounds: 0 });
-  return largest < 1n << 40n && !undefinedCase;
+  return !assembleWasm(src, { ...STANDARD, warriors: 1, rounds: 0 }).warnings.some((w) => w.text.startsWith('pMARS '));
 }
 
 // Calls `make` until it returns a usable source.

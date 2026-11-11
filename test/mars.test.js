@@ -4,7 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, existsSync } from 'node:fs';
-import { assemble } from '../js/assembler.js';
+import { assembleWasm as assemble } from '../wasm/42mars.js';
 import { Mars, rng } from '../js/mars.js';
 import { formatInstruction } from '../js/opcodes.js';
 

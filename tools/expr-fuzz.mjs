@@ -4,13 +4,10 @@
 //
 // Differential fuzzer for the expression evaluator. Feeds random expressions
 // through an external evaluator program (used as a black box) and compares
-// with js/expr.js.
+// with the evaluator of lib/src/asm.c (through wasm/42mars.js).
 //
 //   node tools/expr-fuzz.mjs --eval path/to/evaluator [--n 500000] [--seed 1]
-//        [--jobs 16] [--show 20] [--wasm]
-//
-// --wasm compares the C evaluator (lib/src/asm.c through wasm/42mars.js)
-// instead of js/expr.js.
+//        [--jobs 16] [--show 20]
 //
 // The external program reads one expression per line on stdin and prints
 // `status value` per line (status 0 ok, 1 overflow, -1 bad expression, -2
@@ -18,12 +15,13 @@
 //
 // Expressions whose result is undefined in the reference are left out and
 // counted: a lone `!`, `=`, `&` or `|` where an operator is expected, and
-// dividing -2^63 by -1 (which crashes a C implementation).
+// dividing -2^63 by -1 (which crashes a C implementation). The assembler
+// warns about both ("pMARS has no defined result", "pMARS crashes"); an
+// `;assert` line evaluates the text as it is.
 
 import { spawn } from 'node:child_process';
 import { cpus } from 'node:os';
-import { Evaluator } from '../js/expr.js';
-import { evaluateWasm } from '../wasm/42mars.js';
+import { assembleWasm, compileWasmMars, evaluateWasm } from '../wasm/42mars.js';
 
 const args = process.argv.slice(2);
 const arg = (name, dflt) => {
@@ -31,7 +29,8 @@ const arg = (name, dflt) => {
   return i >= 0 ? args[i + 1] : dflt;
 };
 const EVAL = arg('eval');
-const ourEvaluate = args.includes('--wasm') ? (e) => evaluateWasm(e) : (e) => new Evaluator().evaluate(e);
+await compileWasmMars();
+const ourEvaluate = (e) => evaluateWasm(e);
 if (!EVAL) {
   console.error('usage: node tools/expr-fuzz.mjs --eval path/to/evaluator [--n 500000] [--seed 1] [--jobs n] [--show n]');
   process.exit(2);
@@ -93,28 +92,10 @@ function noise(e) {
   return rand(2) ? e.slice(0, at) + c + e.slice(at) : e.slice(0, at) + e.slice(at + 1);
 }
 
-// Finds out whether evaluating `text` reaches an undefined case. Uses the
-// engine's own control flow, which visits the same positions as the reference.
-class UndefinedProbe extends Evaluator {
-  operator() {
-    const c = this.peek();
-    const c2 = this.peek(1);
-    if ('!=&|'.includes(c) && !(c2 === (c === '!' ? '=' : c))) this.undefined = true;
-    return super.operator();
-  }
-
-  // Any operator with these operands is left out, which covers / and %.
-  apply(op, a, b) {
-    if (a === -(1n << 63n) && b === -1n) this.undefined = true;
-    return super.apply(op, a, b);
-  }
-}
-
+// Whether evaluating `text` reaches an undefined case: the assembler's
+// warnings for it in an `;assert` line.
 function isUndefined(text) {
-  const p = new UndefinedProbe();
-  p.undefined = false;
-  p.evaluate(text);
-  return p.undefined;
+  return assembleWasm(`;assert ${text}\n dat 0\n`).warnings.some((w) => /^pMARS (has no defined result|crashes)/.test(w.text));
 }
 
 // ---------------------------------------------------------------- run

@@ -3,7 +3,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { assemble } from '../js/assembler.js';
+import { assembleWasm as assemble } from '../wasm/42mars.js';
 import { formatInstruction, formatListing } from '../js/opcodes.js';
 
 const N = 8000;
@@ -211,4 +211,25 @@ test('listing uses the pMARS layout', () => {
   const w = assemble(';name Imp\n;author A. K. Dewdney\nimp mov.i imp, imp+1\nend imp\n');
   assert.equal(formatListing(w, 8000),
     'Program "Imp" (length 1) by "A. K. Dewdney"\n\n       ORG      START\nSTART  MOV.I  $     0, $     1     \n');
+});
+
+test('warnings where pMARS has no defined result or takes very long', () => {
+  const pmarsWarnings = (src) => assemble(`;assert 1\n${src}`).warnings.filter((m) => m.text.startsWith('pMARS ')).map((m) => [m.line, m.text]);
+  // a lone ! = & or | where an operator belongs, in an operand, an assert and a FOR count
+  assert.deepEqual(pmarsWarnings(' dat 1!2\n'), [[2, "pMARS has no defined result for '1!2': a lone ! = & or | where an operator belongs"]]);
+  assert.deepEqual(pmarsWarnings(';assert 1&2\n dat 0\n'), [[2, "pMARS has no defined result for '1&2': a lone ! = & or | where an operator belongs"]]);
+  assert.deepEqual(pmarsWarnings(' for 2=1\n rof\n dat 0\n').map((w) => w[0]), [2]);
+  assert.equal(pmarsWarnings(' dat 1|2\n').length, 1);
+  // the operators made of two characters are fine
+  assert.deepEqual(pmarsWarnings(' dat 1!=2, 1==2\n dat 1&&2, 1||2\n dat a=1, !1\n'), []);
+  // -2^63 / -1 and % -1; the product wraps without a crash
+  assert.deepEqual(pmarsWarnings(' dat (-9223372036854775807-1)/-1\n'), [
+    [2, "pMARS crashes on -2^63 / -1 in '(-9223372036854775807-1)/-1'"],
+    [2, "pMARS takes very long for the value of '(-9223372036854775807-1)/-1'"],
+  ]);
+  assert.deepEqual(pmarsWarnings(' dat (-9223372036854775807-1)%-1\n'), [[2, "pMARS crashes on -2^63 / -1 in '(-9223372036854775807-1)%-1'"]]);
+  // values from 2^40 on, also negative ones and in PIN
+  assert.deepEqual(pmarsWarnings(' dat 1099511627775, -1099511627775\n'), []);
+  assert.equal(pmarsWarnings(' dat 1099511627776, -1099511627776\n').length, 2);
+  assert.deepEqual(pmarsWarnings(' dat 0\n pin 1099511627776\n'), [[3, "pMARS takes very long for the value of '1099511627776'"]]);
 });

@@ -577,10 +577,9 @@ class WarriorView {
 
 // ---------------------------------------------------------------- assembler
 
-// The C assembler and evaluator (lib/src/asm.c) with the interface of
-// js/assembler.js and js/expr.js:
-//   assembleWasm(source, options)  same object as assemble()
-//   evaluateWasm(text)             same { status, value } as Evaluator.evaluate()
+// The C assembler and evaluator (lib/src/asm.c):
+//   assembleWasm(source, options)  the warrior object (Warrior in 42mars.d.ts)
+//   evaluateWasm(text)             { status, value } of one expression
 // Both use one module instance per module, created on first use. In a
 // browser, call compileWasmMars() first or pass the module.
 //
@@ -633,7 +632,7 @@ function assembleWith(x, mem, source, options) {
   writeRules(mem, rules, o, o.warriors);
   const src = mem.scratch(bytes.length);
   mem.views().u8.set(bytes, src);
-  // Registers to start with, e.g. { s: 2, w: 2 }, as js/assembler.js.
+  // Registers to start with, e.g. { s: 2, w: 2 }; the others start at 0.
   let regs = 0;
   if (o.registers) {
     regs = mem.scratch(8 * 26);

@@ -1,11 +1,10 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 Martin Leitner-Ankerl
 
-// Redcode assembler and expression evaluator: the C port of js/assembler.js
-// and js/expr.js, with the same results, pMARS quirks included
-// (docs/redcode-semantics.md, sections 1 and 2). The functions follow the
-// JS code one to one and keep its names, so that both can be read side by
-// side.
+// Redcode assembler and expression evaluator with the results of pMARS,
+// quirks included (docs/redcode-semantics.md, sections 1 and 2). It started
+// as a port of the JavaScript assembler js/assembler.js and js/expr.js
+// (removed in November 2026), and the function names come from there.
 //
 // No libc and no global state. All memory comes from the caller: one block,
 // used as a bump arena. When it is too small, assemble() returns 0 and the
@@ -133,7 +132,7 @@ static void put_counter(Arena *A, Buf *b, i64 v) {
 
 enum { EVAL_OK = 0, EVAL_OVERFLOW = 1, EVAL_BAD = -1, EVAL_DIV_ZERO = -2 };
 
-// Operators, see js/expr.js.
+// Operators and their precedence (semantics doc, section 1).
 enum { NONE = -1, IDENTITY, MUL, DIV, MOD, ADD, SUB, EQ, NE, LT, GT, LE, GE, AND, OR, BAD_OP };
 static const int PREC[] = {0, 5, 5, 5, 4, 4, 3, 3, 3, 3, 3, 3, 2, 1, 0};
 
@@ -150,6 +149,10 @@ typedef struct {
   int saved;
   u32 depth;
   int tooDeep;
+  // Where pMARS has no defined result (assemble_eval() warns): a lone ! = &
+  // or | where an operator belongs (pMARS reads uninitialized memory), and
+  // -2^63 divided by -1 (pMARS crashes).
+  int loneOperator, minDivMinusOne;
 } Evaluator;
 
 static int ev_peek(const Evaluator *e, u32 offset) {
@@ -200,6 +203,7 @@ static i64 ev_apply(Evaluator *e, int op, i64 a, i64 b) {
     case MOD:
       if (b == 0) return ev_fail(e, EVAL_DIV_ZERO);
       // -2^63 / -1 wraps to -2^63, its remainder is 0 (C would trap).
+      if (b == -1 && a == -I64_MAX - 1) e->minDivMinusOne = 1;
       if (b == -1) return op == DIV ? (i64)(0 - (u64)a) : 0;
       return op == DIV ? a / b : a % b;
     case EQ: return a == b;
@@ -217,8 +221,9 @@ static i64 ev_apply(Evaluator *e, int op, i64 a, i64 b) {
 static i64 ev_operand(Evaluator *e);
 
 // Continues an expression whose left value is `acc` and whose pending
-// operator is `op1`, with the pMARS quirks of js/expr.js: `saved` is one
-// variable for all levels, and a handed-back `==` is dropped.
+// operator is `op1`, with the pMARS quirks of section 1 of the semantics
+// doc: `saved` is one variable for all levels, and a handed-back `==` is
+// dropped.
 static i64 ev_expression(Evaluator *e, int minPrec, i64 acc, int op1) {
   if (e->tooDeep || e->depth >= MAX_EVAL_DEPTH) { e->tooDeep = 1; return 0; }
   e->depth++;
@@ -247,6 +252,7 @@ static i64 ev_expression(Evaluator *e, int minPrec, i64 acc, int op1) {
       case '|': if (c2 == '|') { op2 = OR; w = 2; } break;
       default: break;
     }
+    if (op2 == BAD_OP && (c == '=' || c == '!' || c == '&' || c == '|')) e->loneOperator = 1;
     e->pos += w;
     if (PREC[op1] >= PREC[op2]) {
       // op2 does not bind tighter: finish op1 first.
@@ -331,6 +337,7 @@ static int evaluate(Evaluator *e, Str text, i64 *value) {
   e->status = EVAL_OK;
   e->depth = 0;
   e->tooDeep = 0;
+  e->loneOperator = e->minDivMinusOne = 0;
   i64 v = ev_expression(e, -1, 0, IDENTITY);
   if (e->pos < e->len) e->status = EVAL_BAD;
   if (e->tooDeep) { e->status = EVAL_BAD; v = 0; }
@@ -351,8 +358,7 @@ enum { MOD_A, MOD_B, MOD_AB, MOD_BA, MOD_F, MOD_X, MOD_I };
 static const char MODE_SYMBOLS[] = "#$@<>*{}";
 
 // ICWS'88 (icws88, pmars -8): the modes the A and the B operand of each
-// opcode may have; none for the opcodes it does not have (js/assembler.js,
-// ICWS88_MODES).
+// opcode may have; none for the opcodes it does not have.
 static const char *const ICWS88_MODES[OP_ORG][2] = {
   [OP_MOV] = {"#$@<", "$@<"}, [OP_ADD] = {"#$@<", "$@<"}, [OP_SUB] = {"#$@<", "$@<"}, [OP_CMP] = {"#$@<", "$@<"},
   [OP_JMP] = {"$@<", "#$@<"}, [OP_JMZ] = {"$@<", "#$@<"}, [OP_JMN] = {"$@<", "#$@<"}, [OP_DJN] = {"$@<", "#$@<"},
@@ -451,7 +457,7 @@ typedef struct {
 // ---------------------------------------------------------------- state
 
 // A set of EQU names, as a list: an expansion adds one name to the set of
-// the text it came from. 0 is "no set" (source text), which JS writes as null.
+// the text it came from. 0 is "no set" (source text).
 typedef struct Active {
   Str name;
   const struct Active *next;
@@ -510,7 +516,7 @@ typedef struct {
   // messages
   AsmMsg *errors, *warnings;
   u32 nErrors, capErrors, nWarnings, capWarnings;
-  // the scratch buffer of pMARS (see js/assembler.js, class Scratch)
+  // the scratch buffer of pMARS (semantics doc, "The scratch buffer")
   u8 *scratch;
   u32 scratchCap;
   // symbols: open addressing, a power of two
@@ -559,6 +565,21 @@ static Str msg3(Asm *a, const char *before, Str value, const char *after) {
   put(&a->A, &b, value);
   putc_(&a->A, &b, after);
   return buf_str(&b);
+}
+
+// evaluate() for the assembler, with a warning where pMARS has no defined
+// result or takes very long (semantics doc, section 4): a lone ! = & or |
+// where an operator belongs, -2^63 / -1, and a value of 2^40 or more, which
+// pMARS reduces to the core size by about |value| / core size subtractions.
+// The texts start with "pMARS": the tests leave them out of the warnings
+// they compare with pMARS's, and tools/pmars-diff.mjs skips such sources.
+M42_FORCE_INLINE int assemble_eval(Asm *a, Str text, i32 line, i64 *value) {
+  const int status = evaluate(&a->ev, text, value);
+  if (a->ev.loneOperator) warning(a, line, msg3(a, "pMARS has no defined result for '", text, "': a lone ! = & or | where an operator belongs"));
+  if (a->ev.minDivMinusOne) warning(a, line, msg3(a, "pMARS crashes on -2^63 / -1 in '", text, "'"));
+  const u64 magnitude = *value < 0 ? 0 - (u64)*value : (u64)*value;
+  if (magnitude >= 1ull << 40) warning(a, line, msg3(a, "pMARS takes very long for the value of '", text, "'"));
+  return status;
 }
 
 // Length of the UTF-8 sequence that starts at s[i] (1 for a byte that is not
@@ -1182,7 +1203,7 @@ static void for_line(Asm *a, Cursor *c, Stream *s) {
   Str text;
   if (!operand_text(a, c, s, 0, &text)) return;
   i64 value;
-  const int status = evaluate(&a->ev, text, &value);
+  const int status = assemble_eval(a, text, c->lineNo, &value);
   if (status < 0) {
     error(a, c->lineNo, msg3(a, "bad FOR count '", js_trim(a, text), "'"));
     return;
@@ -1266,7 +1287,7 @@ static void assert_line(Asm *a, const Line *line, Stream *s) {
   Str text;
   if (!operand_text(a, &c, s, 0, &text)) return;
   i64 value;
-  const int status = evaluate(&a->ev, text, &value);
+  const int status = assemble_eval(a, text, line->lineNo, &value);
   if (status < 0) {
     warning(a, line->lineNo, msg3(a, "invalid assert '", js_trim(a, text), "'"));
     return;
@@ -1401,7 +1422,7 @@ static int st_expression(Asm *a, STokens *ts, int absolute, i32 line, int stopAt
 
 // Evaluates an expression; returns 0 after an error.
 static int st_evaluate(Asm *a, Str text, i32 line, i64 *value) {
-  const int status = evaluate(&a->ev, text, value);
+  const int status = assemble_eval(a, text, line, value);
   if (status < 0) {
     error(a, line, status == EVAL_DIV_ZERO ? msg3(a, "division by zero in '", text, "'") : msg3(a, "bad expression '", text, "'"));
     return 0;
@@ -1540,8 +1561,8 @@ static void parse_statement(Asm *a, const Statement *stmt) {
 
 static AsmText text_of(Str s) { return (AsmText){s.p, s.n}; }
 
-// Assembles `len` bytes of `src` with the options `o` (0 fields get the
-// defaults of js/assembler.js). `mem` is the working memory, `size` bytes;
+// Assembles `len` bytes of `src` with the options `o` (0 fields get pMARS's
+// defaults). `mem` is the working memory, `size` bytes;
 // the result lives in it. Returns 0 when it is too small or the options are
 // invalid (core size below 1).
 static AsmResult *assemble(void *mem, usize size, const u8 *src, usize len, const AsmOptions *opts) {
