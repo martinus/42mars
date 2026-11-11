@@ -42,6 +42,14 @@ function randomWarrior(len, coreSize, loop) {
   return lines.join('\n') + '\n';
 }
 
+// nw random warriors that assemble for rules o, or null.
+function randomCodes(o, nw) {
+  const codes = Array.from({ length: nw }, () => assemble(randomWarrior(1 + rand(o.maxLength), o.coreSize, rand(2) === 0), { ...o, warriors: nw }));
+  return codes.every((c) => c.ok && c.instructions.length <= o.maxLength) ? codes : null;
+}
+
+const sample = (name) => assemble(readFileSync(new URL(`../warriors/${name}.red`, import.meta.url), 'latin1'));
+
 const RULES = [
   { coreSize: 80, maxCycles: 800, maxProcesses: 80, maxLength: 5, minDistance: 5 },
   { coreSize: 800, maxCycles: 8000, maxProcesses: 800, maxLength: 20, minDistance: 20 },
@@ -54,33 +62,41 @@ const RULES = [
 ];
 
 const NEVER = -0x40000000; // mars.js's time of a cell not touched yet
+const queue = (W) => Array.from({ length: W.tasks }, (_, k) => W.queue[(W.head + k) % W.queue.length]);
 
+// The watch, the core and the queues against mars.js. The messages are
+// made only for a difference: this runs after every chunk.
 function compareWatch(m, w, where) {
   const v = w.watch();
+  const c = w.core();
   const n = m.coreSize;
+  const fail = (what, got, want) => assert.fail(`${where}, ${what}: ${got}, mars.js ${want}`);
   for (let i = 0; i < n; i++) {
-    const at = `${where}, cell ${i}`;
-    if (v.owner[i] !== m.owner[i] + 1) assert.fail(`${at}: owner ${v.owner[i] - 1}, mars.js ${m.owner[i]}`);
-    if (v.execBy[i] !== m.execBy[i] + 1) assert.fail(`${at}: execBy ${v.execBy[i] - 1}, mars.js ${m.execBy[i]}`);
-    if (v.readBy[i] !== m.readBy[i] + 1) assert.fail(`${at}: readBy ${v.readBy[i] - 1}, mars.js ${m.readBy[i]}`);
-    if (v.bump[i] !== m.bump[i]) assert.fail(`${at}: bump ${v.bump[i]}, mars.js ${m.bump[i]}`);
-    if (v.origin[i] !== m.origin[i]) assert.fail(`${at}: origin ${v.origin[i]}, mars.js ${m.origin[i]}`);
-    for (const k of ['tWrite', 'tRead', 'tExec']) {
-      const want = m[k][i] === NEVER ? 0 : m[k][i];
-      if (v[k][i] !== want) assert.fail(`${at}: ${k} ${v[k][i]}, mars.js ${m[k][i]}`);
+    if (v.owner[i] !== m.owner[i] + 1) fail(`cell ${i} owner`, v.owner[i] - 1, m.owner[i]);
+    if (v.execBy[i] !== m.execBy[i] + 1) fail(`cell ${i} execBy`, v.execBy[i] - 1, m.execBy[i]);
+    if (v.readBy[i] !== m.readBy[i] + 1) fail(`cell ${i} readBy`, v.readBy[i] - 1, m.readBy[i]);
+    if (v.bump[i] !== m.bump[i]) fail(`cell ${i} bump`, v.bump[i], m.bump[i]);
+    if (v.origin[i] !== m.origin[i]) fail(`cell ${i} origin`, v.origin[i], m.origin[i]);
+    if (v.tWrite[i] !== (m.tWrite[i] === NEVER ? 0 : m.tWrite[i])) fail(`cell ${i} tWrite`, v.tWrite[i], m.tWrite[i]);
+    if (v.tRead[i] !== (m.tRead[i] === NEVER ? 0 : m.tRead[i])) fail(`cell ${i} tRead`, v.tRead[i], m.tRead[i]);
+    if (v.tExec[i] !== (m.tExec[i] === NEVER ? 0 : m.tExec[i])) fail(`cell ${i} tExec`, v.tExec[i], m.tExec[i]);
+    if (c.op[i] !== m.op[i] || c.am[i] !== m.am[i] || c.bm[i] !== m.bm[i] || c.av[i] !== m.av[i] || c.bv[i] !== m.bv[i]) {
+      fail(`cell ${i}`, JSON.stringify(w.cell(i)), JSON.stringify(m.cell(i)));
     }
   }
   m.warriors.forEach((M, i) => {
     const W = w.warriors[i];
     assert.equal(W.territory, M.territory, `${where}, warrior ${i}: territory`);
     assert.deepEqual(Array.from(W.execCount), Array.from(M.execHeat), `${where}, warrior ${i}: execCount`);
+    assert.deepEqual(W.processes(), queue(M), `${where}, warrior ${i}: queue`);
   });
   // The trace of the instructions of this round that it still holds.
-  for (let t = Math.max(1, m.time - 4095); t <= m.time; t++) {
-    const k = t & 4095;
-    const got = Array.from(v.trace.subarray(4 * k, 4 * k + 4));
-    const want = [m.tracePc[k], m.traceA[k], m.traceB[k], m.traceMeta[k]];
-    if (got.join() !== want.join()) assert.fail(`${where}: trace at time ${t}: ${got}, mars.js ${want}`);
+  const T = v.trace.length / 4;
+  for (let t = Math.max(1, m.time - T + 1); t <= m.time; t++) {
+    const k = t % T;
+    if (v.trace[4 * k] !== m.tracePc[k] || v.trace[4 * k + 1] !== m.traceA[k] || v.trace[4 * k + 2] !== m.traceB[k] || v.trace[4 * k + 3] !== m.traceMeta[k]) {
+      fail(`trace at time ${t}`, v.trace.subarray(4 * k, 4 * k + 4).join(), [m.tracePc[k], m.traceA[k], m.traceB[k], m.traceMeta[k]].join());
+    }
   }
 }
 
@@ -116,8 +132,8 @@ test('the watch agrees with the bookkeeping of mars.js on random battles', () =>
     const o = RULES[i % RULES.length];
     const most = Math.max(1, Math.min(4, o.minDistance ? Math.floor(o.coreSize / o.minDistance) : 4));
     const nw = most === 1 ? 1 : 2 + rand(most - 1);
-    const codes = Array.from({ length: nw }, () => assemble(randomWarrior(1 + rand(o.maxLength), o.coreSize, rand(2) === 0), { ...o, warriors: nw }));
-    if (!codes.every((c) => c.ok && c.instructions.length <= o.maxLength)) continue;
+    const codes = randomCodes(o, nw);
+    if (!codes) continue;
     compareMatch(o, codes, rand(2147483646) + 1, 1 + rand(3));
     battles++;
   }
@@ -125,16 +141,59 @@ test('the watch agrees with the bookkeeping of mars.js on random battles', () =>
 });
 
 test('the watch agrees with mars.js on the sample warriors', () => {
-  const read = (f) => assemble(readFileSync(new URL(`../warriors/${f}.red`, import.meta.url), 'latin1'));
-  const all = ['dwarf', 'imp', 'lantern', 'origami', 'seeker'].map(read);
+  const all = ['dwarf', 'imp', 'lantern', 'origami', 'seeker'].map(sample);
   for (let i = 0; i < all.length; i++) {
     compareMatch({}, [all[i], all[(i + 1) % all.length]], 1000 + i, 2);
   }
   compareMatch({ warriors: 3 }, all.slice(0, 3), 77, 1);
 });
 
+// Without mars.js: the flags of each trace entry against what the
+// instruction did to its warrior's queue, one instruction at a time. The
+// queue loses its head and gains what the instruction queued: nothing when
+// the process died, the A pointer for a jump, pc + 2 for a skip, pc + 1 and
+// the A pointer for SPL with room for a process, else pc + 1.
+test('the trace flags agree with what each instruction did to its queue', () => {
+  const DIED = 0x40000, NEW_PROCESS = 0x20000, SKIPPED = 0x80000;
+  let checked = 0;
+  for (let i = 0; i < 60; i++) {
+    const o = [RULES[0], RULES[1], RULES[2], RULES[6], RULES[7]][i % 5];
+    const nw = 2 + rand(2);
+    const codes = randomCodes(o, nw);
+    if (!codes) continue;
+    const w = createWasmMarsSync({ ...o, watch: true }, module);
+    w.load(codes, { seed: rand(2147483646) + 1 });
+    const n = o.coreSize;
+    for (let round = 0; round < 4; round++) {
+      w.startRound();
+      for (let step = 0; step < 2000 && !w.roundOver; step++) {
+        const cur = w.current;
+        const before = w.warriors[cur].processes();
+        w.run(1);
+        const added = w.warriors[cur].processes().slice(before.length - 1);
+        const k = 4 * (w.time % (w.watch().trace.length / 4));
+        const [pc, a, , meta] = w.watch().trace.subarray(k, k + 4);
+        const opcode = (meta >> 11) & 31;
+        const at = `${JSON.stringify(o)} time ${w.time}: opcode ${opcode}, meta ${meta.toString(16)}, queued ${added}`;
+        assert.equal(pc, before[0], `${at}: pc`);
+        assert.equal(meta & 0xff, cur, `${at}: warrior`);
+        let want = [(pc + 1) % n];
+        if (meta & DIED) want = [];
+        else if (opcode === 11) want = meta & NEW_PROCESS ? [(pc + 1) % n, a] : [(pc + 1) % n];
+        else if (opcode === 13 || ([6, 7, 8].includes(opcode) && meta & NEW_PROCESS)) want = [a];
+        else if (meta & SKIPPED) want = [(pc + 2) % n];
+        assert.deepEqual(added, want, at);
+        if (meta & SKIPPED) assert.ok([9, 10, 14, 15].includes(opcode), `${at}: a skip`);
+        if (meta & NEW_PROCESS) assert.ok([6, 7, 8, 11, 13].includes(opcode), `${at}: a new process`);
+        checked++;
+      }
+    }
+  }
+  assert.ok(checked > 20000, `only ${checked} instructions`);
+});
+
 test('runMatch with a watch attached gives the same match and leaves the watch alone', () => {
-  const codes = ['dwarf', 'imp'].map((f) => assemble(readFileSync(new URL(`../warriors/${f}.red`, import.meta.url), 'latin1')));
+  const codes = ['dwarf', 'imp'].map(sample);
   const plain = createWasmMarsSync({}, module).runMatch(codes, { rounds: 20, seed: 5 });
   const w = createWasmMarsSync({ watch: true }, module);
   w.load(codes, { seed: 5 });
@@ -146,7 +205,19 @@ test('runMatch with a watch attached gives the same match and leaves the watch a
   assert.deepEqual(w.watch().tExec, before);
 });
 
-test('watch() needs { watch: true }', () => {
-  const w = createWasmMarsSync({}, module);
-  assert.throws(() => w.watch(), /watch: true/);
+test('the trace and the deaths have the sizes of 42mars.h', () => {
+  const header = readFileSync(new URL('../lib/42mars.h', import.meta.url), 'latin1');
+  const size = (name) => Number(header.match(new RegExp(`#define ${name} (\\d+)`))[1]);
+  const w = createWasmMarsSync({ watch: true }, module);
+  w.load([sample('imp')]);
+  assert.equal(w.watch().trace.length, 4 * size('M42_TRACE_SIZE'));
+  assert.equal(w.watch().death.length, 4 * size('M42_DEATH_SIZE'));
+});
+
+test('watch() needs { watch: true } and a load()', () => {
+  assert.throws(() => createWasmMarsSync({}, module).watch(), /watch: true/);
+  assert.throws(() => createWasmMarsSync({ watch: true }, module).watch(), /first load/);
+  // a maxLength the watch cannot number
+  const w = createWasmMarsSync({ watch: true, maxLength: 65537 }, module);
+  assert.throws(() => w.load([assemble(' dat 0\n')]), /rule out of range/);
 });
