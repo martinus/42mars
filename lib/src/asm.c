@@ -1661,11 +1661,12 @@ static void parse_statement(Asm *a, const Statement *stmt) {
 
   if (op >= OP_ORG) {
     if (mod != -2) { error(a, line, msg3(a, OPCODES[op], (Str){0, 0}, " takes no modifier")); return; }
-    if (op != OP_END && st_peek(a, &ts).t == S_END) { error(a, line, msg3(a, OPCODES[op], (Str){0, 0}, " needs an operand")); return; }
     Str e;
-    if (!st_expression(a, &ts, 1, line, 0, &e) || failed(a) || !e.n) return;
-    i64 v;
-    if (!st_evaluate(a, e, line, &v)) return;
+    if (!st_expression(a, &ts, 1, line, 0, &e) || failed(a)) return;
+    // An empty operand counts as 0, as in pMARS: `org` sets the start to 0,
+    // `pin` is `pin 0`, `end` changes nothing.
+    i64 v = 0;
+    if (e.n && !st_evaluate(a, e, line, &v)) return;
     if (op == OP_ORG) a->start = normalize(a, v);
     else if (op == OP_PIN) { a->hasPin = 1; a->pin = v; }
     else if (v != 0) {
