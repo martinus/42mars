@@ -15,7 +15,7 @@ How the repository is laid out, how to build and test it, how to compare it with
 | [`bench/`](../bench) | Everything that measures speed: `bench`, `bench-pairs`, `bench-native` (the C code built natively), `tie-ceiling`, `wasm-functions`, and `ab-wasm`, `ab-native`, `ab-tool` for alternating A/B timing. |
 | [`test/`](../test) | `npm test`: [node:test](https://nodejs.org/api/test.html) files, the C test program in `test/c/`, the fuzz targets in `test/fuzz/` (`make fuzz`), results recorded from pMARS and from the removed JavaScript engines in `test/fixtures/`. |
 | [`docs/`](.) | The semantics, the plan, the [performance log](performance-log.md) with every speed experiment, this guide, the README chart ([`images/speed.mjs`](images/speed.mjs)) and the logo ([`images/logo.svg`](images/logo.svg)). |
-| [`warriors/`](../warriors) | Sample warriors written for this repository, and Dewdney's Imp and Dwarf. |
+| [`warriors/`](../warriors) | Sample warriors written for this repository, and Dewdney's Imp and Dwarf. In [`warriors/koenigstuhl/`](../warriors/koenigstuhl): 5,261 warriors of the Koenigstuhl hills, downloaded 12th November 2026, without a license: test material, see its README. |
 
 No dependencies: Node 20 or newer for the tests and tools, a C11 compiler for the library, clang 22 with the wasm32 target for the WebAssembly module.
 

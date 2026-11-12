@@ -1,0 +1,17 @@
+;redcode-94nop
+;name imp pump
+;author P.Kline
+;assert CORESIZE == 8000
+
+impsz     equ     2667
+points    equ     3
+
+pStart    spl     1      ; create (points+1)/2 processes
+pump      spl     #impsz*2,#impsz*2
+         add     pump    ,jmp2
+jmp1      spl     @jmp2
+jmp2      jmp     imp-impsz*(points+1)*2,imp+impsz-impsz*(points+1)*2
+imp       mov.i   #100   ,2667
+
+	end
+

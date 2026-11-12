@@ -94,15 +94,15 @@ jobs:
   #   PMARS_BUILD          a shell command, run in the unpacked archive, that
   #                        builds the server version (-DSERVER -DEXT94
   #                        -DPERMUTATE -DRWLIMIT) and leaves the binary at $PMARS_OUT
-  #   CORPUS_COMMIT        the commit of github.com/n1LS/redcode-warriors whose
-  #                        .red files are the corpus (their licenses are
-  #                        unclear: fetched here, never committed)
-  # The binary is cached by the archive's hash and the build command. CI
+  # The corpus is in the repository: warriors/koenigstuhl/94nop (1107 hill
+  # warriors), its first 20 files for the tournament, and
+  # warriors/koenigstuhl/88 for the ICWS'88 listings. The binary is cached by
+  # the archive's hash and the build command. CI
   # compares scores, listings and outputs: the per-round instruction counts
   # and core hashes (--pmars-trace) and pMARS's evaluator (tools/expr-fuzz.mjs)
   # need patched builds and stay local checks. The seed is the run id.
   pmars:
-    if: vars.PMARS_SOURCE_URL != '' && vars.PMARS_SOURCE_SHA256 != '' && vars.PMARS_BUILD != '' && vars.CORPUS_COMMIT != ''
+    if: vars.PMARS_SOURCE_URL != '' && vars.PMARS_SOURCE_SHA256 != '' && vars.PMARS_BUILD != ''
     runs-on: ubuntu-latest
     env:
       PMARS_OUT: ${{ github.workspace }}/../ref-bin/pmars
@@ -142,29 +142,21 @@ jobs:
             exit 1
           fi
           rm -rf "$src" "$RUNNER_TEMP/ref-archive"
-      - name: the corpus at CORPUS_COMMIT
-        env:
-          COMMIT: ${{ vars.CORPUS_COMMIT }}
+      - name: the tournament set, the first 20 warriors of the corpus
         run: |
-          repo="$RUNNER_TEMP/warriors-repo"
-          git init -q "$repo"
-          git -C "$repo" fetch -q --depth 1 https://github.com/n1LS/redcode-warriors.git "$COMMIT"
-          git -C "$repo" checkout -q FETCH_HEAD
-          mkdir -p "$RUNNER_TEMP/corpus" "$RUNNER_TEMP/t20"
-          find "$repo" -name '*.red' -exec cp {} "$RUNNER_TEMP/corpus/" \;
-          ls "$RUNNER_TEMP/corpus" | sort | head -20 | while read -r f; do cp "$RUNNER_TEMP/corpus/$f" "$RUNNER_TEMP/t20/"; done
-          echo "$(ls "$RUNNER_TEMP/corpus" | wc -l) warriors"
+          mkdir -p "$RUNNER_TEMP/t20"
+          ls warriors/koenigstuhl/94nop | LC_ALL=C sort | head -20 | while read -r f; do cp "warriors/koenigstuhl/94nop/$f" "$RUNNER_TEMP/t20/"; done
       - run: make
       - name: compare with pMARS
         run: |
           set -e
           echo "seed ${{ github.run_id }}"
-          d="node tools/pmars-diff.mjs --pmars $PMARS_OUT --corpus $RUNNER_TEMP/corpus --seed ${{ github.run_id }} --jobs 4"
-          $d
-          $d --wasm-match --only battles
-          $d --permute --only battles,fuzz
-          $d --icws88 --only listings,exprs,sources
-          $d --cli build/42mars --only cli
+          d="node tools/pmars-diff.mjs --pmars $PMARS_OUT --seed ${{ github.run_id }} --jobs 4"
+          $d --corpus warriors/koenigstuhl/94nop
+          $d --corpus warriors/koenigstuhl/94nop --wasm-match --only battles
+          $d --corpus warriors/koenigstuhl/94nop --permute --only battles,fuzz
+          $d --corpus warriors/koenigstuhl/88 --icws88 --only listings,exprs,sources
+          $d --corpus warriors/koenigstuhl/94nop --cli build/42mars --only cli
           node tools/tournament.mjs "$RUNNER_TEMP/t20" --rounds 100 --seed ${{ github.run_id }} --pmars "$PMARS_OUT" --compare
           node tools/example-check.mjs "$RUNNER_TEMP/t20" --pmars "$PMARS_OUT" --seed ${{ github.run_id }}
 
