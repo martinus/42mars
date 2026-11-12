@@ -36,6 +36,7 @@ node bench/wasm-functions.mjs old.wasm wasm/42mars.wasm           # which functi
 node tools/example-check.mjs $O/sets/t20 --pmars $O/bin/pmars     # examples/example.c (the C library) against pMARS
 make && node tools/pmars-diff.mjs --pmars $O/bin/pmars --corpus $O/corpus --cli build/42mars --only cli
 make test                                  # the C library, 42mars and the C tests
+make fuzz                                  # libFuzzer targets of test/fuzz/, 60 s each (FUZZ_SECONDS, FUZZ_JOBS)
 make clean && make CFLAGS='-O2 -std=c11 -pedantic -Werror -DM42_PORTABLE' test   # the C11 code that MSVC compiles
 ```
 
@@ -79,7 +80,7 @@ The layout (also in `README.md` and `docs/development.md`; change all three toge
 - New source files start with `// SPDX-License-Identifier: MIT` and `// Copyright (c) 2026 Martin Leitner-Ankerl`.
 - No dependencies: no npm packages, no bundler, tests on `node:test`. Node 20 or newer. Browser code is plain ES modules.
 - C is C11. Compiler specifics (attributes, builtins, `__forceinline`, aligned allocation, DLL exports) go into `lib/src/platform.h` only: MSVC has no statement expressions, VLAs, `__builtin_*` or `aligned_alloc`.
-- CI (`.github/workflows/test.yml`, about 2 minutes): `npm test` on Node 20, 22, 24 and 26; `wasm/build.sh` with Ubuntu's clang-22 must give the committed `42mars.wasm` and `dispatch.h`; the C library on Linux x64 and arm64, macOS and Windows (MSVC through `build-msvc.bat`, so push the branch to try a Windows change), and under ASan and UBSan.
+- CI (`.github/workflows/test.yml`, about 4 minutes, the fuzz job is the longest): `npm test` on Node 20, 22, 24 and 26; `wasm/build.sh` with Ubuntu's clang-22 must give the committed `42mars.wasm` and `dispatch.h`; the C library on Linux x64 and arm64, macOS and Windows (MSVC through `build-msvc.bat`, so push the branch to try a Windows change), and under ASan and UBSan; `make fuzz`, 60 s per target.
 - One version, in `lib/42mars.h` (`M42_VERSION_*`) and `package.json`; a tag `v<version>` releases (npm publish is a dry run until the repository variable `NPM_PUBLISH` is `true`).
 - Read warrior files as latin1. `warriors/` holds only warriors written for this repo plus Dewdney's Imp and Dwarf: hill warriors have unclear licenses.
 - Tests: a temporary folder is deleted in `after()`. Compare big typed arrays as bytes (`Buffer.equals`) and build failure messages only on failure: a per-cell JS loop with a message string per cell made one test file 16 s instead of 5 s. Random cases come from a generator seeded per test, never from one shared by the file.

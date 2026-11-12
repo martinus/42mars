@@ -13,7 +13,7 @@ How the repository is laid out, how to build and test it, how to compare it with
 | [`ui/`](../ui) | Core War Theater, the visualizer. Plain ES modules, no build step. |
 | [`tools/`](../tools) | Node programs on the npm package: `asm` (pMARS-style listing), `corpus` (assemble a folder), `tournament` (round robin on all cores), `serve`, and the comparisons with pMARS: `pmars-diff`, `expr-fuzz`, `example-check`. [`opcodes.js`](../tools/opcodes.js) has the opcode tables and the listing format, which `ui/` and the tests use too. |
 | [`bench/`](../bench) | Everything that measures speed: `bench`, `bench-pairs`, `bench-native` (the C code built natively), `tie-ceiling`, `wasm-functions`, and `ab-wasm`, `ab-native`, `ab-tool` for alternating A/B timing. |
-| [`test/`](../test) | `npm test`: [node:test](https://nodejs.org/api/test.html) files, the C test program in `test/c/`, results recorded from pMARS and from the removed JavaScript engines in `test/fixtures/`. |
+| [`test/`](../test) | `npm test`: [node:test](https://nodejs.org/api/test.html) files, the C test program in `test/c/`, the fuzz targets in `test/fuzz/` (`make fuzz`), results recorded from pMARS and from the removed JavaScript engines in `test/fixtures/`. |
 | [`docs/`](.) | The semantics, the plan, the [performance log](performance-log.md) with every speed experiment, this guide, the README chart ([`images/speed.mjs`](images/speed.mjs)) and the logo ([`images/logo.svg`](images/logo.svg)). |
 | [`warriors/`](../warriors) | Sample warriors written for this repository, and Dewdney's Imp and Dwarf. |
 
@@ -37,7 +37,19 @@ On Windows, `build-msvc.bat` builds the same as `make` into `build\`, the static
 make clean && make CFLAGS='-O2 -std=c11 -pedantic -Werror -DM42_PORTABLE' test
 ```
 
-CI ([`test.yml`](../.github/workflows/test.yml)) runs `npm test` on Node 20 to 26, checks the wasm build, builds and tests the library on Linux (x64, arm64), macOS and Windows and under ASan and UBSan, and makes the release archives. The Windows job reuses the MSVC object of `lib/42mars.c` from an earlier run while `lib/`, `build-msvc.bat` and the runner image stay the same (about 40 s less); a tag always compiles. A tag `v<version>` makes a GitHub release and publishes the npm package. The version is in `lib/42mars.h` and `package.json`, and a test checks that both agree.
+### Fuzzing
+
+Three [libFuzzer](https://llvm.org/docs/LibFuzzer.html) targets in `test/fuzz/` run the C library on arbitrary input under ASan and UBSan: `fuzz_asm` (bytes as Redcode through every function of `42mars.h`, a match and stepping with a watch), `fuzz_eval` (bytes as an expression) and `fuzz_make` (warriors from `m42_warrior_make()` with raw or in-range fields and fuzzed rules; it traps when a warrior that does not fit the rules is played). They need clang.
+
+```sh
+make fuzz                                  # each target 60 s on 1 process
+make fuzz FUZZ_SECONDS=1800 FUZZ_JOBS=8    # longer: 30 minutes each on 8 processes
+make build/fuzz/fuzz_asm && build/fuzz/fuzz_asm build/fuzz/fuzz_asm-crash-<hash>   # run one input again
+```
+
+`make fuzz` fails on any sanitizer report, an input that takes more than 10 s or a process above 2 GB. The input is written to `build/fuzz/<target>-crash-*` (or `-timeout-*`, `-oom-*`), the log of each process to `build/fuzz/<target>-<n>.log`; in CI the job uploads both as the artifact `fuzz-failures`. Run the binary on the file to get the report again, under a debugger if needed. The corpus grows in `build/fuzz/corpus-<target>` and makes later runs start further. An input that found a defect also becomes a regression test in `npm test`, through `assembleWasm` or `test/c/api-test.c`, so the fuzz job is not the only place that holds it.
+
+CI ([`test.yml`](../.github/workflows/test.yml)) runs `npm test` on Node 20 to 26, checks the wasm build, builds and tests the library on Linux (x64, arm64), macOS and Windows and under ASan and UBSan, runs the fuzz targets for 60 s each, and makes the release archives. The Windows job reuses the MSVC object of `lib/42mars.c` from an earlier run while `lib/`, `build-msvc.bat` and the runner image stay the same (about 40 s less); a tag always compiles. A tag `v<version>` makes a GitHub release and publishes the npm package. The version is in `lib/42mars.h` and `package.json`, and a test checks that both agree.
 
 ## Compare with pMARS
 
