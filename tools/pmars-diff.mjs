@@ -125,11 +125,14 @@ const rand = (k) => {
 };
 const pick = (a) => a[rand(a.length)];
 
-function pmars(argv, bin = PMARS) {
+// Runs pMARS (or `bin`) with stdin `input` (empty if none).
+function pmars(argv, bin = PMARS, input = '') {
   return new Promise((resolve) => {
-    execFile(bin, argv, { encoding: 'latin1', maxBuffer: 1 << 24, timeout: TIMEOUT }, (err, stdout, stderr) => {
+    const child = execFile(bin, argv, { encoding: 'latin1', maxBuffer: 1 << 24, timeout: TIMEOUT }, (err, stdout, stderr) => {
       resolve({ code: err ? (err.code ?? -1) : 0, out: stdout, err: stderr, timedOut: Boolean(err?.killed) });
     });
+    child.stdin.on('error', () => {}); // a program that does not read stdin may exit first
+    child.stdin.end(Buffer.from(input, 'latin1'));
   });
 }
 
@@ -594,7 +597,9 @@ async function multi() {
 // --cli path/to/42mars: both programs with the same arguments on corpus
 // warriors, stdout and exit code compared. Arguments mix warrior counts,
 // listings, -b, -k, -o, -A, -=, -F or -f (never random positions), -P, -8,
-// rule changes, -@ files and some invalid options.
+// rule changes, -@ files and some invalid options. One case in six reads
+// two or three of its warriors from stdin (`-`): corpus files put together,
+// sometimes one more or one less than the `-` read.
 const CLI = arg('cli');
 const FORMULAS = ['(W*W-1)/S', '1', 'S', 'W*10+S', 'x=x+S', '10/S', '1/0', 'W-S'];
 
@@ -625,22 +630,30 @@ async function cli() {
     if (rand(5) === 0) args.push('-P'); // with other than two warriors: exit 2
     if (rand(6) === 0) args.push('-8');
     const ws = Array.from({ length: k }, () => pick(files));
+    let input = '';
+    if (k >= 2 && rand(6) === 0) {
+      const m = Math.min(k, 2 + rand(2));
+      for (let j = 0; j < m; j++) ws[rand(k)] = '-';
+      const streamed = ws.filter((w) => w === '-').length + pick([-1, 0, 0, 0, 1]);
+      input = Array.from({ length: Math.max(0, streamed) }, () => readFileSync(pick(files), 'latin1')).join('');
+    }
     if (rand(20) === 0) {
       const at = join(TMP, `options${i}.txt`);
       writeFileSync(at, args.join('\n') + '\n');
-      return ['-@', at, ...ws];
+      return { argv: ['-@', at, ...ws], input };
     }
-    return i % 2 ? [...args, ...ws] : [...ws, ...args];
+    return { argv: i % 2 ? [...args, ...ws] : [...ws, ...args], input };
   });
   const diffs = diffList();
-  await pool(cases, async (argv) => {
-    const [theirs, ours] = await Promise.all([pmars(argv), pmars(argv, CLI)]);
+  await pool(cases, async ({ argv, input }) => {
+    const [theirs, ours] = await Promise.all([pmars(argv, PMARS, input), pmars(argv, CLI, input)]);
     if (theirs.timedOut) return diffs.push(`${argv.join(' ')}: pMARS did not finish`);
     if (theirs.code === ours.code && theirs.out === ours.out) return;
     const wl = theirs.out.split('\n');
     const gl = ours.out.split('\n');
     const at = wl.findIndex((l, i) => l !== gl[i]);
-    diffs.push(`${argv.join(' ')}\n  exit pMARS ${theirs.code}, ours ${ours.code}` +
+    if (input) writeFileSync(join(TMP, `stdin${argv.join('').length}-${input.length}.txt`), input, 'latin1');
+    diffs.push(`${argv.join(' ')}${input ? ` < stdin of ${input.length} bytes, in the tmp folder` : ''}\n  exit pMARS ${theirs.code}, ours ${ours.code}` +
       (at >= 0 ? `; stdout line ${at + 1}\n  pMARS: ${JSON.stringify(wl[at])}\n  ours:  ${JSON.stringify(gl[at])}` : '') +
       (ours.err ? `\n  our stderr: ${JSON.stringify(ours.err.slice(0, 200))}` : ''));
   });

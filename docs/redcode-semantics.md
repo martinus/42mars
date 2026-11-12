@@ -266,6 +266,17 @@ Each logical line is classified by its first non-whitespace character:
   - Anything else: ignored.
 - Otherwise: a statement line. Everything from the first `;` on is removed.
 
+End of a warrior in a stream. pMARS reads several warriors from one stream
+(`pmars - -`, stdin). Each one ends before the line that ends reading above,
+its second `;redcode` line, and the next warrior starts at that line, which
+is the next one's first `;redcode`. Without such a line a warrior takes the
+rest of the stream, its `END` included: the lines after `END` still give
+metadata (`;name X` there renames the warrior), and the next `-` gets an
+empty warrior. Found by running pMARS 0.9.5 on streams of two and three
+warriors, with and without `;redcode` and `END` lines, with CRLF, a 200 KB
+first warrior, and files or `-@` between the `-` (#93). `m42_warrior_source_end()`
+(`sourceEnd` in JS) gives where a warrior ended.
+
 ### 2.2 Tokens
 
 Used in both passes:
@@ -1115,8 +1126,11 @@ two on corpus warriors, `test/cli.test.js` holds recorded pMARS outputs.
 - `-r # -s # -c # -p # -l # -d # -S #` take the next argument, digits only
   (`-r5`, `-r -1`, `-r 10abc`: exit 2). Flags without a value combine
   (`-bk`); options and files mix in any order. `-@ file` reads more options
-  and files from a file, separated by whitespace. `-` reads a warrior from
-  stdin.
+  and files from a file, separated by whitespace. `-` reads the next warrior
+  from stdin: stdin is read once, and each `-` goes on where the previous
+  warrior ended (2.1, "End of a warrior in a stream"), also with files or
+  `-@` in between; after the end of the stream a `-` gets an empty warrior.
+  A file named twice is read from its start each time (#93).
 - pMARS's ranges, exit 2 outside them: `-s` and `-S` 1 .. 2^30, `-p` 1 ..
   2^31-1, `-c` 1 .. 2^63-1, `-l` 1 .. 1000, `-r` from 0. The default `-d`
   is the `-l` value (100 for both by default); `-d` below `-l` is exit 2.

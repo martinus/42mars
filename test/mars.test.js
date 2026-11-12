@@ -180,6 +180,19 @@ test('a warrior that does not fit the rules is refused, with the reason', async 
   assert.equal(m.runMatch([imp, assemble('mov 7, 799', { coreSize: 800 })]).warriors.length, 2);
 });
 
+test('sourceEnd: where the next warrior of a stream starts', () => {
+  // pMARS reads several warriors from stdin: each one ends before its second
+  // ;redcode line, and the next one starts there (#93).
+  const stream = ';redcode\n;name A\nmov 0, 1\n;redcode\n;name B\ndat 5\n';
+  const a = assemble(stream);
+  assert.equal(a.sourceEnd, stream.indexOf(';redcode', 1));
+  const b = assemble(stream.slice(a.sourceEnd));
+  assert.deepEqual([a.name, b.name, b.sourceEnd], ['A', 'B', stream.length - a.sourceEnd]);
+  // in characters, also when the source is UTF-8
+  const u = ';redcode\n;name Ä€\nmov 0, 1\n;redcode\ndat 5\n';
+  assert.equal(assemble(u).sourceEnd, u.indexOf(';redcode', 1));
+});
+
 test('every method called before a load throws with the status text', () => {
   // m42_start_round() and m42_end_round() returned M42_ERR_STATE and the JS
   // interface ignored it; run() returned 0 and state() a made-up round (#90).

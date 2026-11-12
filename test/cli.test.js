@@ -2,8 +2,8 @@
 // Copyright (c) 2026 Martin Leitner-Ankerl
 //
 // The command line program (cli/42mars.c) against outputs of pMARS 0.9.5:
-// test/fixtures/cli.json holds, per case, the arguments, pMARS's exit code
-// and stdout, recorded with `pmars <args>` (the server build in the oracle
+// test/fixtures/cli.json holds, per case, the arguments, the stream on stdin
+// if any, pMARS's exit code and stdout, recorded with `pmars <args>` (the server build in the oracle
 // folder) on the warriors in warriors/ (W/) and the three below (P/). Built
 // natively (test/native.js).
 
@@ -32,14 +32,22 @@ writeFileSync(join(tmp, 'regs.red'), ';name regs\n dat #w, #s\n dat #x, #a\n jmp
 // A NUL byte ends the line content (#85); after an opcode, pMARS gives a syntax error.
 writeFileSync(join(tmp, 'nul.red'), 'mov\0 i b,k\ndat 5\n');
 writeFileSync(join(tmp, 'nulline.red'), ';name a\0b\ndat 1\0 garbage here\nmov 0,1\n');
+// Several warriors on stdin (#93): a case's `stdin` names one of these.
+const streams = {
+  'stream2.txt': ';redcode\n;name A\nmov 0, 1\nend\n;redcode\n;name B\nadd #4, 3\nmov 2, @2\njmp -2\ndat #0, #0\nend\n',
+  'stream3.txt': ';redcode\n;name A\nmov 0,1\n;redcode\ndat 5\n;redcode\n;name C\ndat 7\n',
+  'nomarks.txt': ';name A\nmov 0, 1\nend\n;name B\ndat 1\nend\n',
+  'between.txt': ';redcode\n;name A\nmov 0,1\nend\n;name X\n;author Y\ndat 9\n;redcode\n;name B\ndat 5\n',
+  'crlf.txt': ';redcode\r\n;name A\r\nmov 0,1\r\n;redcode\r\n;name B\r\ndat 5\r\n',
+};
 
 before(() => (prebuilt || skip ? undefined : promisify(execFile)('cc', ['-O2', '-o', bin, join(root, 'cli/42mars.c'), join(root, 'lib/42mars.c')])));
 
 const cases = JSON.parse(readFileSync(new URL('./fixtures/cli.json', import.meta.url), 'utf8'));
 for (const c of cases) {
-  test(`42mars ${c.args}`, { skip }, () => {
+  test(`42mars ${c.args}${c.stdin ? ` < ${c.stdin}` : ''}`, { skip }, () => {
     const argv = c.args.split(' ').map((a) => a.replace(/^W\//, join(root, 'warriors') + '/').replace(/^P\//, tmp + '/'));
-    const r = spawnSync(bin, argv, { encoding: 'latin1' });
+    const r = spawnSync(bin, argv, { encoding: 'latin1', input: c.stdin ? streams[c.stdin] : '' });
     assert.equal(r.status, c.code, r.stderr);
     assert.equal(lines(r.stdout), c.stdout);
   });
