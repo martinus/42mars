@@ -349,9 +349,20 @@ function randomSource() {
   if (rand(2)) lines.push(`k equ ${rand(7)}+${rand(3)}`);
   else lines.push('k equ 3');
   for (let i = rand(8) + 1; i > 0; i--) {
-    const r = rand(15);
+    const r = rand(17);
     if (r === 0) lines.push(`n${i} for ${rand(4)}`, `  ${ins()}`, `${label()} ${ins()}`, 'rof');
     else if (r === 1) lines.push(`m${i} equ ${ins()}`, `${label()} m${i}`);
+    else if (r >= 15) {
+      // FOR and ROF from EQU names, with and without a ROF in the body, and
+      // something in the rest of the line (#118).
+      const f = `f${i}`, rest = () => pick(['', '', ' 1', ' x', ' x rof', ' rof', ' for', ' dat 1', ' CURLINE']);
+      const form = rand(5);
+      if (form === 0) lines.push(`${f} equ for ${rand(3)}`, `    equ ${ins()}`, '    equ rof', `${pick(['', 'c ', `${label()} `])}${f}${rest()}`);
+      else if (form === 1) lines.push(`${f} equ for ${rand(3)}`, `    equ ${ins()}`, `${f}${rest()}`, `  ${ins()}`, 'rof');
+      else if (form === 2) lines.push(`${f} equ for ${rand(2)}`, `${f}${rest()}`, `  ${ins()}`, 'rof');
+      else if (form === 3) lines.push(`${f} equ rof${pick(['', ' 5', ' dat 1'])}`, `for ${rand(3)}`, `  ${ins()}`, `${f}${rest()}`);
+      else lines.push(`${f} equ ${ins()}`, `    equ for ${rand(3)}`, `    equ ${ins()}`, '    equ rof', `${f}${rest()}`);
+    }
     else if (r >= 13) {
       // An EQU name at the statement start whose body holds the opcode, with
       // labels and CURLINE in the rest of the line (#116).

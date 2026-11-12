@@ -477,6 +477,7 @@ typedef struct Active {
   Str name;
   const struct Active *next;
   u8 start; // expanded at the statement start (label position)
+  u32 stamp; // the stamp of the body lines it pushed into the stream, 0: none
 } Active;
 
 static int active_has(const Active *a, Str name) {
@@ -503,6 +504,7 @@ typedef struct {
   u32 n;
   i32 lineNo;
   u8 assert; // a ;assert line, the parts hold the expression
+  u32 restAt; // the last line of a multi-line EQU: where the rest of the use-site line starts, 0: none
 } Line;
 
 typedef struct {
@@ -776,7 +778,7 @@ static void push_line(Asm *a, Lines *ls, Str text, i32 lineNo, int assert) {
   if (!p || !l) return;
   *p = (Part){text, 0, 0};
   ls->lines = l;
-  l[ls->n++] = (Line){p, 1, lineNo, (u8)assert};
+  l[ls->n++] = (Line){p, 1, lineNo, (u8)assert, 0};
 }
 
 static Str trim_start(Str s) {
@@ -1054,11 +1056,22 @@ typedef struct {
   u32 n, i;
   Front *front;
   Rec *rec; // the innermost running FOR block that records this stream
+  u32 limit; // a FOR block from an EQU reads only lines pushed with this stamp or later
 } Stream;
+
+// A running FOR block from an EQU reads only the lines of that EQU and of
+// the EQU names expanded in them (pushed later), never the source after.
+static int stream_limited(const Stream *s) {
+  return s->limit && !(s->front && s->front->stamp >= s->limit);
+}
+
+static int block_delta(Asm *a, const Line *line, int store);
+static int rest_ok(Asm *a, Cursor *c, const Active *act, Stream *s);
 
 static const Line *stream_next(Asm *a, Stream *s) {
   const Line *l;
   u32 stamp = 0;
+  if (stream_limited(s)) return 0;
   if (s->front) {
     l = s->front->line;
     stamp = s->front->stamp;
@@ -1067,6 +1080,21 @@ static const Line *stream_next(Asm *a, Stream *s) {
     l = &s->lines[s->i++];
   } else {
     return 0;
+  }
+  if (s->limit && stamp == s->limit && l->restAt) {
+    // The last body line of the EQU a running FOR block came from: pMARS
+    // takes it without the rest of the use-site line and only checks the
+    // rest (rest_ok()), unless the line ends the block with ROF, which
+    // checks it too.
+    const Line head = {l->parts, l->restAt, l->lineNo, 0, 0};
+    if (block_delta(a, &head, 0) != -1) {
+      Line *h = aalloc(&a->A, sizeof(Line));
+      if (!h) return 0;
+      *h = head;
+      Cursor rest = {l->parts + l->restAt, l->n - l->restAt, 0, 0, l->lineNo, 0};
+      rest_ok(a, &rest, 0, s);
+      l = h;
+    }
   }
   for (Rec *r = s->rec; r; r = r->outer) {
     if (stamp > r->stamp) continue;
@@ -1079,6 +1107,7 @@ static const Line *stream_next(Asm *a, Stream *s) {
 }
 
 static const Line *stream_peek(const Stream *s) {
+  if (stream_limited(s)) return 0;
   if (s->front) return s->front->line;
   return s->i < s->n ? &s->lines[s->i] : 0;
 }
@@ -1147,8 +1176,8 @@ static int expand(Asm *a, Cursor *c, const Token *tok, const Def *d, Stream *s, 
   }
   Active *act = aalloc(&a->A, sizeof(Active));
   if (!act) return 0;
-  *act = (Active){tok->text, tok->active, (u8)start};
-  const Part space = {{0, 0}, 0, 1};
+  *act = (Active){tok->text, tok->active, (u8)start, 0};
+  const Part space = {{0, 0}, tok->active, 1}; // belongs to the use site
   const u32 ns = tok->spaceAfter ? 1 : 0;
   if (d->nBody == 1) {
     const Part parts[2] = {{d->body[0].text, act, 0}, space};
@@ -1169,17 +1198,81 @@ static int expand(Asm *a, Cursor *c, const Token *tok, const Def *d, Stream *s, 
     Part *p = aalloc(&a->A, sizeof(Part));
     if (!p) return 0;
     *p = (Part){d->body[i].text, act, 0};
-    more[i - 1] = (Line){p, 1, d->body[i].lineNo, 0};
+    more[i - 1] = (Line){p, 1, d->body[i].lineNo, 0, 0};
   }
   const Part head[2] = {{d->body[d->nBody - 1].text, act, 0}, space};
   const Parts lastParts = concat(a, head, 1 + ns, rest.parts, rest.n);
   if (!lastParts.parts) return 0;
-  more[d->nBody - 2] = (Line){lastParts.parts, lastParts.n, useSite, 0};
+  more[d->nBody - 2] = (Line){lastParts.parts, lastParts.n, useSite, 0, lastParts.n > 1 ? 1 : 0};
   stream_unshift(a, s, more, d->nBody - 1);
+  act->stamp = a->stamp;
   return 1;
 }
 
 static void define_pending_labels(Asm *a);
+
+// The next part with text left at the cursor is outside `act`'s expansion.
+// Moves only over parts that are used up.
+static int cur_outside(Cursor *c, const Active *act) {
+  for (const Part *p = cur_part(c); p; p = cur_part(c)) {
+    if (p->space || c->pos < p->text.n) return !active_within(p->active, act);
+    c->pi++;
+    c->pos = 0;
+  }
+  return 0;
+}
+
+// The rest of a line after a FOR (count above 0) or ROF from an EQU: an
+// opcode or keyword there is an error in pMARS, also from a one-line EQU
+// name; anything else is ignored. Not inlined: its locals stay out of the
+// FOR recursion's frame.
+static M42_NOINLINE int rest_ok(Asm *a, Cursor *c, const Active *act, Stream *s) {
+  // act 0: every token is outside
+  u32 expansions = 0;
+  for (;;) {
+    if (a->A.oom || !work(a, c->lineNo, 0)) return 0;
+    const Token tok = next_token(a, c);
+    if (tok.t == T_END) return 1;
+    if (tok.t != T_IDENT || active_within(tok.active, act)) continue;
+    if (opcode_of(tok.text) >= 0 || ieq(tok.text, "EQU") || ieq(tok.text, "FOR") || ieq(tok.text, "ROF")) {
+      error(a, c->lineNo, msg3(a, "'", tok.text, "' not allowed after a FOR or ROF from an EQU"));
+      return 0;
+    }
+    const Def *d = lookup(a, tok.text);
+    if (!d || d->kind != DEF_EQU || d->nBody != 1) continue;
+    if (++expansions > MAX_LINE_TEXT) {
+      too_long(a, c->lineNo, MAX_LINE_TEXT);
+      return 0;
+    }
+    if (!expand(a, c, &tok, d, s, 0)) return 0;
+  }
+}
+
+// The skip scan of a FOR from an EQU with count 0 starts with the rest of
+// its line: +1, -1 or 0 as block_delta(). Not inlined, see rest_ok().
+static M42_NOINLINE int rest_delta(Asm *a, Cursor *c) {
+  const Parts rest = take_rest(a, c);
+  const Line line = {rest.parts, rest.n, c->lineNo, 0, 0};
+  return block_delta(a, &line, 1);
+}
+
+// One line of a skipped block. The last body line of a multi-line EQU is
+// scanned without the rest of the use-site line, which pMARS takes as a
+// line of its own after it: skipped too, or read as a statement when the
+// block ended on the body line. Returns 1 when the block ended. Not
+// inlined, see rest_ok().
+static M42_NOINLINE int skip_split(Asm *a, const Line *line, i32 *depth, Stream *s) {
+  if (!line->restAt) return (*depth += block_delta(a, line, 1)) == 0;
+  const Line head = {line->parts, line->restAt, line->lineNo, 0, 0};
+  Line *rest = aalloc(&a->A, sizeof(Line));
+  if (!rest) return 1;
+  *rest = (Line){line->parts + line->restAt, line->n - line->restAt, line->lineNo, 0, 0};
+  if ((*depth += block_delta(a, &head, 1)) == 0) {
+    stream_unshift(a, s, rest, 1);
+    return 1;
+  }
+  return (*depth += block_delta(a, rest, 1)) == 0;
+}
 
 // Builds the operand text after an opcode, FOR or in an assert. Labels
 // become numbers relative to the instruction counter (absolute for ORG, END
@@ -1192,7 +1285,9 @@ static void define_pending_labels(Asm *a);
 // get their value, a real opcode (`counted`) increments the instruction
 // counter, and labels in the rest of the line are relative also for ORG, END
 // and PIN (semantics doc, 2.3, EQU). No out parameter: one more local in the
-// FOR recursion's frame took 100 nested FOR blocks past the C stack.
+// FOR recursion's frame took 100 nested FOR blocks past the C stack. With
+// `counted` 2 (the count of a FOR from an EQU), the text ends with `ins`
+// instead, and the cursor stays at the rest of the line.
 static int operand_text(Asm *a, Cursor *c, Stream *s, int absolute, u32 limit, Str *out, const Active *ins, int counted) {
   Buf b = {0};
   u32 expansions = 0, spaces = 0;
@@ -1204,11 +1299,12 @@ static int operand_text(Asm *a, Cursor *c, Stream *s, int absolute, u32 limit, S
       too_long(a, c->lineNo, limit == MAX_LINE_TEXT ? limit : MAX_OPERAND_TEXT);
       return 0;
     }
+    if (counted == 2 && cur_outside(c, ins)) { *out = buf_str(&b); return 1; }
     const Token tok = next_token(a, c);
     if (tok.t == T_END) { *out = buf_str(&b); return done; }
     if (tok.t == T_SPACE) { putc_(&a->A, &b, " "); spaces++; continue; }
     if (tok.t != T_IDENT) { put(&a->A, &b, tok.text); continue; }
-    if (ins && !active_within(tok.active, ins)) {
+    if (ins && counted < 2 && !active_within(tok.active, ins)) {
       ins = 0;
       define_pending_labels(a);
       if (counted) a->ic++;
@@ -1308,7 +1404,10 @@ static void equ_line(Asm *a, Cursor *c, Stream *s) {
   a->nPending = 0;
 }
 
-static void for_line(Asm *a, Cursor *c, Stream *s) {
+// `act`: the EQU expansion the FOR keyword came from, else 0. Its count is
+// the text of that expansion only, and a running block reads only its lines
+// (semantics doc, "FOR and ROF").
+static void for_line(Asm *a, Cursor *c, const Active *act, Stream *s) {
   // The label written directly before FOR names the counter.
   Str counter = {0, 0};
   const int hasCounter = a->nPending > 0;
@@ -1316,7 +1415,7 @@ static void for_line(Asm *a, Cursor *c, Stream *s) {
   define_pending_labels(a);
 
   Str text;
-  if (!operand_text(a, c, s, 0, MAX_LINE_TEXT, &text, 0, 0)) return;
+  if (!operand_text(a, c, s, 0, MAX_LINE_TEXT, &text, act, act ? 2 : 0)) return;
   i64 value;
   const int status = assemble_eval(a, text, c->lineNo, &value);
   if (status < 0) {
@@ -1328,16 +1427,17 @@ static void for_line(Asm *a, Cursor *c, Stream *s) {
   if (times == 0) {
     // A skipped block ends at the matching ROF; the scan counts every FOR
     // line, also one with a defined label.
-    i32 depth = 1;
+    i32 depth = act ? 1 + rest_delta(a, c) : 1;
+    if (depth == 0) return;
     for (const Line *line = stream_next(a, s); line; line = stream_next(a, s)) {
       if (!work(a, line->lineNo, 1)) return;
-      depth += block_delta(a, line, 1);
-      if (depth == 0) return;
+      if (skip_split(a, line, &depth, s)) return;
     }
     warning(a, c->lineNo, S("FOR without matching ROF"));
     a->stopped = 1;
     return;
   }
+  if (act && !rest_ok(a, c, act, s)) return;
   if (++a->forDepth > MAX_FOR_DEPTH) {
     error(a, c->lineNo, S("FOR blocks nested too deep"));
     a->stopped = 1;
@@ -1351,11 +1451,13 @@ static void for_line(Asm *a, Cursor *c, Stream *s) {
   // (one was ignored), recording further.
   Rec rec = {0, 0, 0, 0, s->rec};
   int found = 1;
+  const u32 limit = s->limit;
+  if (act) s->limit = act->stamp ? act->stamp : 0xFFFFFFFFu;
   for (i64 k = 1; k <= times && found && !a->stopped && !a->A.oom && work(a, c->lineNo, 1); k++) {
     if (hasCounter) define(a, counter, new_def(a, DEF_FOR, k));
     a->running++;
     if (k > 1) {
-      Stream replay = {rec.lines, rec.n, 0, 0, 0};
+      Stream replay = {rec.lines, rec.n, 0, 0, 0, 0};
       process_lines(a, &replay);
     }
     if (!a->rofSeen && !a->stopped && !a->A.oom) {
@@ -1370,6 +1472,7 @@ static void for_line(Asm *a, Cursor *c, Stream *s) {
     if (hasCounter) undefine(a, counter);
   }
   a->forDepth--;
+  s->limit = limit;
   if (!found && !a->stopped && !a->A.oom) {
     warning(a, c->lineNo, S("FOR without matching ROF"));
     a->stopped = 1;
@@ -1402,8 +1505,11 @@ static void statement_line(Asm *a, const Line *line, Stream *s) {
       return;
     }
     if (ieq(tok.text, "EQU")) { equ_line(a, &c, s); return; }
-    if (ieq(tok.text, "FOR")) { for_line(a, &c, s); return; }
+    if (ieq(tok.text, "FOR")) { for_line(a, &c, tok.active, s); return; }
     if (ieq(tok.text, "ROF")) {
+      // From an EQU, an opcode or keyword in the rest of the line is an
+      // error, and the ROF does not count.
+      if (tok.active && !rest_ok(a, &c, tok.active, s)) return;
       // Ends the innermost running FOR block. Labels before it, also on this
       // line, stay pending: the next instruction defines them, in the next
       // repetition too (so `dat 1`, `x rof` makes x a redefinition there).
@@ -1501,7 +1607,7 @@ static STok st_read(Asm *a, STokens *ts) {
         Active *act = aalloc(&a->A, sizeof(Active));
         Frame *st = grow(&a->A, ts->stack, ts->n, &ts->cap, sizeof(Frame));
         if (!act || !st) return (STok){S_END, {(const u8 *)"", 0}, space, 0};
-        *act = (Active){name, top->active, 0};
+        *act = (Active){name, top->active, 0, 0};
         ts->stack = st;
         st[ts->n++] = (Frame){d->body[0].text, 0, act};
         ts->expansions++;
@@ -1763,7 +1869,7 @@ static AsmResult *assemble(void *mem, usize size, const u8 *src, usize len, cons
     d->nBody = 1;
     define(a, S(predefined[i].name), d);
   }
-  Stream s = {lines.lines, lines.n, 0, 0, 0};
+  Stream s = {lines.lines, lines.n, 0, 0, 0, 0};
   process_lines(a, &s);
   if (a->nPending) {
     Buf b = {0};
