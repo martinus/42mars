@@ -262,6 +262,55 @@ int main(int argc, char **argv) {
   m42_score sc[2];
   printf(",\"full\":[%u,%d]", m42_warrior_length(big), m42_match(m2, bigs, 2, &o, sc, 0));
 
+  // Warriors that do not fit the rules of the context (#86): assembled for a
+  // core of 8000, played in one of 800, refused by match, load and bench;
+  // each field of m42_instruction past its range, and the start; a fixed
+  // position at the core size. With a watch attached, the first one read
+  // and wrote outside the watch's memory.
+  {
+    m42_rules sr = m42_rules_94();
+    sr.core_size = 800;
+    sr.max_processes = 800;
+    void *smem = malloc(m42_ctx_size(&sr));
+    m42_ctx *sm = m42_ctx_init(smem, m42_ctx_size(&sr), &sr, &st);
+    const size_t wsize = m42_watch_size(&sr);
+    void *wmem = malloc(wsize);
+    m42_watch_attach(sm, wmem, wsize, &st);
+    const char *far = "mov 7000, 7999\nmov @7000, }7999\njmp -2\n";
+    m42_warrior *fw = m42_assemble_new(far, strlen(far), &r, 0, 0, &st);
+    const m42_warrior *fws[2] = {fw, fw};
+    m42_match_options fo = m42_match_options_default();
+    printf(",\"fit\":[%d,%d,%d", m42_match(sm, fws, 2, &fo, 0, 0), m42_load(sm, fws, 2, &fo), m42_bench(sm, fw, fws, 1, &fo, 0, 0));
+    const m42_instruction ok_ins = {1, 6, 1, 1, 0, 1, 0}; // MOV.I $0, $1
+    for (int f = 0; f < 8; f++) {
+      m42_instruction x = ok_ins;
+      uint32_t start = 0;
+      if (f == 1) x.opcode = 19;
+      if (f == 2) x.modifier = 7;
+      if (f == 3) x.a_mode = 8;
+      if (f == 4) x.b_mode = 8;
+      if (f == 5) x.a = 800;
+      if (f == 6) x.b = 800;
+      if (f == 7) start = 800;
+      char wm[256];
+      const m42_warrior *mw = m42_warrior_make(&x, 1, start, 0, wm, sizeof wm);
+      const m42_warrior *mws[2] = {mw, mw};
+      printf(",%d", m42_load(sm, mws, 2, &fo));
+    }
+    // positions: the last cell and the core size
+    char wm2[256];
+    const m42_warrior *imp = m42_warrior_make(&ok_ins, 1, 0, 0, wm2, sizeof wm2);
+    const m42_warrior *imps[2] = {imp, imp};
+    uint32_t fpos[2] = {0, 799};
+    fo.positions = fpos;
+    printf(",%d", m42_load(sm, imps, 2, &fo));
+    fpos[1] = 800;
+    printf(",%d]", m42_load(sm, imps, 2, &fo));
+    m42_warrior_free(fw);
+    free(wmem);
+    free(smem);
+  }
+
   // the evaluator at the edges of 64 bits (platform.h has its own overflow
   // checks for compilers other than gcc and clang); values as strings
   printf(",\"evaluate\":[");

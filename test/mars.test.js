@@ -155,6 +155,31 @@ test('placement of the second warrior follows pMARS for a given seed', () => {
   assert.equal(m.warriors[1].position, 100 + (rng(5) % 7801));
 });
 
+test('a warrior that does not fit the rules is refused, with the reason', async () => {
+  // Assembled for a core of 8000 and played in one of 800, the engine read
+  // and wrote outside the watch's memory (#86).
+  const { packWarrior } = await import('../wasm/42mars.js');
+  const imp = assemble('mov 0, 1');
+  const far = assemble('mov 7000, 7999\nmov @7000, }7999\njmp -2\n');
+  const m = engine({ coreSize: 800, maxProcesses: 800 });
+  const fit = /does not fit the rules/;
+  assert.throws(() => m.runMatch([far, imp]), /warrior 'Unknown' does not fit the rules: instruction 0 has A value 7000 \(core size 800\)/);
+  assert.throws(() => m.load([imp, far]), fit);
+  const one = (change) => ({ ...imp, instructions: [{ ...imp.instructions[0], ...change }] });
+  for (const change of [{ op: 19 }, { mod: 7 }, { aMode: 8 }, { bMode: 8 }, { aVal: 800 }, { bVal: -1 }, { aVal: 1.5 }]) {
+    assert.throws(() => m.load([one(change), imp]), fit, JSON.stringify(change));
+  }
+  assert.throws(() => m.load([{ ...imp, start: 800 }, imp]), /start 800/);
+  const packed = packWarrior(imp);
+  packed.packed[0] = (1 << 3) | 7; // modifier 7
+  assert.throws(() => m.load([packed, imp]), /modifier 7/);
+  packed.packed[0] = 19 << 3; // opcode 19
+  assert.throws(() => m.load([packed, imp]), /opcode word 152/);
+  assert.throws(() => m.runMatch([imp, imp], { positions: [0, 800] }), RangeError);
+  assert.equal(m.runMatch([imp, imp], { positions: [0, 799] }).warriors.length, 2);
+  assert.equal(m.runMatch([imp, assemble('mov 7, 799', { coreSize: 800 })]).warriors.length, 2);
+});
+
 test('p-space: last result starts at CORESIZE-1 and survives into the next round', () => {
   const src = 'ldp.ab #0, res\nstp.ab #42, #1\nldp.ab #1, res2\njmp 0\nres dat 0, 0\nres2 dat 0, 0\n';
   const m = engine({ maxCycles: 100 });

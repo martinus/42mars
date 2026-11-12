@@ -35,7 +35,7 @@ const char *m42_status_text(int status) {
     case M42_ERR_MEMORY: return "memory too small";
     case M42_ERR_RULES: return "rule out of range";
     case M42_ERR_ARGUMENT: return "bad argument";
-    case M42_ERR_WARRIOR: return "warrior did not assemble or is too long";
+    case M42_ERR_WARRIOR: return "warrior did not assemble, is too long or does not fit the rules";
     case M42_ERR_STATE: return "no warriors loaded";
     default: return "unknown status";
   }
@@ -403,6 +403,18 @@ static int get_options(const m42_match_options *options, m42_match_options *o) {
              : M42_ERR_ARGUMENT;
 }
 
+// 1 when every field of the warrior is in the range of m42_instruction for
+// a core of `size` cells: the engine indexes tables and the watch with them
+// and does not check them again (#86).
+static int fits(const AsmResult *w, u32 size) {
+  if (w->start >= size) return 0;
+  for (u32 j = 0; j < w->nIns; j++) {
+    const AsmIns *x = &w->ins[j];
+    if (x->op > 18 || x->mod > 6 || x->aMode > 7 || x->bMode > 7 || x->aVal >= size || x->bVal >= size) return 0;
+  }
+  return 1;
+}
+
 // Loads warriors, the way wasm/42mars.js load() did: checks, the load
 // area of config(), p-space groups by PIN, then load().
 static int load_warriors(Mars *m, const m42_warrior *const *ws, u32 n, const m42_match_options *o) {
@@ -414,8 +426,9 @@ static int load_warriors(Mars *m, const m42_warrior *const *ws, u32 n, const m42
   u32 total = 0;
   for (u32 i = 0; i < n; i++) {
     if (!ws[i] || !RESULT(ws[i])->ok || RESULT(ws[i])->nIns > r->max_length) return M42_ERR_WARRIOR;
+    if (!fits(RESULT(ws[i]), r->core_size)) return M42_ERR_WARRIOR;
     total += RESULT(ws[i])->nIns;
-    if (positions && positions[i] >= 1u << 31) return M42_ERR_ARGUMENT;
+    if (positions && positions[i] >= r->core_size) return M42_ERR_ARGUMENT;
   }
   i32 *in = config(m, r->core_size, r->max_processes, r->max_cycles, r->min_distance, pspace_of(r), n, total);
   if (!in) return M42_ERR_MEMORY;

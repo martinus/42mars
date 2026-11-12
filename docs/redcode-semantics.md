@@ -689,9 +689,14 @@ be a non-negative safe integer.
 ### 3.1 Match and rounds
 
 - `load(codes, { seed, positions, permute })`: throws if a code is not `ok`,
-  is longer than `maxLength`, or `codes.length * minDistance > coreSize`,
-  and (RangeError) `permute` with other than two warriors or with
-  `positions`. Sets up the
+  is longer than `maxLength`, does not fit the rules (an opcode above 18, a
+  modifier above 6, a mode above 7, an A or B value or the start outside
+  0 .. coreSize-1, e.g. assembled for another core size; the message names
+  the warrior, the instruction and the field), or `codes.length * minDistance
+  > coreSize`, and (RangeError) `permute` with other than two warriors or
+  with `positions`, or a position outside 0 .. coreSize-1. `m42_load()`,
+  `m42_match()` and `m42_bench()` return `M42_ERR_WARRIOR` and
+  `M42_ERR_ARGUMENT` for the same (#86). Sets up the
   warriors (scores 0), p-space, `round = 0`, `results = []`, `roundOver =
   true`. `seed` undefined: a random seed is drawn (`rng` of a random number in
   1 .. 2^31-2); otherwise `seed` is used directly as the generator state.
@@ -736,7 +741,10 @@ be a non-negative safe integer.
 `seed` is the generator state, `rng(s)` is Park-Miller: `t = 16807 * (s %
 127773) - 2836 * trunc(s / 127773)`, plus 2147483647 if negative.
 
-- Fixed `positions`: used as given.
+- Fixed `positions`: used as given, each below `coreSize`. Warriors may
+  overlap or be closer than `minDistance`; a later warrior's code overwrites
+  an earlier one's, and in the watch (3.4) the later warrior owns the cell
+  while each counts its whole length in `territory`.
 - Warrior 0 is always at 0.
 - Two warriors: warrior 1 at `minDistance + seed % (coreSize + 1 - 2 *
   minDistance)`, then `seed = rng(seed)`. (So seed `pos - minDistance`
