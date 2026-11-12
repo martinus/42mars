@@ -18,6 +18,7 @@ case 2369: return EXEC(2369); // djn.b $ $
 case 6662: return EXEC(6662); // mov.i @ <
 case 6918: return EXEC(6918); // mov.i < <
 case 321: return EXEC(321); // djn.b $ #
+#ifndef M42_DISPATCH_16
 case 2649: return EXEC(2649); // spl.b @ $
 case 2382: return EXEC(2382); // cmp.i $ $
 case 2361: return EXEC(2361); // jmn.b $ $
@@ -34,3 +35,4 @@ case 2130: return EXEC(2130); // slt.ab # $
 case 2353: return EXEC(2353); // jmz.b $ $
 case 2665: return EXEC(2665); // jmp.b @ $
 case 2122: return EXEC(2122); // cmp.ab # $
+#endif

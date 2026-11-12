@@ -845,7 +845,8 @@ M42_FORCE_INLINE int exec_ins_rw(Mars *const m, Cell *const C, const u32 n, cons
 // generic code. clang compiles the sparse case labels into a tree of
 // compares; that was faster than a table indexed by the word (one indirect
 // jump that is harder to predict), and 32 cases were faster than 16, 24,
-// 40, 48 or 64.
+// 40, 48 or 64. MSVC compiles the first 16 only (M42_DISPATCH_16 in
+// platform.h).
 M42_FORCE_INLINE int step(Mars *const m, Cell *const C, const u32 n, const u32 mask, const u32 limit,
                                                       Warrior *const W, u16 *const q, u32 *const head, u32 *const tail) {
   const u32 pc = q[(*head)++ & mask];

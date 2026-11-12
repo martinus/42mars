@@ -28,9 +28,13 @@ exit /b 1
 :build
 if not exist build mkdir build
 set FLAGS=/nologo /std:c11 /O2 /W3 /D_CRT_SECURE_NO_WARNINGS
-cl %FLAGS% /c lib\42mars.c /Fobuild\42mars.obj || exit /b 1
+rem The library twice, in parallel (/MP): for the static library, and with
+rem M42_DLL for the DLL (build\42mars-dll.c includes lib\42mars.c).
+> build\42mars-dll.c echo #define M42_DLL
+>> build\42mars-dll.c echo #include "../lib/42mars.c"
+cl %FLAGS% /MP /c lib\42mars.c build\42mars-dll.c /Fobuild\ || exit /b 1
 lib /nologo /out:build\42mars-static.lib build\42mars.obj || exit /b 1
-cl %FLAGS% /DM42_DLL /LD lib\42mars.c /Fobuild\42mars-dll.obj /Fe:build\42mars.dll || exit /b 1
+cl %FLAGS% /LD build\42mars-dll.obj /Fe:build\42mars.dll || exit /b 1
 cl %FLAGS% cli\42mars.c build\42mars-static.lib /Fobuild\cli.obj /Fe:build\42mars.exe || exit /b 1
 cl %FLAGS% test\c\api-test.c build\42mars.lib /Fobuild\api-test.obj /Fe:build\api-test.exe || exit /b 1
 cl %FLAGS% lib\example.c build\42mars-static.lib /Fobuild\example.obj /Fe:build\example.exe || exit /b 1

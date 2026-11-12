@@ -1,7 +1,10 @@
 name: test
 
-# Every push to main and every pull request: the test suite, the C library
-# on Linux, macOS and Windows with its release archives, and an npm publish
+# Every push to main and every pull request: the test suite on the Node
+# versions from package.json's minimum to the newest LTS, a check that
+# wasm/build.sh gives the committed 42mars.wasm, the C library on Linux (x64
+# and arm64), macOS and Windows with its release archives, the C library
+# under AddressSanitizer and UndefinedBehaviorSanitizer, and an npm publish
 # dry run. A tag v<version> (the version of package.json and lib/42mars.h)
 # also makes a GitHub release with the archives and publishes the npm
 # package; the publish stays a dry run until the repository variable
@@ -14,18 +17,53 @@ on:
   pull_request:
   workflow_dispatch:
 
+# A new push to a pull request cancels the run of the previous one. Other
+# runs get a group of their own: every commit on main keeps its run.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: true
+
 jobs:
   test:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        node: [20, 22]
+        node: [20, 22, 24, 26]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: ${{ matrix.node }}
       - run: npm test
+
+  # The tests load the committed 42mars.wasm: this fails when it is not the
+  # build of lib/ (also when tools/gen-dispatch.mjs changes dispatch.h).
+  # Ubuntu's clang 22.1.2 and clang 22.1.8 gave the same bytes; another
+  # clang version may not.
+  wasm:
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - run: sudo apt-get install -y --no-install-recommends clang-22 lld-22
+      - run: CC=clang-22 sh wasm/build.sh
+      - name: the committed files are the build
+        run: |
+          git diff --exit-code --stat -- wasm/42mars.wasm lib/src/dispatch.h || {
+            echo "::error::wasm/42mars.wasm or lib/src/dispatch.h is not what wasm/build.sh builds from lib/ (clang-22): run wasm/build.sh and commit both"
+            exit 1
+          }
+
+  sanitizers:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - run: make -j4 CC=clang CFLAGS='-O1 -g -fno-omit-frame-pointer -fsanitize=address,undefined -fno-sanitize-recover=all -Wall -Wextra -Werror' LDFLAGS='-fsanitize=address,undefined' test
 
   native:
     name: native (${{ matrix.os }})
@@ -33,10 +71,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, windows-latest]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
       - name: C11 without compiler extensions (the code MSVC builds)
@@ -50,8 +88,12 @@ jobs:
       - name: make dist
         if: runner.os != 'Windows'
         run: make dist
+      # Under a minute. The limit catches cl /O2 slowing down again: with all
+      # 32 cases of dispatch.h (M42_DISPATCH_16 in platform.h) the library
+      # alone took 2 minutes or more.
       - name: build-msvc.bat and the tests
         if: runner.os == 'Windows'
+        timeout-minutes: 2
         shell: cmd
         run: |
           call build-msvc.bat || exit /b 1
@@ -69,7 +111,7 @@ jobs:
           Copy-Item build/42mars.lib, build/42mars-static.lib "$d/lib/"
           Copy-Item LICENSE "$d/"
           Compress-Archive -Path $d -DestinationPath "$d.zip"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: archive-${{ matrix.os }}
           path: |
@@ -78,14 +120,14 @@ jobs:
           if-no-files-found: error
 
   npm:
-    needs: [test, native]
+    needs: [test, wasm, sanitizers, native]
     runs-on: ubuntu-latest
     permissions:
       contents: read
       id-token: write # npm provenance
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           registry-url: https://registry.npmjs.org
@@ -109,7 +151,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           pattern: archive-*
           merge-multiple: true

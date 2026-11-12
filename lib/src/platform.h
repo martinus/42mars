@@ -51,6 +51,11 @@ typedef size_t usize; // pointer-sized also on 64-bit Windows, where long is 32 
 #if defined(_MSC_VER) && !defined(M42_PORTABLE)
 #define M42_FORCE_INLINE static __forceinline
 #define M42_NOINLINE __declspec(noinline)
+// Only the 16 most executed instruction words get a case in step() (mars.c,
+// dispatch.h). cl /O2 takes superlinear time in the size of the loops of
+// execute2(): 141 s for lib/42mars.c with 32 cases, 37 s with 16, and the
+// program was as fast (docs/performance-log.md).
+#define M42_DISPATCH_16
 #else
 #define M42_FORCE_INLINE static inline
 #define M42_NOINLINE

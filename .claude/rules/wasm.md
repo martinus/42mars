@@ -15,7 +15,7 @@ paths:
 
 ## The loops
 
-- `step()` switches on the 14-bit instruction word: the 32 hottest words call `exec_ins()` with a constant word, the rest run it generically. Operands in `exec_ins()`, the instruction in `exec_core()`.
+- `step()` switches on the 14-bit instruction word: the 32 hottest words call `exec_ins()` with a constant word, the rest run it generically. MSVC compiles only the first 16 (`M42_DISPATCH_16` in `platform.h`; `gen-dispatch.mjs` writes the guard): with 32, `cl /O2` took 2 minutes for the loops of `execute2()`. Operands in `exec_ins()`, the instruction in `exec_core()`.
 - Hot loops: `execute` (any number of warriors), `execute2` (two warriors, pairs of turns, one head for both queues, tails in locals) as `execute2_8000` (core and process limit 8000 as constants) and `execute2_any`.
 - `execute_limited` (read/write limits) and `execute_watched` (a watch attached, #74) run `exec_ins_rw()`, the generic operand code with folding; `fold()` returns early for a limit equal to the core size. `run_some(m, count, watched)` picks the loop; only `m42_run()` passes `watched`, `run_match()` passes 0.
 - `trace_flags()` repeats `exec_core()`'s step-4 decisions for the watch (exec_core reports nothing, so the hot loops stay untouched): change both together; `test/watch.test.js` checks the flags against the queues.
