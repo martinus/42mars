@@ -81,7 +81,7 @@ Nothing changed: no pull request, go to step 6.
 ## 6. Ready for /clear
 
 - Background jobs of this session have ended (PIDs from `$!`).
-- Nothing left behind: copies like `tools/zz-*`, and folders that tools keep after a failure (`pmars-diff-*` in the system's temporary folder).
+- Nothing left behind: copies like `tools/zz-*`, and folders that tools keep after a failure (`pmars-diff-*` in the system's temporary folder): remove each by the name the tool printed. A glob over `/tmp` was refused, it can hit other sessions' folders.
 - `git status` is clean, or the uncommitted work is named and Martin is asked. Never discard it, never stash it.
 - Open work is in its issue (edit the body to what is left) or in a new one. A pull request that waits on Martin is named.
 - The worktree stays; `gra done` is Martin's.

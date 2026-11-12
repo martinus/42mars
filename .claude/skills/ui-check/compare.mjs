@@ -16,7 +16,7 @@
 // (software rendering: compare base with head, never with a real browser).
 
 import { spawn } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
@@ -25,6 +25,7 @@ const argv = process.argv.slice(2);
 const opt = (name, dflt) => { const i = argv.indexOf(`--${name}`); return i >= 0 ? argv.splice(i, 2)[1] : dflt; };
 const flag = (name) => { const i = argv.indexOf(`--${name}`); if (i >= 0) argv.splice(i, 1); return i >= 0; };
 const base = opt('base'), head = opt('head'), out = opt('out', null), time = flag('time');
+if (out) mkdirSync(out, { recursive: true }); // it crashed after the first view without it
 const port = 9300 + Math.floor(Math.random() * 600);
 if (!base || !head || argv.length === 0) {
   console.error("usage: compare.mjs --base <port> --head <port> [--out dir] [--time] 'query' ...");

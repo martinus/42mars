@@ -27,7 +27,7 @@ paths:
 ## Keep the hot loops byte-identical
 
 A change outside the loops must leave `execute`, `execute2_8000` and `execute2_any` byte-identical, call indices aside; data addresses moved by 64 or 128 were measured neutral twice but are avoidable. Check:
-- wasm: `git show origin/main:wasm/42mars.wasm > base.wasm; node bench/wasm-functions.mjs base.wasm wasm/42mars.wasm`. The three largest functions must be "same" or differ in a few bytes; then `llvm-objdump -d --no-show-raw-insn` both and diff those three: only `call` operands may differ. Constants that all moved by +64 are data addresses: the data section grew in front of the core.
+- wasm: `git show origin/main:wasm/42mars.wasm > base.wasm; node bench/wasm-functions.mjs base.wasm wasm/42mars.wasm`. Its last line names the three loops, matched by size (a new function in front moves their index): "same" or "call operands only" passes. For "differs", `llvm-objdump -d --no-show-raw-insn` both and diff those three; constants that all moved by +64 are data addresses: the data section grew in front of the core.
 - native: `git archive origin/main lib | tar -x -C base/`, compile `base/lib/42mars.c` and `lib/42mars.c` with `clang -O3 -march=native -c` and `gcc -O3 -march=native -c`, each with and without `-DM42_FIXED_CONTEXT`, `objdump -d` and compare the three functions with addresses masked.
 
 What moves them, and the fixes that worked:
