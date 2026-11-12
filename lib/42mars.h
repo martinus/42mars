@@ -63,10 +63,11 @@ extern "C" {
 #define M42_API
 #endif
 
-// The version of the library, of the command line program and of the npm
-// package (package.json); a release is tagged v<major>.<minor>.<patch>.
-#define M42_VERSION_MAJOR 0
-#define M42_VERSION_MINOR 9
+// The version of the library, of the command line program and of the
+// JavaScript package (package.json); a release is tagged
+// v<major>.<minor>.<patch>.
+#define M42_VERSION_MAJOR 1
+#define M42_VERSION_MINOR 0
 #define M42_VERSION_PATCH 0
 
 // "0.1.0": the three numbers above.
