@@ -436,7 +436,7 @@ typedef struct {
   i32 ok;               // 0
   u32 start;            // 4
   i32 hasPin;           // 8
-  u32 pad;              // 12
+  u32 sourceEnd;        // 12: source bytes read, m42_warrior_source_end()
   i64 pin;              // 16
   u32 nIns;             // 24
   u32 nErrors;          // 28
@@ -546,6 +546,7 @@ typedef struct {
   int stopped;
   int hasAssert;
   u32 forDepth;
+  u32 sourceEnd; // see AsmResult
   u32 running; // FOR blocks running: a ROF ends the innermost one (rofSeen)
   int rofSeen;
   u32 stamp; // counts the pushes of EQU lines into a stream, see Rec
@@ -863,8 +864,9 @@ static void read_source(Asm *a, Str src, Lines *out) {
     const Str rest = slice(body, p, body.n);
     if (ieq(word, "REDCODE") && !gap) {
       // The first ;redcode starts the warrior, the second one ends it and
-      // stops reading the source.
-      if (++redcode == 2) return;
+      // stops reading the source. The next warrior of a stream starts at
+      // that line, as in pMARS (semantics doc, 2.1).
+      if (++redcode == 2) { a->sourceEnd = starts[lineNo - 1]; return; }
       out->n = 0;
       continue;
     }
@@ -1704,6 +1706,7 @@ static AsmResult *assemble(void *mem, usize size, const u8 *src, usize len, cons
   a->date = a->version = (Str){(const u8 *)"", 0};
 
   Lines lines = {0};
+  a->sourceEnd = (u32)len; // unless a second ;redcode ends the warrior
   read_source(a, (Str){src, (u32)len}, &lines);
   a->base = a->A.top;
 
@@ -1766,6 +1769,7 @@ static AsmResult *assemble(void *mem, usize size, const u8 *src, usize len, cons
 
   r->ok = ok;
   r->start = (u32)a->start;
+  r->sourceEnd = a->sourceEnd;
   r->hasPin = a->hasPin;
   r->pin = a->pin;
   r->nIns = ok ? a->nIns : 0;

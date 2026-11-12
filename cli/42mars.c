@@ -283,17 +283,26 @@ static int play(Args *a, m42_warrior **w) {
   rules.rounds = (uint32_t)a->rounds;
   rules.warriors = (uint32_t)a->nfiles;
 
+  // Every `-` reads the next warrior of stdin, as pMARS: stdin is read once,
+  // and each warrior continues where the previous one ended (a second
+  // ;redcode line, m42_warrior_source_end()).
+  char *in = 0;
+  size_t inLen = 0, inPos = 0;
   for (int i = 0; i < a->nfiles; i++) {
     const char *path = a->files[i];
-    FILE *f = strcmp(path, "-") ? fopen(path, "rb") : stdin;
+    const int fromStdin = !strcmp(path, "-");
+    if (fromStdin && !in && !(in = read_all(stdin, &inLen))) return fail(3, "cannot read", path);
+    FILE *f = fromStdin ? 0 : fopen(path, "rb");
     size_t len = 0;
-    char *src = f ? read_all(f, &len) : 0;
-    if (f && f != stdin) fclose(f);
-    if (!src) return fail(3, "cannot read", path);
+    char *src = fromStdin ? 0 : f ? read_all(f, &len) : 0;
+    if (f) fclose(f);
+    if (!fromStdin && !src) { free(in); return fail(3, "cannot read", path); }
     int s;
-    w[i] = m42_assemble_new(src, len, &rules, icws88 ? M42_ICWS88 : 0, i == 0 ? a->registers : 0, &s);
+    w[i] = m42_assemble_new(fromStdin ? in + inPos : src, fromStdin ? inLen - inPos : len, &rules, icws88 ? M42_ICWS88 : 0,
+                            i == 0 ? a->registers : 0, &s);
     free(src);
-    if (!w[i]) return fail(3, m42_status_text(s), path);
+    if (!w[i]) { free(in); return fail(3, m42_status_text(s), path); }
+    if (fromStdin) inPos += m42_warrior_source_end(w[i]);
     for (uint32_t k = 0; k < m42_warrior_errors(w[i]) + m42_warrior_warnings(w[i]); k++) {
       char msg[512];
       int32_t line;
@@ -304,9 +313,10 @@ static int play(Args *a, m42_warrior **w) {
     }
     // Like pMARS: each warrior's listing as soon as it assembled, and the
     // first one that does not assemble ends the run.
-    if (!m42_warrior_ok(w[i])) return 3;
+    if (!m42_warrior_ok(w[i])) { free(in); return 3; }
     if (!a->brief) (a->assemble ? print_assembly : print_listing)(w[i], rules.core_size);
   }
+  free(in);
   if (a->assemble || a->rounds == 0) return 0;
   const int n = a->nfiles;
   int64_t reg[26];

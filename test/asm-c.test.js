@@ -144,13 +144,17 @@ function source(g) {
   return g.rand(2) ? validSource(g) : brokenSource(g);
 }
 
+// The result without sourceEnd, which came after the recording (#93) and has
+// tests of its own.
+const recordable = ({ sourceEnd, ...rest }) => rest;
+
 test('random sources give the recorded results', () => {
   const g = generator(20261110);
   const results = [];
   for (let k = 0; k < 4000; k++) {
     const src = source(g);
     const opts = k % 7 === 0 ? { coreSize: 80, maxLength: 5 } : k % 3 === 0 ? { icws88: true } : {};
-    results.push([JSON.stringify(src), assemble(src, opts)]);
+    results.push([JSON.stringify(src), recordable(assemble(src, opts))]);
   }
   check('sources', results, 100);
 });
@@ -167,7 +171,7 @@ test('random expressions give the recorded results', () => {
 
 test('the C assembler on chosen cases', () => {
   const results = [];
-  const run = (src, opts) => results.push([JSON.stringify(src), assemble(src, opts)]);
+  const run = (src, opts) => results.push([JSON.stringify(src), recordable(assemble(src, opts))]);
   // registers to start with (the first warrior of a pMARS run)
   run(';assert s == 2 && W == 2\n dat #s, #w\n dat #x=x+1, #a\n', { registers: { s: 2, W: 2, x: -5, a: 7 } });
   run(';assert s == 2\n dat #s, #w\n');

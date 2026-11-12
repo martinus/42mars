@@ -93,6 +93,9 @@ uint32_t m42_warrior_length(const m42_warrior *w) { return w ? RESULT(w)->nIns :
 EXPORT(m42_warrior_start)
 uint32_t m42_warrior_start(const m42_warrior *w) { return w ? RESULT(w)->start : 0; }
 
+EXPORT(m42_warrior_source_end)
+size_t m42_warrior_source_end(const m42_warrior *w) { return w ? RESULT(w)->sourceEnd : 0; }
+
 EXPORT(m42_warrior_pin)
 int m42_warrior_pin(const m42_warrior *w, int64_t *pin) {
   if (!w || !RESULT(w)->hasPin) return 0;

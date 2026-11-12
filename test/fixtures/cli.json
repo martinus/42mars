@@ -35,4 +35,12 @@
 {"args":"-b -r 2 P/nul.red W/imp.red","code":3,"stdout":""},
 {"args":"-r 0 P/nulline.red","code":0,"stdout":"Program \"a\" (length 2) by \"Anonymous\"\n\n       ORG      START\nSTART  DAT.F  #     0, $     1     \n       MOV.I  $     0, $     1     \n\n"},
 {"args":"-8 -r 0 P/nulline.red","code":3,"stdout":""}
+,
+{"args":"-b -r 10 -F 4000 - -","stdin":"stream2.txt","code":0,"stdout":"A by Anonymous scores 9\nB by Anonymous scores 12\nResults: 0 1 9\n"},
+{"args":"-r 0 - - -","stdin":"stream3.txt","code":0,"stdout":"Program \"A\" (length 1) by \"Anonymous\"\n\n       ORG      START\nSTART  MOV.I  $     0, $     1     \n\nProgram \"Unknown\" (length 1) by \"Anonymous\"\n\n       ORG      START\nSTART  DAT.F  #     0, $     5     \n\nProgram \"C\" (length 1) by \"Anonymous\"\n\n       ORG      START\nSTART  DAT.F  #     0, $     7     \n\n"},
+{"args":"-b -r 5 -F 3000 - - -","stdin":"stream3.txt","code":0,"stdout":"A by Anonymous scores 40\n  Results: 5 0 0 0\nUnknown by Anonymous scores 0\n  Results: 0 0 0 5\nC by Anonymous scores 0\n  Results: 0 0 0 5\n"},
+{"args":"-r 0 - -","stdin":"nomarks.txt","code":0,"stdout":"Program \"B\" (length 1) by \"Anonymous\"\n\n       ORG      START\nSTART  MOV.I  $     0, $     1     \n\nProgram \"Unknown\" (length 0) by \"Anonymous\"\n\n\n"},
+{"args":"-r 0 - W/imp.red -","stdin":"stream2.txt","code":0,"stdout":"Program \"A\" (length 1) by \"Anonymous\"\n\n       ORG      START\nSTART  MOV.I  $     0, $     1     \n\nProgram \"Imp\" (length 1) by \"A. K. Dewdney\"\n\n       ORG      START\nSTART  MOV.I  $     0, $     1     \n\nProgram \"B\" (length 4) by \"Anonymous\"\n\n       ORG      START\nSTART  ADD.AB #     4, $     3     \n       MOV.I  $     2, @     2     \n       JMP.B  $    -2, $     0     \n       DAT.F  #     0, #     0     \n\n"},
+{"args":"-r 0 - -","stdin":"between.txt","code":0,"stdout":"Program \"X\" (length 1) by \"Y\"\n\n       ORG      START\nSTART  MOV.I  $     0, $     1     \n\nProgram \"B\" (length 1) by \"Anonymous\"\n\n       ORG      START\nSTART  DAT.F  #     0, $     5     \n\n"},
+{"args":"-r 0 - -","stdin":"crlf.txt","code":0,"stdout":"Program \"A\" (length 1) by \"Anonymous\"\n\n       ORG      START\nSTART  MOV.I  $     0, $     1     \n\nProgram \"B\" (length 1) by \"Anonymous\"\n\n       ORG      START\nSTART  DAT.F  #     0, $     5     \n\n"}
 ]

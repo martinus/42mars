@@ -13,6 +13,7 @@ EXPORTS
 	m42_warrior_ok
 	m42_warrior_length
 	m42_warrior_start
+	m42_warrior_source_end
 	m42_warrior_pin
 	m42_warrior_code
 	m42_warrior_make_size

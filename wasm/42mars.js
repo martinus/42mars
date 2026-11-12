@@ -798,7 +798,13 @@ function assembleWith(x, mem, source, options) {
       continue;
     }
     check(x, mem, status, 'assemble');
-    return readWarrior(x, mem, mem.views().dv.getUint32(out, true), utf8 ? utf8Decoder : latin1Decoder, o);
+    const w = mem.views().dv.getUint32(out, true);
+    const result = readWarrior(x, mem, w, utf8 ? utf8Decoder : latin1Decoder, o);
+    // m42_warrior_source_end() in characters of `source`: where the next
+    // warrior of a stream starts (it is the start of a line).
+    const end = x.m42_warrior_source_end(w);
+    result.sourceEnd = utf8 ? utf8Decoder.decode(bytes.subarray(0, end)).length : end;
+    return result;
   }
 }
 

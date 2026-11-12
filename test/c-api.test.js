@@ -132,6 +132,9 @@ test('the C library through 42mars.h agrees with the JS assembler and the wasm e
   // no warriors, a core of 70000, three warriors with rules for two, no
   // context, assembling with core size 0, the broken warrior in a match
   assert.deepEqual(out.errors, [-3, 1, -3, -3, -2, -4]);
+  // m42_warrior_source_end: 26 bytes up to the second ;redcode of two
+  // warriors, all 17 of one, all 23 of the rest (warrior B), 0 when made
+  assert.deepEqual(out.sourceEnd, [26, 17, 23, 1, 0]);
   // m42_cells: 8 cells around the end, equal to m42_core's; first at the
   // core size, count 0 and no context copy nothing
   assert.deepEqual(out.cells, [8, 1, 0, 0, 0]);

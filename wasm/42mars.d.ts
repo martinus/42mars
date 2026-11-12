@@ -67,6 +67,8 @@ export interface Warrior {
   instructions: Instruction[];
   /** Offset of the first instruction to run (ORG, END). */
   start: number;
+  /** Characters of the source the assembler read: up to the start of a second ;redcode line, else all. The next warrior of a stream starts there (pMARS reads several warriors from stdin). */
+  sourceEnd: number;
   /** PIN, or null without one. */
   pin: number | null;
   errors: Message[];

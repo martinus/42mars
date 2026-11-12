@@ -143,6 +143,10 @@ M42_API int m42_assemble(const char *src, size_t len, const m42_rules *rules, un
 M42_API int m42_warrior_ok(const m42_warrior *w);
 M42_API uint32_t m42_warrior_length(const m42_warrior *w); // 0 when not ok
 M42_API uint32_t m42_warrior_start(const m42_warrior *w);  // ORG / END offset
+// The bytes of the source the assembler read: up to the start of a second
+// ;redcode line, else all of it (0 for m42_warrior_make()). pMARS reads
+// several warriors from one stream (`-` for stdin): the next one starts there.
+M42_API size_t m42_warrior_source_end(const m42_warrior *w);
 // 1 and *pin when the warrior has a PIN, else 0.
 M42_API int m42_warrior_pin(const m42_warrior *w, int64_t *pin);
 // The instructions, m42_warrior_length() of them.

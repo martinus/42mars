@@ -287,6 +287,23 @@ int main(int argc, char **argv) {
            m42_get_scores(m, 0, counters, 8));
   }
 
+  // m42_warrior_source_end(): up to the start of the second ;redcode line,
+  // else the whole source; 0 for m42_warrior_make() (#93)
+  {
+    const char *two = ";redcode\n;name A\nmov 0, 1\n;redcode\n;name B\ndat 5\n", *one = ";name A\nmov 0, 1\n";
+    m42_warrior *wt = m42_assemble_new(two, strlen(two), &r, 0, 0, &st), *wb = m42_assemble_new(two + 26, strlen(two) - 26, &r, 0, 0, &st);
+    m42_warrior *wo = m42_assemble_new(one, strlen(one), &r, 0, 0, &st);
+    char nb[64];
+    m42_warrior_text(wb, M42_NAME, nb, sizeof nb);
+    const m42_instruction ins = {1, 6, 1, 1, 0, 1, 0};
+    char made[256];
+    printf(",\"sourceEnd\":[%u,%u,%u,%d,%u]", (unsigned)m42_warrior_source_end(wt), (unsigned)m42_warrior_source_end(wo),
+           (unsigned)m42_warrior_source_end(wb), strcmp(nb, "B") == 0, (unsigned)m42_warrior_source_end(m42_warrior_make(&ins, 1, 0, 0, made, sizeof made)));
+    m42_warrior_free(wt);
+    m42_warrior_free(wb);
+    m42_warrior_free(wo);
+  }
+
   // A context of exactly m42_ctx_size() holds two warriors of max_length.
   char longest[1024] = "";
   for (uint32_t i = 0; i < r.max_length; i++) strcat(longest, " spl 0\n");
