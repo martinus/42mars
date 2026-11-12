@@ -1392,6 +1392,12 @@ parallel (`cl /MP`), and the Windows job went from about 280 s to under a
 minute. Four warrior pairs are not a tournament, the corpus and the
 tournament sets cannot go to CI: the MSVC numbers above are all there is.
 
+Later the same day `build-msvc.bat` stopped compiling a second object for
+the DLL: the two parallel compiles shared the 4 vCPUs, 53 s together. Now
+one object (39 s on the runner) makes both the static library and the DLL,
+whose exports are listed in `lib/42mars.def`. The build step went from 64
+to 47 s, the Windows job from 86 to 72 s (#82).
+
 ### All engines as whole processes, the README charts (12th November 2026)
 
 Every engine plays the 3 bench pairs, 4,000 rounds each from `-F 1334`
