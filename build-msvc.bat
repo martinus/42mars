@@ -28,13 +28,13 @@ exit /b 1
 :build
 if not exist build mkdir build
 set FLAGS=/nologo /std:c11 /O2 /W3 /D_CRT_SECURE_NO_WARNINGS
-rem The library twice, in parallel (/MP): for the static library, and with
-rem M42_DLL for the DLL (build\42mars-dll.c includes lib\42mars.c).
-> build\42mars-dll.c echo #define M42_DLL
->> build\42mars-dll.c echo #include "../lib/42mars.c"
-cl %FLAGS% /MP /c lib\42mars.c build\42mars-dll.c /Fobuild\ || exit /b 1
+rem The library is compiled once: lib makes the static library of the
+rem object, the linker the DLL with the exports listed in lib\42mars.def. A
+rem second object for the DLL (with M42_DLL) was a second cl /O2 run of
+rem about 40 s, and two in parallel shared the 4 vCPUs of GitHub's runner.
+cl %FLAGS% /c lib\42mars.c /Fobuild\42mars.obj || exit /b 1
 lib /nologo /out:build\42mars-static.lib build\42mars.obj || exit /b 1
-cl %FLAGS% /LD build\42mars-dll.obj /Fe:build\42mars.dll || exit /b 1
+cl %FLAGS% /LD build\42mars.obj /Fe:build\42mars.dll /link /DEF:lib\42mars.def || exit /b 1
 cl %FLAGS% cli\42mars.c build\42mars-static.lib /Fobuild\cli.obj /Fe:build\42mars.exe || exit /b 1
 cl %FLAGS% test\c\api-test.c build\42mars.lib /Fobuild\api-test.obj /Fe:build\api-test.exe || exit /b 1
 cl %FLAGS% /Ilib examples\example.c build\42mars-static.lib /Fobuild\example.obj /Fe:build\example.exe || exit /b 1

@@ -1,0 +1,53 @@
+; SPDX-License-Identifier: MIT
+; Copyright (c) 2026 Martin Leitner-Ankerl
+;
+; The exports of 42mars.dll: every M42_API function of 42mars.h, in its order.
+; build-msvc.bat links the DLL with it, from the same object as the static
+; library. test/c-api.test.js checks that it matches the header.
+LIBRARY 42mars
+EXPORTS
+	m42_version
+	m42_status_text
+	m42_rules_94
+	m42_assemble
+	m42_warrior_ok
+	m42_warrior_length
+	m42_warrior_start
+	m42_warrior_pin
+	m42_warrior_code
+	m42_warrior_make_size
+	m42_warrior_make
+	m42_warrior_text
+	m42_warrior_errors
+	m42_warrior_warnings
+	m42_warrior_message
+	m42_warrior_statements
+	m42_warrior_statement
+	m42_evaluate
+	m42_evaluate_registers
+	m42_warrior_packed_size
+	m42_warrior_pack
+	m42_assemble_new
+	m42_warrior_free
+	m42_ctx_size
+	m42_ctx_init
+	m42_new
+	m42_free
+	m42_match_options_default
+	m42_log_stride
+	m42_log_size
+	m42_match
+	m42_bench
+	m42_load
+	m42_start_round
+	m42_run
+	m42_end_round
+	m42_get_state
+	m42_get_warrior
+	m42_warrior_scores
+	m42_core
+	m42_queue
+	m42_pspace_get
+	m42_pspace_set
+	m42_watch_size
+	m42_watch_attach

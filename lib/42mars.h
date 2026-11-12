@@ -17,7 +17,8 @@
 //                      given is its heap. The WebAssembly build uses it; a
 //                      context through a pointer is 4 to 6% slower in
 //                      WebAssembly, 1 to 3% natively (#53).
-//   M42_DLL            Windows: export the functions from a DLL.
+//   M42_DLL            Windows: export the functions from a DLL that is built
+//                      without lib/42mars.def (build-msvc.bat uses that).
 //
 // Use:
 //   m42_rules r = m42_rules_94();
@@ -46,9 +47,9 @@
 extern "C" {
 #endif
 
-// Every function is M42_API: the exports of the Windows DLL, built with
-// M42_DLL defined (build-msvc.bat). A program that uses the DLL needs
-// nothing defined.
+// Every function is M42_API: the exports of the Windows DLL. build-msvc.bat
+// lists them in lib/42mars.def instead; M42_DLL exports them for a DLL
+// built without it. A program that uses the DLL needs nothing defined.
 #if defined(_WIN32) && defined(M42_DLL)
 #define M42_API __declspec(dllexport)
 #else
