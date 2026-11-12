@@ -5,7 +5,8 @@ name: test
 # wasm/build.sh gives the committed 42mars.wasm, the C library on Linux (x64
 # and arm64), macOS and Windows with its release archives, the C library
 # under AddressSanitizer and UndefinedBehaviorSanitizer, its fuzz targets
-# for 60 s each (make fuzz), and an npm publish
+# for 60 s each (make fuzz), the comparison with pMARS 0.9.5 (once the
+# repository variables of the pmars job are set), and an npm publish
 # dry run. A tag v<version> (the version of package.json and lib/42mars.h)
 # also makes a GitHub release with the archives and publishes the npm
 # package; the publish stays a dry run until the repository variable
@@ -82,6 +83,90 @@ jobs:
             build/fuzz/fuzz_*-*
             !build/fuzz/corpus-*
           if-no-files-found: ignore
+
+  # 42mars against pMARS 0.9.5 (#91), built from its source archive and run
+  # as a program only. The clean room (CLAUDE.md): nobody reads the files of
+  # that archive, the build's output goes to /dev/null so that no compiler
+  # message quotes a source line into the log, and nothing of it is uploaded.
+  # Repository variables; the job is skipped until all are set:
+  #   PMARS_SOURCE_URL     the source archive of pMARS 0.9.5 (.tar.gz, .tgz or .zip)
+  #   PMARS_SOURCE_SHA256  its SHA-256
+  #   PMARS_BUILD          a shell command, run in the unpacked archive, that
+  #                        builds the server version (-DSERVER -DEXT94
+  #                        -DPERMUTATE -DRWLIMIT) and leaves the binary at $PMARS_OUT
+  #   CORPUS_COMMIT        the commit of github.com/n1LS/redcode-warriors whose
+  #                        .red files are the corpus (their licenses are
+  #                        unclear: fetched here, never committed)
+  # The binary is cached by the archive's hash and the build command. CI
+  # compares scores, listings and outputs: the per-round instruction counts
+  # and core hashes (--pmars-trace) and pMARS's evaluator (tools/expr-fuzz.mjs)
+  # need patched builds and stay local checks. The seed is the run id.
+  pmars:
+    if: vars.PMARS_SOURCE_URL != '' && vars.PMARS_SOURCE_SHA256 != '' && vars.PMARS_BUILD != '' && vars.CORPUS_COMMIT != ''
+    runs-on: ubuntu-latest
+    env:
+      PMARS_OUT: ${{ github.workspace }}/../ref-bin/pmars
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - id: hash
+        env:
+          PMARS_BUILD: ${{ vars.PMARS_BUILD }}
+        run: echo "build=$(printf '%s' "$PMARS_BUILD" | sha256sum | cut -c1-16)" >> "$GITHUB_OUTPUT"
+      - id: cache
+        uses: actions/cache@v6
+        with:
+          path: ${{ github.workspace }}/../ref-bin
+          key: pmars-${{ vars.PMARS_SOURCE_SHA256 }}-${{ steps.hash.outputs.build }}
+      - name: build pMARS from its archive (output hidden)
+        if: steps.cache.outputs.cache-hit != 'true'
+        env:
+          URL: ${{ vars.PMARS_SOURCE_URL }}
+          SHA: ${{ vars.PMARS_SOURCE_SHA256 }}
+          PMARS_BUILD: ${{ vars.PMARS_BUILD }}
+        run: |
+          src="$RUNNER_TEMP/ref-src"
+          mkdir -p "$src" "$(dirname "$PMARS_OUT")"
+          curl -fsSL "$URL" -o "$RUNNER_TEMP/ref-archive"
+          echo "$SHA  $RUNNER_TEMP/ref-archive" | sha256sum -c --quiet
+          case "$URL" in
+            *.zip) unzip -q "$RUNNER_TEMP/ref-archive" -d "$src" ;;
+            *) tar -xf "$RUNNER_TEMP/ref-archive" -C "$src" ;;
+          esac
+          if (cd "$src" && sh -c "$PMARS_BUILD") > /dev/null 2>&1 && [ -x "$PMARS_OUT" ]; then
+            echo "pMARS built"
+          else
+            echo "::error::the build of pMARS failed; its output is hidden on purpose (clean room): build it locally to see why"
+            exit 1
+          fi
+          rm -rf "$src" "$RUNNER_TEMP/ref-archive"
+      - name: the corpus at CORPUS_COMMIT
+        env:
+          COMMIT: ${{ vars.CORPUS_COMMIT }}
+        run: |
+          repo="$RUNNER_TEMP/warriors-repo"
+          git init -q "$repo"
+          git -C "$repo" fetch -q --depth 1 https://github.com/n1LS/redcode-warriors.git "$COMMIT"
+          git -C "$repo" checkout -q FETCH_HEAD
+          mkdir -p "$RUNNER_TEMP/corpus" "$RUNNER_TEMP/t20"
+          find "$repo" -name '*.red' -exec cp {} "$RUNNER_TEMP/corpus/" \;
+          ls "$RUNNER_TEMP/corpus" | sort | head -20 | while read -r f; do cp "$RUNNER_TEMP/corpus/$f" "$RUNNER_TEMP/t20/"; done
+          echo "$(ls "$RUNNER_TEMP/corpus" | wc -l) warriors"
+      - run: make
+      - name: compare with pMARS
+        run: |
+          set -e
+          echo "seed ${{ github.run_id }}"
+          d="node tools/pmars-diff.mjs --pmars $PMARS_OUT --corpus $RUNNER_TEMP/corpus --seed ${{ github.run_id }} --jobs 4"
+          $d
+          $d --wasm-match --only battles
+          $d --permute --only battles,fuzz
+          $d --icws88 --only listings,exprs,sources
+          $d --cli build/42mars --only cli
+          node tools/tournament.mjs "$RUNNER_TEMP/t20" --rounds 100 --seed ${{ github.run_id }} --pmars "$PMARS_OUT" --compare
+          node tools/example-check.mjs "$RUNNER_TEMP/t20" --pmars "$PMARS_OUT" --seed ${{ github.run_id }}
 
   native:
     name: native (${{ matrix.os }})

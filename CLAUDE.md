@@ -40,7 +40,7 @@ make fuzz                                  # libFuzzer targets of test/fuzz/, 60
 make clean && make CFLAGS='-O2 -std=c11 -pedantic -Werror -DM42_PORTABLE' test   # the C11 code that MSVC compiles
 ```
 
-`O=${COREWAR_ORACLE:-$HOME/.local/share/corewar-theater}`: pMARS binaries, a 568-warrior corpus, tournament sets, corewar.dev timing scripts; outside the repo for license reasons, listed in its `README.md`. A missing or broken binary: ask Martin; never build pMARS (needs its source).
+`O=${COREWAR_ORACLE:-$HOME/.local/share/corewar-theater}`: pMARS binaries, a 568-warrior corpus, tournament sets, corewar.dev timing scripts; outside the repo for license reasons, listed in its `README.md`. A missing or broken binary: ask Martin; never build pMARS (needs its source). The one exception is the `pmars` job of `.github/workflows/test.yml` (#91): it builds pMARS from its archive with all output hidden; never read, print or upload that step's files.
 
 Skills: `engine-check` (correctness gate for engine changes), `perf-experiment` (speed ideas: state of the speed work, measuring, logging), `ui-check` (the visualizer in headless Chrome, compared with main). `/issues` and `/wrap-up` are Martin's: `/issues` works all his open issues, merges each PR on green and ends with the wrap-up; `/wrap-up` reflects on the session, lands the lessons in these files and in scripts, trims these files and leaves the repository ready for `/clear`.
 
@@ -72,7 +72,7 @@ The layout (also in `README.md` and `docs/development.md`; change all three toge
 
 - One simulator, `lib/src/mars.c`; one assembler and evaluator, `lib/src/asm.c` (`assemble`, `evaluate` in JS). Both must agree with pMARS. A behavior change also goes into the semantics doc.
 - The JS interface calls only functions of `lib/42mars.h`: a feature the JS side needs goes into the header first.
-- Oracles: pMARS through `tools/pmars-diff.mjs`, `tools/expr-fuzz.mjs` and `--pmars --compare` (local only, CI has no pMARS). In `npm test`: the specialized loops against the generic code of the watched loop (`test/wasm.test.js`, `test/watch.test.js`), and digests of whole results recorded while the removed JavaScript engines gave the same results (`test/recorded.js`). Rules for those digests: `.claude/rules/engine.md`.
+- Oracles: pMARS through `tools/pmars-diff.mjs`, `tools/expr-fuzz.mjs` and `--pmars --compare`. CI's `pmars` job (once its repository variables are set) compares scores, listings and `42mars` outputs; `--pmars-trace` (instructions and core per round) and `tools/expr-fuzz.mjs` stay local. In `npm test`: the specialized loops against the generic code of the watched loop (`test/wasm.test.js`, `test/watch.test.js`), and digests of whole results recorded while the removed JavaScript engines gave the same results (`test/recorded.js`). Rules for those digests: `.claude/rules/engine.md`.
 - Where pMARS has no defined result or takes very long, the assembler warns with a text that starts with `pMARS` (semantics doc, section 4); the generators of the tools skip such sources.
 
 ## Conventions
