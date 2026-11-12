@@ -37,7 +37,7 @@ On Windows, `build-msvc.bat` builds the same as `make` into `build\`, the static
 make clean && make CFLAGS='-O2 -std=c11 -pedantic -Werror -DM42_PORTABLE' test
 ```
 
-CI ([`test.yml`](../.github/workflows/test.yml)) runs `npm test` on Node 20 to 26, checks the wasm build, builds and tests the library on Linux (x64, arm64), macOS and Windows and under ASan and UBSan, and makes the release archives. A tag `v<version>` makes a GitHub release and publishes the npm package. The version is in `lib/42mars.h` and `package.json`, and a test checks that both agree.
+CI ([`test.yml`](../.github/workflows/test.yml)) runs `npm test` on Node 20 to 26, checks the wasm build, builds and tests the library on Linux (x64, arm64), macOS and Windows and under ASan and UBSan, and makes the release archives. The Windows job reuses the MSVC object of `lib/42mars.c` from an earlier run while `lib/`, `build-msvc.bat` and the runner image stay the same (about 40 s less); a tag always compiles. A tag `v<version>` makes a GitHub release and publishes the npm package. The version is in `lib/42mars.h` and `package.json`, and a test checks that both agree.
 
 ## Compare with pMARS
 
