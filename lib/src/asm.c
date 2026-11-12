@@ -1646,7 +1646,6 @@ static void parse_statement(Asm *a, const Statement *stmt) {
   const int op = opcode_of(optok.text);
   ts.raw = 0;
   if (op < 0) { error(a, line, msg3(a, "bad opcode '", optok.text, "'")); return; }
-  if (op == OP_SPL) ((volatile u8 *)a->A.end)[1] = 1; // deliberate out-of-bounds write, must make the fuzz job fail
   int mod = -2; // none given
   if (is_char(st_peek(a, &ts), '.')) {
     st_next(a, &ts);
