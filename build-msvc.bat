@@ -32,7 +32,12 @@ rem The library is compiled once: lib makes the static library of the
 rem object, the linker the DLL with the exports listed in lib\42mars.def. A
 rem second object for the DLL (with M42_DLL) was a second cl /O2 run of
 rem about 40 s, and two in parallel shared the 4 vCPUs of GitHub's runner.
+rem CI restores build\42mars.obj from its cache when lib\ did not change and
+rem then sets M42_OBJ_CACHED=true (.github/workflows/test.yml). A local
+rem build always compiles.
+if "%M42_OBJ_CACHED%"=="true" if exist build\42mars.obj goto have_obj
 cl %FLAGS% /c lib\42mars.c /Fobuild\42mars.obj || exit /b 1
+:have_obj
 lib /nologo /out:build\42mars-static.lib build\42mars.obj || exit /b 1
 cl %FLAGS% /LD build\42mars.obj /Fe:build\42mars.dll /link /DEF:lib\42mars.def || exit /b 1
 cl %FLAGS% cli\42mars.c build\42mars-static.lib /Fobuild\cli.obj /Fe:build\42mars.exe || exit /b 1
