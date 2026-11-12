@@ -310,3 +310,73 @@ test('ORG, END and PIN without an operand count it as 0', () => {
     assert.deepEqual([w.ok, w.start, w.pin, w.warnings.length], [true, start, pin, 0], src);
   }
 });
+
+test('after an EQU opcode at the statement start, the rest of the line counts one instruction further', () => {
+  // pMARS 0.9.5 (`pmars -r 0`, the last instructions of the listing): when
+  // the EQU expansion that holds the opcode ends, the pending labels get
+  // their value and the instruction counter moves on; labels and CURLINE in
+  // the rest of the line count from there. Found with the Koenigstuhl corpus,
+  // manipulatedlight2.red (#116).
+  const last = (src, n = 1, o = {}) => {
+    const w = assemble(`;assert 1\n${src}`, o);
+    assert.ok(w.ok, `${src}: ${JSON.stringify(w.errors)}`);
+    return w.instructions.slice(-n).map((i) => formatInstruction(i.op, i.mod, i.aMode, i.aVal, i.bMode, i.bVal, 8000));
+  };
+  const cases = [
+    ['s equ spl 1\nx s\ns\ns\nfor 3\ns -71-395*x\nmov >-1,}-1\nrof\n', 6, ['SPL.B $1510, $0', 'MOV.I >-1, }-1', 'SPL.B $2300, $0', 'MOV.I >-1, }-1', 'SPL.B $3090, $0', 'MOV.I >-1, }-1']],
+    ['s equ dat 1\nx dat 0\ns -x\n', 1, ['DAT.F #0, $3']],
+    ['s equ dat\nx dat 0\ns -x\n', 1, ['DAT.F #0, $2']],
+    ['s equ dat 1,\nx dat 0\ns x\n', 1, ['DAT.F $1, $-2']],
+    ['s equ jmp\nx dat 0\ns x\n', 1, ['JMP.B $-2, $0']],
+    ['s equ dat 1,\nx dat 0\ns CURLINE\n', 1, ['DAT.F $1, $2']],
+    // several body lines: only the last one is continued by the rest
+    ['s equ dat 0\n equ dat\nx dat 0\ns -x\n', 2, ['DAT.F #0, $0', 'DAT.F #0, $3']],
+    // labels inside the body count at the instruction's address
+    ['x dat 0\ns equ dat 1-x\ns\n', 1, ['DAT.F #0, $2']],
+    ['x dat 0\ns equ dat 1-x\ns -x\n', 1, ['DAT.F #0, $4']],
+    ['x dat 0\ns equ dat 1-x, x\ns -x\n', 1, ['DAT.F $2, $1']],
+    // a label pending before the EQU name is defined before the rest is read
+    ['s equ dat 1\nl s -l\n', 1, ['DAT.F #0, $2']],
+    // nested: the expansion that holds the opcode decides
+    ['a equ dat\nb equ a -x\nx dat 0\nb -x\n', 1, ['DAT.F #0, $4']],
+    ['a equ lbl\nb equ a dat -x\nx dat 0\nb -x\n', 1, ['DAT.F #0, $3']],
+    ['s equ dat 1\nx dat 0\nt equ x\ns -t\n', 1, ['DAT.F #0, $3']],
+    ['x dat 0\nt equ x\ns equ dat 1-t\ns -t\n', 1, ['DAT.F #0, $4']],
+    // FOR counters, & concatenation
+    ['s equ dat 1\nx01 dat 0\nx02 dat 0\ni for 2\ns -x&i, i\nrof\n', 2, ['DAT.F $4, $1', 'DAT.F $4, $2']],
+    // not affected: an opcode from the source, a body of only a label, a
+    // predefined name, a label defined later (pass 2)
+    ['s equ lbl\nx dat 0\ns dat -x\n', 1, ['DAT.F #0, $1']],
+    ['s equ lbl dat\nx dat 0\ns -lbl\n', 1, ['DAT.F #0, $1']],
+    ['s equ dat 1\nx dat 0\ns -CORESIZE\n', 1, ['DAT.F #0, $1']],
+    ['s equ dat 1\nx dat 0\ns -y\ny dat 0\n', 2, ['DAT.F #0, $0', 'DAT.F #0, $0']],
+  ];
+  for (const [src, n, want] of cases) assert.deepEqual(last(src, n), want, src);
+  // A multi-line EQU in an operand: the statement of its last body line has
+  // the opcode from the body, but the rest of the line is not one further.
+  // pMARS gives this DAT too, the instructions before it differ (#119).
+  assert.deepEqual(last('a equ 5\n equ dat\nx dat 0\njmp a -x, x\n'), ['DAT.F $2, $-2']);
+  // ICWS'88 (`pmars -8`): the same
+  assert.deepEqual(last('a equ mov\nb equ a x,\nx dat #0\nb x\n', 1, { icws88: true }), ['MOV.I $-2, $-2']);
+});
+
+test('after an ORG, END or PIN from an EQU, labels in the rest of the line are relative', () => {
+  // pMARS 0.9.5: START from `pmars -r 0`; ORG x+2 three instructions after x
+  // starts outside the program (a warning). PIN from `pmars -b -r 3`: a
+  // warrior with `stp #1, #1` and this PIN against one with `pin 7` that dies
+  // when it loads 1 from p-space cell 1 shares p-space for x+9 (relative 7),
+  // not for x+7. Labels defined later are absolute, as pass 2 reads them.
+  const cases = [
+    ['x dat 0\ndat 0\ns equ end\ns x+3\n', 1, null],
+    ['x dat 0\ns equ org\ndat 0\ns x+CURLINE\ndat 0\n', 0, null],
+    ['x dat 0\ns equ org\nl s l\ndat 0\n', 0, null],
+    ['s equ org\ndat 0\ns y\ndat 0\ny dat 0\n', 2, null],
+    ['s equ pin\nx stp #1, #1\njmp 0\ns x+9\n', 0, 7],
+  ];
+  for (const [src, start, pin] of cases) {
+    const w = assemble(`;assert 1\n${src}`);
+    assert.deepEqual([w.ok, w.start, w.pin, w.warnings.length], [true, start, pin, 0], src);
+  }
+  const outside = assemble(';assert 1\nx dat 0\ndat 0\ndat 0\ns equ org\ns x+2\n');
+  assert.equal(outside.warnings.length, 1);
+});

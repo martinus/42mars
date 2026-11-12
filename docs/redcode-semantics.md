@@ -452,6 +452,26 @@ expanded in place, as if the text was written there, with these details:
   where the name was used.
 - After the body, if the character following the EQU name at the use site is
   whitespace, one space is added.
+- When the opcode comes from an EQU body (the name stands at the statement
+  start), the statement counts as done when the expansion that holds the
+  opcode ends, before the rest of the line is read: the pending labels get
+  the instruction counter as value, a real opcode increments the counter,
+  and labels and `CURLINE` in the rest of the line count from there, also
+  those of EQU names expanded in the rest. For `ORG`, `END` and `PIN`, the
+  counter stays, but labels in the rest are relative (value minus counter)
+  instead of absolute. Inside the expansion that holds the opcode, labels
+  and `CURLINE` count at the instruction's own address. That expansion is
+  the innermost one: with `a equ dat`, `b equ a -x`, the `-x` of `b`'s body
+  is already in the rest. With `s equ dat 1` and `x dat 0`, the line `s -x`
+  is `DAT.F #0, $3`, and `l s -l` alone is `DAT.F #0, $2` (`l` is defined
+  before `-l` is read). Not affected: names that are still undefined, which
+  pass 2 reads as usual (absolute for `ORG`, `END`, `PIN`); an opcode from
+  the source text with EQU names in its operands; an EQU body of only
+  labels (`s equ lbl`, `s dat -x`); the statement of the last body line of
+  a multi-line EQU used in an operand, although its opcode comes from the
+  body (#119: pMARS differs there in other ways). The same in ICWS'88
+  mode. Found with `manipulatedlight2.red` of the Koenigstuhl corpus
+  (#116).
 - Body text is processed with the same rules (labels, nested EQU names, FOR
   counters, CURLINE). Using an EQU name inside its own expansion is an error
   ("recursive EQU").
