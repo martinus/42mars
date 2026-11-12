@@ -64,7 +64,7 @@ The layout (also in `README.md` and `docs/development.md`; change all three toge
 - `ui/` the visualizer, on the library's watch.
 - `docs/redcode-semantics.md`: the spec. Exact assembler and simulator behavior, the watch (3.4, 3.6), pMARS quirks, deviations (section 4). Change it together with the code.
 - `docs/performance-log.md`: every speed experiment with numbers and verdict, rejected ones too. Commands in entries before 12th November 2026 use the old paths (`tools/bench*.mjs` and the other speed tools are in `bench/` now).
-- `docs/plan.md`: status, validation, speed summary, roadmap. Update it when a roadmap item lands; keep `README.md`'s numbers and test count in sync. `docs/development.md`: the contributor's guide. `docs/images/speed.svg`: the README chart, from `docs/images/speed.mjs` and the numbers in it.
+- `docs/plan.md`: status, validation, speed summary, roadmap. Update it when a roadmap item lands; keep `README.md`'s numbers and test count in sync. `docs/development.md`: the contributor's guide. `docs/images/speed-*.svg`: the README charts, from `docs/images/speed.mjs` and the numbers in it. `docs/images/logo.svg`: the logo, edited by hand, one unit is one cell; the bar of 42mars in the charts has its orange `#f0652d` (`ours` in `speed.mjs`).
 - `test/fixtures/`: pMARS results (`expressions.json`, `snippets.json`, `permute.json`, `test/golden.test.js`) and recorded digests (`asm-c.json`, `wasm.json`, `watch.json`, via `test/recorded.js`). `test/engines.js`: comparing two engines.
 
 ## The engine and its checks

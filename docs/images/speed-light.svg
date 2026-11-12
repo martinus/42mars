@@ -18,7 +18,7 @@
 <text x="728" y="326" text-anchor="middle" font-size="12" fill="#76756f">500</text>
 <text x="485" y="346" text-anchor="middle" font-size="13" fill="#52514e">million simulated instructions per second</text>
 <text x="228" y="134" text-anchor="end" font-size="15" fill="#0b0b0b" font-weight="700">42mars<tspan font-weight="400" fill="#76756f" font-size="13" dx="7">C</tspan></text>
-<path d="M242,118h461.05903593133047a4,4 0 0 1 4,4v14a4,4 0 0 1 -4,4h-461.05903593133047z" fill="#2a78d6"/>
+<path d="M242,118h461.05903593133047a4,4 0 0 1 4,4v14a4,4 0 0 1 -4,4h-461.05903593133047z" fill="#f0652d"/>
 <text x="717.0590359313305" y="134" font-size="15" fill="#0b0b0b" font-weight="700">478<tspan font-weight="400" fill="#76756f" font-size="13" dx="8">4.5× pMARS</tspan></text>
 <text x="228" y="174" text-anchor="end" font-size="15" fill="#0b0b0b" font-weight="500">fmars<tspan font-weight="400" fill="#76756f" font-size="13" dx="7">C</tspan></text>
 <path d="M242,158h386.8341041370604a4,4 0 0 1 4,4v14a4,4 0 0 1 -4,4h-386.8341041370604z" fill="#b5b4ae"/>
