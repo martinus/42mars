@@ -13,7 +13,10 @@
 //        are equal (a few bytes: call indices or data addresses moved)
 //
 // The functions are in the order of mars.c; the three largest are
-// execute2_8000, execute2_any and execute.
+// execute2_8000, execute2_any and execute. With two modules the last line
+// compares those three, matched by size (a new function before them moves
+// their index): same, differs only in call operands (a function index after
+// the call opcode, e.g. +1 for a new export), or differs.
 import { readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 
@@ -34,8 +37,25 @@ function bodies(file) {
   throw new Error(`${file}: no code section`);
 }
 
+// The bytes of x and y differ only inside the LEB128 operand of a call
+// (opcode 0x10): the number of such operands, or -1.
+function callOperandsOnly(x, y) {
+  if (x.length !== y.length) return -1;
+  const starts = new Set();
+  for (let k = 0; k < x.length; k++) {
+    if (x[k] === y[k]) continue;
+    let j = k;
+    while (j > 0 && (x[j - 1] & 0x80) && (y[j - 1] & 0x80)) j--;
+    if (j === 0 || x[j - 1] !== 0x10 || y[j - 1] !== 0x10) return -1;
+    starts.add(j);
+  }
+  return starts.size;
+}
+
+const largest = (fns) => fns.map((f, i) => i).sort((i, j) => fns[j].length - fns[i].length).slice(0, 3);
+
 const [fileA, fileB] = process.argv.slice(2);
-if (!fileA) {
+if (!fileA || process.argv.length > 4) {
   console.error('usage: node bench/wasm-functions.mjs <A.wasm> [B.wasm]');
   process.exit(2);
 }
@@ -53,4 +73,12 @@ if (!fileB) {
     else what = `differs in ${x.reduce((n, v, k) => n + (v !== y[k]), 0)} of ${x.length} bytes`;
     console.log(`${String(i).padStart(3)} ${what}`);
   }
+  const ia = largest(a), ib = largest(b);
+  const loops = ia.map((i, r) => {
+    const x = a[i], y = b[ib[r]];
+    const calls = x.equals(y) ? 0 : callOperandsOnly(x, y);
+    const what = x.equals(y) ? 'same' : calls > 0 ? `call operands only (${calls})` : 'differs';
+    return `${i}${i === ib[r] ? '' : `->${ib[r]}`} ${what}`;
+  });
+  console.log(`the three largest (the loops): ${loops.join(', ')}`);
 }
