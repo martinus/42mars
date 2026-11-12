@@ -93,7 +93,7 @@
 {"name":"comment-only","src":"; just a comment\n\n   ; indented\ndat 1\n","opts":{},"result":{"ok":true,"name":"Unknown","author":"Anonymous","strategy":"","start":0,"pin":null,"instructions":[[12,4,0,0,1,1,4]],"warnings":1}},
 {"name":"misc-char","src":"dat [1]\n","opts":{},"result":{"ok":false,"name":"Unknown","author":"Anonymous","strategy":"","start":0,"pin":null,"instructions":[],"warnings":1}},
 {"name":"leading-number","src":"5 dat 1\n","opts":{},"result":{"ok":false,"name":"Unknown","author":"Anonymous","strategy":"","start":0,"pin":null,"instructions":[],"warnings":2}},
-{"name":"opcode-as-label","src":"div dat 0\n","opts":{},"result":{"ok":false,"name":"Unknown","author":"Anonymous","strategy":"","start":0,"pin":null,"instructions":[],"warnings":1}},
+{"name":"opcode-as-label","src":"div dat 0\n","opts":{},"result":{"ok":false,"name":"Unknown","author":"Anonymous","strategy":"","start":0,"pin":null,"instructions":[],"warnings":2}},
 {"name":"lowercase-ops","src":"spl.b 1\nSpL 2\n","opts":{},"result":{"ok":true,"name":"Unknown","author":"Anonymous","strategy":"","start":0,"pin":null,"instructions":[[11,1,1,1,1,0,1],[11,1,1,2,1,0,2]],"warnings":1}},
 {"name":"empty","src":";name nothing\n","opts":{},"result":{"ok":true,"name":"nothing","author":"Anonymous","strategy":"","start":0,"pin":null,"instructions":[],"warnings":2}},
 {"name":"big-values","src":"dat #123456789012, #-99999999999\n","opts":{},"result":{"ok":true,"name":"Unknown","author":"Anonymous","strategy":"","start":0,"pin":null,"instructions":[[12,4,0,5012,0,1,1]],"warnings":1}},

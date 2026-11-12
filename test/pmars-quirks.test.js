@@ -353,9 +353,9 @@ test('after an EQU opcode at the statement start, the rest of the line counts on
   ];
   for (const [src, n, want] of cases) assert.deepEqual(last(src, n), want, src);
   // A multi-line EQU in an operand: the statement of its last body line has
-  // the opcode from the body, but the rest of the line is not one further.
-  // pMARS gives this DAT too, the instructions before it differ (#119).
-  assert.deepEqual(last('a equ 5\n equ dat\nx dat 0\njmp a -x, x\n'), ['DAT.F $2, $-2']);
+  // the opcode from the body; the rest is one further for the statement it
+  // takes over (#119, the last instruction is pMARS's undefined one).
+  assert.deepEqual(last('a equ 5\n equ dat\nx dat 0\njmp a -x, x\n', 2), ['DAT.F $2, $-2', 'MOV.A #0, #0']);
   // ICWS'88 (`pmars -8`): the same
   assert.deepEqual(last('a equ mov\nb equ a x,\nx dat #0\nb x\n', 1, { icws88: true }), ['MOV.I $-2, $-2']);
 });
@@ -432,6 +432,63 @@ test('a FOR or ROF from an EQU reads only that EQU, and checks the rest of the l
     'f equ for 1\n equ dat 1\n equ rof\n equ dat 2\nf 5\ndat 9\n',
     's equ for 0\ns rof\ndat 1\nrof\ndat 9\n',
     'f equ for 0\n equ dat 3\nf x rof\ndat 5\nrof\ndat 9\n',
+  ];
+  for (const src of fails) assert.equal(assemble(`;assert 1\n${src}`).ok, false, src);
+});
+
+test('a statement with a multi-line EQU in an operand is lost, its last body line takes it over', () => {
+  // pMARS 0.9.5 (`pmars -r 0`, the whole listing, or that it fails; PIN by
+  // p-space sharing in `pmars -b`): the EQU's further body lines are read
+  // first, the last one takes over the statement from the source: it counts
+  // when the EQU's text ends, the rest of the line one further, and its own
+  // text is lost. An instruction counted that way leaves the last
+  // instruction of the warrior undefined in pMARS (a random A-field), here
+  // MOV.A #0, #0 with a warning. ORG, END and PIN lose their value, END
+  // still ends the source after the body lines. Found with
+  // tools/pmars-diff.mjs (#119).
+  const run = (src) => {
+    const w = assemble(`;assert 1\n${src}`);
+    assert.ok(w.ok, `${src}: ${JSON.stringify(w.errors)}`);
+    return w;
+  };
+  const listing = (w) => w.instructions.map((i) => formatInstruction(i.op, i.mod, i.aMode, i.aVal, i.bMode, i.bVal, 8000));
+  const D = (n) => `DAT.F #0, $${n}`;
+  const M = 'MOV.A #0, #0';
+  const cases = [
+    ['a equ 5\n equ dat 0\ndat 3\njmp a\n', [D(3), D(0), M], 0],
+    ['a equ 5\n equ dat 1\n equ dat 2\njmp a\ndat 9\n', [D(1), D(2), D(9), M], 0],
+    ['dat 7\na equ 5\n equ dat 1\nmov a, 3\ndat 9\n', [D(7), 'DAT.F $1, $3', D(9), M], 0],
+    ['a equ 5\n equ dat 1\njmp a\ndat y\ny dat 9\n', [D(1), D(2), D(9), M], 0],
+    ['a equ 5\n equ dat 1\n equ y dat 2\njmp a\ndat y\n', [D(1), D(2), D(-2), M], 0],
+    ['a equ 5\n equ x\n equ dat 2\njmp a\ndat x\n', [D(2), D(-2), M], 0],
+    ['a equ 5\n equ dat CURLINE\ndat 7\njmp a\n', [D(7), D(1), M], 0],
+    ['x dat 0\na equ 5\n equ dat 1\njmp a -x\n', [D(0), D(3), M], 0],
+    ['a equ 5\n equ dat 1\njmp a, a\ndat 7\n', ['DAT.F $1, $5', D(1), D(7), M], 0],
+    ['b equ dat 4\na equ 5\n equ b\njmp a\ndat 9\n', [D(4), D(9), M], 0],
+    ['a equ 5\n equ dat 1\njmp a\nx dat 9\nend x\n', [D(1), D(9), M], 2],
+    ['a equ 1\n equ dat 1\n equ dat 2\n;assert a\ndat 7\n', [D(1), D(7), M], 0],
+    ['x equ 1\n equ mov\n;assert x\ndat 0\n', [D(0), M], 0],
+    // the assert is invalid (a warning), not 0
+    ['a equ 0\n equ dat 1\n;assert a\ndat 7\n', [D(7), M], 0],
+    // nothing lost: the opcode comes from an EQU, or ORG and END count no instruction
+    ['s equ jmp\na equ 5\n equ dat 1\ns a\ndat 7\n', ['JMP.B $5, $0', D(1), D(7)], 0],
+    ['a equ 1\n equ dat 1\ndat 6\norg a\ndat 7\n', [D(6), D(1), D(7)], 0],
+    ['a equ 1\n equ dat 1\ndat 6\nend a\ndat 7\n', [D(6), D(1)], 0],
+  ];
+  for (const [src, want, start] of cases) {
+    const w = run(src);
+    assert.deepEqual([listing(w), w.start], [want, start], src);
+    assert.equal(w.warnings.some((m) => m.text.startsWith('pMARS has no defined result')), want.at(-1) === M, src);
+  }
+  assert.equal(run('a equ 7\n equ dat 0\nstp #1, #1\njmp 0\npin a\n').pin, null);
+  const fails = [
+    'a equ 5\n equ x\nmov 1, a\n',
+    'a equ 5\n equ\njmp a\ndat 7\n',
+    'a equ 5\n equ dat 1\nfor a\ndat 7\nrof\n',
+    'x equ mov 0, 1\n equ jmp -1\n;assert x\n',
+    // an opcode in an assert, as in any operand: "Improper placement"
+    'dat 0\n;assert mov\n',
+    'dat 0\n;assert 1+dat\n',
   ];
   for (const src of fails) assert.equal(assemble(`;assert 1\n${src}`).ok, false, src);
 });

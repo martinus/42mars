@@ -505,7 +505,13 @@ typedef struct {
   i32 lineNo;
   u8 assert; // a ;assert line, the parts hold the expression
   u32 restAt; // the last line of a multi-line EQU: where the rest of the use-site line starts, 0: none
+  u8 held; // the last line of a multi-line EQU in an operand: the kind of the statement it takes over (HOLD_*)
 } Line;
+
+// A statement from the source with a multi-line EQU name in an operand is
+// lost in pMARS: its EQU's last body line takes it over (semantics doc,
+// 2.3, EQU). What the held statement was:
+enum { HOLD_NONE, HOLD_INS, HOLD_PSEUDO, HOLD_END, HOLD_ASSERT, HOLD_FOR };
 
 typedef struct {
   Str text;
@@ -562,6 +568,10 @@ typedef struct {
   u32 work; // see MAX_WORK
   const u8 *base; // the arena's top after reading the source, see MAX_MEMORY
   int exhausted; // past MAX_WORK or MAX_MEMORY: both passes stop
+  u8 hold; // HOLD_*: a statement from the source reads its operands
+  u8 lost; // a multi-line EQU in its operands took it over
+  u8 owner; // HOLD_*: the line being read takes over a held statement
+  const Active *ownerAct; // that line's multi-line EQU
   // pass 2
   i64 ic2;
   i64 start;
@@ -778,7 +788,7 @@ static void push_line(Asm *a, Lines *ls, Str text, i32 lineNo, int assert) {
   if (!p || !l) return;
   *p = (Part){text, 0, 0};
   ls->lines = l;
-  l[ls->n++] = (Line){p, 1, lineNo, (u8)assert, 0};
+  l[ls->n++] = (Line){p, 1, lineNo, (u8)assert, 0, 0};
 }
 
 static Str trim_start(Str s) {
@@ -1086,7 +1096,7 @@ static const Line *stream_next(Asm *a, Stream *s) {
     // takes it without the rest of the use-site line and only checks the
     // rest (rest_ok()), unless the line ends the block with ROF, which
     // checks it too.
-    const Line head = {l->parts, l->restAt, l->lineNo, 0, 0};
+    const Line head = {l->parts, l->restAt, l->lineNo, 0, 0, l->held};
     if (block_delta(a, &head, 0) != -1) {
       Line *h = aalloc(&a->A, sizeof(Line));
       if (!h) return 0;
@@ -1198,12 +1208,18 @@ static int expand(Asm *a, Cursor *c, const Token *tok, const Def *d, Stream *s, 
     Part *p = aalloc(&a->A, sizeof(Part));
     if (!p) return 0;
     *p = (Part){d->body[i].text, act, 0};
-    more[i - 1] = (Line){p, 1, d->body[i].lineNo, 0, 0};
+    more[i - 1] = (Line){p, 1, d->body[i].lineNo, 0, 0, 0};
   }
   const Part head[2] = {{d->body[d->nBody - 1].text, act, 0}, space};
   const Parts lastParts = concat(a, head, 1 + ns, rest.parts, rest.n);
   if (!lastParts.parts) return 0;
-  more[d->nBody - 2] = (Line){lastParts.parts, lastParts.n, useSite, 0, lastParts.n > 1 ? 1 : 0};
+  more[d->nBody - 2] = (Line){lastParts.parts, lastParts.n, useSite, 0, lastParts.n > 1 ? 1 : 0, 0};
+  if (a->hold) {
+    // A multi-line EQU in an operand of a statement from the source (a
+    // second one is in this one's last line, where nothing is held).
+    a->lost = 1;
+    if (a->hold != HOLD_FOR) more[d->nBody - 2].held = a->hold;
+  }
   stream_unshift(a, s, more, d->nBody - 1);
   act->stamp = a->stamp;
   return 1;
@@ -1235,7 +1251,7 @@ static M42_NOINLINE int rest_ok(Asm *a, Cursor *c, const Active *act, Stream *s)
     if (tok.t == T_END) return 1;
     if (tok.t != T_IDENT || active_within(tok.active, act)) continue;
     if (opcode_of(tok.text) >= 0 || ieq(tok.text, "EQU") || ieq(tok.text, "FOR") || ieq(tok.text, "ROF")) {
-      error(a, c->lineNo, msg3(a, "'", tok.text, "' not allowed after a FOR or ROF from an EQU"));
+      error(a, c->lineNo, msg3(a, "", tok.text, " not allowed here"));
       return 0;
     }
     const Def *d = lookup(a, tok.text);
@@ -1252,7 +1268,7 @@ static M42_NOINLINE int rest_ok(Asm *a, Cursor *c, const Active *act, Stream *s)
 // its line: +1, -1 or 0 as block_delta(). Not inlined, see rest_ok().
 static M42_NOINLINE int rest_delta(Asm *a, Cursor *c) {
   const Parts rest = take_rest(a, c);
-  const Line line = {rest.parts, rest.n, c->lineNo, 0, 0};
+  const Line line = {rest.parts, rest.n, c->lineNo, 0, 0, 0};
   return block_delta(a, &line, 1);
 }
 
@@ -1263,10 +1279,10 @@ static M42_NOINLINE int rest_delta(Asm *a, Cursor *c) {
 // inlined, see rest_ok().
 static M42_NOINLINE int skip_split(Asm *a, const Line *line, i32 *depth, Stream *s) {
   if (!line->restAt) return (*depth += block_delta(a, line, 1)) == 0;
-  const Line head = {line->parts, line->restAt, line->lineNo, 0, 0};
+  const Line head = {line->parts, line->restAt, line->lineNo, 0, 0, line->held};
   Line *rest = aalloc(&a->A, sizeof(Line));
   if (!rest) return 1;
-  *rest = (Line){line->parts + line->restAt, line->n - line->restAt, line->lineNo, 0, 0};
+  *rest = (Line){line->parts + line->restAt, line->n - line->restAt, line->lineNo, 0, 0, 0};
   if ((*depth += block_delta(a, &head, 1)) == 0) {
     stream_unshift(a, s, rest, 1);
     return 1;
@@ -1287,7 +1303,10 @@ static M42_NOINLINE int skip_split(Asm *a, const Line *line, i32 *depth, Stream 
 // and PIN (semantics doc, 2.3, EQU). No out parameter: one more local in the
 // FOR recursion's frame took 100 nested FOR blocks past the C stack. With
 // `counted` 2 (the count of a FOR from an EQU), the text ends with `ins`
-// instead, and the cursor stays at the rest of the line.
+// instead, and the cursor stays at the rest of the line. With 3 or 4 (the
+// line that takes over a held statement, `ins` its multi-line EQU), the
+// held statement counts at the end of `ins` (3) or not (4, ORG, END, PIN,
+// assert), the line's own statement counts as usual.
 static int operand_text(Asm *a, Cursor *c, Stream *s, int absolute, u32 limit, Str *out, const Active *ins, int counted) {
   Buf b = {0};
   u32 expansions = 0, spaces = 0;
@@ -1301,6 +1320,12 @@ static int operand_text(Asm *a, Cursor *c, Stream *s, int absolute, u32 limit, S
     }
     if (counted == 2 && cur_outside(c, ins)) { *out = buf_str(&b); return 1; }
     const Token tok = next_token(a, c);
+    if (counted >= 3 && ins && (tok.t == T_END || (tok.t != T_SPACE && !active_within(tok.active, ins)))) {
+      ins = 0;
+      define_pending_labels(a);
+      if (counted == 3) a->ic++;
+      absolute = 0;
+    }
     if (tok.t == T_END) { *out = buf_str(&b); return done; }
     if (tok.t == T_SPACE) { putc_(&a->A, &b, " "); spaces++; continue; }
     if (tok.t != T_IDENT) { put(&a->A, &b, tok.text); continue; }
@@ -1314,6 +1339,11 @@ static int operand_text(Asm *a, Cursor *c, Stream *s, int absolute, u32 limit, S
     const char *kw = ieq(tok.text, "FOR") ? "FOR" : ieq(tok.text, "ROF") ? "ROF" : ieq(tok.text, "EQU") ? "EQU" : 0;
     if (kw) {
       error(a, c->lineNo, msg3(a, kw, (Str){0, 0}, " not allowed here"));
+      return 0;
+    }
+    if (opcode_of(tok.text) >= 0) {
+      // pMARS: "Improper placement", also in an assert, which else only warns
+      error(a, c->lineNo, msg3(a, "", tok.text, " not allowed here"));
       return 0;
     }
     const Def *d = lookup(a, tok.text);
@@ -1345,8 +1375,25 @@ static void define_pending_labels(Asm *a) {
   a->nPending = 0;
 }
 
-static void opcode_line(Asm *a, Cursor *c, Str name, int op, const Active *ins, Stream *s) {
+// The messages of a statement lost to a multi-line EQU in an operand. They
+// reuse existing texts (new read-only data in front of the core moves the
+// hot loops' addresses) and are not inlined (their locals would go into the
+// FOR recursion's frame), see .claude/rules/wasm.md.
+static M42_NOINLINE void undefined_warning(Asm *a, i32 line, Buf *text, Str operands) {
+  put(&a->A, text, operands);
+  warning(a, line, msg3(a, "pMARS has no defined result for '", js_trim(a, buf_str(text)), "'"));
+}
+
+static M42_NOINLINE void bad_opcode(Asm *a, const Line *line) {
+  error(a, line->lineNo, msg3(a, "bad opcode '", js_trim(a, line->parts[0].text), "'"));
+}
+
+// `opAct`: the expansion the opcode came from, 0 for the source; `ins` that
+// expansion if it began at the statement start.
+static void opcode_line(Asm *a, Cursor *c, Str name, int op, const Active *opAct, const Active *ins, Stream *s) {
   const int pseudo = op >= OP_ORG;
+  const int owner = a->owner;
+  a->owner = HOLD_NONE;
   // Characters glued to the opcode are stored right behind it in the scratch
   // buffer, followed by a space and a 0 byte if whitespace follows, else by
   // nothing; the opcode text is read back up to the first 0 byte.
@@ -1358,9 +1405,27 @@ static void opcode_line(Asm *a, Cursor *c, Str name, int op, const Active *ins, 
   put(&a->A, &text, scratch_string(a));
   Str operands;
   const i64 ic = a->ic;
-  const int done = operand_text(a, c, s, pseudo, 2 * MAX_OPERAND_TEXT + 1, &operands, ins, !pseudo);
+  const i32 lineNo = c->lineNo; // a multi-line EQU moves the cursor to its body
+  a->hold = opAct || owner ? HOLD_NONE : !pseudo ? HOLD_INS : op == OP_END ? HOLD_END : HOLD_PSEUDO;
+  a->lost = 0;
+  const int done = owner ? operand_text(a, c, s, pseudo, 2 * MAX_OPERAND_TEXT + 1, &operands, a->ownerAct, owner == HOLD_INS ? 3 : 4)
+                         : operand_text(a, c, s, pseudo, 2 * MAX_OPERAND_TEXT + 1, &operands, ins, !pseudo);
+  a->hold = HOLD_NONE;
   if (!done) {
     a->ic = ic; // the counter stays the number of statements
+    return;
+  }
+  if (a->lost) {
+    // pMARS loses it; its labels stay pending for the EQU's body lines.
+    if (!pseudo) undefined_warning(a, lineNo, &text, operands);
+    a->lost = 0;
+    return;
+  }
+  if (owner == HOLD_ASSERT) {
+    // counted, not stored: pMARS read its text as the assert
+    define_pending_labels(a);
+    if (!pseudo) a->ic++;
+    undefined_warning(a, c->lineNo, &text, operands);
     return;
   }
   define_pending_labels(a);
@@ -1370,7 +1435,7 @@ static void opcode_line(Asm *a, Cursor *c, Str name, int op, const Active *ins, 
   a->statements = st;
   st[a->nStatements++] = (Statement){buf_str(&text), c->lineNo, (u8)pseudo};
   if (!pseudo && done == 1) a->ic++;
-  if (op == OP_END) a->stopped = 1;
+  if (op == OP_END || owner == HOLD_END) a->stopped = 1;
 }
 
 static void equ_line(Asm *a, Cursor *c, Stream *s) {
@@ -1415,7 +1480,17 @@ static void for_line(Asm *a, Cursor *c, const Active *act, Stream *s) {
   define_pending_labels(a);
 
   Str text;
-  if (!operand_text(a, c, s, 0, MAX_LINE_TEXT, &text, act, act ? 2 : 0)) return;
+  a->hold = act ? HOLD_NONE : HOLD_FOR;
+  a->lost = 0;
+  const int read = operand_text(a, c, s, 0, MAX_LINE_TEXT, &text, act, act ? 2 : 0);
+  a->hold = HOLD_NONE;
+  if (!read) return;
+  if (a->lost) {
+    // pMARS reads the EQU's last body line as the count
+    a->lost = 0;
+    error(a, c->lineNo, msg3(a, "bad FOR count '", js_trim(a, text), "'"));
+    return;
+  }
   i64 value;
   const int status = assemble_eval(a, text, c->lineNo, &value);
   if (status < 0) {
@@ -1501,7 +1576,7 @@ static void statement_line(Asm *a, const Line *line, Stream *s) {
     if (op >= 0) {
       // Only an expansion at the statement start counts the statement early:
       // the last body line of a multi-line EQU in an operand does not.
-      opcode_line(a, &c, tok.text, op, tok.active && tok.active->start ? tok.active : 0, s);
+      opcode_line(a, &c, tok.text, op, tok.active, tok.active && tok.active->start ? tok.active : 0, s);
       return;
     }
     if (ieq(tok.text, "EQU")) { equ_line(a, &c, s); return; }
@@ -1538,7 +1613,17 @@ static void statement_line(Asm *a, const Line *line, Stream *s) {
 static void assert_line(Asm *a, const Line *line, Stream *s) {
   Cursor c = cursor(line);
   Str text;
-  if (!operand_text(a, &c, s, 0, MAX_LINE_TEXT, &text, 0, 0)) return;
+  a->hold = HOLD_ASSERT;
+  a->lost = 0;
+  const int read = operand_text(a, &c, s, 0, MAX_LINE_TEXT, &text, 0, 0);
+  a->hold = HOLD_NONE;
+  if (!read) return;
+  if (a->lost) {
+    // pMARS reads the EQU's last body line as the expression
+    a->lost = 0;
+    warning(a, line->lineNo, msg3(a, "invalid assert '", js_trim(a, text), "'"));
+    return;
+  }
   i64 value;
   const int status = assemble_eval(a, text, line->lineNo, &value);
   if (status < 0) {
@@ -1554,8 +1639,15 @@ static void process_lines(Asm *a, Stream *s) {
   while (!a->stopped && !a->A.oom && !a->rofSeen) {
     const Line *line = stream_next(a, s);
     if (!line || !work(a, line->lineNo, 1)) return;
-    if (line->assert) assert_line(a, line, s);
-    else statement_line(a, line, s);
+    if (line->assert) { assert_line(a, line, s); continue; }
+    // A line that takes over a held statement needs an opcode in pMARS. One
+    // call of statement_line(): a second one stopped it from being inlined,
+    // and the FOR recursion's frames no longer fit 100 levels.
+    a->owner = line->held;
+    a->ownerAct = line->held ? line->parts[0].active : 0;
+    statement_line(a, line, s);
+    if (line->held && a->owner) bad_opcode(a, line);
+    a->owner = HOLD_NONE;
   }
 }
 
@@ -1886,6 +1978,14 @@ static AsmResult *assemble(void *mem, usize size, const u8 *src, usize len, cons
   // skips pass 2 then, so ORG, END and PIN statements are not even checked.
   if (a->ic == 0) warning(a, 0, S("no instructions"));
   else for (u32 i = 0; i < a->nStatements && !a->A.oom && !a->exhausted; i++) parse_statement(a, &a->statements[i]);
+  // Instructions that pMARS counted but lost (a multi-line EQU in an
+  // operand) leave its last instructions undefined; here MOV.A #0, #0.
+  while (!failed(a) && !a->A.oom && (i64)a->nIns < a->ic) {
+    AsmIns *l = grow(&a->A, a->ins, a->nIns, &a->capIns, sizeof(AsmIns));
+    if (!l) break;
+    a->ins = l;
+    l[a->nIns++] = (AsmIns){OP_MOV, MOD_A, 0, 0, 0, 0, 0};
+  }
 
   if (a->ic > a->o.maxLength) {
     Buf b = {0};
