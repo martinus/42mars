@@ -301,11 +301,18 @@ const OPS = ICWS88
 const MODS = ICWS88 ? ['', '', '', '', '', '', '', '', '', '', '', '.i'] : ['', '', '', '.a', '.b', '.ab', '.ba', '.f', '.x', '.i'];
 const MODES = ICWS88 ? ['', '', '#', '$', '@', '<', '', '#', '<', '@', '>', '*'] : ['', '', '#', '$', '@', '<', '>', '*', '{', '}'];
 
+// A NUL byte somewhere in a line, followed by text: the line ends at the NUL
+// for pMARS, but the text after it stays in the scratch buffer.
+function withNul(text, tails) {
+  const at = rand(text.length + 1);
+  return `${text.slice(0, at)}\0${pick(tails)}${text.slice(at)}`;
+}
+
 // Random source text: labels of different lengths, EQU, FOR/ROF (also
 // skipped blocks), CURLINE, ORG/END, metadata with trailing whitespace,
 // comments, opcodes glued to their operands (also at the end of a line, where
-// pMARS reads old scratch buffer content), continuation lines, CRLF line ends
-// and a lone CR with text after it.
+// pMARS reads old scratch buffer content), continuation lines, CRLF line ends,
+// a lone CR with text after it and a NUL byte anywhere in a line.
 function randomSource() {
   // Names ending in digits leave digits in the scratch buffer, so that glued
   // text at the end of a line often picks up a number instead of letters.
@@ -359,6 +366,7 @@ function randomSource() {
   lines.forEach((line, i) => {
     let text = line;
     if (rand(30) === 0) text += `\r${pick(['dat 7', 'junk', ''])}`;
+    if (rand(30) === 0) text = withNul(text, ['dat 7', 'junk', ' x,y', '']);
     const space = text.indexOf(' ', 1);
     if (i < lines.length - 1 && space > 0 && rand(25) === 0) text = `${text.slice(0, space)}\\${eol}${text.slice(space)}`;
     out += text + (i < lines.length - 1 || rand(6) ? eol : '');
@@ -370,7 +378,7 @@ function randomSource() {
 // the end of a line pick up what earlier lines and identifiers left in the
 // buffer. Mostly valid code, identifiers of different lengths ending in
 // digits, FOR blocks (also skipped ones) with `&` concatenation, EQU bodies,
-// asserts, comments, continuation lines and different line ends.
+// asserts, comments, continuation lines, different line ends and NUL bytes.
 function scratchSource() {
   const names = ['d1', 'k7', 'ab3', 'zz98', 'p12345', 'a1234567', 'q0000000009', 'start', 'longer_name7'];
   const defined = [];
@@ -430,6 +438,7 @@ function scratchSource() {
   lines.forEach((line, i) => {
     let text = line;
     if (rand(25) === 0) text += `\r${pick(['dat 7', 'q0000000009', ''])}`;
+    if (rand(25) === 0) text = withNul(text, ['dat 7', 'q0000000009', '']);
     const space = text.indexOf(' ', 1);
     if (i < lines.length - 1 && space > 0 && rand(20) === 0) text = `${text.slice(0, space)}\\${eol}${text.slice(space)}`;
     out += text + (i < lines.length - 1 || rand(4) ? eol : '');

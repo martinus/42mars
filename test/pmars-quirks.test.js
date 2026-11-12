@@ -67,6 +67,55 @@ test('continuation and the comment check look at the content before a CR', () =>
   assert.deepEqual(asm('dat 1\r;x \\\ndat 2\n'), ['DAT.F #0, $1', 'DAT.F #0, $2']);
 });
 
+test('a NUL byte ends the line content, like a lone CR', () => {
+  assert.deepEqual(asm('dat 1\0 garbage here\nmov 0,1\n'), ['DAT.F #0, $1', 'MOV.I $0, $1']);
+  assert.deepEqual(asm('mov 0,1\n\0\nmov 0,2\n'), ['MOV.I $0, $1', 'MOV.I $0, $2']);
+  assert.deepEqual(asm('x\0y equ 3\ndat x\n'), ['DAT.F #0, $0']);
+  assert.equal(assemble(';name A\0B\nmov 0,1\n').name, 'A');
+  assert.deepEqual(asm('; c \0 \nmov 0,1\n'), ['MOV.I $0, $1']);
+  // continuation looks at the content before the NUL, on both lines
+  assert.deepEqual(asm('mov 0,\\\0x\n1\n'), ['MOV.I $0, $1']);
+  assert.deepEqual(asm('mov 0,\\\n1\0x\n'), ['MOV.I $0, $1']);
+  assert.deepEqual(asm('x equ 1\0+5\ndat x\n'), ['DAT.F #0, $1']);
+  assert.deepEqual(asm('for 2\0 zz\ndat 1\nrof\n'), ['DAT.F #0, $1', 'DAT.F #0, $1']);
+  assert.deepEqual(asm('for 2\ndat 1\0zz\nrof\n'), ['DAT.F #0, $1', 'DAT.F #0, $1']);
+  assert.deepEqual(asm('mov 0,1\nend\0 zz\n'), ['MOV.I $0, $1']);
+  assert.deepEqual(asm(';assert 1\0 zz\nmov 0,1\n'), ['MOV.I $0, $1']);
+  assert.deepEqual(assemble(';assert 1\0 zz\nmov 0,1\n').warnings, []);
+  const empty = assemble('\0mov 0,1\n');
+  assert.equal(empty.ok, true);
+  assert.deepEqual(empty.instructions, []);
+  // The text after the NUL stays in the scratch buffer (section 5 below).
+  assert.deepEqual(asm('\tdat#9\x0055\n'), ['DAT.F #0, #99']);
+  assert.equal(assemble('mov 0\0,1\n').ok, false);
+});
+
+test('a NUL byte right after an opcode leaves it without operands', () => {
+  // pMARS: "Syntax error", exit code 3, also with -8. It was an ok warrior
+  // with opcode 255 (#85).
+  for (const icws88 of [false, true]) {
+    for (const src of ['mov\0 i b,k\ndat 5\n', 'dat\0 i b,k\n', 'for 1\njmp\0 i b,k\nrof\n']) {
+      assert.equal(assemble(src, { icws88 }).ok, false, JSON.stringify(src));
+    }
+  }
+});
+
+test('no warrior that assembles holds a field out of range', () => {
+  const bad = [];
+  for (const head of ['mov', 'dat', 'jmp', 'mov.i', 'x equ mov\nx']) {
+    for (const tail of [' i b,k', ' 0,1', '#1', '']) {
+      for (let b = 0; b < 256; b++) {
+        const src = `${head}${String.fromCharCode(b)}${tail}\n`;
+        for (const icws88 of [false, true]) {
+          const w = assemble(src, { icws88 });
+          if (w.ok && w.instructions.some((i) => i.op > 18 || i.mod > 6 || i.aMode > 7 || i.bMode > 7)) bad.push(JSON.stringify(src));
+        }
+      }
+    }
+  }
+  assert.deepEqual(bad, []);
+});
+
 // ---- 4. warriors without instructions
 
 test('a warrior without instructions is accepted with a warning', () => {

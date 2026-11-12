@@ -226,9 +226,13 @@ reference tests compare `ok` and the number of warnings.
 
 - A physical line is the text up to and including the next LF (the last one
   may have no LF). A final LF does not start another line.
-- The content of a physical line ends at its first CR or LF. Text after a
-  lone CR up to the next LF is ignored: `mov 1, 2\rdat 3\n` is only
-  `mov 1, 2`. A CRLF line end is just the end of the content.
+- The content of a physical line ends at its first CR, LF or NUL byte. Text
+  after a lone CR or a NUL up to the next LF is ignored: `mov 1, 2\rdat 3\n`
+  and `mov 1, 2\0dat 3\n` are only `mov 1, 2`. A CRLF line end is just the
+  end of the content. This holds for every kind of line below, also inside
+  `EQU` bodies, `FOR` blocks and continued lines: `;name A\0B` gives the name
+  `A`, `mov\0 0, 1` is `mov` without operands, an error. The ignored text
+  still goes into pMARS's scratch buffer (end of 2.4).
 - Line continuation: if the content of a physical line, after appending it to
   the current logical line, makes the logical line end with `\`, and no `;`
   appeared in any of its physical lines so far, the `\` is removed and the
