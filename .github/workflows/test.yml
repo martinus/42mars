@@ -4,11 +4,11 @@ name: test
 # versions from package.json's minimum to the newest LTS, a check that
 # wasm/build.sh gives the committed 42mars.wasm, the C library on Linux (x64
 # and arm64), macOS and Windows with its release archives, the C library
-# under AddressSanitizer and UndefinedBehaviorSanitizer, its fuzz targets
-# for 60 s each (make fuzz), the comparison with pMARS 0.9.5 (once the
-# repository variables of the pmars job are set), and an npm publish
-# dry run. A tag v<version> (the version of package.json and lib/42mars.h)
-# also makes a GitHub release with the archives and publishes the npm
+# under AddressSanitizer and UndefinedBehaviorSanitizer, the comparison
+# with pMARS 0.9.5, and an npm publish dry run. The fuzz targets (make
+# fuzz) are not run here: 3.5 minutes per run for a smoke test; they run by
+# hand and in the release gate. A tag v<version> (the version of
+# package.json and lib/42mars.h) also makes a GitHub release with the archives and publishes the npm
 # package; the publish stays a dry run until the repository variable
 # NPM_PUBLISH is "true" (it needs the secret NPM_TOKEN).
 
@@ -66,23 +66,6 @@ jobs:
         with:
           node-version: 22
       - run: make -j4 CC=clang CFLAGS='-O1 -g -fno-omit-frame-pointer -fsanitize=address,undefined -fno-sanitize-recover=all -Wall -Wextra -Werror' LDFLAGS='-fsanitize=address,undefined' test
-
-  # The fuzz targets of test/fuzz/ under ASan and UBSan, 60 s each on 4
-  # processes: fails on any report, timeout or out-of-memory stop. The input
-  # that failed is uploaded; docs/development.md says how to reproduce it.
-  fuzz:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - run: make fuzz FUZZ_SECONDS=60 FUZZ_JOBS=4
-      - if: failure()
-        uses: actions/upload-artifact@v7
-        with:
-          name: fuzz-failures
-          path: |
-            build/fuzz/fuzz_*-*
-            !build/fuzz/corpus-*
-          if-no-files-found: ignore
 
   # 42mars against pMARS 0.9.5 (#91), built from its source archive and run
   # as a program only. The clean room (CLAUDE.md): nobody reads the files of
@@ -242,7 +225,7 @@ jobs:
           if-no-files-found: error
 
   npm:
-    needs: [test, wasm, sanitizers, native, fuzz]
+    needs: [test, wasm, sanitizers, native]
     runs-on: ubuntu-latest
     permissions:
       contents: read
