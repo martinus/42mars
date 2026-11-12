@@ -405,7 +405,7 @@ static int default_modifier(int op, int aMode, int bMode) {
   const int aImm = aMode == 0, bImm = bMode == 0;
   switch (op) {
     case OP_DAT: case OP_NOP: return MOD_F;
-    case OP_MOV: case OP_CMP: case OP_SEQ: case OP_SNE: return aImm ? MOD_AB : bImm ? MOD_B : MOD_I;
+    case OP_MOV: case OP_CMP: case OP_SEQ: case OP_SNE: return aImm ? MOD_AB : bImm ? MOD_B : MOD_F;
     case OP_ADD: case OP_SUB: case OP_MUL: case OP_DIV: case OP_MOD: return aImm ? MOD_AB : bImm ? MOD_B : MOD_F;
     case OP_SLT: case OP_LDP: case OP_STP: return aImm ? MOD_AB : MOD_B;
     default: return MOD_B;
