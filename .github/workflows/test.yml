@@ -8,9 +8,10 @@ name: test
 # with pMARS 0.9.5, and an npm publish dry run. The fuzz targets (make
 # fuzz) are not run here: 3.5 minutes per run for a smoke test; they run by
 # hand and in the release gate. A tag v<version> (the version of
-# package.json and lib/42mars.h) also makes a GitHub release with the archives and publishes the npm
-# package; the publish stays a dry run until the repository variable
-# NPM_PUBLISH is "true" (it needs the secret NPM_TOKEN).
+# package.json and lib/42mars.h) also makes a GitHub release with the
+# archives and the JavaScript package (npm pack). The npm publish stays a
+# dry run until the repository variable NPM_PUBLISH is "true" (it needs
+# the secret NPM_TOKEN).
 
 on:
   push:
@@ -280,6 +281,14 @@ jobs:
           else
             npm publish --dry-run
           fi
+      # The package as a file for the GitHub release: `npm install <url>`
+      # works without the npm registry.
+      - run: npm pack
+      - uses: actions/upload-artifact@v7
+        with:
+          name: archive-npm
+          path: 42mars-*.tgz
+          if-no-files-found: error
 
   release:
     if: startsWith(github.ref, 'refs/tags/v')
