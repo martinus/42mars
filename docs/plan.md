@@ -1,6 +1,6 @@
 # 42mars: plan
 
-42mars is a [Core War](https://corewar.co.uk/) simulator (MARS) with its own Redcode assembler, and Core War Theater is the browser visualizer built on it. The assembler and the simulator reproduce pMARS 0.9.x behavior so that warriors assemble and fight like on the hills. Everything is MIT licensed. The prototype in this repository runs today:
+42mars is a [Core War](https://corewar.co.uk/) simulator (MARS) with its own Redcode assembler, and Core War Theater is the browser visualizer built on it. The assembler and the simulator reproduce pMARS 0.9.x behavior so that warriors assemble and fight like on the hills. Everything is MIT licensed. What works today:
 
 - 565 of 567 hill warriors from [n1LS/redcode-warriors](https://github.com/n1LS/redcode-warriors) assemble. The 2 failures are real syntax errors (`fail.red` is broken on purpose, `stone.red` has `dat #0 #0` without a comma, which pMARS rejects too).
 - pMARS's own `validate.red` self-ties for all 80,000 cycles, which it only does on a MARS with ICWS'88 semantics and in-register evaluation.
@@ -68,10 +68,8 @@ pMARS does not build a syntax tree. It substitutes `EQU` bodies, `FOR`/`ROF` cou
 
 [`docs/redcode-semantics.md`](redcode-semantics.md) lists all of it, plus the exact simulator semantics: in-register evaluation, `SPL` queue order, the cycle budget after a death, placement with the pMARS random generator (`seed = pos - MINDISTANCE` reproduces `pmars -F pos`), p-space and `PIN`.
 
-Deviations, all on purpose:
+Where pMARS does not terminate, crashes or reads uninitialized memory, 42mars does something reasonable instead; section 4 of the semantics doc lists these cases. Additions:
 
-- A file with only a CR as line ending is split into lines. pMARS reads it as one long line.
-- A warrior without instructions is an error. pMARS warns and loads nothing.
 - `;debug`, `;trace` and `;break` are ignored, like in the pMARS server build. `;strategy` lines are collected and shown.
 - Every instruction records the source line it came from, through `EQU` and `FOR` expansion.
 
@@ -217,7 +215,7 @@ The current focus is the library (L). M1 stays, because a library has to score e
 
 ### L: the 42mars library
 
-A C library, a pMARS-compatible command line program and an npm package. C only (C11, no C++), so that every language can call it and the WebAssembly build needs no standard library. The public interface may break until 1.0.0.
+A C library, a pMARS-compatible command line program and an npm package. C only (C11, no C++), so that every language can call it and the WebAssembly build needs no standard library. From 1.0.0 on the interface of `lib/42mars.h` and of the npm package changes only in a compatible way within 1.x; `lib/42mars.h` names the two exceptions.
 
 - L1 (#53), done: `mars.c` keeps all state in `struct Mars` and every function takes it. The wasm module and the native benchmark use one context at a fixed address, with no loss against the globals (wasm within noise, native 1 to 3% faster). A context through a pointer (`-DMARS_CONTEXT_POINTER`) costs 4 to 6% in wasm and 1 to 3% natively (`docs/performance-log.md`, "A context object"); L3 decides whether the native library takes that.
 - Layout, done: `lib/` the C library, `wasm/` its WebAssembly build and JS interface, `ui/` the visualizer, `js/` the JS simulator until the library replaces it (decided 10th November 2026: one implementation, in C; pMARS stays the oracle). Since 12th November 2026 `lib/` holds only the library, `examples/` the example, `tools/` the user tools and the pMARS comparisons, `bench/` the speed tools, and this plan is in `docs/` (`docs/development.md`).
