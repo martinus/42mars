@@ -41,7 +41,7 @@ make clean && make CFLAGS='-O2 -std=c11 -pedantic -Werror -DM42_PORTABLE' test  
 
 `O=${COREWAR_ORACLE:-$HOME/.local/share/corewar-theater}`: pMARS binaries, a 568-warrior corpus, tournament sets, corewar.dev timing scripts; outside the repo for license reasons, listed in its `README.md`. A missing or broken binary: ask Martin; never build pMARS (needs its source).
 
-Skills: `engine-check` (correctness gate for engine changes), `perf-experiment` (speed ideas: state of the speed work, measuring, logging), `ui-check` (the visualizer in headless Chrome, compared with main). `/issues` is Martin's: work all his open issues, merge each PR on green, reflect.
+Skills: `engine-check` (correctness gate for engine changes), `perf-experiment` (speed ideas: state of the speed work, measuring, logging), `ui-check` (the visualizer in headless Chrome, compared with main). `/issues` and `/wrap-up` are Martin's: `/issues` works all his open issues, merges each PR on green and ends with the wrap-up; `/wrap-up` reflects on the session, lands the lessons in these files and in scripts, trims these files and leaves the repository ready for `/clear`.
 
 ## Working on a GitHub issue
 
@@ -79,7 +79,7 @@ The layout (also in `README.md` and `docs/development.md`; change all three toge
 - New source files start with `// SPDX-License-Identifier: MIT` and `// Copyright (c) 2026 Martin Leitner-Ankerl`.
 - No dependencies: no npm packages, no bundler, tests on `node:test`. Node 20 or newer. Browser code is plain ES modules.
 - C is C11. Compiler specifics (attributes, builtins, `__forceinline`, aligned allocation, DLL exports) go into `lib/src/platform.h` only: MSVC has no statement expressions, VLAs, `__builtin_*` or `aligned_alloc`.
-- CI (`.github/workflows/test.yml`, about 2 minutes): `npm test` on Node 20, 22, 24 and 26; `wasm/build.sh` with Ubuntu's clang-22 must give the committed `42mars.wasm` and `dispatch.h`; the C library on Linux x64 and arm64, macOS and Windows (MSVC through `build-msvc.bat`, so push the branch to try a Windows change), and under ASan and UBSan. MSVC compiles only the first 16 cases of `dispatch.h` (`M42_DISPATCH_16`): with 32 it took 2 minutes per compile, and the Windows build step has a 2-minute limit.
+- CI (`.github/workflows/test.yml`, about 2 minutes): `npm test` on Node 20, 22, 24 and 26; `wasm/build.sh` with Ubuntu's clang-22 must give the committed `42mars.wasm` and `dispatch.h`; the C library on Linux x64 and arm64, macOS and Windows (MSVC through `build-msvc.bat`, so push the branch to try a Windows change), and under ASan and UBSan.
 - One version, in `lib/42mars.h` (`M42_VERSION_*`) and `package.json`; a tag `v<version>` releases (npm publish is a dry run until the repository variable `NPM_PUBLISH` is `true`).
 - Read warrior files as latin1. `warriors/` holds only warriors written for this repo plus Dewdney's Imp and Dwarf: hill warriors have unclear licenses.
 - Tests: a temporary folder is deleted in `after()`. Compare big typed arrays as bytes (`Buffer.equals`) and build failure messages only on failure: a per-cell JS loop with a message string per cell made one test file 16 s instead of 5 s. Random cases come from a generator seeded per test, never from one shared by the file.
@@ -87,7 +87,7 @@ The layout (also in `README.md` and `docs/development.md`; change all three toge
 
 ## Running long checks
 
-- Several checks (engine-check, A/B timing): one script in the scratchpad runs them in order, prints each command with its last lines and exit code, and ends with a sentinel line; start it with `nohup`, wait for the sentinel in the background (`~/gra/CLAUDE.md`, "Shell", also for PIDs and `pgrep -f`). Read the output file with the Read tool: the clean-room hook blocks shell reads of text that mentions pmars, and the `tasks/*.output` files.
+- Several checks (engine-check, A/B timing): write them into a file in the scratchpad, one command per line, and start `nohup node .claude/skills/engine-check/in-order.mjs <file> > <out> 2>&1 &`. It prints each command with its last lines and exit code and ends with `ALL DONE`; wait for that line in the background (`~/gra/CLAUDE.md`, "Shell", also for PIDs and `pgrep -f`). Read the output file with the Read tool: the clean-room hook blocks shell reads of text that mentions pmars, and the `tasks/*.output` files.
 - Timings only on an idle machine: check `uptime` and `node`/`clang` processes, other agents included. Never run pMARS checks or tests next to an A/B timing; `ab-wasm` swaps `42mars.wasm` while it runs.
 
 ## Gotchas
@@ -96,5 +96,4 @@ The layout (also in `README.md` and `docs/development.md`; change all three toge
 - Edit and read our own files with the Edit and Read tools when the command would mention pMARS: the hook refused `sed`, `grep` and Python on `tools/pmars-diff.mjs`, `docs/plan.md`, the semantics doc and result files because their text held `pmars`.
 - The engine's `current` is an index, 0 is a valid warrior: test `m.current >= 0`, not `m.current &&`.
 - pMARS never returns on some inputs (semantics doc, section 4): always run it with a timeout.
-- `pmars-diff --wasm-match` compares scores only (early ties leave another final core); core hashes need `--pmars-trace`.
 - Never compare a timing with a number from the log or another session: the same `42mars.wasm` ran the bench at 310M/s in one session and 359M/s in the next (10th November 2026). Measure the baseline again, alternating.
