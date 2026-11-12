@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 Martin Leitner-Ankerl
 
-// Reads one match of the input format of tools/native-input.mjs for the
+// Reads one match of the input format of bench/native-input.mjs for the
 // native drivers (bench-native.c, tie-ceiling.c): the header line
 // "coreSize maxProcesses maxCycles minDistance pSpaceSize warriors
 // instructions seed rounds", per warrior "length start p-space-group 0",

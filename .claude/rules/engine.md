@@ -1,6 +1,6 @@
 ---
 paths:
-  - "js/**"
+  - "tools/opcodes.js"
   - "lib/**"
   - "test/**"
   - "tools/pmars-diff.mjs"

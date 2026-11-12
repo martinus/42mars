@@ -12,13 +12,16 @@ core), Fedora, Node 22.22, clang 22. Numbers from a busy machine are marked.
 
 | Name | Command | What it is |
 |---|---|---|
-| bench | `node tools/bench.mjs <corpus> [--headless\|--wasm\|--wasm-match]` | 3 hill pairs (agony/bubbles, bomber/chalk, army/bananasplit), 200 rounds each, 22,667,265 instructions, single thread. Report median and range of at least 7 fresh processes. |
-| native | `node tools/bench-native.mjs <corpus> --runs 7` | the same battles on `src/engine/wasm/mars.c` built natively with `clang -O3 -march=native` |
-| corpus pairs | `node tools/bench-pairs.mjs <corpus> [--early-tie]` | 40 random corpus pairs (fixed generator, `--seed 1`), 30 rounds each, `runMatch`, single thread, 78,859,469 instructions; broader instruction mix than the bench. Before November 2026 an ad-hoc script with the same shape, so older corpus-pair numbers are relative only |
+| bench | `node bench/bench.mjs <corpus> [--headless\|--wasm\|--wasm-match]` | 3 hill pairs (agony/bubbles, bomber/chalk, army/bananasplit), 200 rounds each, 22,667,265 instructions, single thread. Report median and range of at least 7 fresh processes. |
+| native | `node bench/bench-native.mjs <corpus> --runs 7` | the same battles on `lib/src/mars.c` built natively with `clang -O3 -march=native` |
+| corpus pairs | `node bench/bench-pairs.mjs <corpus> [--early-tie]` | 40 random corpus pairs (fixed generator, `--seed 1`), 30 rounds each, `runMatch`, single thread, 78,859,469 instructions; broader instruction mix than the bench. Before November 2026 an ad-hoc script with the same shape, so older corpus-pair numbers are relative only |
 | t20 | `node tools/tournament.mjs <first 20 corpus files> --rounds 100 --seed 1 --jobs 1 --engine wasm` | 190 pairings, single thread, includes early ties |
 | t80 | same with the first 80 corpus files, `--jobs 16` and `--jobs 31` | 3,160 pairings, the tournament number |
 
 `<corpus>` is [n1LS/redcode-warriors](https://github.com/n1LS/redcode-warriors).
+
+Paths: since 12th November 2026 the speed tools are in `bench/` (`bench.mjs`, `bench-pairs.mjs`, `bench-native.mjs` with `bench-native.c` and `input.h`, `native-input.mjs`, `tie-ceiling.mjs` with `tie-ceiling.c`, `wasm-functions.mjs`, `ab-*.mjs`) and `gen-dispatch.mjs` is in `lib/src/`. Commands in the entries below that date still use the old paths `tools/` and `lib/tools/`; older entries also name files of the JavaScript engines (`src/engine/...`, `js/...`) that are gone.
+
 Correctness for every kept change: `npm test`, and `tools/pmars-diff.mjs` with
 `--pmars-trace` (instruction count and core hash after every round against a
 pMARS build) plus `--wasm-match` for the early-tie path, on fresh seeds.
@@ -1388,6 +1391,35 @@ and was twice as slow. `/O1` was slower to compile than `/O2` (107 s).
 parallel (`cl /MP`), and the Windows job went from about 280 s to under a
 minute. Four warrior pairs are not a tournament, the corpus and the
 tournament sets cannot go to CI: the MSVC numbers above are all there is.
+
+### All engines as whole processes, the README charts (12th November 2026)
+
+Every engine plays the 3 bench pairs, 4,000 rounds each from `-F 1334`
+(445,920,804 instructions), as whole processes: start, assembly and, for
+WebAssembly, Node start and module compile included. 7 alternating runs,
+median (range), idle machine, GCC 16.2, Node 22.22. All 9 builds gave the
+same wins, losses and ties. Commands in `docs/images/speed.mjs`, which draws
+the charts of `README.md`.
+
+| Engine | Seconds | M instructions/s |
+|---|---|---|
+| 42mars, `build/42mars` (`make`, `-O3`) | 0.932 (0.918–0.939) | 478 |
+| fmars 0.0.207 (`bin/xfmars`) | 1.109 (1.096–1.139) | 402 |
+| 42mars, WebAssembly `runMatch()` | 1.144 (1.133–1.170) | 390 |
+| 42mars, WebAssembly, no early ties | 1.153 (1.150–1.182) | 387 |
+| exMARS 0.01, native | 1.600 (1.589–1.621) | 279 |
+| rmars 215fadc, `--threads 1` | 2.321 (2.298–2.379) | 192 |
+| exMARS, corewar.dev's WebAssembly build | 2.957 (2.917–3.026) | 151 |
+| pMARS 0.9.5 | 4.225 (4.190–4.261) | 106 |
+| pMARS, corewar.dev's WebAssembly build | 6.917 (6.876–7.145) | 64 |
+
+The same measurement an hour earlier, without exMARS 0.01, gave times about
+1% lower for every engine (42mars 0.920 s, pMARS 4.182 s): the README uses
+the later run only. exMARS 0.01 (Martin Ankerl, 2003) was downloaded and
+built for this under a one-time hook exception Martin asked for; the session
+read its `Makefile`, `bench.sh`, `doc.txt` and the first 30 lines of the
+register-width/MUL patch (not applied), wrote no engine code, and deleted
+the source tree afterwards (`$COREWAR_ORACLE/README.md`, `bin/exmars`).
 
 ## Ideas from other simulators
 

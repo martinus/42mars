@@ -72,8 +72,8 @@ build/42mars: cli/42mars.c build/lib42mars.a
 build/api-test: test/c/api-test.c build/$(SHARED)
 	$(CC) $(CFLAGS) $(LDFLAGS) $(RPATH) -o $@ test/c/api-test.c -Lbuild -l42mars
 
-build/example: lib/example.c build/lib42mars.a
-	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ lib/example.c build/lib42mars.a
+build/example: examples/example.c build/lib42mars.a
+	$(CC) $(CFLAGS) $(LDFLAGS) -Ilib -o $@ examples/example.c build/lib42mars.a
 
 test: all build/api-test build/example
 	M42_BIN=build node --test test/c-api.test.js test/cli.test.js

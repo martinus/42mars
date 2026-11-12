@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 Martin Leitner-Ankerl
 //
-// Builds lib/example.c with lib/42mars.c (the C library through its public
+// Builds examples/example.c with lib/42mars.c (the C library through its public
 // header) and compares it with pMARS on every pairing of a folder of
 // warriors: `example -r R -F pos a b` against `pmars -b -k -r R -F pos a b`,
 // wins and ties of both warriors. Prints SAME or each difference; exit
@@ -37,7 +37,7 @@ const lib = fileURLToPath(new URL('../lib/', import.meta.url));
 const tmp = mkdtempSync(join(tmpdir(), 'example-check-'));
 try {
   const bin = join(tmp, 'example');
-  execFileSync(CC, [...CFLAGS, '-o', bin, join(lib, 'example.c'), join(lib, '42mars.c')], { stdio: 'inherit' });
+  execFileSync(CC, [...CFLAGS, '-o', bin, '-I', lib, fileURLToPath(new URL('../examples/example.c', import.meta.url)), join(lib, '42mars.c')], { stdio: 'inherit' });
   const files = readdirSync(dir).filter((f) => /\.red$/i.test(f)).sort().map((f) => join(dir, f));
   const rand = (k) => {
     seed ^= seed << 13; seed >>>= 0;

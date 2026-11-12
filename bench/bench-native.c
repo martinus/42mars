@@ -2,17 +2,17 @@
 // Copyright (c) 2026 Martin Leitner-Ankerl
 
 // Native benchmark driver for the library, to see what the wasm layer costs.
-// tools/bench-native.mjs writes the input (see input.h) and builds and runs
+// bench/bench-native.mjs writes the input (see input.h) and builds and runs
 // this file with -DM42_FIXED_CONTEXT, the context of the wasm build. A
 // second argument turns on early tie detection.
 // Built with -DCOUNT_INS it also prints how often each instruction word was
 // executed to stderr, "<word> <count>" per line, the input of
-// tools/gen-dispatch.mjs --rank.
+// lib/src/gen-dispatch.mjs --rank.
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
-#include "42mars.c" // lib/, see tools/bench-native.mjs (-I)
+#include "42mars.c" // lib/, see bench/bench-native.mjs (-I)
 #include "input.h"
 
 int main(int argc, char **argv) {

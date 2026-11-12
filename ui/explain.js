@@ -6,7 +6,7 @@
 // warrior is doing right now. The classification is a heuristic based on the
 // simulator's trace, not an analysis of the warrior's code.
 
-import { OP, OPCODES, MODIFIERS, MODE_SYMBOLS, formatInstruction } from '../js/opcodes.js';
+import { OP, OPCODES, MODIFIERS, MODE_SYMBOLS, formatInstruction } from '../tools/opcodes.js';
 
 export const OPCODE_DOCS = {
   DAT: 'Data. A process that executes a DAT dies. Used as bomb and to store numbers.',

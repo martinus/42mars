@@ -8,7 +8,7 @@
 // Prints median and range of the engine time and of the whole process.
 //
 //   git show HEAD:tools/tournament.mjs > tools/zz-base-tournament.mjs
-//   node tools/ab-tool.mjs tools/zz-base-tournament.mjs tools/tournament.mjs 5 \
+//   node bench/ab-tool.mjs tools/zz-base-tournament.mjs tools/tournament.mjs 5 \
 //        $O/sets/t80 --rounds 100 --seed 1 --engine wasm --jobs 32
 //
 // The old version has to sit in tools/ (its imports are relative); delete
@@ -17,7 +17,7 @@ import { spawnSync } from 'node:child_process';
 
 const [A, B, runs, ...args] = process.argv.slice(2);
 if (!B || !(Number(runs) > 0)) {
-  console.error('usage: node tools/ab-tool.mjs <A.mjs> <B.mjs> <runs> <arguments of the tool...>');
+  console.error('usage: node bench/ab-tool.mjs <A.mjs> <B.mjs> <runs> <arguments of the tool...>');
   process.exit(2);
 }
 const times = { A: [], B: [] };

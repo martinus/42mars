@@ -4,7 +4,7 @@
 // Example for 42mars.h: assembles two warriors, plays a match and prints
 // "wins losses ties" for each warrior, one line per warrior.
 //
-//   cc -O2 -o example example.c 42mars.c
+//   cc -O2 -Ilib -o example examples/example.c lib/42mars.c   (in the repository root)
 //   ./example [-r rounds] [-F position] [-s size] [-c cycles] [-p processes]
 //             [-l length] [-d distance] a.red b.red
 //

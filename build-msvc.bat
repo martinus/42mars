@@ -37,4 +37,4 @@ lib /nologo /out:build\42mars-static.lib build\42mars.obj || exit /b 1
 cl %FLAGS% /LD build\42mars-dll.obj /Fe:build\42mars.dll || exit /b 1
 cl %FLAGS% cli\42mars.c build\42mars-static.lib /Fobuild\cli.obj /Fe:build\42mars.exe || exit /b 1
 cl %FLAGS% test\c\api-test.c build\42mars.lib /Fobuild\api-test.obj /Fe:build\api-test.exe || exit /b 1
-cl %FLAGS% lib\example.c build\42mars-static.lib /Fobuild\example.obj /Fe:build\example.exe || exit /b 1
+cl %FLAGS% /Ilib examples\example.c build\42mars-static.lib /Fobuild\example.obj /Fe:build\example.exe || exit /b 1

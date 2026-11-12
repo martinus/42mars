@@ -431,7 +431,7 @@ static inline void set_ab(Cell *c, u32 v) { m42_memcpy(c, &v, 4); }
 static inline u64 cell_of(const Cell *c) { u64 v; m42_memcpy(&v, c, 8); return v; }
 static inline void set_cell(Cell *c, u64 v) { m42_memcpy(c, &v, 8); }
 
-// Notes on speed, from tools/bench.mjs --wasm-match (M instructions/s in
+// Notes on speed, from bench/bench.mjs --wasm-match (M instructions/s in
 // Node 22; first version 125):
 // - warrior record padded to 128 bytes, indexed by a shift instead of a
 //   multiply by 72: 147; following a next-warrior pointer: 154
@@ -839,7 +839,7 @@ M42_FORCE_INLINE int exec_ins_rw(Mars *const m, Cell *const C, const u32 n, cons
 #undef INC
 
 // Executes the next instruction of warrior W, see exec_ins(). The most
-// executed instruction words (tools/gen-dispatch.mjs, dispatch.h) have a
+// executed instruction words (lib/src/gen-dispatch.mjs, dispatch.h) have a
 // case each that calls exec_ins() with the word as a constant: a copy of the
 // instruction without run-time mode and opcode tests. The others run the
 // generic code. clang compiles the sparse case labels into a tree of

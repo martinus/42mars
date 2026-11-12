@@ -7,7 +7,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { assembleWasm as assemble, evaluateWasm as evaluate } from '../wasm/42mars.js';
-import { formatInstruction } from '../js/opcodes.js';
+import { formatInstruction } from '../tools/opcodes.js';
 
 // evaluateWasm() status
 const EVAL_OK = 0;

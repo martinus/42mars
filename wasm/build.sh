@@ -4,7 +4,7 @@
 #
 # Rebuilds wasm/42mars.wasm from lib/42mars.c (the simulator, the assembler
 # and the functions of 42mars.h, one translation unit). Needs Node (for
-# tools/gen-dispatch.mjs, which writes dispatch.h) and clang with the wasm32
+# lib/src/gen-dispatch.mjs, which writes dispatch.h) and clang with the wasm32
 # target and wasm-ld (tested with clang 22); no emscripten, no libc.
 #   -Os: about 2 to 3% faster than -O3 in V8 (bench, corpus pairs, t20; see
 #     docs/performance-log.md); natively -O3 is faster
@@ -19,7 +19,7 @@
 # memory and __heap_base.
 set -eu
 cd "$(dirname "$0")/../lib/src"
-node ../../tools/gen-dispatch.mjs -o dispatch.h
+node gen-dispatch.mjs -o dispatch.h
 CC=${CC:-clang}
 "$CC" --target=wasm32 -Os -nostdlib -fno-strict-aliasing -Wall -Wextra \
   -DM42_FIXED_CONTEXT -DM42_NO_LIBC \

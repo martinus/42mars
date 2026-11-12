@@ -60,7 +60,7 @@ import { mkdirSync, readFileSync, readdirSync, writeFileSync, mkdtempSync, rmSyn
 import { tmpdir, cpus } from 'node:os';
 import { join } from 'node:path';
 import { assembleWasm, compileWasmMars, createWasmMarsSync } from '../wasm/42mars.js';
-import { formatListing } from '../js/opcodes.js';
+import { formatListing } from './opcodes.js';
 
 const args = process.argv.slice(2);
 const arg = (name, dflt) => {

@@ -3,15 +3,15 @@
 // Copyright (c) 2026 Martin Leitner-Ankerl
 //
 // A/B timing of two versions of lib/src/mars.c in the native build,
-// the native counterpart of tools/ab-wasm.mjs: builds both once with
-// tools/bench-native.mjs --src (a dispatch.h next to a version is used for
+// the native counterpart of bench/ab-wasm.mjs: builds both once with
+// bench/bench-native.mjs --src (a dispatch.h next to a version is used for
 // it), then runs them alternately on one input and prints median and range.
 // The repository's mars.c is not touched.
 //
-//   node tools/ab-native.mjs <A/mars.c> <B/mars.c> [--input file] [--runs 5]
+//   node bench/ab-native.mjs <A/mars.c> <B/mars.c> [--input file] [--runs 5]
 //        [--early-tie]
 //
-// Without --input the bench pairs of tools/bench.mjs from $O/corpus run
+// Without --input the bench pairs of bench/bench.mjs from $O/corpus run
 // (O = $COREWAR_ORACLE or ~/.local/share/corewar-theater). For the
 // tournament mix: tools/tournament.mjs <set> --native-input file, then
 // --input file --early-tie. Check that the machine is idle first.
@@ -29,7 +29,7 @@ const INPUT = opt('input', null);
 const earlyTie = flag('early-tie');
 const [A, B] = argv;
 if (!A || !B || !Number.isInteger(RUNS) || RUNS < 1) {
-  console.error('usage: node tools/ab-native.mjs <A/mars.c> <B/mars.c> [--input file] [--runs 5] [--early-tie]');
+  console.error('usage: node bench/ab-native.mjs <A/mars.c> <B/mars.c> [--input file] [--runs 5] [--early-tie]');
   process.exit(2);
 }
 const O = process.env.COREWAR_ORACLE ?? join(homedir(), '.local/share/corewar-theater');

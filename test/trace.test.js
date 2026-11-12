@@ -7,7 +7,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { assembleWasm as assemble, createWasmMarsSync } from '../wasm/42mars.js';
-import { OP, MOD } from '../js/opcodes.js';
+import { OP, MOD } from '../tools/opcodes.js';
 
 const STORED = 1 << 16;
 const NEW_PROCESS = 1 << 17;

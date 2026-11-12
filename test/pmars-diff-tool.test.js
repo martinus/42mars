@@ -29,7 +29,7 @@ const url = (rel) => pathToFileURL(join(root, rel)).href;
 const agrees = script('agrees.mjs', `#!/usr/bin/env node
 import { readFileSync } from 'node:fs';
 import { assembleWasm as assemble } from ${JSON.stringify(url('wasm/42mars.js'))};
-import { formatListing } from ${JSON.stringify(url('js/opcodes.js'))};
+import { formatListing } from ${JSON.stringify(url('tools/opcodes.js'))};
 const w = assemble(readFileSync(process.argv.at(-1), 'latin1'), { warriors: 1, rounds: 0, registers: { w: 1, s: 1 } }); // as pmars -r 0 file
 if (w.ok) process.stdout.write(formatListing(w, 8000));
 `);
