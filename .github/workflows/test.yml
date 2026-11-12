@@ -130,7 +130,13 @@ jobs:
           src="$RUNNER_TEMP/ref-src"
           mkdir -p "$src" "$(dirname "$PMARS_OUT")"
           curl -fsSL "$URL" -o "$RUNNER_TEMP/ref-archive"
-          echo "$SHA  $RUNNER_TEMP/ref-archive" | sha256sum -c --quiet
+          # The hash only, never the content: it gives the value for a new
+          # archive and tells a changed archive from a broken build.
+          got="$(sha256sum "$RUNNER_TEMP/ref-archive" | cut -d' ' -f1)"
+          if [ "$got" != "$SHA" ]; then
+            echo "::error::the archive's SHA-256 is $got, PMARS_SOURCE_SHA256 is $SHA"
+            exit 1
+          fi
           case "$URL" in
             *.zip) unzip -q "$RUNNER_TEMP/ref-archive" -d "$src" ;;
             *) tar -xf "$RUNNER_TEMP/ref-archive" -C "$src" ;;
