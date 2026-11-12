@@ -68,6 +68,12 @@ export function recorded(file) {
     assert.ok(want[name], `${file} has no recording of ${JSON.stringify(name)}: RECORD_FIXTURES=1`);
     assert.equal(groups.length, want[name].length, `${name}: number of groups`);
     const k = groups.findIndex((d, i) => d !== want[name][i]);
-    if (k >= 0) assert.fail(`${name}: results ${k * per} to ${k * per + per - 1} changed, the first of them: ${results[k * per][0]}`);
+    // One digest per group: which result of the group changed is unknown, so
+    // the message names the group's first input only as a pointer (it read
+    // as the changed one in #116).
+    if (k >= 0) {
+      const first = per === 1 ? `changed: ${results[k][0]}` : `one or more of these changed (one digest for the group, which starts with ${results[k * per][0]})`;
+      assert.fail(`${name}: result${per === 1 ? ` ${k}` : `s ${k * per} to ${k * per + per - 1}`}: ${first}`);
+    }
   };
 }

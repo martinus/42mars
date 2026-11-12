@@ -8,6 +8,7 @@
 //        [--jobs 16] [--seed 1] [--scale 1] [--only listings,exprs,...]
 //        [--pmars-trace path/to/pmars-trace] [--cli path/to/42mars]
 //        [--timeout 120] [--watch | --wasm-match] [--permute] [--icws88]
+//        [--cases file]
 // An unknown option and an option without its value are refused.
 //
 // Sections:
@@ -19,6 +20,9 @@
 //   battles    corpus pairs at fixed positions: wins/ties per warrior
 //   fuzz       random warriors on core sizes 80, 800 and 8000
 //   multi      3 and 4 warrior battles (random warriors)
+//   cases      with --cases file: the sources in that file, separated by
+//              lines `---`, compared like listings; for a rule found by
+//              running pMARS on small hand-written sources
 // The battles, fuzz and multi sections run on the wasm engine
 // (wasm/42mars.js), round by round. --wasm says the same; it is accepted
 // because logged commands carry it from the time of the JavaScript
@@ -72,13 +76,13 @@ const arg = (name, dflt) => {
 function usage(message) {
   if (message) console.error(`pmars-diff: ${message}`);
   console.error('usage: node tools/pmars-diff.mjs --pmars path/to/pmars [--corpus dir] [--tmp dir] [--jobs n] [--seed n] [--scale n] [--only a,b]\n'
-    + '       [--pmars-trace path/to/pmars-trace] [--cli path/to/42mars] [--timeout s] [--watch | --wasm-match] [--permute] [--icws88]');
+    + '       [--pmars-trace path/to/pmars-trace] [--cli path/to/42mars] [--timeout s] [--watch | --wasm-match] [--permute] [--icws88] [--cases file]');
   process.exit(2);
 }
 // Before anything runs: `--pmars-trace` without its binary took the next
 // option as the binary and every battle counted as a difference, and a
 // mistyped option ran as a test of something else.
-const VALUE_OPTIONS = ['pmars', 'pmars-trace', 'corpus', 'tmp', 'jobs', 'seed', 'scale', 'only', 'timeout', 'cli'];
+const VALUE_OPTIONS = ['pmars', 'pmars-trace', 'corpus', 'tmp', 'jobs', 'seed', 'scale', 'only', 'timeout', 'cli', 'cases'];
 const FLAG_OPTIONS = ['wasm-match', 'permute', 'watch', 'icws88', 'wasm', 'headless'];
 for (let i = 0; i < args.length; i++) {
   const name = args[i].startsWith('--') ? args[i].slice(2) : null;
@@ -239,6 +243,18 @@ async function listings() {
     if (d) diffs.push(d);
   });
   report('listings', files.length, diffs);
+}
+
+async function cases() {
+  const file = arg('cases');
+  if (!file) return console.log('cases: skipped (no --cases)');
+  const srcs = readFileSync(file, 'latin1').split(/^---\r?\n/m);
+  const diffs = diffList();
+  await pool(srcs, async (src) => {
+    const d = await compareListing(tmpFile(src), src);
+    if (d) diffs.push(`${d}\n  source: ${JSON.stringify(src)}`);
+  });
+  report('cases', srcs.length, diffs);
 }
 
 // ---------------------------------------------------------------- usable cases
@@ -683,7 +699,7 @@ async function cli() {
   report('cli', n, diffs);
 }
 
-const sections = { listings, exprs, sources, battles, fuzz, multi, cli };
+const sections = { listings, cases, exprs, sources, battles, fuzz, multi, cli };
 const t0 = Date.now();
 for (const [name, fn] of Object.entries(sections)) {
   if (!ONLY || ONLY.has(name)) await fn();
