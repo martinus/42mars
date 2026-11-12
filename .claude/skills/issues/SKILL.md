@@ -106,7 +106,7 @@ Fix what they find before the push; say which you ran and what you skipped, with
 
 ### 7. engine-check, push, watch CI
 
-The `engine-check` skill for any engine change, the `ui-check` skill for any UI change. Then [pull-request-loop.md](pull-request-loop.md), steps 1 to 4. CI has no pMARS, so the pMARS checks are yours, and their results go in the PR body.
+The `engine-check` skill for any engine change, the `ui-check` skill for any UI change. Then [pull-request-loop.md](pull-request-loop.md), steps 1 to 4. CI's `pmars` job compares scores only (and runs only once its repository variables are set), so `--pmars-trace` and the other pMARS checks are yours, and their results go in the PR body.
 
 A red CI on your PR is work now: diagnose, fix, push again.
 
