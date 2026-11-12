@@ -455,6 +455,9 @@ class WasmMars {
       if (pspace !== true && (!Array.isArray(pspace) || pspace.length !== nw || pspace.some((p) => p.length !== cells))) {
         throw new RangeError(`pspace: true, or one array of ${cells} cells per warrior`);
       }
+      if (pspace !== true && pspace.some((p) => p.some((v) => !Number.isInteger(v) || v < 0 || v >= this.coreSize))) {
+        throw new RangeError(`pspace: every value must be from 0 to ${this.coreSize - 1}`);
+      }
       ps = this.mem.scratch(4 * cells * nw);
       const view = new Int32Array(this.bytes().buffer, ps, cells * nw);
       for (let i = 0; i < nw; i++) {

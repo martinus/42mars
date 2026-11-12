@@ -305,7 +305,19 @@ int main(int argc, char **argv) {
     fo.positions = fpos;
     printf(",%d", m42_load(sm, imps, 2, &fo));
     fpos[1] = 800;
-    printf(",%d]", m42_load(sm, imps, 2, &fo));
+    printf(",%d", m42_load(sm, imps, 2, &fo));
+    // p-space values: below the core size, as LDP copies them into a cell
+    // field (#88's fuzzing: a value of the core size or more made the
+    // engine address outside the core); sr.pspace_size is 500
+    static uint32_t pv[2 * 500];
+    for (int k = 0; k < 2 * 500; k++) pv[k] = 799;
+    m42_match_options pso = m42_match_options_default();
+    pso.pspace = pv;
+    const int okMatch = m42_match(sm, imps, 2, &pso, 0, 0);
+    pv[57] = 800;
+    const int badMatch = m42_match(sm, imps, 2, &pso, 0, 0);
+    m42_load(sm, imps, 2, &pso);
+    printf(",%d,%d,%d,%d]", okMatch, badMatch, m42_pspace_set(sm, 1, 3, 799), m42_pspace_set(sm, 1, 3, 800));
     m42_warrior_free(fw);
     free(wmem);
     free(smem);

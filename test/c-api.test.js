@@ -134,8 +134,10 @@ test('the C library through 42mars.h agrees with the JS assembler and the wasm e
   assert.deepEqual(out.errors, [-3, 1, -3, -3, -2, -4]);
   // warriors that do not fit the rules of the context: M42_ERR_WARRIOR (-4)
   // from match, load and bench; in range 0, then each field out of range and
-  // the start; positions 799 and 800 (M42_ERR_ARGUMENT, -3) in a core of 800
-  assert.deepEqual(out.fit, [-4, -4, -4, 0, -4, -4, -4, -4, -4, -4, -4, 0, -3]);
+  // the start; p-space values 799 and 800 through options->pspace and
+  // m42_pspace_set (M42_ERR_ARGUMENT, -3); positions 799 and 800 in a core
+  // of 800
+  assert.deepEqual(out.fit, [-4, -4, -4, 0, -4, -4, -4, -4, -4, -4, -4, 0, -3, 0, -3, 0, -3]);
   // permute: one warrior, two, two at fixed positions
   assert.deepEqual(out.permute, [-3, 0, -3]);
   // the same PIN shares p-space cell 3, not the last result; another PIN
