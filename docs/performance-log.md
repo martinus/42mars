@@ -1350,6 +1350,45 @@ changed) against `main`: t80 with 31 jobs +0.4% (n=9, ranges
 overlapping). What is left at 31 jobs, up to 1%, I could not tell from
 noise; at 16 jobs and on one thread there is none.
 
+### MSVC gets 16 cases instead of 32: a quarter of the compile time, the same speed (12th November 2026)
+
+The Windows job of CI took about 4.5 minutes, the other jobs under 30 s.
+Nearly all of it was `cl /O2` on `lib/42mars.c`, twice (static library
+and DLL), about 2 minutes each. `/d2cgsummary` names the loops of
+`execute2()`: `execute2_8000` 45 s, `execute2_any` 45 s, `execute2` 40 s,
+everything else under 3 s. Each of them inlines `step()` twice, with its
+32 specialized cases of `dispatch.h`, which means 66 copies of
+`exec_ins()` in one function. MSVC's time grows faster than that size.
+`lib/src/platform.h` now defines `M42_DISPATCH_16` for MSVC, and
+`tools/gen-dispatch.mjs` puts the cases after the first 16 (the hottest,
+`HOT` is ranked) inside `#ifndef M42_DISPATCH_16`. The gcc, clang and wasm
+builds are byte-identical to before.
+
+GitHub's `windows-latest` runner (4 vCPUs, AMD EPYC 9V45, MSVC 14.51 of
+Visual Studio 18), `cl /std:c11 /O2`, the `42mars` program built from each
+object, `42mars -b -r <rounds>` on the warriors of `warriors/`, the
+variants alternating, median of 5 runs in seconds. Compile time of
+`lib/42mars.c` alone:
+
+| Variant | compile | lantern - origami, 10000 | seeker - dwarf, 100000 | origami - imp, 30000 | lantern - origami - seeker, 3000 |
+|---|---|---|---|---|---|
+| MSVC, 32 cases | 140.7 s | 4.809 | 5.299 | 3.790 | 1.294 |
+| MSVC, 16 cases | 36.7 s | 4.770 (-0.8%) | 5.079 (-4.2%) | 4.083 (+7.7%) | 1.279 (-1.2%) |
+| MSVC, 8 cases | 12.7 s | 4.922 (+2.3%) | 5.936 (+12.0%) | 3.733 (-1.5%) | 1.276 (-1.4%) |
+| clang-cl 20.1.8, 32 cases | 6.5 s | 4.665 (-3.0%) | 5.046 (-4.8%) | 4.445 (+17.3%) | 1.261 (-2.5%) |
+
+Another run on another runner: no cases at all compiled in 2.6 s and
+was 31% slower on seeker - dwarf (6.878 against 5.238 s), 1 to 3% apart
+on the others. Without `execute2()` (every match through `execute()`)
+the compile took 7.7 s and lantern - origami 6.3 against 4.8 s. A plain
+`inline` instead of `__forceinline` (`-DM42_PORTABLE`) compiled in 0.8 s
+and was twice as slow. `/O1` was slower to compile than `/O2` (107 s).
+
+16 cases it is. `build-msvc.bat` also compiles the two objects in
+parallel (`cl /MP`), and the Windows job went from about 280 s to under a
+minute. Four warrior pairs are not a tournament, the corpus and the
+tournament sets cannot go to CI: the MSVC numbers above are all there is.
+
 ## Ideas from other simulators
 
 exMARS (Martin Ankerl, 2003, based on exhaust and pMARS) and the exMARS fork

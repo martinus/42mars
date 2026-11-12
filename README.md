@@ -20,7 +20,7 @@ sudo make install       # into /usr/local, or make install PREFIX=...; on Linux,
 cc -O2 -o example lib/example.c $(pkg-config --cflags --libs 42mars)
 ```
 
-With MSVC, `build-msvc.bat` builds the same into `build\`, or compile directly: `cl /O2 /std:c11 lib\example.c lib\42mars.c`. Each release on GitHub has these builds for Linux, macOS and Windows.
+With MSVC, `build-msvc.bat` builds the same into `build\`, or compile directly: `cl /O2 /std:c11 lib\example.c lib\42mars.c`. Each release on GitHub has these builds for Linux (x86-64 and arm64), macOS (arm64) and Windows (x86-64).
 
 **Command line.** `42mars` takes pMARS's options and prints its output, for tools that call pMARS (differences: [docs/redcode-semantics.md](docs/redcode-semantics.md), section 5):
 

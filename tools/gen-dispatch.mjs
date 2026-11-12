@@ -12,7 +12,9 @@
 //   node tools/gen-dispatch.mjs --rank [--top 32] <count files...>
 //
 //   --hot      (default) one case per entry of HOT below: what
-//              wasm/build.sh uses, written to lib/src/dispatch.h
+//              wasm/build.sh uses, written to lib/src/dispatch.h. The cases
+//              after the first 16 are inside #ifndef M42_DISPATCH_16, which
+//              lib/src/platform.h defines for MSVC
 //   --full     one case per combination of opcode, modifier, A mode and B
 //              mode (19 * 7 * 8 * 8 = 8512); slower and much larger, see
 //              docs/performance-log.md
@@ -88,12 +90,14 @@ const lines = [
 ];
 if (mode === 'hot') {
   const seen = new Set();
-  for (const text of HOT) {
+  for (const [i, text] of HOT.entries()) {
     const w = parse(text);
     if (seen.has(w)) throw new Error(`duplicate HOT entry '${text}'`);
     seen.add(w);
+    if (i === 16) lines.push('#ifndef M42_DISPATCH_16');
     lines.push(`case ${w}: return EXEC(${w}); // ${text}`);
   }
+  if (HOT.length > 16) lines.push('#endif');
 } else if (mode === 'full') {
   for (let op = 0; op < OPS.length; op++) {
     for (let mod = 0; mod < MODS.length; mod++) {
