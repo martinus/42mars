@@ -222,7 +222,8 @@ typedef struct {
   uint32_t *pspace;           // 0: p-space and last results start as in a new match;
                               // else per warrior max(1, p-space size) cells, cell 0 the
                               // last result: read before the first round, written after
-                              // the last (to play a match in blocks, also with LDP)
+                              // the last (to play a match in blocks, also with LDP);
+                              // each value below core_size, else M42_ERR_ARGUMENT
 } m42_match_options;
 
 // 1 round, first_round 0, early ties on, seed 0, no fixed positions, no log,
@@ -305,7 +306,8 @@ M42_API uint32_t m42_queue(const m42_ctx *m, uint32_t w, uint32_t *out, uint32_t
 
 // P-space cell i of warrior w (cell 0 is the last result), e.g. to carry it
 // from one m42_load() to the next. Warriors with the same PIN share cells
-// 1 and up.
+// 1 and up. A value to set must be below core_size, as every value a
+// warrior can store (else M42_ERR_ARGUMENT).
 M42_API int m42_pspace_get(const m42_ctx *m, uint32_t w, uint32_t i, uint32_t *value);
 M42_API int m42_pspace_set(m42_ctx *m, uint32_t w, uint32_t i, uint32_t value);
 

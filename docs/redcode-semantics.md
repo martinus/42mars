@@ -707,6 +707,10 @@ be a non-negative safe integer.
 - P-space: each warrior has `pSpaceSize` cells, all 0 initially, plus a
   "last result" value that starts at `coreSize - 1`. Warriors whose `pin` is
   the same non-null number share one p-space (cells, not the last result).
+  Every value is below `coreSize`: `STP` stores a field, and the results are
+  small. A value given from outside (`runMatch({ pspace })`,
+  `m42_match()`'s `options->pspace`, `m42_pspace_set()`) must be too, else a
+  RangeError or `M42_ERR_ARGUMENT`: `LDP` copies it into a field unchanged.
 - `startRound()`:
   1. `round++`, positions are chosen (3.2).
   2. The whole core becomes `DAT.F $0, $0`, time 0; a watch is reset

@@ -180,6 +180,18 @@ test('a warrior that does not fit the rules is refused, with the reason', async 
   assert.equal(m.runMatch([imp, assemble('mov 7, 799', { coreSize: 800 })]).warriors.length, 2);
 });
 
+test('p-space values from outside are below the core size', () => {
+  // LDP copies a p-space value into a cell field, and the engine does not
+  // reduce it again: a value of the core size or more made it address
+  // outside the core (found by the fuzz target fuzz_make of #88).
+  const imp = assemble('mov 0, 1', { coreSize: 800 });
+  const m = engine({ coreSize: 800, maxProcesses: 800, pSpaceSize: 50 });
+  const cells = (v) => [0, 1].map(() => Int32Array.from({ length: 50 }, (_, k) => (k === 7 ? v : 0)));
+  assert.equal(m.runMatch([imp, imp], { pspace: cells(799) }).warriors.length, 2);
+  assert.throws(() => m.runMatch([imp, imp], { pspace: cells(800) }), RangeError);
+  assert.throws(() => m.runMatch([imp, imp], { pspace: cells(-1) }), RangeError);
+});
+
 test('p-space: last result starts at CORESIZE-1 and survives into the next round', () => {
   const src = 'ldp.ab #0, res\nstp.ab #42, #1\nldp.ab #1, res2\njmp 0\nres dat 0, 0\nres2 dat 0, 0\n';
   const m = engine({ maxCycles: 100 });

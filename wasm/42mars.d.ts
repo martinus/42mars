@@ -109,7 +109,7 @@ export interface MatchOptions extends LoadOptions {
   earlyTie?: boolean;
   /** Play rounds firstRound + 1 .. firstRound + rounds, with empty p-space (unless pspace is given). Default 0. */
   firstRound?: number;
-  /** Carry p-space over: true starts as a match starts, else one array per warrior (pSpaceSize cells, at least 1, cell 0 the last result) as a previous call returned it. Then the result's warriors have `pspace`. */
+  /** Carry p-space over: true starts as a match starts, else one array per warrior (pSpaceSize cells, at least 1, cell 0 the last result, each value from 0 to coreSize-1) as a previous call returned it. Then the result's warriors have `pspace`. */
   pspace?: true | Int32Array[];
 }
 
