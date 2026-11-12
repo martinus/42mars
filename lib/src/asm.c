@@ -546,6 +546,9 @@ typedef struct {
   int stopped;
   int hasAssert;
   u32 forDepth;
+  u32 running; // FOR blocks running: a ROF ends the innermost one (rofSeen)
+  int rofSeen;
+  u32 stamp; // counts the pushes of EQU lines into a stream, see Rec
   u32 work; // see MAX_WORK
   const u8 *base; // the arena's top after reading the source, see MAX_MEMORY
   int exhausted; // past MAX_WORK or MAX_MEMORY: both passes stop
@@ -1025,17 +1028,45 @@ static void cur_insert(Asm *a, Cursor *c, const Part *parts, u32 n) {
 typedef struct Front {
   const Line *line;
   struct Front *next;
+  u32 stamp; // Asm.stamp when it was pushed, see Rec
 } Front;
+
+// The lines a running FOR block reads in its first repetition, for the other
+// repetitions. Lines that an EQU of the block pushes while it runs (a stamp
+// after `stamp`) are left out: the replay expands the EQU again.
+typedef struct Rec {
+  Line *lines;
+  u32 n, cap, stamp;
+  struct Rec *outer; // the running block around it that reads the same stream
+} Rec;
 
 typedef struct {
   const Line *lines;
   u32 n, i;
   Front *front;
+  Rec *rec; // the innermost running FOR block that records this stream
 } Stream;
 
-static const Line *stream_next(Stream *s) {
-  if (s->front) { const Line *l = s->front->line; s->front = s->front->next; return l; }
-  return s->i < s->n ? &s->lines[s->i++] : 0;
+static const Line *stream_next(Asm *a, Stream *s) {
+  const Line *l;
+  u32 stamp = 0;
+  if (s->front) {
+    l = s->front->line;
+    stamp = s->front->stamp;
+    s->front = s->front->next;
+  } else if (s->i < s->n) {
+    l = &s->lines[s->i++];
+  } else {
+    return 0;
+  }
+  for (Rec *r = s->rec; r; r = r->outer) {
+    if (stamp > r->stamp) continue;
+    Line *g = grow(&a->A, r->lines, r->n, &r->cap, sizeof(Line));
+    if (!g) return 0;
+    r->lines = g;
+    g[r->n++] = *l;
+  }
+  return l;
 }
 
 static const Line *stream_peek(const Stream *s) {
@@ -1045,10 +1076,11 @@ static const Line *stream_peek(const Stream *s) {
 
 static void stream_unshift(Asm *a, Stream *s, const Line *lines, u32 n) {
   Front *head = s->front;
+  const u32 stamp = ++a->stamp;
   for (u32 k = n; k-- > 0;) {
     Front *f = aalloc(&a->A, sizeof(Front));
     if (!f) return;
-    *f = (Front){&lines[k], head};
+    *f = (Front){&lines[k], head, stamp};
     head = f;
   }
   s->front = head;
@@ -1229,7 +1261,7 @@ static void equ_line(Asm *a, Cursor *c, Stream *s) {
     q.quiet = 1;
     const Token tok = next_token(a, &q);
     if (tok.t != T_IDENT || !ieq(tok.text, "EQU")) break;
-    stream_next(s);
+    stream_next(a, s);
     body = grow(&a->A, body, n, &cap, sizeof(BodyLine));
     if (!body) return;
     body[n++] = (BodyLine){rest_raw(a, &q), next->lineNo};
@@ -1260,37 +1292,56 @@ static void for_line(Asm *a, Cursor *c, Stream *s) {
     return;
   }
 
-  // Collect the block up to the matching ROF.
-  i64 times = value > 0 ? value % 65536 : 0;
-  Line *body = 0;
-  u32 n = 0, cap = 0;
-  int found = 0;
-  i32 depth = 1;
-  for (const Line *line = stream_next(s); line; line = stream_next(s)) {
-    if (!work(a, line->lineNo, 1)) return;
-    depth += block_delta(a, line, times == 0);
-    if (depth == 0) { found = 1; break; }
-    body = grow(&a->A, body, n, &cap, sizeof(Line));
-    if (!body) return;
-    body[n++] = *line;
-  }
-  if (!found) {
+  const i64 times = value > 0 ? value % 65536 : 0;
+  if (times == 0) {
+    // A skipped block ends at the matching ROF; the scan counts every FOR
+    // line, also one with a defined label.
+    i32 depth = 1;
+    for (const Line *line = stream_next(a, s); line; line = stream_next(a, s)) {
+      if (!work(a, line->lineNo, 1)) return;
+      depth += block_delta(a, line, 1);
+      if (depth == 0) return;
+    }
     warning(a, c->lineNo, S("FOR without matching ROF"));
-    if (times > 1) times = 1;
+    a->stopped = 1;
+    return;
   }
-  if (times > 0 && ++a->forDepth > MAX_FOR_DEPTH) {
+  if (++a->forDepth > MAX_FOR_DEPTH) {
     error(a, c->lineNo, S("FOR blocks nested too deep"));
     a->stopped = 1;
     return;
   }
-  for (i64 k = 1; k <= times && !a->stopped && !a->A.oom && work(a, c->lineNo, 1); k++) {
+  // A running block ends at the first ROF that it reads at its own level,
+  // as in pMARS: a FOR line with a defined label is ignored and opens no
+  // block, so the next ROF ends this one (semantics doc, "FOR and ROF"). The
+  // first repetition reads the stream and records what it read; the others
+  // replay that, and read on in the stream if the replay ends without a ROF
+  // (one was ignored), recording further.
+  Rec rec = {0, 0, 0, 0, s->rec};
+  int found = 1;
+  for (i64 k = 1; k <= times && found && !a->stopped && !a->A.oom && work(a, c->lineNo, 1); k++) {
     if (hasCounter) define(a, counter, new_def(a, DEF_FOR, k));
-    Stream inner = {body, n, 0, 0};
-    process_lines(a, &inner);
+    a->running++;
+    if (k > 1) {
+      Stream replay = {rec.lines, rec.n, 0, 0, 0};
+      process_lines(a, &replay);
+    }
+    if (!a->rofSeen && !a->stopped && !a->A.oom) {
+      rec.stamp = a->stamp;
+      s->rec = &rec;
+      process_lines(a, s);
+      s->rec = rec.outer;
+    }
+    a->running--;
+    found = a->rofSeen;
+    a->rofSeen = 0;
     if (hasCounter) undefine(a, counter);
   }
-  if (times > 0) a->forDepth--;
-  if (!found) a->stopped = 1;
+  a->forDepth--;
+  if (!found && !a->stopped && !a->A.oom) {
+    warning(a, c->lineNo, S("FOR without matching ROF"));
+    a->stopped = 1;
+  }
 }
 
 // Label position: labels, then an opcode, EQU, FOR, ROF or an EQU name.
@@ -1315,7 +1366,14 @@ static void statement_line(Asm *a, const Line *line, Stream *s) {
     if (op >= 0) { opcode_line(a, &c, tok.text, op, s); return; }
     if (ieq(tok.text, "EQU")) { equ_line(a, &c, s); return; }
     if (ieq(tok.text, "FOR")) { for_line(a, &c, s); return; }
-    if (ieq(tok.text, "ROF")) { error(a, c.lineNo, S("ROF without FOR")); return; }
+    if (ieq(tok.text, "ROF")) {
+      // Ends the innermost running FOR block. Labels before it, also on this
+      // line, stay pending: the next instruction defines them, in the next
+      // repetition too (so `dat 1`, `x rof` makes x a redefinition there).
+      if (a->running) a->rofSeen = 1;
+      else error(a, c.lineNo, S("ROF without FOR"));
+      return;
+    }
     if (str_eqc(tok.text, "CURLINE")) { error(a, c.lineNo, S("CURLINE cannot be a label")); return; }
 
     const Def *d = lookup(a, tok.text);
@@ -1350,8 +1408,8 @@ static void assert_line(Asm *a, const Line *line, Stream *s) {
 }
 
 static void process_lines(Asm *a, Stream *s) {
-  while (!a->stopped && !a->A.oom) {
-    const Line *line = stream_next(s);
+  while (!a->stopped && !a->A.oom && !a->rofSeen) {
+    const Line *line = stream_next(a, s);
     if (!line || !work(a, line->lineNo, 1)) return;
     if (line->assert) assert_line(a, line, s);
     else statement_line(a, line, s);
@@ -1666,7 +1724,7 @@ static AsmResult *assemble(void *mem, usize size, const u8 *src, usize len, cons
     d->nBody = 1;
     define(a, S(predefined[i].name), d);
   }
-  Stream s = {lines.lines, lines.n, 0, 0};
+  Stream s = {lines.lines, lines.n, 0, 0, 0};
   process_lines(a, &s);
   if (a->nPending) {
     Buf b = {0};

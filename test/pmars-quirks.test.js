@@ -258,3 +258,37 @@ test('substituted text has a limit: "Substitution is too complex"', () => {
   assert.equal(assemble(`${big};assert ${f(7999)}\ndat 0\n`).ok, true);
   assert.equal(assemble(`${big};assert ${f(8001)}\ndat 0\n`).ok, false);
 });
+
+test('a running FOR block ends at the first ROF it reads, a dropped FOR line opens none', () => {
+  // Expected values from pMARS 0.9.5 (`pmars -r 0`, each source after
+  // `;assert 1`): the instructions and the number of warnings. The ROF scan
+  // ahead of a block counted the dropped `i for 1` as a nested block; found
+  // by tools/pmars-diff.mjs with seed 1794473882.
+  const cases = [
+    ['i for 2\ndat i\ni for 1\ndat 7\nrof\ndat 9\n', ['DAT.F #0, $1', 'DAT.F #0, $7', 'DAT.F #0, $2', 'DAT.F #0, $7', 'DAT.F #0, $9'], 2],
+    ['i for 2\na i for 1\ndat 7\nrof\ndat 9\n', ['DAT.F #0, $7', 'DAT.F #0, $7', 'DAT.F #0, $9'], 2],
+    ['i for 2\ndat i\ni for 0\ndat 7\nrof\ndat 9\n', ['DAT.F #0, $1', 'DAT.F #0, $7', 'DAT.F #0, $2', 'DAT.F #0, $7', 'DAT.F #0, $9'], 2],
+    ['for 1\ny dat 0\ny for 1\ndat 5\nrof\ndat 9\n', ['DAT.F #0, $0', 'DAT.F #0, $5', 'DAT.F #0, $9'], 1],
+    // a skipped block counts every FOR
+    ['x dat 0\nfor 0\nx for 1\nrof\nrof\ndat 9\n', ['DAT.F #0, $0', 'DAT.F #0, $9'], 0],
+    ['i for 0\ni for 1\nrof\nrof\ndat 9\n', ['DAT.F #0, $9'], 0],
+    // labels before ROF stay pending; a dropped `x rof` makes an iteration read on
+    ['for 2\ndat 1\nx\nrof\ndat x\n', ['DAT.F #0, $1', 'DAT.F #0, $1', 'DAT.F #0, $-1'], 1],
+    ['for 3\ndat 1\nx rof\ndat 5\nrof\ndat x\n', ['DAT.F #0, $1', 'DAT.F #0, $1', 'DAT.F #0, $5', 'DAT.F #0, $1', 'DAT.F #0, $5', 'DAT.F #0, $-4'], 2],
+    ['for 3\ndat 1\nx rof\ndat x\n', ['DAT.F #0, $1', 'DAT.F #0, $1', 'DAT.F #0, $-1'], 2],
+    ['y dat 0\nfor 2\ndat 1\ny rof\ndat 7\n', ['DAT.F #0, $0', 'DAT.F #0, $1', 'DAT.F #0, $7'], 2],
+    ['for 2\nx rof\ndat x\n', ['DAT.F #0, $0'], 0],
+    // a multi-line EQU is expanded again in every iteration
+    ['m equ dat 1\n equ dat 2\nfor 2\nm\nrof\ndat 9\n', ['DAT.F #0, $1', 'DAT.F #0, $2', 'DAT.F #0, $1', 'DAT.F #0, $2', 'DAT.F #0, $9'], 0],
+  ];
+  for (const [src, want, warnings] of cases) {
+    const w = assemble(`;assert 1\n${src}`);
+    assert.deepEqual(w.instructions.map((i) => formatInstruction(i.op, i.mod, i.aMode, i.aVal, i.bMode, i.bVal, 8000)), want, src);
+    assert.equal(w.warnings.length, warnings, src);
+  }
+  // pMARS: errors ("Unopened FOR")
+  for (const src of ['i for 1\nj for 1\nj for 1\ndat 1\nrof\nrof\nrof\ndat 9\n', 'x dat 0\nfor 1\nx for 2\ndat 1\nrof\nrof\ndat 9\n',
+    'for 2\ny dat 0\ny for 1\ndat 5\nrof\nrof\ndat 9\n', 'for 3\nx rof\ndat 5\nrof\n']) {
+    assert.equal(assemble(`;assert 1\n${src}`).ok, false, src);
+  }
+});

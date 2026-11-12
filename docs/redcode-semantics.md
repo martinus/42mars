@@ -485,12 +485,28 @@ block is not expanded and nothing is skipped either).
   `CURLINE`, a comment token or any non-identifier token also ends the scan
   of the line. Nothing else is processed: no labels, no EQU definitions, no
   asserts.
-- Otherwise the count is taken modulo 65536 and the lines between `FOR` and
-  the matching `ROF` are expanded that many times, with the counter set to
-  1, 2, ..., count. Nested `FOR` blocks inside are expanded recursively each
-  time. Label definitions inside the block happen on every iteration, so a
-  plain label inside a repeated block is redefined in the second iteration
-  (warning, line dropped); concatenation (`imp&N`) avoids that.
+- Otherwise the count is taken modulo 65536 and the block runs that many
+  times, with the counter set to 1, 2, ..., count. Nested `FOR` blocks inside
+  are expanded recursively each time. Label definitions inside the block
+  happen on every iteration, so a plain label inside a repeated block is
+  redefined in the second iteration (warning, line dropped); concatenation
+  (`imp&N`) avoids that.
+- The end of a running block is found while it runs, not by scanning
+  ahead: it is the first `ROF` that a line of the block reads at its own
+  level. A line that is dropped as a redefinition opens no block and ends
+  none, so a `FOR` line whose label is defined at that moment (the block's
+  own counter, a label defined before, also one defined earlier in the same
+  iteration) does not count, and the next `ROF` ends the outer block:
+  `i for 2`, `dat i`, `i for 1`, `dat 7`, `rof`, `dat 9` is `dat 1`, `dat 7`,
+  `dat 2`, `dat 7`, `dat 9` with a warning per iteration. An iteration repeats
+  the lines the first one read, and when such a `ROF` line is dropped in a
+  later iteration, that iteration reads on after the block until a `ROF`
+  (`for 3`, `dat 1`, `x rof`, `dat 5`, `rof`, `dat x`: from the second
+  iteration on, `x rof` is a redefinition, giving `dat 1`, `dat 1`, `dat 5`,
+  `dat 1`, `dat 5`, `dat -4`). Labels in front of a `ROF` stay pending: the
+  next instruction defines them, in the next iteration if there is one. A
+  skipped block (count <= 0) is scanned as above, and there every `FOR`
+  counts, defined label or not.
 - After the block, the counter name is undefined again. Expansion continues
   after the `ROF` line. Text after `ROF` on that line is ignored.
 - A `FOR` whose `ROF` is missing: warning ("FOR without ROF"), the block is
