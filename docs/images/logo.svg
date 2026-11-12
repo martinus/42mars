@@ -1,0 +1,59 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 12 12" width="240" height="240" role="img" aria-label="42mars">
+  <title>42mars</title>
+  <!-- Mars as an 11 x 11 disc of core cells with 42 written into it. One unit is one cell.
+       The dark board under the cells makes it look the same on a bright and on a dark page:
+       with the page showing through the gaps, bright digits were hard to read on white. -->
+  <defs><rect id="c" width="0.86" height="0.86" rx="0.17"/></defs>
+  <g transform="translate(0.5700000000000001 0.5700000000000001)">
+    <path fill="#4a0f1c" d="M3.93 -0.07h3v1h-3zM1.93 0.93h7v1h-7zM0.93 1.93h9v1h-9zM0.93 2.93h9v1h-9zM-0.07 3.93h11v1h-11zM-0.07 4.93h11v1h-11zM-0.07 5.93h11v1h-11zM0.93 6.93h9v1h-9zM0.93 7.93h9v1h-9zM1.93 8.93h7v1h-7zM3.93 9.93h3v1h-3z"/>
+    <g fill="#ee6634">
+      <use xlink:href="#c" x="4" y="0"/><use xlink:href="#c" x="5" y="0"/><use xlink:href="#c" x="6" y="0"/>
+      <use xlink:href="#c" x="2" y="1"/><use xlink:href="#c" x="3" y="1"/><use xlink:href="#c" x="4" y="1"/><use xlink:href="#c" x="5" y="1"/>
+      <use xlink:href="#c" x="1" y="2"/><use xlink:href="#c" x="2" y="2"/><use xlink:href="#c" x="3" y="2"/><use xlink:href="#c" x="4" y="2"/>
+      <use xlink:href="#c" x="1" y="3"/><use xlink:href="#c" x="3" y="3"/>
+      <use xlink:href="#c" x="0" y="4"/><use xlink:href="#c" x="1" y="4"/>
+    </g>
+    <g fill="#e04f2e">
+      <use xlink:href="#c" x="6" y="1"/><use xlink:href="#c" x="7" y="1"/>
+      <use xlink:href="#c" x="5" y="2"/><use xlink:href="#c" x="6" y="2"/><use xlink:href="#c" x="7" y="2"/>
+      <use xlink:href="#c" x="5" y="3"/>
+      <use xlink:href="#c" x="3" y="4"/><use xlink:href="#c" x="5" y="4"/><use xlink:href="#c" x="6" y="4"/>
+      <use xlink:href="#c" x="0" y="5"/><use xlink:href="#c" x="1" y="5"/><use xlink:href="#c" x="5" y="5"/>
+      <use xlink:href="#c" x="0" y="6"/><use xlink:href="#c" x="1" y="6"/><use xlink:href="#c" x="2" y="6"/>
+    </g>
+    <g fill="#cc3b2b">
+      <use xlink:href="#c" x="8" y="1"/>
+      <use xlink:href="#c" x="8" y="2"/>
+      <use xlink:href="#c" x="7" y="4"/>
+      <use xlink:href="#c" x="3" y="6"/><use xlink:href="#c" x="5" y="6"/>
+      <use xlink:href="#c" x="1" y="7"/><use xlink:href="#c" x="2" y="7"/><use xlink:href="#c" x="3" y="7"/><use xlink:href="#c" x="5" y="7"/>
+      <use xlink:href="#c" x="1" y="8"/><use xlink:href="#c" x="2" y="8"/>
+    </g>
+    <g fill="#b52d2b">
+      <use xlink:href="#c" x="9" y="2"/>
+      <use xlink:href="#c" x="9" y="3"/>
+      <use xlink:href="#c" x="7" y="6"/><use xlink:href="#c" x="8" y="6"/>
+      <use xlink:href="#c" x="3" y="8"/><use xlink:href="#c" x="4" y="8"/><use xlink:href="#c" x="5" y="8"/>
+      <use xlink:href="#c" x="3" y="9"/>
+    </g>
+    <g fill="#9d242b">
+      <use xlink:href="#c" x="9" y="4"/><use xlink:href="#c" x="10" y="4"/>
+      <use xlink:href="#c" x="9" y="5"/><use xlink:href="#c" x="10" y="5"/>
+      <use xlink:href="#c" x="9" y="6"/><use xlink:href="#c" x="10" y="6"/>
+      <use xlink:href="#c" x="9" y="7"/>
+      <use xlink:href="#c" x="6" y="8"/><use xlink:href="#c" x="7" y="8"/><use xlink:href="#c" x="8" y="8"/><use xlink:href="#c" x="9" y="8"/>
+      <use xlink:href="#c" x="2" y="9"/><use xlink:href="#c" x="4" y="9"/><use xlink:href="#c" x="5" y="9"/><use xlink:href="#c" x="6" y="9"/><use xlink:href="#c" x="7" y="9"/><use xlink:href="#c" x="8" y="9"/>
+      <use xlink:href="#c" x="4" y="10"/><use xlink:href="#c" x="5" y="10"/><use xlink:href="#c" x="6" y="10"/>
+    </g>
+    <!-- joins the cells of each digit, from cell centre to cell centre. It is under the cells,
+         so it only shows in the seams between them. -->
+    <path transform="translate(0.43 0.43)" fill="none" stroke="#c98a6a" stroke-width="0.86" d="M2 3v2M2 5h2M4 3v4M6 3h2M8 3v2M8 5h-2M6 5v2M6 7h2"/>
+    <g fill="#fff3dc">
+      <use xlink:href="#c" x="2" y="3"/><use xlink:href="#c" x="4" y="3"/><use xlink:href="#c" x="6" y="3"/><use xlink:href="#c" x="7" y="3"/><use xlink:href="#c" x="8" y="3"/>
+      <use xlink:href="#c" x="2" y="4"/><use xlink:href="#c" x="4" y="4"/><use xlink:href="#c" x="8" y="4"/>
+      <use xlink:href="#c" x="2" y="5"/><use xlink:href="#c" x="3" y="5"/><use xlink:href="#c" x="4" y="5"/><use xlink:href="#c" x="6" y="5"/><use xlink:href="#c" x="7" y="5"/><use xlink:href="#c" x="8" y="5"/>
+      <use xlink:href="#c" x="4" y="6"/><use xlink:href="#c" x="6" y="6"/>
+      <use xlink:href="#c" x="4" y="7"/><use xlink:href="#c" x="6" y="7"/><use xlink:href="#c" x="7" y="7"/><use xlink:href="#c" x="8" y="7"/>
+    </g>
+  </g>
+</svg>
