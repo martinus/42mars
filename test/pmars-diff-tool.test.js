@@ -6,7 +6,7 @@
 // and one that hangs (the run gets aborted).
 import { after, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync, spawn } from 'node:child_process';
+import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -94,4 +94,25 @@ test('pmars-diff: Ctrl-C without differences so far deletes the folder', async (
   assert.equal(code, 130);
   assert.match(out, /^aborted: 0 differences so far$/m);
   assert.deepEqual(folders(), []);
+});
+
+// `--pmars-trace` without its binary took the next option as the binary:
+// every battle then counted as a difference (4,800 in one run).
+test('pmars-diff: an option without its value and an unknown option are refused before anything runs', () => {
+  const refused = (extra, message) => {
+    const tmp = mkdtempSync(join(dir, 'tmp-'));
+    const r = spawnSync(process.execPath, [tool, '--pmars', agrees, '--only', 'exprs', '--scale', '0.01', '--jobs', '2', ...extra],
+      { encoding: 'utf8', env: { ...process.env, TMPDIR: tmp } });
+    assert.equal(r.status, 2, `${extra.join(' ')}: ${r.stdout}${r.stderr}`);
+    assert.ok(r.stderr.includes(message), r.stderr);
+    assert.equal(r.stdout, '');
+    assert.deepEqual(readdirSync(tmp), [], 'no temporary folder is made');
+  };
+  refused(['--pmars-trace', '--watch'], 'pmars-diff: --pmars-trace needs a value');
+  refused(['--corpus'], 'pmars-diff: --corpus needs a value');
+  refused(['--permut'], 'pmars-diff: unknown option --permut');
+  refused(['stray'], 'pmars-diff: unknown option stray');
+  // What the logged commands carry stays accepted.
+  const ok = run(agrees, ['--wasm', '--seed', '7']);
+  assert.equal(ok.code, 0, ok.out);
 });

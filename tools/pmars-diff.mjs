@@ -6,7 +6,9 @@
 //
 //   node tools/pmars-diff.mjs --pmars path/to/pmars [--corpus dir] [--tmp dir]
 //        [--jobs 16] [--seed 1] [--scale 1] [--only listings,exprs,...]
-//        [--watch | --wasm-match] [--permute] [--icws88]
+//        [--pmars-trace path/to/pmars-trace] [--cli path/to/42mars]
+//        [--timeout 120] [--watch | --wasm-match] [--permute] [--icws88]
+// An unknown option and an option without its value are refused.
 //
 // Sections:
 //   listings   every .red file in --corpus: pMARS listing (pmars -r 0) vs
@@ -67,12 +69,29 @@ const arg = (name, dflt) => {
   const i = args.indexOf(`--${name}`);
   return i >= 0 ? args[i + 1] : dflt;
 };
-const PMARS = arg('pmars');
-const TRACE = arg('pmars-trace');
-if (!PMARS) {
-  console.error('usage: node tools/pmars-diff.mjs --pmars path/to/pmars [--corpus dir] [--tmp dir] [--jobs n] [--seed n] [--scale n] [--only a,b]');
+function usage(message) {
+  if (message) console.error(`pmars-diff: ${message}`);
+  console.error('usage: node tools/pmars-diff.mjs --pmars path/to/pmars [--corpus dir] [--tmp dir] [--jobs n] [--seed n] [--scale n] [--only a,b]\n'
+    + '       [--pmars-trace path/to/pmars-trace] [--cli path/to/42mars] [--timeout s] [--watch | --wasm-match] [--permute] [--icws88]');
   process.exit(2);
 }
+// Before anything runs: `--pmars-trace` without its binary took the next
+// option as the binary and every battle counted as a difference, and a
+// mistyped option ran as a test of something else.
+const VALUE_OPTIONS = ['pmars', 'pmars-trace', 'corpus', 'tmp', 'jobs', 'seed', 'scale', 'only', 'timeout', 'cli'];
+const FLAG_OPTIONS = ['wasm-match', 'permute', 'watch', 'icws88', 'wasm', 'headless'];
+for (let i = 0; i < args.length; i++) {
+  const name = args[i].startsWith('--') ? args[i].slice(2) : null;
+  if (name !== null && VALUE_OPTIONS.includes(name)) {
+    if (i + 1 >= args.length || args[i + 1].startsWith('--')) usage(`--${name} needs a value`);
+    i++;
+  } else if (name === null || !FLAG_OPTIONS.includes(name)) {
+    usage(`unknown option ${args[i]}`);
+  }
+}
+const PMARS = arg('pmars');
+const TRACE = arg('pmars-trace');
+if (!PMARS) usage();
 const CORPUS = arg('corpus');
 const OWN_TMP = !arg('tmp');
 const TMP = arg('tmp') || mkdtempSync(join(tmpdir(), 'pmars-diff-'));
