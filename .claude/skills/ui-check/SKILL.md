@@ -1,19 +1,23 @@
 ---
 name: ui-check
-description: Run the Core War Theater visualizer headless and take screenshots, to verify a UI change visually or reproduce a UI bug. Use after any change to ui/**, before calling it done.
+description: Runs the Core War Theater visualizer in headless Chrome to compare it with main (identical textures for the same seed), take screenshots, check console errors and compare engine time per frame. Use after any change to ui/** or to what the visualizer reads (the watch, wasm/42mars.js), before calling it done.
 ---
 # UI check
 
-1. Serve: `node tools/serve.mjs 8123 &`, note the PID, kill that PID at the end (not `pkill -f`).
-2. Screenshot with headless Chrome (WebGL2 through SwiftShader):
+No Playwright on Martin's machine: Chrome is driven over the DevTools protocol with Node's built-in `WebSocket` (`compare.mjs` here does that).
+
+1. Serve main and the working tree, remember the server PIDs, kill those PIDs at the end:
    ```sh
-   S=$(mktemp -d)
-   google-chrome --headless=new --no-sandbox --user-data-dir=$S/prof \
-     --use-angle=swiftshader --enable-unsafe-swiftshader --window-size=1600,1000 \
-     --virtual-time-budget=6000 --enable-logging=stderr --v=0 \
-     --screenshot=$S/shot.png 'http://127.0.0.1:8123/ui/?cast=lantern,origami&steps=3000&paused&noguide' 2>&1 | grep -i 'console\|error'
+   S=<scratchpad>; mkdir $S/main && git archive origin/main | tar -x -C $S/main
+   (cd $S/main && exec node tools/serve.mjs 8124 > /dev/null 2>&1) & P1=$!
+   node tools/serve.mjs 8125 > /dev/null 2>&1 & P2=$!
+   until curl -so /dev/null http://127.0.0.1:8124/ui/ && curl -so /dev/null http://127.0.0.1:8125/ui/; do sleep 0.3; done
    ```
-   Then open `$S/shot.png` with the Read tool and look at it. Console errors in the output are failures. Add `--force-device-scale-factor=2` for a screenshot a person will see.
-3. Cover what changed: `layout=grid` and `layout=ring`; `preset=nano` (instruction text in cells); `speed=16` without `paused` for the running look; `steps=N` to stop at an interesting moment (deterministic for a given cast and preset); with and without `noguide`.
-4. Interaction (hover, keys, clicks): if `node -e "require('playwright')"` works, use Playwright (`chromium.launch()`); otherwise start Chrome with `--remote-debugging-port=9222` and drive it over the DevTools protocol with Node's built-in `WebSocket`. `window.__theater` holds the app state for assertions.
-5. Software rendering is slow: judge layout, colors and text from screenshots, not frame rate. For frame time, ask Martin to check in a real browser, or measure `frame()` time through `window.__theater` in a non-headless run.
+2. Anything that must not change (engine, glue, a refactor of `ui/`): compare with main.
+   `node .claude/skills/ui-check/compare.mjs --base 8124 --head 8125 --out $S/shots '<query>' ...`
+   It seeds `Math.random` the same for both, so both place the warriors alike, then compares after `steps=N&paused` the textures the renderer gets (`window.__theater.dataA/dataB`), time, round, processes, territories and the story; it prints SAME or DIFF, exits 1 on a difference or a console error, and saves screenshots with `--out`. Views that covered #75: `cast=lantern,origami&steps=3000&paused&noguide`, `cast=dwarf,imp&steps=500&paused&preset=nano&layout=ring&noguide`, `cast=lantern,origami,seeker&steps=2500&paused&noguide&layout=grid`, `cast=seeker,imp&steps=20000&paused&noguide` (Seeker dies at 2553: events and the death cause). A paused snapshot after `steps` is one frame: it does not show per-frame effects (heat decay, arcs while running), so check those on screenshots of a running view.
+3. A change meant to look different: screenshots, and open each with the Read tool. `compare.mjs --out` saves them; a single one without the script:
+   `google-chrome --headless=new --no-sandbox --user-data-dir=$S/prof --use-angle=swiftshader --enable-unsafe-swiftshader --window-size=1600,1000 --virtual-time-budget=6000 --screenshot=$S/shot.png 'http://127.0.0.1:8125/ui/?<query>'`. Add `--force-device-scale-factor=2` for a screenshot a person will see. Cover what changed: `layout=grid` and `ring`, `preset=nano` (instruction text in cells), `speed=16` without `paused`, with and without `noguide`.
+4. Speed: `compare.mjs --time '<query without paused>'` runs each view 5 s and prints the engine's instructions/s inside `run()` and the ms per frame outside it, for base and head. Software rendering makes the frame time 40 to 60 ms: compare base with head only; for real frame times ask Martin to check in a browser.
+5. Interaction (hover, keys, clicks): extend `compare.mjs`'s `open()` (`Runtime.evaluate` on `window.__theater`, `Input.dispatchMouseEvent`).
+6. `kill $P1 $P2`.
