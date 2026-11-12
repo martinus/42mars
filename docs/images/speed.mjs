@@ -46,8 +46,8 @@ const charts = [
 ];
 
 const themes = {
-  light: { surface: '#fcfcfb', border: '#e6e5e0', ink: '#0b0b0b', ink2: '#52514e', ink3: '#76756f', ours: '#2a78d6', other: '#b5b4ae', grid: '#d6d5cf' },
-  dark: { surface: '#1a1a19', border: '#2e2e2c', ink: '#f0efec', ink2: '#c3c2b7', ink3: '#97968e', ours: '#3987e5', other: '#5c5b57', grid: '#3a3a37' },
+  light: { surface: '#fcfcfb', border: '#e6e5e0', ink: '#0b0b0b', ink2: '#52514e', ink3: '#76756f', ours: '#f0652d', other: '#b5b4ae', grid: '#d6d5cf' },
+  dark: { surface: '#1a1a19', border: '#2e2e2c', ink: '#f0efec', ink2: '#c3c2b7', ink3: '#97968e', ours: '#f0652d', other: '#5c5b57', grid: '#3a3a37' },
 };
 
 const W = 880, PAD = 32, LABEL = 210, ROW = 40, BAR = 22, TOP = 118, TICK = 100e6;

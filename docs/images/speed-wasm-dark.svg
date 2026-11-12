@@ -18,7 +18,7 @@
 <text x="728" y="246" text-anchor="middle" font-size="12" fill="#97968e">500</text>
 <text x="485" y="266" text-anchor="middle" font-size="13" fill="#c3c2b7">million simulated instructions per second</text>
 <text x="228" y="134" text-anchor="end" font-size="15" fill="#f0efec" font-weight="700">42mars<tspan font-weight="400" fill="#97968e" font-size="13" dx="7">WebAssembly</tspan></text>
-<path d="M242,118h374.87676703496504a4,4 0 0 1 4,4v14a4,4 0 0 1 -4,4h-374.87676703496504z" fill="#3987e5"/>
+<path d="M242,118h374.87676703496504a4,4 0 0 1 4,4v14a4,4 0 0 1 -4,4h-374.87676703496504z" fill="#f0652d"/>
 <text x="630.876767034965" y="134" font-size="15" fill="#f0efec" font-weight="700">390<tspan font-weight="400" fill="#97968e" font-size="13" dx="8">6.0× pMARS</tspan></text>
 <text x="228" y="174" text-anchor="end" font-size="15" fill="#f0efec" font-weight="500">exMARS<tspan font-weight="400" fill="#97968e" font-size="13" dx="7">WebAssembly</tspan></text>
 <path d="M242,158h142.5793106148123a4,4 0 0 1 4,4v14a4,4 0 0 1 -4,4h-142.5793106148123z" fill="#5c5b57"/>
