@@ -161,3 +161,14 @@ test('examples/example.c builds with cc -Ilib examples/example.c lib/42mars.c an
   assert.equal(out, r.warriors.map((w) => `${w.wins} ${w.losses} ${w.ties}\n`).join(''));
   assert.equal(out, '1 90 9\n90 1 9\n');
 });
+
+// build-msvc.bat links 42mars.dll with the exports listed in lib/42mars.def:
+// a function of the header that is missing there is missing from the DLL.
+test('lib/42mars.def exports exactly the M42_API functions of lib/42mars.h', () => {
+  const header = readFileSync(join(root, 'lib/42mars.h'), 'latin1');
+  const api = [...header.matchAll(/^M42_API\b[^(]*?\b(m42_\w+)\s*\(/gm)].map((m) => m[1]);
+  const def = readFileSync(join(root, 'lib/42mars.def'), 'latin1');
+  const exports = def.slice(def.indexOf('\nEXPORTS') + 1).split('\n').slice(1).map((l) => l.trim()).filter((l) => l && !l.startsWith(';'));
+  assert.ok(api.length >= 45, `only ${api.length} M42_API functions found in the header`);
+  assert.deepEqual([...exports].sort(), [...api].sort());
+});
