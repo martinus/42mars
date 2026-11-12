@@ -141,7 +141,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
           m42_pspace_get(m, i, k, &v);
           m42_pspace_set(m, i, k, v + 1);
           uint32_t sc[16];
-          m42_warrior_scores(m, i, sc, 16);
+          m42_get_scores(m, i, sc, 16);
         }
       }
       m42_end_round(m);

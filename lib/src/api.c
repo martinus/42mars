@@ -572,9 +572,11 @@ int m42_end_round(m42_ctx *ctx) {
   return s;
 }
 
+// The getters write at most `size` bytes of their struct; a shorter struct
+// than the one of 1.0 (sizeof today) is refused.
 EXPORT(m42_get_state)
-int m42_get_state(const m42_ctx *ctx, m42_state *s) {
-  const int r = s ? ready(ctx) : M42_ERR_ARGUMENT;
+int m42_get_state(const m42_ctx *ctx, m42_state *s, size_t size) {
+  const int r = s && size >= sizeof(m42_state) ? ready(ctx) : M42_ERR_ARGUMENT;
   if (r != M42_OK) return r;
   const Mars *m = CCTX_OF(ctx);
   *s = (m42_state){m->round_, m->roundOver, m->current, m->warriorsLeft, (u64)m->timeNow, m->cyclesLeft};
@@ -582,8 +584,8 @@ int m42_get_state(const m42_ctx *ctx, m42_state *s) {
 }
 
 EXPORT(m42_get_warrior)
-int m42_get_warrior(const m42_ctx *ctx, uint32_t w, m42_warrior_state *s) {
-  const int r = s ? ready(ctx) : M42_ERR_ARGUMENT;
+int m42_get_warrior(const m42_ctx *ctx, uint32_t w, m42_warrior_state *s, size_t size) {
+  const int r = s && size >= sizeof(m42_warrior_state) ? ready(ctx) : M42_ERR_ARGUMENT;
   if (r != M42_OK) return r;
   const Mars *m = CCTX_OF(ctx);
   if (w >= m->nw) return M42_ERR_ARGUMENT;
@@ -593,8 +595,8 @@ int m42_get_warrior(const m42_ctx *ctx, uint32_t w, m42_warrior_state *s) {
   return M42_OK;
 }
 
-EXPORT(m42_warrior_scores)
-uint32_t m42_warrior_scores(const m42_ctx *ctx, uint32_t w, uint32_t *out, uint32_t max) {
+EXPORT(m42_get_scores)
+uint32_t m42_get_scores(const m42_ctx *ctx, uint32_t w, uint32_t *out, uint32_t max) {
   if (ready(ctx) != M42_OK || w >= CCTX_OF(ctx)->nw) return 0;
   const Mars *m = CCTX_OF(ctx);
   const u32 count = 2 * m->nw - 1;
@@ -606,6 +608,20 @@ EXPORT(m42_core)
 const m42_cell *m42_core(const m42_ctx *ctx) {
   const Mars *m = CCTX_OF(ctx);
   return ctx ? (const m42_cell *)(const void *)CORE(m) : 0;
+}
+
+EXPORT(m42_cells)
+uint32_t m42_cells(const m42_ctx *ctx, uint32_t first, uint32_t count, m42_instruction *out) {
+  if (!ctx || !out) return 0;
+  const Mars *m = CCTX_OF(ctx);
+  if (first >= m->N) return 0;
+  const u32 n = count < m->N ? count : m->N;
+  for (u32 k = 0; k < n; k++) {
+    const Cell *c = &CORE(m)[(first + k) % m->N];
+    out[k] = (m42_instruction){(uint8_t)(c->ins >> 3 & 31), (uint8_t)(c->ins & 7), (uint8_t)(c->ins >> 8 & 7),
+                               (uint8_t)(c->ins >> 11 & 7), c->a, c->b, 0};
+  }
+  return n;
 }
 
 EXPORT(m42_queue)

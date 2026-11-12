@@ -104,11 +104,11 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
             for (uint32_t i = 0; i < n; i++) {
               m42_queue(m, i, q, 16);
               m42_warrior_state st;
-              m42_get_warrior(m, i, &st);
+              m42_get_warrior(m, i, &st, sizeof st);
             }
           }
           m42_state st;
-          m42_get_state(m, &st);
+          m42_get_state(m, &st, sizeof st);
           m42_end_round(m);
         }
         touch(m42_core(m), (size_t)r.core_size * sizeof(m42_cell));

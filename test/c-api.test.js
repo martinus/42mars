@@ -132,6 +132,13 @@ test('the C library through 42mars.h agrees with the JS assembler and the wasm e
   // no warriors, a core of 70000, three warriors with rules for two, no
   // context, assembling with core size 0, the broken warrior in a match
   assert.deepEqual(out.errors, [-3, 1, -3, -3, -2, -4]);
+  // m42_cells: 8 cells around the end, equal to m42_core's; first at the
+  // core size, count 0 and no context copy nothing
+  assert.deepEqual(out.cells, [8, 1, 0, 0, 0]);
+  // getters: full size 0, one byte less M42_ERR_ARGUMENT (-3), more 0 with
+  // the bytes behind the struct untouched; its time is what m42_run returned;
+  // 3 score counters for two warriors
+  assert.deepEqual(out.getters, [0, -3, 0, 0, -3, 0, 1, 1, 3]);
   // warriors that do not fit the rules of the context: M42_ERR_WARRIOR (-4)
   // from match, load and bench; in range 0, then each field out of range and
   // the start; p-space values 799 and 800 through options->pspace and

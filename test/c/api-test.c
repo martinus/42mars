@@ -160,10 +160,10 @@ int main(int argc, char **argv) {
     m42_start_round(m);
     uint64_t executed = 0;
     m42_state st;
-    for (m42_get_state(m, &st); !st.round_over; m42_get_state(m, &st)) executed += m42_run(m, 1000);
+    for (m42_get_state(m, &st, sizeof st); !st.round_over; m42_get_state(m, &st, sizeof st)) executed += m42_run(m, 1000);
     m42_warrior_state ws0, ws1;
-    m42_get_warrior(m, 0, &ws0);
-    m42_get_warrior(m, 1, &ws1);
+    m42_get_warrior(m, 0, &ws0, sizeof ws0);
+    m42_get_warrior(m, 1, &ws1, sizeof ws1);
     printf(",\"r%d\":{\"executed\":%llu,\"time\":%llu,\"round\":%u,\"hash\":%u,\"alive\":[%u,%u],\"position\":%u}", round,
            (unsigned long long)executed, (unsigned long long)st.time, st.round, core_hash(m, r.core_size), ws0.alive,
            ws1.alive, ws1.position);
@@ -196,7 +196,7 @@ int main(int argc, char **argv) {
   if (!x || m42_load(m, pair, 2, &o) != M42_OK) exit(8);
   m42_start_round(m);
   m42_state wst;
-  for (m42_get_state(m, &wst); !wst.round_over && wst.time < 3000; m42_get_state(m, &wst)) m42_run(m, 300);
+  for (m42_get_state(m, &wst, sizeof wst); !wst.round_over && wst.time < 3000; m42_get_state(m, &wst, sizeof wst)) m42_run(m, 300);
   uint32_t h = 2166136261u;
   for (uint32_t a = 0; a < r.core_size; a++) {
     const uint32_t v[8] = {x->owner[a], x->exec_by[a], x->read_by[a], (uint32_t)x->bump[a], (uint32_t)x->origin[a],
@@ -251,6 +251,41 @@ int main(int argc, char **argv) {
   m42_pspace_set(m, 0, 3, 99);
   m42_pspace_get(m, 1, 3, &apart);
   printf(",\"pin\":[%u,%u,%u]", shared, last, apart);
+
+  // The interface of 1.0 (#89): m42_cells() against m42_core(), around the
+  // end of the core; the getters with their size, one byte less, and more
+  // (the bytes after the struct stay); m42_get_scores().
+  {
+    m42_start_round(m);
+    const uint64_t ran = m42_run(m, 200);
+    const uint32_t N = r.core_size;
+    m42_instruction cells[8];
+    const uint32_t got = m42_cells(m, N - 3, 8, cells);
+    const m42_cell *core = m42_core(m);
+    int same = got == 8;
+    for (uint32_t k = 0; same && k < 8; k++) {
+      const m42_cell c = core[(N - 3 + k) % N];
+      const m42_instruction x = cells[k];
+      same = x.opcode == (c.word & 255) >> 3 && x.modifier == (c.word & 7) && x.a_mode == (c.word >> 8 & 7) &&
+             x.b_mode == (c.word >> 11 & 7) && x.a == c.a && x.b == c.b && x.line == 0;
+    }
+    m42_instruction all[1];
+    printf(",\"cells\":[%u,%d,%u,%u,%u", got, same, m42_cells(m, N, 1, all), m42_cells(m, 0, 0, all), m42_cells(0, 0, 1, all));
+    union { m42_state s; unsigned char b[sizeof(m42_state) + 8]; } us;
+    union { m42_warrior_state s; unsigned char b[sizeof(m42_warrior_state) + 8]; } uw;
+    memset(&us, 0xab, sizeof us);
+    memset(&uw, 0xab, sizeof uw);
+    const int s1 = m42_get_state(m, &us.s, sizeof us.s), s2 = m42_get_state(m, &us.s, sizeof us.s - 1);
+    const int s3 = m42_get_state(m, &us.s, sizeof us);
+    const int w1 = m42_get_warrior(m, 1, &uw.s, sizeof uw.s), w2 = m42_get_warrior(m, 1, &uw.s, sizeof uw.s - 1);
+    const int w3 = m42_get_warrior(m, 1, &uw.s, sizeof uw);
+    int guard = 1;
+    for (size_t k = sizeof us.s; k < sizeof us; k++) guard &= us.b[k] == 0xab;
+    for (size_t k = sizeof uw.s; k < sizeof uw; k++) guard &= uw.b[k] == 0xab;
+    uint32_t counters[8];
+    printf("],\"getters\":[%d,%d,%d,%d,%d,%d,%d,%u,%u]", s1, s2, s3, w1, w2, w3, guard, us.s.time == ran ? 1u : 0u,
+           m42_get_scores(m, 0, counters, 8));
+  }
 
   // A context of exactly m42_ctx_size() holds two warriors of max_length.
   char longest[1024] = "";

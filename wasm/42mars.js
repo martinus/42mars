@@ -231,6 +231,8 @@ function check(x, mem, status) {
 // positions at 24, log at 28, permute at 32, pspace at 36), m42_state (32 bytes),
 // m42_warrior_state (40 bytes), and room for single values.
 const S_RULES = 0, S_OPTIONS = 48, S_STATE = 88, S_WARRIOR = 120, S_VALUE = 160, S_SIZE = 192;
+// sizeof m42_state and m42_warrior_state, passed to the getters
+const STATE_SIZE = 32, WARRIOR_STATE_SIZE = 40;
 
 class WasmMars {
   constructor(instance, options) {
@@ -484,7 +486,7 @@ class WasmMars {
     // The scores from m42_match, the counters with one call per warrior:
     // tournaments call this once per block of rounds.
     const warriors = this.warriors.map((w, i) => {
-      x.m42_warrior_scores(this.ctx, i, counters, 2 * nw - 1);
+      x.m42_get_scores(this.ctx, i, counters, 2 * nw - 1);
       const { dv: v } = this.mem.views();
       const score = [];
       for (let k = 0; k < 2 * nw - 1; k++) score.push(v.getUint32(counters + 4 * k, true));
@@ -498,7 +500,7 @@ class WasmMars {
   // m42_state; before the first load: round 0, round over.
   state() {
     const at = this.structs + S_STATE;
-    if (!this.ctx || this.x.m42_get_state(this.ctx, at) !== M42_OK) {
+    if (!this.ctx || this.x.m42_get_state(this.ctx, at, STATE_SIZE) !== M42_OK) {
       return { round: 0, roundOver: true, current: 0, warriorsLeft: 0, time: 0, cyclesLeft: 0 };
     }
     const { dv } = this.mem.views();
@@ -630,7 +632,7 @@ class WarriorView {
   state() {
     const m = this.mars;
     const at = m.structs + S_WARRIOR;
-    check(this.x, m.mem, this.x.m42_get_warrior(m.ctx, this.index, at));
+    check(this.x, m.mem, this.x.m42_get_warrior(m.ctx, this.index, at, WARRIOR_STATE_SIZE));
     const { dv } = m.mem.views();
     const died = Number(dv.getBigInt64(at + 16, true));
     return {
@@ -667,10 +669,10 @@ class WarriorView {
 
   get score() {
     const m = this.mars;
-    const count = this.x.m42_warrior_scores(m.ctx, this.index, 0, 0);
+    const count = this.x.m42_get_scores(m.ctx, this.index, 0, 0);
     m.mem.reset(); // scratch memory for this call only
     const at = m.mem.scratch(4 * count);
-    this.x.m42_warrior_scores(m.ctx, this.index, at, count);
+    this.x.m42_get_scores(m.ctx, this.index, at, count);
     return Array.from(new Uint32Array(m.bytes().buffer, at, count));
   }
 
