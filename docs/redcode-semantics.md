@@ -467,11 +467,33 @@ expanded in place, as if the text was written there, with these details:
   before `-l` is read). Not affected: names that are still undefined, which
   pass 2 reads as usual (absolute for `ORG`, `END`, `PIN`); an opcode from
   the source text with EQU names in its operands; an EQU body of only
-  labels (`s equ lbl`, `s dat -x`); the statement of the last body line of
-  a multi-line EQU used in an operand, although its opcode comes from the
-  body (#119: pMARS differs there in other ways). The same in ICWS'88
-  mode. Found with `manipulatedlight2.red` of the Koenigstuhl corpus
-  (#116).
+  labels (`s equ lbl`, `s dat -x`); for the last body line of a multi-line
+  EQU in an operand see the next point. The same in ICWS'88 mode. Found
+  with `manipulatedlight2.red` of the Koenigstuhl corpus (#116).
+- A multi-line EQU name in an operand of a statement from the source (an
+  opcode, `ORG`, `END` or `PIN` read from the source, an assert, a `FOR`
+  count) loses that statement in pMARS (#119). The first body line ends its
+  text as above, but the text is never used; its pending labels stay
+  pending. The further body lines are read next, and the last one, with
+  the rest of the use-site line, takes the lost statement over: when the
+  EQU's text in it ends, the pending labels get their value and a lost
+  instruction counts (as in the point above, so the rest is one further),
+  then the line's own statement counts and is stored as usual. So with
+  `a equ 5`, ` equ dat 1`, `x dat 0` before, `jmp a -x` gives `DAT.F #0,
+  $3`, and the `jmp 5` is gone. The lost instruction still counts for the
+  labels after it, for `MAXLENGTH` and for the length of the warrior, but
+  pass 2 numbers the stored statements without it, so labels defined later
+  point one further. pMARS leaves the last instruction of the warrior
+  undefined then (a random A-field, different from run to run); the engine
+  puts `MOV.A #0, #0` there, what pMARS shows when that memory is 0, and
+  warns (section 4). A lost `ORG`, `END` or `PIN` loses its value (start
+  0, no PIN); `END` still ends pass 1, after the last body line. A lost
+  assert is invalid (a warning) and the last body line's statement counts
+  but is not stored, which again leaves the last instruction undefined. A
+  lost `FOR` count is an error. A last body line without an opcode is an
+  error (pMARS: "Missing 'opcode'", here `bad opcode '<line>'`). Not lost: a statement whose opcode comes from
+  an EQU (`s equ jmp`, `s a`), where the body lines follow as statements of
+  their own.
 - Body text is processed with the same rules (labels, nested EQU names, FOR
   counters, CURLINE). Using an EQU name inside its own expansion is an error
   ("recursive EQU").
@@ -545,7 +567,10 @@ block is not expanded and nothing is skipped either).
   expanded once as far as it goes, and then pass 1 stops (nothing after is
   processed).
 - A `ROF` without `FOR`: error. `FOR`, `ROF` or `EQU` after a label-position
-  opcode (e.g. in an operand): error.
+  opcode (e.g. in an operand): error. So is an opcode name (also `ORG`,
+  `END`, `PIN`) in an operand, an assert or a `FOR` count (pMARS: "Improper
+  placement"); the statement is dropped, so `div dat 0` alone also warns
+  that there are no instructions.
 
 #### FOR and ROF from an EQU
 
@@ -1131,9 +1156,13 @@ warning counts it compares, and the tools skip sources that get them.
   the same (about 0.05% of random expressions differ in the kind only).
 - pMARS counts logical lines in its messages (a continued line counts once);
   the engine's `line` is the physical line number.
-- An opcode name in an operand (`div dat 0`) is an error in both. pMARS drops
-  the statement already in pass 1, so it additionally warns that there are
-  no instructions; the engine reports the error in pass 2.
+- A statement lost to a multi-line EQU in an operand (2.3, EQU) still
+  counts, and pMARS leaves the last instruction of the warrior undefined:
+  its A-field is random memory, different from run to run. The engine puts
+  `MOV.A #0, #0` there and warns `pMARS has no defined result for
+  '<statement>'` at the lost statement (for an assert: at the body line it
+  read). The generators of `tools/pmars-diff.mjs` put multi-line EQU names only at
+  the statement start.
 - pMARS keeps its scratch buffer between the warriors of one run (see "The
   scratch buffer"); the engine starts each assembly with a fresh one.
 
@@ -1155,8 +1184,9 @@ warning counts it compares, and the tools skip sources that get them.
   plus 64 bytes per source byte, which held every source measured (the most:
   161 MB for a source of 3.6 MB).
 - FOR blocks nested deeper than 100 are the error `FOR blocks nested too
-  deep`, which also stops pass 1. Each level takes about 540 bytes of the
-  64 KB stack of the wasm build (121 levels fit).
+  deep`, which also stops pass 1. Each level takes about 600 bytes of the
+  64 KB stack of the wasm build (107 levels fit, measured with the limit
+  raised, #119).
 - An exception inside wasm (V8 out of stack when the caller's JS stack is
   nearly used up) leaves the C stack pointer of that instance behind;
   `assemble` and `evaluate` then drop the instance and rethrow.
