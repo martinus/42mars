@@ -231,7 +231,8 @@ tools/              Node tools: asm, corpus, tournament, serve, and the comparis
 bench/              speed measurements and A/B timing
 test/               npm test: 380 tests on node:test; C tests in test/c/, fuzz targets in test/fuzz/, recorded results in test/fixtures/
 docs/               the semantics, the plan, the performance log, development guide
-warriors/           sample warriors written for this repository, and Dewdney's Imp and Dwarf
+warriors/           sample warriors written for this repository, and Dewdney's Imp and Dwarf;
+                    koenigstuhl/: 5,261 hill warriors, test material without a license
 Makefile            native build on Linux and macOS; build-msvc.bat for Windows
 CHANGELOG.md        the changes of the interface, from 1.0.0 on
 ```
@@ -249,4 +250,4 @@ flowchart LR
 
 ## License
 
-MIT, see [LICENSE](LICENSE). The sample warriors in [`warriors/`](warriors) are MIT too, except Imp and Dwarf, the classic examples from A. K. Dewdney's 1984 article. Hill warriors are not included because their licenses are unclear.
+MIT, see [LICENSE](LICENSE). The sample warriors in [`warriors/`](warriors) are MIT too, except Imp and Dwarf, the classic examples from A. K. Dewdney's 1984 article. The hill warriors in [`warriors/koenigstuhl/`](warriors/koenigstuhl) have no license and are not covered by it: they are test material, downloaded from the [Koenigstuhl](https://asdflkj.net/COREWAR/koenigstuhl.html) hills on 12th November 2026.

@@ -1,0 +1,28 @@
+;redcode-odd
+;name miniBlur Copy
+;author Christian Schmidt
+;strategy scanner
+;assert 1
+
+
+dist equ 2942 ;boot distance
+step equ 2891 ;scan pattern; -723 might be better
+time equ 2210 ;number of SPLs copied
+
+scan   mov <boot, <top
+     for 8
+       mov <boot, <top
+     rof
+boot   jmp start+dist, top+9
+
+top    mov.b  2, #dist+9
+       mov   sp, >top
+       add #step, #-step*time
+start  jmz.f -2, @-1
+       jmn  top, *top
+sp     spl   0, 0
+       mov    2, >top-3
+       djn.f -1, >top-3
+       dat    0,  5-top
+
+end scan
