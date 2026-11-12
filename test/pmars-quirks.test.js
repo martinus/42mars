@@ -380,3 +380,58 @@ test('after an ORG, END or PIN from an EQU, labels in the rest of the line are r
   const outside = assemble(';assert 1\nx dat 0\ndat 0\ndat 0\ns equ org\ns x+2\n');
   assert.equal(outside.warnings.length, 1);
 });
+
+test('a FOR or ROF from an EQU reads only that EQU, and checks the rest of the line', () => {
+  // pMARS 0.9.5 (`pmars -r 0`, the whole listing, or that it fails): a FOR
+  // from an EQU takes its count from the EQU's text only. A running block
+  // reads only the EQU's further body lines ("Unclosed ROF" and the end of
+  // pass 1 without a ROF there); a skipped one (count 0) reads on in the
+  // source. The rest of the use-site line goes with the last body line;
+  // where that line ends a skipped block, the rest is a line of its own.
+  // After a FOR or ROF from an EQU, an opcode or keyword in that rest is an
+  // error. Found with tools/pmars-diff.mjs (#118).
+  const listing = (src) => {
+    const w = assemble(`;assert 1\n${src}`);
+    assert.ok(w.ok, `${src}: ${JSON.stringify(w.errors)}`);
+    return w.instructions.map((i) => formatInstruction(i.op, i.mod, i.aMode, i.aVal, i.bMode, i.bVal, 8000));
+  };
+  const D = (n) => `DAT.F #0, $${n}`;
+  const cases = [
+    ['s equ for 2\n equ dat 1\n equ rof\ns\ndat 9\n', [D(1), D(1), D(9)]],
+    ['s equ for 2\n equ dat 1\ns\ndat 7\nrof\ndat 9\n', [D(1)]],
+    ['s equ for 2\ns\ndat 9\n', []],
+    ['t equ for 2\n equ dat 3\ns equ t\n equ dat 1\n equ rof\ns\ndat 9\n', [D(3)]],
+    ['s equ dat 0\n equ for 2\ns\ndat 1\nrof\ndat 9\n', [D(0)]],
+    ['s equ for 2\n equ dat 1\nfor 2\ns\nrof\ndat 9\n', [D(1)]],
+    ['x equ 1\ns equ for x +1\n equ dat 1\n equ rof\ns\ndat 9\n', [D(1), D(1), D(9)]],
+    // the count is the EQU's text, the rest goes with the last body line
+    ['s equ for 0\ns 1\ndat 1\nrof\ndat 9\n', [D(9)]],
+    ['f equ for 2\n equ dat 1\nf CURLINE\ndat 5\nrof\n', [D(1)]],
+    ['f equ for 1\n equ dat 1\n equ dat 2\nf 5\ndat 9\n', [D(1), D(2)]],
+    ['f equ for 1\n equ dat 1\n equ rof\n equ dat 2\nf -CURLINE\ndat 9\n', [D(1), D(0), D(9)]],
+    ['s equ for 2\n equ dat 1\n equ rof\ns 7\ndat 9\n', [D(1), D(1), D(9)]],
+    // count 0: the skip reads the rest of the line after the body lines
+    ['s equ for 0\ns 1 rof\ndat 1\nrof\ndat 9\n', [D(9)]],
+    ['f equ for 0\n equ dat 1\nf for\ndat 5\nrof\nrof\ndat 9\n', [D(9)]],
+    ['f equ for 0\n equ dat 1\n equ rof\nf dat 7\ndat 9\n', [D(7), D(9)]],
+    ['f equ jmp 1\n equ for 0\n equ dat 2\n equ rof\nf dat 7\ndat 9\n', ['JMP.B $1, $0', D(7), D(9)]],
+    ['f equ for 0\n equ dat 1\nc f dat 7\nrof\ndat 9\n', [D(9)]],
+    // ROF from an EQU: identifiers, numbers and the body's own text after it are fine
+    ['r equ rof\nfor 2\ndat 1\nr foo\ndat 9\n', [D(1), D(1), D(9)]],
+    ['r equ rof dat 5\nfor 2\ndat 1\nr\ndat 9\n', [D(1), D(1), D(9)]],
+    ['r equ rof\nm equ 5\n equ dat 1\nfor 2\ndat 1\nr m\ndat 9\n', [D(1), D(1), D(9)]],
+  ];
+  for (const [src, want] of cases) assert.deepEqual(listing(src), want, src);
+  const fails = [
+    'r equ rof\nfor 2\ndat 1\nr dat 5\ndat 9\n',
+    'r equ rof\nx equ dat\nfor 2\ndat 1\nr x\ndat 9\n',
+    's equ for 2\n equ dat 1\n equ rof\ns equ\ndat 9\n',
+    's equ for 1\ns rof\ndat 9\n',
+    'f equ for 1\n equ dat 3\nf dat 1\ndat 5\nrof\n',
+    'f equ for 0\n equ dat 1\n equ rof\nf 7\ndat 9\n',
+    'f equ for 1\n equ dat 1\n equ rof\n equ dat 2\nf 5\ndat 9\n',
+    's equ for 0\ns rof\ndat 1\nrof\ndat 9\n',
+    'f equ for 0\n equ dat 3\nf x rof\ndat 5\nrof\ndat 9\n',
+  ];
+  for (const src of fails) assert.equal(assemble(`;assert 1\n${src}`).ok, false, src);
+});

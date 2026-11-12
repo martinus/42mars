@@ -480,7 +480,8 @@ expanded in place, as if the text was written there, with these details:
   `x` and then fails on `1 equ 2`).
 
 A `FOR ... ROF` block may be written inside one multi-line EQU body and is
-expanded when the EQU is used.
+expanded when the EQU is used. A `FOR` or `ROF` that comes from an EQU name
+follows its own rules, see "FOR and ROF from an EQU".
 
 Substituted text has a limit, which pMARS reports as "Buffer overflow.
 Substitution is too complex", an error. Counted are the characters of the
@@ -545,6 +546,41 @@ block is not expanded and nothing is skipped either).
   processed).
 - A `ROF` without `FOR`: error. `FOR`, `ROF` or `EQU` after a label-position
   opcode (e.g. in an operand): error.
+
+#### FOR and ROF from an EQU
+
+When the `FOR` or `ROF` keyword comes from an EQU body (the name stands at
+the statement start), pMARS reads less of the source. Call the innermost
+expansion that holds the keyword its EQU, and the text of the use-site line
+after that expansion the rest (with a multi-line body, the rest goes with
+the last body line, as for any EQU).
+
+- The count of a `FOR` is the text after `FOR` inside its EQU only; the rest
+  is not part of it (`s equ for 0`, `s 1` counts 0).
+- Count above 0: the block reads only the further body lines of its EQU (and
+  what EQU names in them expand to), never the source after the use. Without
+  a `ROF` there: warning (pMARS: "Unclosed ROF"), the block is expanded once
+  and pass 1 stops, as for a missing `ROF`. `s equ for 2` alone as `s`
+  assembles no instruction. Where the last body line ends the block with
+  `ROF`, the rest stays with it; where it does not, it is taken without the
+  rest.
+- Count 0: the block is skipped as usual, over the further body lines and on
+  into the source. The rest is scanned like a line of its own: for a
+  one-line body right after the `FOR` (`s equ for 0`, `s x rof` ends the
+  skipped block there), else after the last body line. When the skip ends
+  on the last body line, the rest is read as a statement line (with
+  `f equ for 0`, ` equ rof`, the line `f dat 7` gives `DAT.F #0, $7`).
+- After a `FOR` with count above 0 or a `ROF` from an EQU, the rest is
+  checked and else ignored: an opcode, `ORG`, `END`, `PIN`, `EQU`, `FOR` or
+  `ROF` there is an error (pMARS: "Improper placement"), also one that a
+  one-line EQU name there expands to (`r equ rof`, `x equ dat`, `r x`); the
+  `ROF` then does not count. Labels, `CURLINE`, numbers and other
+  characters are fine, and so is text inside the EQU after the keyword
+  (`r equ rof dat 5`). A multi-line EQU name in the rest is not looked at
+  (pMARS adds a warning "Unclosed ROF" there, the instructions are the
+  same).
+
+Found with `tools/pmars-diff.mjs` (#118).
 
 #### Asserts
 
