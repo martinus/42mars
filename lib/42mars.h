@@ -3,7 +3,10 @@
 
 // 42mars: a Redcode assembler and MARS simulator with the results of pMARS
 // 0.9.5, instruction counts and final cores included. C11, no global state,
-// no allocation unless asked for. The interface may change until 1.0.0.
+// no allocation unless asked for. From 1.0.0 on the interface changes only
+// in a compatible way within 1.x, with two exceptions stated where they
+// apply: the layout of m42_cell (M42_CELL_LAYOUT) and the text of
+// m42_warrior_statement().
 //
 // Build: compile lib/42mars.c together with your program, e.g.
 //   cc -O2 -Ilib -o example examples/example.c lib/42mars.c
@@ -63,7 +66,7 @@ extern "C" {
 // The version of the library, of the command line program and of the npm
 // package (package.json); a release is tagged v<major>.<minor>.<patch>.
 #define M42_VERSION_MAJOR 0
-#define M42_VERSION_MINOR 1
+#define M42_VERSION_MINOR 9
 #define M42_VERSION_PATCH 0
 
 // "0.1.0": the three numbers above.

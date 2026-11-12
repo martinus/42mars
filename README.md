@@ -176,7 +176,7 @@ const { warriors } = mars.runMatch([imp, dwarf], { rounds: 100, seed: 1 });
 for (const w of warriors) console.log(w.name, w.wins, w.losses, w.ties);
 ```
 
-In a browser without npm: `import { ... } from 'https://cdn.jsdelivr.net/npm/42mars@0.1.0/wasm/42mars.js'`. The types are in [`wasm/42mars.d.ts`](wasm/42mars.d.ts).
+In a browser without npm: `import { ... } from 'https://cdn.jsdelivr.net/npm/42mars@0.9.0/wasm/42mars.js'`. The types are in [`wasm/42mars.d.ts`](wasm/42mars.d.ts).
 
 ### Core War Theater, the visualizer
 
@@ -233,6 +233,7 @@ test/               npm test: 376 tests on node:test; C tests in test/c/, fuzz t
 docs/               the semantics, the plan, the performance log, development guide
 warriors/           sample warriors written for this repository, and Dewdney's Imp and Dwarf
 Makefile            native build on Linux and macOS; build-msvc.bat for Windows
+CHANGELOG.md        the changes of the interface, from 1.0.0 on
 ```
 
 ```mermaid
