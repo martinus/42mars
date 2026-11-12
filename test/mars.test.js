@@ -7,11 +7,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, existsSync } from 'node:fs';
-import { assembleWasm as assemble, createWasmMarsSync, rng } from '../wasm/42mars.js';
+import { assemble, createMarsSync, rng } from '../wasm/42mars.js';
 import { formatInstruction } from '../tools/opcodes.js';
 
 // An engine with the watch (watch(), events()).
-const engine = (opts = {}) => createWasmMarsSync({ ...opts, watch: true });
+const engine = (opts = {}) => createMarsSync({ ...opts, watch: true });
 
 function warrior(src, opts) {
   const w = assemble(src, opts);
@@ -180,6 +180,28 @@ test('a warrior that does not fit the rules is refused, with the reason', async 
   assert.equal(m.runMatch([imp, assemble('mov 7, 799', { coreSize: 800 })]).warriors.length, 2);
 });
 
+test('every method called before a load throws with the status text', () => {
+  // m42_start_round() and m42_end_round() returned M42_ERR_STATE and the JS
+  // interface ignored it; run() returned 0 and state() a made-up round (#90).
+  const m = createMarsSync({ watch: true });
+  const calls = {
+    startRound: () => m.startRound(), run: () => m.run(10), step: () => m.step(), endRound: () => m.endRound(),
+    state: () => m.state(), round: () => m.round, roundOver: () => m.roundOver, time: () => m.time,
+    cyclesLeft: () => m.cyclesLeft, warriorsLeft: () => m.warriorsLeft, current: () => m.current,
+    core: () => m.core(), watch: () => m.watch(),
+  };
+  for (const [method, call] of Object.entries(calls)) {
+    assert.throws(call, (e) => e instanceof Error && e.message === `${method}: no warriors loaded`, method);
+  }
+  // after a load they work
+  m.load([assemble('mov 0, 1'), assemble('mov 0, 1')], { seed: 1 });
+  m.startRound();
+  assert.equal(m.run(10), 10);
+  assert.equal(m.time, 10);
+  m.endRound();
+  assert.equal(m.roundOver, true);
+});
+
 test('p-space values from outside are below the core size', () => {
   // LDP copies a p-space value into a cell field, and the engine does not
   // reduce it again: a value of the core size or more made it address
@@ -236,7 +258,7 @@ const empty = (name) => ({ ok: true, instructions: [], start: 0, pin: null, name
 for (const watch of [true, false]) {
   test(`a warrior without instructions runs whatever is at its position${watch ? ' (watched)' : ''}`, () => {
     // Placed onto warrior 0's imp loop: it executes that code and survives.
-    let m = createWasmMarsSync({ watch });
+    let m = createMarsSync({ watch });
     m.load([warrior('jmp 0\n'), empty('ghost')], { positions: [0, 0] });
     m.startRound();
     const ghost = m.warriors[1];
@@ -256,7 +278,7 @@ for (const watch of [true, false]) {
     assert.deepEqual(m.roundResult.survivors, [0, 1]);
 
     // In an empty part of the core it executes DAT and dies.
-    m = createWasmMarsSync({ watch });
+    m = createMarsSync({ watch });
     m.load([warrior('jmp 0\n'), empty('ghost')], { positions: [0, 4000] });
     m.startRound();
     m.run(1e6);
@@ -265,7 +287,7 @@ for (const watch of [true, false]) {
     assert.equal(m.warriors[1].diedAt, 2);
 
     // Only empty warriors: two die, then the round ends with the third.
-    m = createWasmMarsSync({ watch, warriors: 3 });
+    m = createMarsSync({ watch, warriors: 3 });
     m.load([empty('a'), empty('b'), empty('c')], { positions: [0, 100, 200] });
     m.startRound();
     m.run(1e6);

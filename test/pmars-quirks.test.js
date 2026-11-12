@@ -6,10 +6,10 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { assembleWasm as assemble, evaluateWasm as evaluate } from '../wasm/42mars.js';
+import { assemble, evaluate } from '../wasm/42mars.js';
 import { formatInstruction } from '../tools/opcodes.js';
 
-// evaluateWasm() status
+// evaluate() status
 const EVAL_OK = 0;
 const EVAL_BAD = -1;
 

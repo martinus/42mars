@@ -71,7 +71,7 @@ Two or three options, each with its real cost, one marked recommended.
 Stop and ask for:
 - anything that changes results against pMARS 0.9.5, including an opt-in mode that does (e.g. statistical early stopping)
 - a dependency, a build step for the browser code, a new top-level folder
-- a change to the public API that the UI or the tests read (`createWasmMars`, `runMatch`, the watch, the assembler output)
+- a change to the public API that the UI or the tests read (`createMars`, `runMatch`, the watch, the assembler output)
 - anything in the clean-room hook or its rule
 - any choice where two readings of the issue lead to different work
 

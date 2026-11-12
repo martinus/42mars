@@ -3,7 +3,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { assembleWasm as assemble } from '../wasm/42mars.js';
+import { assemble } from '../wasm/42mars.js';
 import { formatInstruction, formatListing } from '../tools/opcodes.js';
 
 const N = 8000;

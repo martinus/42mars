@@ -14,8 +14,8 @@ pMARS binary, used as a black box, on corpus warriors and random input.
 Section 4 lists where the engine deliberately differs.
 
 The expression evaluator and the assembler are C (`lib/src/asm.c`);
-`wasm/42mars.js` calls them as `evaluateWasm(text)` and
-`assembleWasm(source, options)`. They started as a port of a JavaScript
+`wasm/42mars.js` calls them as `evaluate(text)` and
+`assemble(source, options)`. They started as a port of a JavaScript
 assembler (`expr.js`, `assembler.js`), removed in November 2026 after the
 tools and the visualizer had moved to the C one. The simulator is C too
 (`lib/src/mars.c`, section 3); the visualizer ran on a JavaScript copy of it,
@@ -36,7 +36,7 @@ functions have the behavior described here.
 ### API
 
 ```js
-evaluateWasm(text) -> { status, value }   // value is a BigInt
+evaluate(text) -> { status, value }   // value is a BigInt
 // status, named as in lib/src/asm.c:
 //   EVAL_OK        0
 //   EVAL_OVERFLOW  1   result valid, but 64-bit overflow happened
@@ -44,7 +44,7 @@ evaluateWasm(text) -> { status, value }   // value is a BigInt
 //   EVAL_DIV_ZERO -2   division or modulo by zero
 ```
 
-Each `evaluateWasm` call starts with all 26 registers 0. Within one
+Each `evaluate` call starts with all 26 registers 0. Within one
 assembly the registers persist from one expression to the next.
 
 ### Syntax and semantics
@@ -180,7 +180,7 @@ export const DEFAULT_OPTIONS = Object.freeze({
   readLimit: 0,    // 0 means coreSize
   writeLimit: 0,   // 0 means coreSize
 });
-export function assembleWasm(source, options = {}) -> result
+export function assemble(source, options = {}) -> result
 ```
 
 `VERSION` is 95 (pMARS 0.9.5).
@@ -655,14 +655,14 @@ definition. `instructions[i].line` is that number.
 
 ```js
 export function rng(seed) -> next seed     // Park-Miller, see 3.2
-export async function compileWasmMars() -> WebAssembly.Module   // cached
-export async function createWasmMars(options) -> engine        // Node and browsers
-export function createWasmMarsSync(options, module?) -> engine
+export async function compileMars() -> WebAssembly.Module   // cached
+export async function createMars(options) -> engine        // Node and browsers
+export function createMarsSync(options, module?) -> engine
 // options: the names of DEFAULT_OPTIONS (section 2), and watch: true for
 // the watch (3.4, 3.6)
 engine:
   opt, coreSize
-  load(codes, { seed, positions, permute })   // assembleWasm() or packWarrior() results; starts a match
+  load(codes, { seed, positions, permute })   // assemble() or packWarrior() results; starts a match
   startRound(), endRound()
   step()             // one instruction
   run(n) -> executed count; stops early when the round ends; a fraction rounds up
@@ -711,6 +711,12 @@ be a non-negative safe integer.
   small. A value given from outside (`runMatch({ pspace })`,
   `m42_match()`'s `options->pspace`, `m42_pspace_set()`) must be too, else a
   RangeError or `M42_ERR_ARGUMENT`: `LDP` copies it into a field unchanged.
+- Errors: every status other than `M42_OK` from a function of `lib/42mars.h`
+  is an `Error` whose message is the method's name and `m42_status_text()`,
+  e.g. `run: no warriors loaded` for `startRound()`, `run()`, `step()`,
+  `endRound()`, `state()` and its getters, `core()` and `watch()` before the
+  first `load()` (#90). Argument errors the JS interface finds itself are
+  `RangeError`s and `TypeError`s.
 - `startRound()`:
   1. `round++`, positions are chosen (3.2).
   2. The whole core becomes `DAT.F $0, $0`, time 0; a watch is reset
@@ -881,7 +887,7 @@ against it. `tools/pmars-diff.mjs` has three fuzz rule sets with limits.
 
 ### 3.4 The watch: bookkeeping for the visualizer
 
-With a watch attached (`m42_watch_attach()` in C, `createWasmMars({ watch:
+With a watch attached (`m42_watch_attach()` in C, `createMars({ watch:
 true })` in JS, `watch()` gives typed array views of it), `m42_run()`
 (`run()`) records per cell, in the time of the round mod 2^32 (0 for never)
 and with warriors as index + 1 (0 for none):
@@ -1078,7 +1084,7 @@ warning counts it compares, and the tools skip sources that get them.
   `for 1000000` (16960 repetitions each) did not end within 30 s and took
   19 GB. Without the limit, 38 bytes of nested FOR blocks took the engine
   18 s and 14.7 GB. `tools/pmars-diff.mjs` skips sources with this error.
-  `m42_assemble_new()` and `assembleWasm` grow the working memory up to 128 MB
+  `m42_assemble_new()` and `assemble` grow the working memory up to 128 MB
   plus 64 bytes per source byte, which held every source measured (the most:
   161 MB for a source of 3.6 MB).
 - FOR blocks nested deeper than 100 are the error `FOR blocks nested too
@@ -1086,9 +1092,9 @@ warning counts it compares, and the tools skip sources that get them.
   64 KB stack of the wasm build (121 levels fit).
 - An exception inside wasm (V8 out of stack when the caller's JS stack is
   nearly used up) leaves the C stack pointer of that instance behind;
-  `assembleWasm` and `evaluateWasm` then drop the instance and rethrow.
-- A core size below 1 is rejected (`assembleWasm` throws a RangeError).
-- The C code works on bytes. `assembleWasm` passes Latin-1 when every
+  `assemble` and `evaluate` then drop the instance and rethrow.
+- A core size below 1 is rejected (`assemble` throws a RangeError).
+- The C code works on bytes. `assemble` passes Latin-1 when every
   character of the source is below 256, else UTF-8. In UTF-8 mode one
   character outside ASCII is one token, and message texts trim the Unicode
   spaces that JavaScript's `trim()` trims.

@@ -14,7 +14,7 @@ import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'n
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createWasmMarsSync, evaluateWasm, assembleWasm as assemble } from '../wasm/42mars.js';
+import { createMarsSync, evaluate, assemble } from '../wasm/42mars.js';
 import { hasCc, lines, prebuilt, program, skip } from './native.js';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
@@ -71,7 +71,7 @@ test('the C library through 42mars.h agrees with the JS assembler and the wasm e
   assert.equal(codes[files.length - 1].ok, false);
 
   // matches: warrior 0 against each other one, as runMatch plays them
-  const m = createWasmMarsSync();
+  const m = createMarsSync();
   let total = 0;
   out.matches.forEach((got, k) => {
     const r = m.runMatch([codes[0], codes[k + 1]], { rounds: 20, seed: 1234 });
@@ -114,7 +114,7 @@ test('the C library through 42mars.h agrees with the JS assembler and the wasm e
   assert.deepEqual(s.pspace, [0, 0, 4242, -3, -3]);
   // the watch: too small, attached, a round up to time 3000 in steps of
   // 300, against the wasm build's watch; detached, it records nothing
-  const wm = createWasmMarsSync({ watch: true });
+  const wm = createMarsSync({ watch: true });
   wm.load([codes[0], codes[1]], { seed: 1234 });
   wm.startRound();
   while (!wm.roundOver && wm.time < 3000) wm.run(300);
@@ -159,7 +159,7 @@ test('the C library through 42mars.h agrees with the JS assembler and the wasm e
     '4611686018427387904+4611686018427387904', '-4611686018427387904+-4611686018427387904', '3037000500*3037000500',
   ];
   assert.deepEqual(out.evaluate, expressions.map((e) => {
-    const r = evaluateWasm(e);
+    const r = evaluate(e);
     return [r.status, String(r.value)];
   }));
   assert.deepEqual(out.evaluate.map((e) => e[0]), [1, 0, 0, 1, 1, 0, 1, 0, 1, 0, 1]);
@@ -170,7 +170,7 @@ test('examples/example.c builds with cc -Ilib examples/example.c lib/42mars.c an
   const out = lines(execFileSync(example, ['-r', '100', '-F', '4000', lantern, origami], { encoding: 'utf8' }));
   // pmars -b -k -r 100 -F 4000 lantern.red origami.red prints "1 9" and "90 9"
   // (wins ties); the same match on the wasm engine:
-  const r = createWasmMarsSync().runMatch([codes[files.indexOf(lantern)], codes[files.indexOf(origami)]], { rounds: 100, seed: 3900 });
+  const r = createMarsSync().runMatch([codes[files.indexOf(lantern)], codes[files.indexOf(origami)]], { rounds: 100, seed: 3900 });
   assert.equal(out, r.warriors.map((w) => `${w.wins} ${w.losses} ${w.ties}\n`).join(''));
   assert.equal(out, '1 90 9\n90 1 9\n');
 });

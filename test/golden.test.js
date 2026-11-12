@@ -12,7 +12,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { assembleWasm, evaluateWasm } from '../wasm/42mars.js';
+import { assemble, evaluate } from '../wasm/42mars.js';
 
 const load = (f) => JSON.parse(readFileSync(new URL(`./fixtures/${f}`, import.meta.url), 'utf8'));
 
@@ -20,7 +20,7 @@ const load = (f) => JSON.parse(readFileSync(new URL(`./fixtures/${f}`, import.me
 test('expressions match the reference results', () => {
   const bad = [];
   for (const [expr, status, value] of load('expressions.json')) {
-    const r = evaluateWasm(expr);
+    const r = evaluate(expr);
     if (r.status !== status || (status >= 0 && r.value.toString() !== value)) {
       bad.push(`${JSON.stringify(expr)}: want ${status}/${value}, got ${r.status}/${r.value}`);
     }
@@ -30,7 +30,7 @@ test('expressions match the reference results', () => {
 
 for (const { name, src, opts, result } of load('snippets.json')) {
   test(`snippet ${name}`, () => {
-    const w = assembleWasm(src, opts);
+    const w = assemble(src, opts);
     const got = {
       ok: w.ok, name: w.name, author: w.author, strategy: w.strategy, start: w.start, pin: w.pin,
       instructions: w.instructions.map((i) => [i.op, i.mod, i.aMode, i.aVal, i.bMode, i.bVal, i.line]),

@@ -8,7 +8,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { assembleWasm as assemble, createWasmMarsSync } from '../wasm/42mars.js';
+import { assemble, createMarsSync } from '../wasm/42mars.js';
 
 function warrior(src) {
   const w = assemble(src);
@@ -18,7 +18,7 @@ function warrior(src) {
 
 // Warrior 0 idles at 0, warrior 1 runs `src` at 4000.
 function duel(src) {
-  const m = createWasmMarsSync({ watch: true });
+  const m = createMarsSync({ watch: true });
   m.load([warrior('jmp 0\n'), warrior(src)], { positions: [0, 4000] });
   m.startRound();
   return m;

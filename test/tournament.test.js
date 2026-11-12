@@ -8,7 +8,7 @@ import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, 
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { assembleWasm, createWasmMarsSync } from '../wasm/42mars.js';
+import { assemble, createMarsSync } from '../wasm/42mars.js';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
 const dir = mkdtempSync(join(tmpdir(), 'tournament-test-'));
@@ -25,8 +25,8 @@ const pairings = (t) => t.results.map((r) => [r.a, r.b]);
 
 // Each pairing as one runMatch() call over all its rounds.
 function wholeMatches(t, rounds) {
-  const code = (f) => assembleWasm(readFileSync(f, 'latin1'));
-  const m = createWasmMarsSync();
+  const code = (f) => assemble(readFileSync(f, 'latin1'));
+  const m = createMarsSync();
   return t.pairs.map((p) => {
     const r = m.runMatch([code(t.files[p.a]), code(t.files[p.b])], { rounds, seed: p.pos - 100 });
     return r.warriors.map((w) => [w.wins, w.losses, w.ties]);

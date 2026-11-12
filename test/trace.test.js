@@ -6,7 +6,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { assembleWasm as assemble, createWasmMarsSync } from '../wasm/42mars.js';
+import { assemble, createMarsSync } from '../wasm/42mars.js';
 import { OP, MOD } from '../tools/opcodes.js';
 
 const STORED = 1 << 16;
@@ -16,7 +16,7 @@ const SKIPPED = 1 << 19;
 const FLAGS = STORED | NEW_PROCESS | DIED | SKIPPED;
 
 function battle(sources, opts = {}, positions = [0, 4000]) {
-  const m = createWasmMarsSync({ ...opts, watch: true });
+  const m = createMarsSync({ ...opts, watch: true });
   m.load(sources.map((s) => {
     const w = assemble(s, opts);
     assert.ok(w.ok, JSON.stringify(w.errors));

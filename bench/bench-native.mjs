@@ -20,10 +20,10 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { assembleWasm as assemble, compileWasmMars } from '../wasm/42mars.js';
+import { assemble, compileMars } from '../wasm/42mars.js';
 import { nativeMatch } from './native-input.mjs';
 
-await compileWasmMars(); // assembleWasm() then works on every Node 20
+await compileMars(); // assemble() then works on every Node 20
 
 const argv = process.argv.slice(2);
 const opt = (name, dflt) => { const i = argv.indexOf(`--${name}`); return i >= 0 ? argv.splice(i, 2)[1] : dflt; };

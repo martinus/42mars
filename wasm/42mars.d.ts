@@ -55,7 +55,7 @@ export interface Message {
   text: string;
 }
 
-/** The result of assembleWasm(). */
+/** The result of assemble(). */
 export interface Warrior {
   /** True when there were no errors: only then can the warrior be loaded. */
   ok: boolean;
@@ -90,7 +90,7 @@ export interface PackedWarrior {
 
 export type Code = Warrior | PackedWarrior;
 
-/** Status of evaluateWasm(): 0 ok, 1 overflow (the value wrapped around), -1 not an expression, -2 division by zero. */
+/** Status of evaluate(): 0 ok, 1 overflow (the value wrapped around), -1 not an expression, -2 division by zero. */
 export type EvalStatus = 0 | 1 | -1 | -2;
 
 export interface LoadOptions {
@@ -217,8 +217,8 @@ export interface EngineOptions extends Options {
   watch?: boolean;
 }
 
-/** One simulator: an instance of the WebAssembly module. */
-export interface WasmMars {
+/** One simulator, an instance of the WebAssembly module. Every status other than M42_OK from the library is an Error "<method>: <m42_status_text()>", e.g. "run: no warriors loaded" for startRound(), run(), step(), endRound(), state() and its getters, core() and watch() before the first load(). */
+export interface Mars {
   readonly coreSize: number;
   readonly opt: Readonly<Required<Options>>;
   readonly warriors: WarriorView[];
@@ -257,17 +257,17 @@ export interface WasmMars {
 }
 
 /** Compiles 42mars.wasm once (fetch in browsers, the file system in Node). */
-export function compileWasmMars(): Promise<WebAssembly.Module>;
+export function compileMars(): Promise<WebAssembly.Module>;
 
-export function createWasmMars(options?: EngineOptions): Promise<WasmMars>;
+export function createMars(options?: EngineOptions): Promise<Mars>;
 
-/** With a module from compileWasmMars(), or in Node 20.16+ / 22.3+ without one. */
-export function createWasmMarsSync(options?: EngineOptions, module?: WebAssembly.Module): WasmMars;
+/** With a module from compileMars(), or in Node 20.16+ / 22.3+ without one. */
+export function createMarsSync(options?: EngineOptions, module?: WebAssembly.Module): Mars;
 
 export function packWarrior(code: Warrior, packed?: Int32Array): PackedWarrior;
 
-/** Assembles Redcode as pMARS 0.9.5 does. In a browser, call compileWasmMars() first or pass the module. */
-export function assembleWasm(source: string, options?: Options, module?: WebAssembly.Module): Warrior;
+/** Assembles Redcode as pMARS 0.9.5 does. In a browser, call compileMars() first or pass the module. */
+export function assemble(source: string, options?: Options, module?: WebAssembly.Module): Warrior;
 
 /** Evaluates one Redcode expression with 64-bit integers, as pMARS does. */
-export function evaluateWasm(text: string, module?: WebAssembly.Module): { status: EvalStatus; value: bigint };
+export function evaluate(text: string, module?: WebAssembly.Module): { status: EvalStatus; value: bigint };

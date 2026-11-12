@@ -28,7 +28,7 @@ test('package.json, 42mars.h and the wasm module have the same version', async (
   const header = readFileSync(join(root, 'lib/42mars.h'), 'latin1');
   const part = (name) => header.match(new RegExp(`#define M42_VERSION_${name} (\\d+)`))[1];
   assert.equal(pkg.version, `${part('MAJOR')}.${part('MINOR')}.${part('PATCH')}`);
-  const x = new WebAssembly.Instance(await glue.compileWasmMars()).exports;
+  const x = new WebAssembly.Instance(await glue.compileMars()).exports;
   const at = x.m42_version();
   const bytes = new Uint8Array(x.memory.buffer, at, 32);
   assert.equal(new TextDecoder().decode(bytes.subarray(0, bytes.indexOf(0))), pkg.version);
@@ -47,16 +47,16 @@ test('the npm package works by its name, without the rest of the repository', { 
   mkdirSync(join(tmp, 'app/node_modules'), { recursive: true });
   renameSync(join(tmp, 'package'), join(tmp, 'app/node_modules/42mars'));
   writeFileSync(join(tmp, 'app/use.mjs'), `
-import { assembleWasm, createWasmMars } from '42mars';
-const imp = assembleWasm(' mov 0, 1\\n');
-const dwarf = assembleWasm(' add #4, 3\\n mov 2, @2\\n jmp -2\\n dat #0, #0\\n');
-const m = await createWasmMars();
+import { assemble, createMars } from '42mars';
+const imp = assemble(' mov 0, 1\\n');
+const dwarf = assemble(' add #4, 3\\n mov 2, @2\\n jmp -2\\n dat #0, #0\\n');
+const m = await createMars();
 const r = m.runMatch([imp, dwarf], { rounds: 10, seed: 1 });
 console.log(JSON.stringify(r.warriors.map((w) => [w.wins, w.losses, w.ties])));
 `);
   assert.deepEqual(readdirSync(join(tmp, 'app/node_modules/42mars/wasm')).sort(), ['42mars.d.ts', '42mars.js', '42mars.wasm']);
   const scores = JSON.parse(execFileSync(process.execPath, ['use.mjs'], { cwd: join(tmp, 'app'), encoding: 'utf8' }));
   // the same match on the repository's engine
-  const r = glue.createWasmMarsSync().runMatch([glue.assembleWasm(' mov 0, 1\n'), glue.assembleWasm(' add #4, 3\n mov 2, @2\n jmp -2\n dat #0, #0\n')], { rounds: 10, seed: 1 });
+  const r = glue.createMarsSync().runMatch([glue.assemble(' mov 0, 1\n'), glue.assemble(' add #4, 3\n mov 2, @2\n jmp -2\n dat #0, #0\n')], { rounds: 10, seed: 1 });
   assert.deepEqual(scores, r.warriors.map((w) => [w.wins, w.losses, w.ties]));
 });

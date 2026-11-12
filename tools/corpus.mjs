@@ -6,9 +6,9 @@
 // With the assembler of lib/src/asm.c, through wasm/42mars.js.
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
-import { assembleWasm as assemble, compileWasmMars } from '../wasm/42mars.js';
+import { assemble, compileMars } from '../wasm/42mars.js';
 
-await compileWasmMars();
+await compileMars();
 const dir = process.argv[2];
 const verbose = process.argv.includes('--verbose');
 const files = [];

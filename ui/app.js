@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 Martin Leitner-Ankerl
 
-import { assembleWasm as assemble, compileWasmMars, createWasmMarsSync } from '../wasm/42mars.js';
+import { assemble, compileMars, createMarsSync } from '../wasm/42mars.js';
 import { formatInstruction, formatListing, OP, OPCODES } from '../tools/opcodes.js';
 import { Renderer, TEX_W } from './renderer.js';
 import { computeLayout, addressAt, cellCenter, LAYOUT_GRID, LAYOUT_RING } from './layout.js';
@@ -13,7 +13,7 @@ import { ActivityTracker, ACTIVITIES, ACTIVITY_LABELS, ACTIVITY_SENTENCES, OPCOD
 // once before anything assembles or runs (in a browser it cannot be loaded
 // synchronously). The simulator runs with a watch, which records what the
 // visualizer shows (semantics doc, 3.7).
-const wasmModule = await compileWasmMars();
+const wasmModule = await compileMars();
 
 // ------------------------------------------------------------------ config
 
@@ -144,7 +144,7 @@ function restartMatch() {
   }
   const opts = options();
   try {
-    state.mars = createWasmMarsSync({ ...opts, watch: true }, wasmModule);
+    state.mars = createMarsSync({ ...opts, watch: true }, wasmModule);
     state.mars.load(state.slots.map((s) => s.result));
   } catch (e) {
     state.mars = null;
