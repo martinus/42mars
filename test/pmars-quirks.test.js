@@ -292,3 +292,21 @@ test('a running FOR block ends at the first ROF it reads, a dropped FOR line ope
     assert.equal(assemble(`;assert 1\n${src}`).ok, false, src);
   }
 });
+
+test('ORG, END and PIN without an operand count it as 0', () => {
+  // pMARS 0.9.5 (`pmars -r 0`): each assembles without a warning, START where
+  // the listing puts it. A bare `pin` shares p-space with `pin 0` and not
+  // with `pin 7` (`pmars -b -r 4`, a warrior that stores 42 in p-space cell
+  // 1 against one that dies when it loads 42). It was "ORG needs an operand";
+  // found by tools/pmars-diff.mjs with seed 1794475258.
+  const cases = [
+    ['x dat 0\nmov 0,1\norg\n', 0, null], ['x dat 0\nmov 0,1\norg 1\norg\n', 0, null],
+    ['x dat 0\nmov 0,1\norg\norg 1\n', 1, null], ['x dat 0\nmov 0,1\norg\nend 1\n', 1, null],
+    ['x dat 0\nmov 0,1\norg 1\nend\n', 1, null], ['x dat 0\nmov 0,1\norg ;c\n', 0, null],
+    ['dat 0\npin\n', 0, 0], ['dat 0\npin 5\npin\n', 0, 0], ['dat 0\npin\npin 7\n', 0, 7],
+  ];
+  for (const [src, start, pin] of cases) {
+    const w = assemble(`;assert 1\n${src}`);
+    assert.deepEqual([w.ok, w.start, w.pin, w.warnings.length], [true, start, pin, 0], src);
+  }
+});

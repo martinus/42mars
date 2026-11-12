@@ -593,6 +593,9 @@ ORG|END|PIN expr
   ("END start ignored"), else start = value (normalized). `END` without
   operand or with 0 changes nothing.
 - `PIN expr`: pin = value (not normalized).
+- An empty operand (nothing after the keyword, or only a comment) counts as
+  0, as in pMARS: `org` sets the start to 0, also after `org 1`; `pin` is
+  `pin 0` and shares p-space with it.
 
 After pass 2:
 
