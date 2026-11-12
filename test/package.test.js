@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 Martin Leitner-Ankerl
 //
-// The npm package and the version: package.json, lib/42mars.h and the
+// The JavaScript demo (wasm/, packed as by npm) and the version: package.json, lib/42mars.h and the
 // wasm build agree on the version; wasm/42mars.d.ts declares what
 // wasm/42mars.js exports; the packed package holds only the wasm interface
 // and works by its name, without the rest of the repository.
@@ -32,9 +32,9 @@ test('package.json, 42mars.h and the wasm module have the same version', async (
   const at = x.m42_version();
   const bytes = new Uint8Array(x.memory.buffer, at, 32);
   assert.equal(new TextDecoder().decode(bytes.subarray(0, bytes.indexOf(0))), pkg.version);
-  // the README's links to the package (release, CDN) name this version (#94)
+  // the README's CDN links to the tag name this version (#94)
   const readme = readFileSync(join(root, 'README.md'), 'utf8');
-  const pinned = [...readme.matchAll(/42mars@v?(\d+\.\d+\.\d+)|download\/v(\d+\.\d+\.\d+)\/42mars-(\d+\.\d+\.\d+)\.tgz/g)].flatMap((m) => m.slice(1).filter(Boolean));
+  const pinned = [...readme.matchAll(/42mars@v?(\d+\.\d+\.\d+)/g)].map((m) => m[1]);
   assert.ok(pinned.length > 0);
   assert.deepEqual([...new Set(pinned)], [pkg.version]);
 });

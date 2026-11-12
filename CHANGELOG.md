@@ -1,6 +1,6 @@
 # Changelog
 
-From 1.0.0 on, every change of the interface is listed here: the C library (`lib/42mars.h`), the command line program `42mars`, and the JavaScript package (`wasm/42mars.js`, `wasm/42mars.d.ts`). Within 1.x the interface changes only in a compatible way; `lib/42mars.h` names the two exceptions (the layout of `m42_cell`, the text of `m42_warrior_statement()`).
+From 1.0.0 on, every change of the interface is listed here: the C library (`lib/42mars.h`), and the command line program `42mars`. Within 1.x they change only in a compatible way; `lib/42mars.h` names the two exceptions (the layout of `m42_cell`, the text of `m42_warrior_statement()`).
 
 ## 1.0.0 (not released yet)
 
@@ -8,7 +8,7 @@ The first release with that promise.
 
 - **The C library**: a Redcode assembler and MARS simulator with the results of pMARS 0.9.5, instruction counts and final cores of every round included. One header, one file to compile, C11, no global state, no hidden allocation. Matches, benches, stepping with a watch for visualizers, p-space, `-P` permutations, read and write limits, ICWS'88.
 - **`42mars`**: a command line program with pMARS 0.9.5's options, stdout and exit codes, built on the library.
-- **The JavaScript package**: the library as a WebAssembly module with a JavaScript interface (`assemble`, `evaluate`, `createMars`, `createMarsSync`, `compileMars`), no dependencies, for Node 20 and newer and browsers. It is not on npm: the release has it as `42mars-1.0.0.tgz` for `npm install <url>`, and a CDN serves it from the tag.
+- **A JavaScript demo** (`wasm/`): the library as a WebAssembly module with a JavaScript interface (`assemble`, `evaluate`, `createMars`, `createMarsSync`, `compileMars`), no dependencies, for Node 20 and newer and browsers. Not on npm, and not covered by the promise: it may change in any release (such changes are listed here too).
 
 Since 0.9.0, the assembler gives pMARS's result for more sources, so some assemble differently: labels after an EQU opcode at the statement start (#116), `FOR` and `ROF` from an EQU (#118), a multi-line EQU in an operand (#119), and an opcode in an assert is an error, as in pMARS.
 

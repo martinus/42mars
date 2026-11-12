@@ -1,6 +1,7 @@
 {
   "name": "42mars",
   "version": "1.0.0",
+  "private": true,
   "description": "Fast Core War simulator (MARS) and Redcode assembler with the results of pMARS 0.9.5, in WebAssembly",
   "keywords": ["corewar", "core war", "redcode", "mars", "pmars", "webassembly"],
   "license": "MIT",

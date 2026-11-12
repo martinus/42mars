@@ -5,13 +5,12 @@ name: test
 # wasm/build.sh gives the committed 42mars.wasm, the C library on Linux (x64
 # and arm64), macOS and Windows with its release archives, the C library
 # under AddressSanitizer and UndefinedBehaviorSanitizer, the comparison
-# with pMARS 0.9.5, and an npm publish dry run. The fuzz targets (make
+# with pMARS 0.9.5. The fuzz targets (make
 # fuzz) are not run here: 3.5 minutes per run for a smoke test; they run by
 # hand and in the release gate. A tag v<version> (the version of
 # package.json and lib/42mars.h) also makes a GitHub release with the
-# archives and the JavaScript package (npm pack). The npm publish stays a
-# dry run until the repository variable NPM_PUBLISH is "true" (it needs
-# the secret NPM_TOKEN).
+# archives. The JavaScript interface in wasm/ is a demo and not published
+# on npm.
 
 on:
   push:
@@ -257,42 +256,9 @@ jobs:
             build/42mars-*.zip
           if-no-files-found: error
 
-  npm:
-    needs: [test, wasm, sanitizers, native]
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      id-token: write # npm provenance
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 22
-          registry-url: https://registry.npmjs.org
-      - name: the tag is the version
-        if: startsWith(github.ref, 'refs/tags/v')
-        run: test "$GITHUB_REF_NAME" = "v$(node -p "require('./package.json').version")"
-      - name: npm publish
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: |
-          if [ "${{ startsWith(github.ref, 'refs/tags/v') && vars.NPM_PUBLISH == 'true' }}" = true ]; then
-            npm publish --provenance --access public
-          else
-            npm publish --dry-run
-          fi
-      # The package as a file for the GitHub release: `npm install <url>`
-      # works without the npm registry.
-      - run: npm pack
-      - uses: actions/upload-artifact@v7
-        with:
-          name: archive-npm
-          path: 42mars-*.tgz
-          if-no-files-found: error
-
   release:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [npm]
+    needs: [test, wasm, sanitizers, native]
     runs-on: ubuntu-latest
     permissions:
       contents: write

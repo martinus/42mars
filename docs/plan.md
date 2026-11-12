@@ -40,7 +40,7 @@ ui/app.js ──> renderer.js (WebGL2 cells + bloom)   overlay.js (arcs, tags, c
 | `Makefile`, `build-msvc.bat` | The native builds: static and shared library, `build/42mars`, the test programs, install with pkg-config, release archives. |
 | `cli/42mars.c` | The command line program with pMARS's options and output, on `lib/42mars.h` only. |
 | `examples/example.c` | A complete program on the library: a match of two warriors from the command line. |
-| `wasm/42mars.js` | JavaScript glue over the functions of `lib/42mars.h`, the npm package `42mars` with `42mars.wasm` and the types in `wasm/42mars.d.ts`: `createMars()` with the step API (`load`, `startRound`, `run`), `runMatch()` for a whole match inside WebAssembly, and `packWarrior()` for warriors that are loaded with one copy and shared between threads. |
+| `wasm/42mars.js` | JavaScript glue over the functions of `lib/42mars.h`, the JavaScript demo with `42mars.wasm` and the types in `wasm/42mars.d.ts`: `createMars()` with the step API (`load`, `startRound`, `run`), `runMatch()` for a whole match inside WebAssembly, and `packWarrior()` for warriors that are loaded with one copy and shared between threads. |
 | `ui/*` | Visualizer. No dependencies, no build step, plain ES modules. |
 | `tools/opcodes.js` | Opcode tables, formatting, pMARS-style listing. |
 | `tools/asm.mjs` | `node tools/asm.mjs file.red` prints a pMARS-style listing or the errors. |
@@ -215,7 +215,7 @@ The current focus is the library (L). M1 stays, because a library has to score e
 
 ### L: the 42mars library
 
-A C library, a pMARS-compatible command line program and an npm package. C only (C11, no C++), so that every language can call it and the WebAssembly build needs no standard library. From 1.0.0 on the interface of `lib/42mars.h` and of the npm package changes only in a compatible way within 1.x; `lib/42mars.h` names the two exceptions.
+A C library and a pMARS-compatible command line program, with a JavaScript demo (not on npm since 1.0.0, not under the 1.x promise). C only (C11, no C++), so that every language can call it and the WebAssembly build needs no standard library. From 1.0.0 on the interface of `lib/42mars.h` and of the npm package changes only in a compatible way within 1.x; `lib/42mars.h` names the two exceptions.
 
 - L1 (#53), done: `mars.c` keeps all state in `struct Mars` and every function takes it. The wasm module and the native benchmark use one context at a fixed address, with no loss against the globals (wasm within noise, native 1 to 3% faster). A context through a pointer (`-DMARS_CONTEXT_POINTER`) costs 4 to 6% in wasm and 1 to 3% natively (`docs/performance-log.md`, "A context object"); L3 decides whether the native library takes that.
 - Layout, done: `lib/` the C library, `wasm/` its WebAssembly build and JS interface, `ui/` the visualizer, `js/` the JS simulator until the library replaces it (decided 10th November 2026: one implementation, in C; pMARS stays the oracle). Since 12th November 2026 `lib/` holds only the library, `examples/` the example, `tools/` the user tools and the pMARS comparisons, `bench/` the speed tools, and this plan is in `docs/` (`docs/development.md`).

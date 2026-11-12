@@ -2,7 +2,8 @@
 // Copyright (c) 2026 Martin Leitner-Ankerl
 
 // The 42mars library (lib/42mars.h) in WebAssembly: the assembler and the
-// simulator with pMARS's results, the npm package `42mars`. The API is in
+// simulator with pMARS's results, a demo of the C library in JavaScript
+// (not covered by its 1.x promise). The API is in
 // 42mars.d.ts and in docs/redcode-semantics.md, sections 2 and 3.
 //
 //   const m = await createMars({ coreSize: 8000 });
