@@ -4,7 +4,7 @@ description: Correctness gate for any change to the assembler, the expression ev
 ---
 # Engine check
 
-Setup: `O=${COREWAR_ORACLE:-$HOME/.local/share/corewar-theater}`, `SEED=$(date +%s)` (fresh every time; report it). Steps 2 to 5 take about 3 minutes: run them as one background script with a sentinel (CLAUDE.md, "Running long checks").
+Setup: `O=${COREWAR_ORACLE:-$HOME/.local/share/corewar-theater}`, `SEED=$(date +%s)` (fresh every time; report it). Steps 2 to 5 take about 3 minutes: run them in the background with `in-order.mjs` of this folder (CLAUDE.md, "Running long checks").
 
 1. Builds (anything under `lib/` or the build script changed):
    - `wasm/build.sh && md5sum wasm/42mars.wasm` twice: the sums match. `git status` shows `42mars.wasm` modified exactly when its sources are.

@@ -1,6 +1,6 @@
 ---
 name: issues
-description: Works every open GitHub issue that martinus filed to done, one pull request per subject, merged when CI is green, re-reading the issue list after every merge; then reflects on the session and lands what would make the next one better. Run only when Martin types /issues or says "do the issues".
+description: Works every open GitHub issue that martinus filed to done, one pull request per subject, merged when CI is green, re-reading the issue list after every merge; then wraps up with the wrap-up skill. Run only when Martin types /issues or says "do the issues".
 argument-hint: "[optional: an issue number or subject to start with]"
 disable-model-invocation: true
 ---
@@ -8,7 +8,7 @@ disable-model-invocation: true
 # Do the issues
 
 Read every open issue the owner filed, finish them all, stop when nothing is
-left, then reflect on the session.
+left, then wrap up.
 
 **One subject is one PR.** The loop does not move on until that PR is merged
 and the issue list has been read again.
@@ -106,7 +106,7 @@ Fix what they find before the push; say which you ran and what you skipped, with
 
 ### 7. engine-check, push, watch CI
 
-The `engine-check` skill for any engine change, the `ui-check` skill for any UI change. Then [pull-request-loop.md](pull-request-loop.md), steps 1 to 4. CI runs `npm test` on Node 20 and 22 without pMARS, so the pMARS checks are yours, and their results go in the PR body.
+The `engine-check` skill for any engine change, the `ui-check` skill for any UI change. Then [pull-request-loop.md](pull-request-loop.md), steps 1 to 4. CI has no pMARS, so the pMARS checks are yours, and their results go in the PR body.
 
 A red CI on your PR is work now: diagnose, fix, push again.
 
@@ -126,19 +126,6 @@ Do not start the next speed experiment while CI or anything else runs on this ma
 
 No open issue by `martinus`, `main` green. Report which issues closed in which PR (with the measured numbers for speed issues), what you filed, what you decided not to do, what waits on Martin, and the numbers of open issues by anybody else, unread.
 
-## Reflect, and land what is clear
+## Wrap up
 
-Answer Martin's question: **what would make the next session more efficient and more effective?** From what happened in this session, not from opinion:
-
-- a tool call that was refused or blocked (e.g. by the clean-room hook), and why
-- a test, a check or a CI run that went red, and what fixed it
-- a measurement that had to be repeated because the machine was busy or the method was wrong
-- a question Martin had to answer twice, or a correction he made
-- a file read whole to find one fact, a command written from nothing that a tool in `tools/` or `bench/` could hold
-- a rule that was wrong, stale, or not followed, and a rule that cost reading and saved nothing
-
-For each, the change that stops it: add, change or **remove** a line in `CLAUDE.md`, `.claude/rules/`, a skill, or a tool script. Removing counts as much as adding. Never into machine-local memory: Martin works from more than one computer.
-
-**Land the clear ones in one PR, merged on green without asking.** Clear means one reading, the evidence is in this session, and it touches only `CLAUDE.md`, `.claude/` or a script in `tools/` or `bench/`. **Ask first** about anything else, and always about the clean-room hook or rule.
-
-If nothing went wrong, say so in one line.
+Then read [the wrap-up skill](../wrap-up/SKILL.md) and follow it, without asking: `/issues` is its permission too. The Skill tool refuses it (only Martin starts it), so read the file.
