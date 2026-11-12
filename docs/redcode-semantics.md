@@ -1174,10 +1174,19 @@ two on corpus warriors, `test/cli.test.js` holds recorded pMARS outputs.
   `-A` prints `       END      START` before its `       END` when the
   start lies in the code. The simulation is the same.
 - `-e` (the debugger, off in the server build) is ignored.
-- Not supported by `42mars` (exit 2): `-V` (pMARS prints its internal
-  assembler passes), and values
-  beyond the engine: core size above 65536, more than 2^24 processes or
-  p-space cells, more than 2^32-1 cycles.
+- `-V` changes nothing on stdout or in the exit code, in pMARS as here
+  (run with `-b`, `-A`, a warrior that does not assemble, two warriors).
+  pMARS prints its assembler's passes on stderr: "After pass 0" with every
+  statement and assert line as `(    2) step equ 4`, then parameter checks,
+  "After pass 1" with the statements after expansion as `(    4) ADD #4,3`,
+  and a table of every label and its references. `42mars -V` prints pass 0
+  and pass 1 per warrior in that format, before the warrior's messages; the
+  statements of ORG, END and PIN get no line number (the library has none
+  for them), and the parameter checks and the label table are left out
+  (#92).
+- Not supported by `42mars` (exit 2): values beyond the engine: core size
+  above 65536, more than 2^24 processes or p-space cells, more than 2^32-1
+  cycles.
 
 ### Output
 

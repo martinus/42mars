@@ -10,9 +10,10 @@
 //
 // stdout is pMARS's: listings, results, -k lines, -A output. Messages go to
 // stderr in our own words. Exit codes are pMARS's: 0 ok, 2 bad options, 3 a
-// warrior that does not assemble or cannot be read. Not supported, with a
-// clear error: -V (pMARS's internal assembler dump), and values beyond the
-// engine's limits
+// warrior that does not assemble or cannot be read. -V prints the source
+// lines and the statements after expansion to stderr in pMARS's format,
+// not its parameter checks and label table. Not supported, with a clear
+// error: values beyond the engine's limits
 // (core size 65536, 2^24 processes and p-space cells, 2^32-1 cycles). -e
 // (the debugger, off in pMARS's server version) is ignored, as pMARS does.
 // What pMARS does for each option is in docs/redcode-semantics.md,
@@ -42,7 +43,7 @@ static void usage(void) {
         "  -S # p-space [core/16]     -P   permuted positions\n"
         "  -R # read limit [core]     -W # write limit [core]\n"
         "  -= $ score formula [(W*W-1)/S] -8   ICWS'88 only\n"
-        "  -@ $ read options from file $\n",
+        "  -@ $ read options from file $ -V   assembler passes on stderr\n",
         stderr);
 }
 
@@ -91,7 +92,7 @@ typedef struct {
   const char *files[MAX_WARRIORS + 1];
   int nfiles;
   long long rounds, size, cycles, processes, length, distance, pspace, position, readLimit, writeLimit;
-  int brief, koth, sorted, assemble, fixed, permute, hasDistance, hasPosition;
+  int brief, koth, sorted, assemble, fixed, permute, hasDistance, hasPosition, verbose;
   const char *formula;
   int64_t registers[26]; // after the formula check: the first warrior starts with them
 } Args;
@@ -187,7 +188,7 @@ static int parse(int argc, char **argv, Args *a) {
           break;
         case 'P': a->permute = 1; break;
         case '8': icws88 = 1; break;
-        case 'V': return fail(2, "-V (pMARS's verbose assembly) is not supported", 0);
+        case 'V': a->verbose = 1; break;
         default: return fail(2, "unknown option", arg);
       }
     }
@@ -216,6 +217,47 @@ static void print_cell(const m42_instruction *x, uint32_t size) {
 }
 
 static void text(const m42_warrior *w, m42_text which, char *buf, size_t n) { m42_warrior_text(w, which, buf, n); }
+
+// -V: pMARS's dump of the passes on stderr, the parts the library knows:
+// the source lines that are statements or asserts (pass 0, comments cut
+// off), and the statements after expansion (pass 1), each with its physical
+// line. ORG, END and PIN statements have no line in the library's
+// interface and get none.
+static int is_assert(const char *s, size_t n) {
+  const char *word = ";assert";
+  if (n < 7) return 0;
+  for (int i = 0; i < 7; i++) if ((s[i] | 0x20) != word[i] && s[i] != word[i]) return 0;
+  return 1;
+}
+
+static void print_passes(const char *src, size_t len, const m42_warrior *w) {
+  fprintf(stderr, "After pass 0\nInstruction (physical line, instr):\n\n");
+  int line = 1;
+  for (size_t at = 0; at < len; line++) {
+    size_t end = at;
+    while (end < len && src[end] != '\n' && src[end] != '\r' && src[end]) end++;
+    size_t s = at;
+    while (s < end && (src[s] == ' ' || src[s] == '\t')) s++;
+    const int assert_line = is_assert(src + s, end - s);
+    size_t cut = at;
+    while (cut < end && src[cut] != ';') cut++;
+    if (assert_line) fprintf(stderr, "(%5d) %.*s\n", line, (int)(end - at), src + at);
+    else if (s < end && src[s] != ';') fprintf(stderr, "(%5d) %.*s\n", line, (int)(cut - at), src + at);
+    while (end < len && src[end] != '\n') end++;
+    at = end + 1;
+  }
+  fprintf(stderr, "\n***END*OF*PASS***\n\nAfter pass 1\nInstruction (physical line, instr):\n\n");
+  const m42_instruction *code = m42_warrior_code(w);
+  uint32_t k = 0;
+  for (uint32_t i = 0; i < m42_warrior_statements(w); i++) {
+    char text[256];
+    m42_warrior_statement(w, i, text, sizeof text);
+    const int pseudo = !strncmp(text, "ORG", 3) || !strncmp(text, "END", 3) || !strncmp(text, "PIN", 3);
+    if (pseudo || !code || k >= m42_warrior_length(w)) fprintf(stderr, "(     ) %s\n", text);
+    else fprintf(stderr, "(%5d) %s\n", (int)code[k++].line, text);
+  }
+  fprintf(stderr, "\n***END*OF*PASS***\n\n");
+}
 
 static void print_listing(const m42_warrior *w, uint32_t size) {
   char name[512], author[512];
@@ -300,6 +342,10 @@ static int play(Args *a, m42_warrior **w) {
     int s;
     w[i] = m42_assemble_new(fromStdin ? in + inPos : src, fromStdin ? inLen - inPos : len, &rules, icws88 ? M42_ICWS88 : 0,
                             i == 0 ? a->registers : 0, &s);
+    if (w[i] && a->verbose) {
+      if (fromStdin) print_passes(in + inPos, m42_warrior_source_end(w[i]), w[i]);
+      else print_passes(src, len, w[i]);
+    }
     free(src);
     if (!w[i]) { free(in); return fail(3, m42_status_text(s), path); }
     if (fromStdin) inPos += m42_warrior_source_end(w[i]);
