@@ -3,7 +3,7 @@
 
 // Measures how many instructions of tie rounds a proof of the form "this
 // loop cannot die" could save at most (issue #27). Native only, built by
-// tools/tie-ceiling.mjs from the input format of bench-native.c.
+// bench/tie-ceiling.mjs from the input format of bench-native.c.
 //
 // Every round runs to its end. The driver notes when the early tie of
 // run_match() would have stopped it (tie_check(), same schedule), and
@@ -35,7 +35,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include "42mars.c" // lib/, see tools/tie-ceiling.mjs (-I)
+#include "42mars.c" // lib/, see bench/tie-ceiling.mjs (-I)
 #include "input.h"
 
 static u8 *execW, *execKind;

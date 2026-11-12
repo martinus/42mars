@@ -91,7 +91,7 @@ If you hand an issue to an agent, its prompt gets the issue's "Done when", and y
 | `docs/redcode-semantics.md` | any behavior change, and a new early-exit proof (section 3.7) |
 | `.claude/rules/<area>.md` | a rule the next agent needs in that part of the code |
 | `CLAUDE.md` | a way of working, a command, a gotcha that applies everywhere |
-| `PLAN.md`, `README.md` | speed numbers, test counts, roadmap status |
+| `docs/plan.md`, `README.md` | speed numbers, test counts, roadmap status |
 
 Grep before adding a rule (`grep -rn <symbol> CLAUDE.md .claude/`): extend the bullet that already covers it.
 
@@ -134,11 +134,11 @@ Answer Martin's question: **what would make the next session more efficient and 
 - a test, a check or a CI run that went red, and what fixed it
 - a measurement that had to be repeated because the machine was busy or the method was wrong
 - a question Martin had to answer twice, or a correction he made
-- a file read whole to find one fact, a command written from nothing that a tool in `tools/` could hold
+- a file read whole to find one fact, a command written from nothing that a tool in `tools/` or `bench/` could hold
 - a rule that was wrong, stale, or not followed, and a rule that cost reading and saved nothing
 
 For each, the change that stops it: add, change or **remove** a line in `CLAUDE.md`, `.claude/rules/`, a skill, or a tool script. Removing counts as much as adding. Never into machine-local memory: Martin works from more than one computer.
 
-**Land the clear ones in one PR, merged on green without asking.** Clear means one reading, the evidence is in this session, and it touches only `CLAUDE.md`, `.claude/` or a script in `tools/`. **Ask first** about anything else, and always about the clean-room hook or rule.
+**Land the clear ones in one PR, merged on green without asking.** Clear means one reading, the evidence is in this session, and it touches only `CLAUDE.md`, `.claude/` or a script in `tools/` or `bench/`. **Ask first** about anything else, and always about the clean-room hook or rule.
 
 If nothing went wrong, say so in one line.

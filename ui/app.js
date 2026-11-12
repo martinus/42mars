@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Martin Leitner-Ankerl
 
 import { assembleWasm as assemble, compileWasmMars, createWasmMarsSync } from '../wasm/42mars.js';
-import { formatInstruction, formatListing, OP, OPCODES } from '../js/opcodes.js';
+import { formatInstruction, formatListing, OP, OPCODES } from '../tools/opcodes.js';
 import { Renderer, TEX_W } from './renderer.js';
 import { computeLayout, addressAt, cellCenter, LAYOUT_GRID, LAYOUT_RING } from './layout.js';
 import { Timeline } from './timeline.js';

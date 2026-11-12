@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="880" height="350" viewBox="0 0 880 350" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif" role="img" aria-labelledby="title desc">
+<title id="title">42mars: speed of Core War simulators in WebAssembly, one thread</title>
+<desc id="desc">Million simulated instructions per second, one thread, the same 12,000 rounds for every engine: 42mars WebAssembly 390, exMARS WebAssembly 151, pMARS WebAssembly 64.</desc>
+<rect x="0.5" y="0.5" width="879" height="349" rx="14" fill="#1a1a19" stroke="#2e2e2c"/>
+<text x="32" y="62" font-size="34" font-weight="700" fill="#f0efec">42mars<tspan font-weight="400" fill="#c3c2b7" font-size="21" dx="14">speed of Core War simulators in WebAssembly, one thread</tspan></text>
+<text x="32" y="90" font-size="14.5" fill="#c3c2b7">Every engine plays the same 12,000 rounds and gets the same wins, losses and ties.</text>
+<line x1="242" y1="110" x2="242" y2="228" stroke="#3a3a37" stroke-dasharray=""/>
+<text x="242" y="246" text-anchor="middle" font-size="12" fill="#97968e">0</text>
+<line x1="339.2" y1="110" x2="339.2" y2="228" stroke="#3a3a37" stroke-dasharray="2 3"/>
+<text x="339.2" y="246" text-anchor="middle" font-size="12" fill="#97968e">100</text>
+<line x1="436.4" y1="110" x2="436.4" y2="228" stroke="#3a3a37" stroke-dasharray="2 3"/>
+<text x="436.4" y="246" text-anchor="middle" font-size="12" fill="#97968e">200</text>
+<line x1="533.5999999999999" y1="110" x2="533.5999999999999" y2="228" stroke="#3a3a37" stroke-dasharray="2 3"/>
+<text x="533.5999999999999" y="246" text-anchor="middle" font-size="12" fill="#97968e">300</text>
+<line x1="630.8" y1="110" x2="630.8" y2="228" stroke="#3a3a37" stroke-dasharray="2 3"/>
+<text x="630.8" y="246" text-anchor="middle" font-size="12" fill="#97968e">400</text>
+<line x1="728" y1="110" x2="728" y2="228" stroke="#3a3a37" stroke-dasharray="2 3"/>
+<text x="728" y="246" text-anchor="middle" font-size="12" fill="#97968e">500</text>
+<text x="485" y="266" text-anchor="middle" font-size="13" fill="#c3c2b7">million simulated instructions per second</text>
+<text x="228" y="134" text-anchor="end" font-size="15" fill="#f0efec" font-weight="700">42mars<tspan font-weight="400" fill="#97968e" font-size="13" dx="7">WebAssembly</tspan></text>
+<path d="M242,118h374.87676703496504a4,4 0 0 1 4,4v14a4,4 0 0 1 -4,4h-374.87676703496504z" fill="#3987e5"/>
+<text x="630.876767034965" y="134" font-size="15" fill="#f0efec" font-weight="700">390<tspan font-weight="400" fill="#97968e" font-size="13" dx="8">6.0× pMARS</tspan></text>
+<text x="228" y="174" text-anchor="end" font-size="15" fill="#f0efec" font-weight="500">exMARS<tspan font-weight="400" fill="#97968e" font-size="13" dx="7">WebAssembly</tspan></text>
+<path d="M242,158h142.5793106148123a4,4 0 0 1 4,4v14a4,4 0 0 1 -4,4h-142.5793106148123z" fill="#5c5b57"/>
+<text x="398.5793106148123" y="174" font-size="15" fill="#f0efec" font-weight="500">151<tspan font-weight="400" fill="#97968e" font-size="13" dx="8">2.3× pMARS</tspan></text>
+<text x="228" y="214" text-anchor="end" font-size="15" fill="#f0efec" font-weight="500">pMARS<tspan font-weight="400" fill="#97968e" font-size="13" dx="7">WebAssembly</tspan></text>
+<path d="M242,198h58.66228444238832a4,4 0 0 1 4,4v14a4,4 0 0 1 -4,4h-58.66228444238832z" fill="#5c5b57"/>
+<text x="314.66228444238834" y="214" font-size="15" fill="#f0efec" font-weight="500">64<tspan font-weight="400" fill="#97968e" font-size="13" dx="8">reference</tspan></text>
+<text x="32" y="298" font-size="12" fill="#97968e">3 hill pairs × 4,000 rounds, 446M instructions. Whole process wall time, median of 7. Ryzen 9 7950X, GCC 16.2, Node 22.22, 12th November 2026.</text>
+<text x="32" y="316" font-size="12" fill="#97968e">exMARS and pMARS are the builds of corewar.dev. Times include Node start and module compile. The method: docs/images/speed.mjs.</text>
+</svg>

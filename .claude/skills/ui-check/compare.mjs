@@ -34,14 +34,27 @@ if (!base || !head || argv.length === 0) {
 const profile = mkdtempSync(join(tmpdir(), 'ui-compare-'));
 const chrome = spawn('google-chrome', ['--headless=new', '--no-sandbox', `--user-data-dir=${profile}`, '--use-angle=swiftshader',
   '--enable-unsafe-swiftshader', `--remote-debugging-port=${port}`, 'about:blank'], { stdio: 'ignore' });
-// Chrome writes into its profile until it has exited: remove it after that.
+// google-chrome is a wrapper script, and the browser outlives a kill of it:
+// a headless Chrome left that way ran at 1200% CPU for 49 minutes (12th
+// November 2026). So close the browser over the DevTools protocol, wait
+// until its port is gone (it writes into the profile until then), and do
+// that on an exception too.
 const finish = async (code) => {
-  const exited = new Promise((r) => chrome.once('exit', r));
+  try {
+    const { webSocketDebuggerUrl } = await (await fetch(`http://127.0.0.1:${port}/json/version`)).json();
+    const ws = new WebSocket(webSocketDebuggerUrl);
+    await new Promise((r, e) => { ws.addEventListener('open', r, { once: true }); ws.addEventListener('error', e, { once: true }); });
+    ws.send(JSON.stringify({ id: 1, method: 'Browser.close' }));
+  } catch { /* not started, or already gone */ }
   chrome.kill();
-  await exited;
-  rmSync(profile, { recursive: true, force: true });
+  for (let k = 0; k < 100; k++) {
+    try { await fetch(`http://127.0.0.1:${port}/json/version`); } catch { break; }
+    await sleep(100);
+  }
+  rmSync(profile, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   process.exit(code);
 };
+process.on('uncaughtException', (e) => { console.error(e); finish(1); });
 for (let k = 0; ; k++) {
   try { await fetch(`http://127.0.0.1:${port}/json/version`); break; } catch { if (k > 100) { console.error('chrome did not start'); await finish(2); } await sleep(100); }
 }

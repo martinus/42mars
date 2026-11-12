@@ -6,8 +6,8 @@
 // no allocation unless asked for. The interface may change until 1.0.0.
 //
 // Build: compile lib/42mars.c together with your program, e.g.
-//   cc -O2 example.c 42mars.c
-//   cl /O2 /std:c11 example.c 42mars.c
+//   cc -O2 -Ilib -o example examples/example.c lib/42mars.c
+//   cl /O2 /std:c11 /Ilib examples\example.c lib\42mars.c
 // or link the library that `make install` installs (pkg-config 42mars). C11;
 // gcc, clang and MSVC (lib/src/platform.h has what differs). Defines:
 //   M42_NO_LIBC        no <stdlib.h>: leaves out m42_new, m42_free,

@@ -7,8 +7,8 @@
 // V8's code for them moves by a percent or two when their bytes change,
 // also when the new code never runs (docs/performance-log.md, fifth round).
 //
-//   node tools/wasm-functions.mjs <A.wasm>            index, size, hash per function
-//   node tools/wasm-functions.mjs <A.wasm> <B.wasm>   per function index: same,
+//   node bench/wasm-functions.mjs <A.wasm>            index, size, hash per function
+//   node bench/wasm-functions.mjs <A.wasm> <B.wasm>   per function index: same,
 //        or the size of both and the number of differing bytes when the sizes
 //        are equal (a few bytes: call indices or data addresses moved)
 //
@@ -36,7 +36,7 @@ function bodies(file) {
 
 const [fileA, fileB] = process.argv.slice(2);
 if (!fileA) {
-  console.error('usage: node tools/wasm-functions.mjs <A.wasm> [B.wasm]');
+  console.error('usage: node bench/wasm-functions.mjs <A.wasm> [B.wasm]');
   process.exit(2);
 }
 const a = bodies(fileA);

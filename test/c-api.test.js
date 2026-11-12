@@ -4,7 +4,7 @@
 // The C library through its public header (lib/42mars.h), built natively
 // (test/native.js): test/c/api-test.c drives the functions and prints JSON,
 // which must agree with the wasm build of the library. Also runs
-// lib/example.c.
+// examples/example.c.
 
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -32,7 +32,7 @@ before(() => {
   if (!hasCc) return undefined;
   return Promise.all([
     prebuilt ? null : run('cc', ['-std=c11', '-O2', '-Wall', '-Wextra', '-o', apiTest, join(root, 'test/c/api-test.c'), join(root, 'lib/42mars.c')]),
-    prebuilt ? null : run('cc', ['-o', example, 'example.c', '42mars.c'], { cwd: join(root, 'lib') }),
+    prebuilt ? null : run('cc', ['-Ilib', '-o', example, 'examples/example.c', 'lib/42mars.c'], { cwd: root }),
     run('cc', ['-std=c11', '-fsyntax-only', '-Wall', '-Wextra', '-Werror=implicit-function-declaration', '-DM42_FIXED_CONTEXT', join(root, 'lib/42mars.c')]),
   ]);
 });
@@ -152,7 +152,7 @@ test('the C library through 42mars.h agrees with the JS assembler and the wasm e
   assert.deepEqual(out.evaluate.map((e) => e[0]), [1, 0, 0, 1, 1, 0, 1, 0, 1, 0, 1]);
 });
 
-test('lib/example.c builds with cc example.c 42mars.c and plays a match', { skip }, () => {
+test('examples/example.c builds with cc -Ilib examples/example.c lib/42mars.c and plays a match', { skip }, () => {
   const lantern = join(warriorDir, 'lantern.red'), origami = join(warriorDir, 'origami.red');
   const out = lines(execFileSync(example, ['-r', '100', '-F', '4000', lantern, origami], { encoding: 'utf8' }));
   // pmars -b -k -r 100 -F 4000 lantern.red origami.red prints "1 9" and "90 9"

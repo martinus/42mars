@@ -2,16 +2,16 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 Martin Leitner-Ankerl
 // Simulator speed on random corpus pairs: a broader instruction mix than
-// tools/bench.mjs. Picks `--pairs` pairs of warriors from a folder with a
+// bench/bench.mjs. Picks `--pairs` pairs of warriors from a folder with a
 // fixed generator (`--seed`), plays `--rounds` rounds of each with
 // runMatch() on the wasm engine in one thread, and prints the rate.
-// Usage: node tools/bench-pairs.mjs <warrior dir> [--pairs 40] [--rounds 30]
+// Usage: node bench/bench-pairs.mjs <warrior dir> [--pairs 40] [--rounds 30]
 //        [--seed 1] [--early-tie] [--native-input file]
 //   --early-tie  stop rounds that must end in a tie early (as the
 //                tournament does). The rate is then the effective one: the
 //                sum of the round times per second.
 //   --native-input  write the pairs in the input format of
-//                bench-native.c and exit, for tools/bench-native.mjs --input
+//                bench-native.c and exit, for bench/bench-native.mjs --input
 // The time includes loading the warriors, not assembling them or compiling
 // the wasm module.
 import { readFileSync, readdirSync, writeFileSync } from 'node:fs';

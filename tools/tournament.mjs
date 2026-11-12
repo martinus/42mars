@@ -48,7 +48,7 @@
 // (without --progress they come in blocks of 8 rounds, but are the same).
 //
 // --native-input writes every pairing as a match in the input format of
-// lib/tools/bench-native.c and exits, for tools/bench-native.mjs --input.
+// bench/bench-native.c and exits, for bench/bench-native.mjs --input.
 
 import { Worker, isMainThread, workerData } from 'node:worker_threads';
 import { spawn } from 'node:child_process';
@@ -56,9 +56,9 @@ import { readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { availableParallelism } from 'node:os';
 import { basename, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { OP } from '../js/opcodes.js';
+import { OP } from './opcodes.js';
 import { compileWasmMars, createWasmMarsSync, packWarrior, assembleWasm as assemble } from '../wasm/42mars.js';
-import { nativeMatch } from './native-input.mjs';
+import { nativeMatch } from '../bench/native-input.mjs';
 
 // ------------------------------------------------------------------ tasks
 //
@@ -407,7 +407,7 @@ async function main() {
     for (let b = a + 1; b < files.length; b++) pairs.push({ a, b, pos: pairPosition(o.seed, a, b, o), ca: asA[a], cb: asB[b] });
   }
   if (o.nativeInput) {
-    if (o.permute || o.readLimit || o.writeLimit) throw new Error('--native-input: lib/tools/bench-native.c has no permute and no limits');
+    if (o.permute || o.readLimit || o.writeLimit) throw new Error('--native-input: bench/bench-native.c has no permute and no limits');
     const rules = { coreSize: o.size, maxProcesses: o.processes, maxCycles: o.cycles, minDistance: o.distance, pSpaceSize: Math.floor(o.size / 16) };
     writeFileSync(o.nativeInput, pairs.map((p) => nativeMatch([codes[p.ca], codes[p.cb]], rules, p.pos - o.distance, o.rounds)).join(''));
     return;

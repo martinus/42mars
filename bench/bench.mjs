@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 Martin Leitner-Ankerl
 // Simulator speed: 3 warrior pairs from a warrior folder, 200 rounds each (or argv[3]).
-// Usage: node tools/bench.mjs <dir with agony.red, bubbles.red, bomber.red, chalk.red, army.red, bananasplit.red> [rounds]
+// Usage: node bench/bench.mjs <dir with agony.red, bubbles.red, bomber.red, chalk.red, army.red, bananasplit.red> [rounds]
 //        [--watch | --wasm-match [--early-tie]]
 //   (default)     the wasm engine through the step API, run(1e6) from JS
 //                 (--wasm, accepted for logged commands, says the same)
@@ -30,7 +30,7 @@ const mode = flags.find((f) => process.argv.includes(f)) ?? '--wasm';
 const dir = args[0];
 const ROUNDS = Number(args[1] || 200);
 if (!dir || !(Number.isInteger(ROUNDS) && ROUNDS > 0)) {
-  console.error('usage: node tools/bench.mjs <dir> [rounds] [--watch | --wasm-match [--early-tie]]');
+  console.error('usage: node bench/bench.mjs <dir> [rounds] [--watch | --wasm-match [--early-tie]]');
   process.exit(2);
 }
 const pairs = [['agony.red', 'bubbles.red'], ['bomber.red', 'chalk.red'], ['army.red', 'bananasplit.red']];

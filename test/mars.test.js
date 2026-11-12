@@ -8,7 +8,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, existsSync } from 'node:fs';
 import { assembleWasm as assemble, createWasmMarsSync, rng } from '../wasm/42mars.js';
-import { formatInstruction } from '../js/opcodes.js';
+import { formatInstruction } from '../tools/opcodes.js';
 
 // An engine with the watch (watch(), events()).
 const engine = (opts = {}) => createWasmMarsSync({ ...opts, watch: true });

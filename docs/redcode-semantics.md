@@ -20,7 +20,7 @@ assembler (`expr.js`, `assembler.js`), removed in November 2026 after the
 tools and the visualizer had moved to the C one. The simulator is C too
 (`lib/src/mars.c`, section 3); the visualizer ran on a JavaScript copy of it,
 `js/mars.js`, until it moved to the library's watch (#75, #76).
-`js/opcodes.js` holds the opcode, modifier and mode tables and the
+`tools/opcodes.js` holds the opcode, modifier and mode tables and the
 formatting.
 
 The C library's interface is `lib/42mars.h`, documented in the header; its
@@ -867,8 +867,8 @@ runs one instruction per iteration through the generic operand code of the
 limits and records around it. Both give the same core, queues, scores and
 round results (`test/wasm.test.js` compares them after every chunk of random
 battles, `tools/pmars-diff.mjs --watch` the watched one with pMARS).
-`tools/bench.mjs` measures both (`--watch`) and `runMatch` (`--wasm-match`),
-`tools/bench-native.mjs` the C code natively.
+`bench/bench.mjs` measures both (`--watch`) and `runMatch` (`--wasm-match`),
+`bench/bench-native.mjs` the C code natively.
 
 ### 3.6 Trace and process deaths
 
@@ -896,7 +896,7 @@ state (`alive`, `diedAt`).
 
 `lib/src/mars.c` implements 3.1 to 3.6. With the assembler it is compiled to
 `wasm/42mars.wasm` (committed, no imports; `wasm/build.sh` rebuilds it with
-`tools/gen-dispatch.mjs` and clang), which exports the functions of
+`lib/src/gen-dispatch.mjs` and clang), which exports the functions of
 `lib/42mars.h`; `wasm/42mars.js` wraps them (API above).
 `tools/pmars-diff.mjs` compares the core, the instruction count and the
 scores of every round with pMARS.
@@ -958,7 +958,7 @@ in local variables and alternates the two warriors without looking up the
 next one (the round ends when one of them dies).
 
 The 32 most executed instruction words (opcode, modifier and both modes;
-`HOT` in `tools/gen-dispatch.mjs`, generated into `lib/src/dispatch.h`)
+`HOT` in `lib/src/gen-dispatch.mjs`, generated into `lib/src/dispatch.h`)
 each have a copy of the instruction code compiled for that word, without
 run-time mode and opcode tests; all other words run the generic code. With
 the standard settings (core size 8000, 8000 processes) a second copy of the

@@ -8,7 +8,7 @@ Setup: `O=${COREWAR_ORACLE:-$HOME/.local/share/corewar-theater}`, `SEED=$(date +
 
 1. Builds (anything under `lib/` or the build script changed):
    - `wasm/build.sh && md5sum wasm/42mars.wasm` twice: the sums match. `git status` shows `42mars.wasm` modified exactly when its sources are.
-   - `node tools/bench-native.mjs $O/corpus 10` builds and runs (CI does not build it; it was broken from #8 to #19).
+   - `node bench/bench-native.mjs $O/corpus 10` builds and runs (CI does not build it; it was broken from #8 to #19).
    - `lib/src/mars.c` or `api.c` changed: the hot loops are unchanged unless that was the point (`.claude/rules/wasm.md`, "Keep the hot loops byte-identical"), in wasm and natively.
 2. `PMARS_VALIDATE=$O/validate.red npm test`: all pass, none skipped. A recorded digest that changed: `.claude/rules/engine.md`, "Recorded digests"; never record again just to get green.
 3. pMARS differential, each ends with no differences (exit code 0):
@@ -27,6 +27,6 @@ Setup: `O=${COREWAR_ORACLE:-$HOME/.local/share/corewar-theater}`, `SEED=$(date +
    - C portability: `make test`, `make clean && make CFLAGS='-O2 -std=c11 -pedantic -Wall -Wextra -Werror -DM42_PORTABLE' test`; after pointer or memory changes also `make clean && make CFLAGS='-O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all' test`.
 6. The watch or the glue changed: the `ui-check` skill (`compare.mjs` against main).
 7. Mutation proof for each new test: the smallest change that brings the defect back; for C rebuild and check that `md5sum` of `42mars.wasm` changed; see the test fail for the expected reason; restore, rebuild, `md5sum` back to the original. Script it (copy the file, apply, rebuild, run, restore) when there are several. A mutant whose test stays green: does the test reach the code, and does its fixture tell right from wrong (a paused UI snapshot does not show heat decay, a change in `exec_core()` passes the engine-against-engine comparison).
-8. Docs: behavior change → semantics doc; speed change → `docs/performance-log.md` (`perf-experiment`); test count → `PLAN.md`, `README.md`.
+8. Docs: behavior change → semantics doc; speed change → `docs/performance-log.md` (`perf-experiment`); test count → `docs/plan.md`, `README.md`.
 
 Report every command with its result line, the seed, each mutation with the observed failure, and every step skipped with the reason.

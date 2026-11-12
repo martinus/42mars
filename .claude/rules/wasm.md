@@ -2,15 +2,15 @@
 paths:
   - "lib/**"
   - "wasm/**"
-  - "tools/bench*.mjs"
+  - "bench/**"
   - "docs/performance-log.md"
 ---
 # Library and WebAssembly rules
 
 ## Build
 
-- Build only with `wasm/build.sh` (clang 22, `--target=wasm32 -Os -nostdlib`, no emscripten, libc or imports). It regenerates `dispatch.h` from `HOT` in `tools/gen-dispatch.mjs` first; both outputs are committed, and two builds must give the same `md5sum`. Commit `42mars.wasm` with the C change it was built from.
-- `mars.c` also builds natively (`tools/bench-native.mjs`, `lib/tools/tie-ceiling.c` with `-DTRACE_TIES`, which stays out of the wasm build). Keep both building when you change an internal signature (`run_some()` gained an argument in #78 and `tie-ceiling.c` had to follow).
+- Build only with `wasm/build.sh` (clang 22, `--target=wasm32 -Os -nostdlib`, no emscripten, libc or imports). It regenerates `dispatch.h` from `HOT` in `lib/src/gen-dispatch.mjs` first; both outputs are committed, and two builds must give the same `md5sum`. Commit `42mars.wasm` with the C change it was built from.
+- `mars.c` also builds natively (`bench/bench-native.mjs`, `bench/tie-ceiling.c` with `-DTRACE_TIES`, which stays out of the wasm build). Keep both building when you change an internal signature (`run_some()` gained an argument in #78 and `tie-ceiling.c` had to follow).
 - No libc, no compiler-rt in wasm: clang turned a string-length loop into `strlen` and a 64-bit overflow multiply into `__multi3`, both undefined at link time (`no_builtin`, an empty `asm` barrier, see `umulh()`). The C stack is 64 KB below the data: recursion needs a limit. An exception inside wasm leaves the C stack pointer behind, so the glue drops the assembler's instance after one (#54).
 
 ## The loops
@@ -22,12 +22,12 @@ paths:
 - Keep anything else out of the hot loops: a branch on a flag that was a constant 0 there still changed clang -O3's native code of all three (#40).
 - Linear queues for two warriors with `maxCycles` up to 80000 (`config()`): each tail stays at most `2 + 2 * (maxCycles + 1)`. Anything that lets a round run longer or a turn push more breaks that bound (test "full queues at the linear queue limit and above"). `execute2` needs both heads equal whenever warrior 0 moves: `start_round()` starts warrior 0's queue at 1 when warrior 1 moves first, and every path out of `execute2` must leave them so.
 - `runMatch({ firstRound })` plays a block with empty p-space; blocks equal the whole match without `LDP` or with `pspace` carried (#48). Anything new that carries state from round to round breaks the split unless `pspace` carries it.
-- Early ties (process-count proof, no-killer scan, at most 4096 instructions apart) are exact: same scores and round results. A new early exit needs its proof in the semantics doc, 3.7, and first a measured ceiling (`tools/tie-ceiling.mjs`, #27).
+- Early ties (process-count proof, no-killer scan, at most 4096 instructions apart) are exact: same scores and round results. A new early exit needs its proof in the semantics doc, 3.7, and first a measured ceiling (`bench/tie-ceiling.mjs`, #27).
 
 ## Keep the hot loops byte-identical
 
 A change outside the loops must leave `execute`, `execute2_8000` and `execute2_any` byte-identical, call indices aside; data addresses moved by 64 or 128 were measured neutral twice but are avoidable. Check:
-- wasm: `git show origin/main:wasm/42mars.wasm > base.wasm; node tools/wasm-functions.mjs base.wasm wasm/42mars.wasm`. The three largest functions must be "same" or differ in a few bytes; then `llvm-objdump -d --no-show-raw-insn` both and diff those three: only `call` operands may differ. Constants that all moved by +64 are data addresses: the data section grew in front of the core.
+- wasm: `git show origin/main:wasm/42mars.wasm > base.wasm; node bench/wasm-functions.mjs base.wasm wasm/42mars.wasm`. The three largest functions must be "same" or differ in a few bytes; then `llvm-objdump -d --no-show-raw-insn` both and diff those three: only `call` operands may differ. Constants that all moved by +64 are data addresses: the data section grew in front of the core.
 - native: `git archive origin/main lib | tar -x -C base/`, compile `base/lib/42mars.c` and `lib/42mars.c` with `clang -O3 -march=native -c` and `gcc -O3 -march=native -c`, each with and without `-DM42_FIXED_CONTEXT`, `objdump -d` and compare the three functions with addresses masked.
 
 What moves them, and the fixes that worked:

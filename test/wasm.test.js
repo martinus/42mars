@@ -464,7 +464,7 @@ test('early tie when the core has no DAT, DIV, MOD or STP left', () => {
   assert.ok(y.instructions < 40000, `executed ${y.instructions}`);
 });
 
-// The instruction words in lib/src/dispatch.h (tools/gen-dispatch.mjs)
+// The instruction words in lib/src/dispatch.h (lib/src/gen-dispatch.mjs)
 // run a copy of the instruction compiled for that word. Each of them must
 // agree with the generic code of the watched loop: in the loop for the
 // standard settings (core size and

@@ -9,7 +9,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { formatListing, OPCODES } from '../js/opcodes.js';
+import { formatListing, OPCODES } from '../tools/opcodes.js';
 import { assembleWasm as assemble } from '../wasm/42mars.js';
 
 const ok88 = (src) => assemble(src, { icws88: true }).ok;

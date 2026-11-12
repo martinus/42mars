@@ -7,12 +7,12 @@
 // each in a fresh process, and the result is the median and range per
 // measure and build.
 //
-//   node tools/ab-wasm.mjs <A.wasm> <B.wasm> [--runs 7] [--t80-runs 5]
+//   node bench/ab-wasm.mjs <A.wasm> <B.wasm> [--runs 7] [--t80-runs 5]
 //        [--only bench,pairs,t20,t80j16,t80j31]
 //
 // Measures (O = $COREWAR_ORACLE or ~/.local/share/corewar-theater):
-//   bench   tools/bench.mjs $O/corpus --wasm-match           M instructions/s
-//   pairs   tools/bench-pairs.mjs $O/corpus                  M instructions/s
+//   bench   bench/bench.mjs $O/corpus --wasm-match           M instructions/s
+//   pairs   bench/bench-pairs.mjs $O/corpus                  M instructions/s
 //   t20     tools/tournament.mjs $O/sets/t20 --jobs 1        seconds
 //   t80j16, t80j31  the same on $O/sets/t80 with 16 and 31 jobs, --t80-runs times
 //
@@ -34,7 +34,7 @@ const T80_RUNS = Number(opt('t80-runs', 5));
 const ONLY = opt('only', 'bench,pairs,t20,t80j16,t80j31').split(',');
 const [A, B] = argv;
 if (!A || !B) {
-  console.error('usage: node tools/ab-wasm.mjs <A.wasm> <B.wasm> [--runs 7] [--t80-runs 5] [--only bench,pairs,t20,t80j16,t80j31]');
+  console.error('usage: node bench/ab-wasm.mjs <A.wasm> <B.wasm> [--runs 7] [--t80-runs 5] [--only bench,pairs,t20,t80j16,t80j31]');
   process.exit(2);
 }
 
@@ -45,13 +45,13 @@ const builds = [['A', readFileSync(A)], ['B', readFileSync(B)]];
 const restore = () => writeFileSync(WASM, original);
 process.on('SIGINT', () => { restore(); process.exit(130); });
 
-const tool = (name) => join(root, 'tools', name);
+const tool = (name) => join(root, name);
 const MEASURES = {
-  bench: { runs: RUNS, args: [tool('bench.mjs'), join(O, 'corpus'), '--wasm-match'], unit: 'M/s', re: /^([\d.]+)M instructions\/s/m },
-  pairs: { runs: RUNS, args: [tool('bench-pairs.mjs'), join(O, 'corpus')], unit: 'M/s', re: /^([\d.]+)M instructions\/s/m },
-  t20: { runs: RUNS, args: [tool('tournament.mjs'), join(O, 'sets/t20'), '--rounds', '100', '--seed', '1', '--jobs', '1', '--engine', 'wasm'], unit: 's', re: /^engine \(wasm\): ([\d.]+) s/m },
-  t80j16: { runs: T80_RUNS, args: [tool('tournament.mjs'), join(O, 'sets/t80'), '--rounds', '100', '--seed', '1', '--jobs', '16', '--engine', 'wasm'], unit: 's', re: /^engine \(wasm\): ([\d.]+) s/m },
-  t80j31: { runs: T80_RUNS, args: [tool('tournament.mjs'), join(O, 'sets/t80'), '--rounds', '100', '--seed', '1', '--jobs', '31', '--engine', 'wasm'], unit: 's', re: /^engine \(wasm\): ([\d.]+) s/m },
+  bench: { runs: RUNS, args: [tool('bench/bench.mjs'), join(O, 'corpus'), '--wasm-match'], unit: 'M/s', re: /^([\d.]+)M instructions\/s/m },
+  pairs: { runs: RUNS, args: [tool('bench/bench-pairs.mjs'), join(O, 'corpus')], unit: 'M/s', re: /^([\d.]+)M instructions\/s/m },
+  t20: { runs: RUNS, args: [tool('tools/tournament.mjs'), join(O, 'sets/t20'), '--rounds', '100', '--seed', '1', '--jobs', '1', '--engine', 'wasm'], unit: 's', re: /^engine \(wasm\): ([\d.]+) s/m },
+  t80j16: { runs: T80_RUNS, args: [tool('tools/tournament.mjs'), join(O, 'sets/t80'), '--rounds', '100', '--seed', '1', '--jobs', '16', '--engine', 'wasm'], unit: 's', re: /^engine \(wasm\): ([\d.]+) s/m },
+  t80j31: { runs: T80_RUNS, args: [tool('tools/tournament.mjs'), join(O, 'sets/t80'), '--rounds', '100', '--seed', '1', '--jobs', '31', '--engine', 'wasm'], unit: 's', re: /^engine \(wasm\): ([\d.]+) s/m },
 };
 for (const m of ONLY) if (!MEASURES[m]) throw new Error(`unknown measure ${m}`);
 

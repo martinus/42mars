@@ -1,21 +1,21 @@
 #!/usr/bin/env node
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 Martin Leitner-Ankerl
-// The battles of tools/bench.mjs on a native build of lib/src/mars.c
+// The battles of bench/bench.mjs on a native build of lib/src/mars.c
 // (clang -O3 -march=native), to measure what the wasm layer costs.
-// Usage: node tools/bench-native.mjs <warrior dir> [rounds] [--cc clang] [--runs 1]
-//        node tools/bench-native.mjs --input <file> [--early-tie] [--count <file>] [--keep <dir>] [--src <mars.c>]
+// Usage: node bench/bench-native.mjs <warrior dir> [rounds] [--cc clang] [--runs 1]
+//        node bench/bench-native.mjs --input <file> [--early-tie] [--count <file>] [--keep <dir>] [--src <mars.c>]
 //   --input      run the matches of a file written with --native-input by
-//                tools/tournament.mjs or tools/bench-pairs.mjs instead of the
+//                tools/tournament.mjs or bench/bench-pairs.mjs instead of the
 //                bench pairs
 //   --early-tie  stop tie rounds early, as runMatch() and the tournament do
 //   --count      build with -DCOUNT_INS and write executions per instruction
-//                word to this file, the input of tools/gen-dispatch.mjs --rank
+//                word to this file, the input of lib/src/gen-dispatch.mjs --rank
 //   --src        build this mars.c instead of the repository's (with a
-//                dispatch.h next to it, if there is one), for tools/ab-native.mjs
+//                dispatch.h next to it, if there is one), for bench/ab-native.mjs
 //   --keep       build and write the input into this directory instead of a
 //                fresh one in /tmp (for perf stat / perf record on the binary)
-import { readFileSync, writeFileSync, mkdtempSync, mkdirSync, copyFileSync, existsSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdtempSync, mkdirSync, copyFileSync, cpSync, existsSync } from 'node:fs';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -52,15 +52,12 @@ if (SRC) {
   // Another mars.c: a copy of lib/ with it in place of src/mars.c (and a
   // dispatch.h next to it, if there is one), so the repository stays as it is.
   const copy = join(tmp, 'lib');
-  for (const f of ['42mars.h', '42mars.c', 'src/asm.c', 'src/api.c', 'src/dispatch.h', 'tools/bench-native.c', 'tools/input.h']) {
-    mkdirSync(dirname(join(copy, f)), { recursive: true });
-    copyFileSync(join(lib, f), join(copy, f));
-  }
+  cpSync(lib, copy, { recursive: true });
   copyFileSync(SRC, join(copy, 'src', 'mars.c'));
   if (existsSync(join(dirname(SRC), 'dispatch.h'))) copyFileSync(join(dirname(SRC), 'dispatch.h'), join(copy, 'src', 'dispatch.h'));
   lib = copy;
 }
-const src = join(lib, 'tools', 'bench-native.c');
+const src = fileURLToPath(new URL('bench-native.c', import.meta.url)); // includes input.h next to it, 42mars.c through -I
 // -DM42_FIXED_CONTEXT: the one static context of the wasm build, so that
 // the native profile shows the code the wasm build runs (lib/42mars.h).
 execFileSync(CC, ['-O3', '-march=native', '-fno-strict-aliasing', '-ffp-contract=off', '-DM42_FIXED_CONTEXT', ...(COUNT ? ['-DCOUNT_INS'] : []), '-I', lib, '-o', join(tmp, 'bench'), src, '-lm'], { stdio: 'inherit' });

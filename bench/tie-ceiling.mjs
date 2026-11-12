@@ -3,13 +3,13 @@
 // Copyright (c) 2026 Martin Leitner-Ankerl
 //
 // Upper bound for exact early ties of the form "this loop cannot die"
-// (issue #27): builds lib/tools/tie-ceiling.c natively, runs it on a
+// (issue #27): builds bench/tie-ceiling.c natively, runs it on a
 // bench-native input split into --jobs shards, and adds up its lines.
 //
-//   node tools/tie-ceiling.mjs <input> [--jobs 31] [--cc clang] [--raw file]
-//   node tools/tie-ceiling.mjs --from-raw <file>
+//   node bench/tie-ceiling.mjs <input> [--jobs 31] [--cc clang] [--raw file]
+//   node bench/tie-ceiling.mjs --from-raw <file>
 //
-// Inputs come from tools/tournament.mjs or tools/bench-pairs.mjs with
+// Inputs come from tools/tournament.mjs or bench/bench-pairs.mjs with
 // --native-input. --raw keeps the driver's lines (match numbers of the
 // whole input), --from-raw reports from such a file without running.
 //
@@ -36,7 +36,7 @@ const RAW = opt('raw', null);
 const FROM_RAW = opt('from-raw', null);
 const [input] = argv;
 if ((!input && !FROM_RAW) || !Number.isInteger(JOBS) || JOBS < 1) {
-  console.error('usage: node tools/tie-ceiling.mjs <input> [--jobs 31] [--cc clang] [--raw file]\n       node tools/tie-ceiling.mjs --from-raw <file>');
+  console.error('usage: node bench/tie-ceiling.mjs <input> [--jobs 31] [--cc clang] [--raw file]\n       node bench/tie-ceiling.mjs --from-raw <file>');
   process.exit(2);
 }
 
@@ -60,7 +60,7 @@ async function run(file) {
   const children = [];
   try {
     const bin = join(tmp, 'tie-ceiling');
-    const src = fileURLToPath(new URL('../lib/tools/tie-ceiling.c', import.meta.url));
+    const src = fileURLToPath(new URL('tie-ceiling.c', import.meta.url));
     execFileSync(CC, ['-O2', '-march=native', '-fno-strict-aliasing', '-ffp-contract=off', '-DM42_FIXED_CONTEXT', '-I', fileURLToPath(new URL('../lib/', import.meta.url)), '-o', bin, src, '-lm'], { stdio: 'inherit' });
     const shards = Math.min(JOBS, matches.length);
     const outputs = await Promise.all(Array.from({ length: shards }, (_, s) => {

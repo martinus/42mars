@@ -37,7 +37,7 @@ jobs:
       - run: npm test
 
   # The tests load the committed 42mars.wasm: this fails when it is not the
-  # build of lib/ (also when tools/gen-dispatch.mjs changes dispatch.h).
+  # build of lib/ (also when lib/src/gen-dispatch.mjs changes dispatch.h).
   # Ubuntu's clang 22.1.2 and clang 22.1.8 gave the same bytes; another
   # clang version may not.
   wasm:

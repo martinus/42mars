@@ -7,7 +7,7 @@
 // registers w and s at 1, which pMARS's score formula check leaves.
 import { readFileSync } from 'node:fs';
 import { assembleWasm as assemble, compileWasmMars } from '../wasm/42mars.js';
-import { formatListing } from '../js/opcodes.js';
+import { formatListing } from './opcodes.js';
 
 await compileWasmMars(); // assembleWasm() then works on every Node 20
 

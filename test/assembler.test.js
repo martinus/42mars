@@ -4,7 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { assembleWasm as assemble } from '../wasm/42mars.js';
-import { formatInstruction, formatListing } from '../js/opcodes.js';
+import { formatInstruction, formatListing } from '../tools/opcodes.js';
 
 const N = 8000;
 // Assembles and returns the instructions as compact strings, e.g. "MOV.I $0, $1".
