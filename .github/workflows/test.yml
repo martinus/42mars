@@ -88,6 +88,25 @@ jobs:
       - name: make dist
         if: runner.os != 'Windows'
         run: make dist
+      # The object of lib/42mars.c (about 40 s of cl /O2) from an earlier run
+      # with the same lib/, build-msvc.bat and runner image, whose MSVC made
+      # it. build-msvc.bat compiles only without it. Runs on main save it and
+      # pull requests read it; a tag always compiles. Without ImageVersion
+      # the key is unique to the run, so nothing is reused.
+      - name: runner image (Windows)
+        id: image
+        if: runner.os == 'Windows' && !startsWith(github.ref, 'refs/tags/')
+        shell: pwsh
+        run: |
+          $v = if ($env:ImageVersion) { $env:ImageVersion } else { "run-$env:GITHUB_RUN_ID" }
+          "version=$v" >> $env:GITHUB_OUTPUT
+      - name: cached library object (Windows)
+        id: obj
+        if: runner.os == 'Windows' && !startsWith(github.ref, 'refs/tags/')
+        uses: actions/cache@v6
+        with:
+          path: build/42mars.obj
+          key: msvc-obj-${{ steps.image.outputs.version }}-${{ hashFiles('lib/**', 'build-msvc.bat') }}
       # Under a minute. The limit catches cl /O2 slowing down again: with all
       # 32 cases of dispatch.h (M42_DISPATCH_16 in platform.h) the library
       # alone took 2 minutes or more.
@@ -95,6 +114,8 @@ jobs:
         if: runner.os == 'Windows'
         timeout-minutes: 2
         shell: cmd
+        env:
+          M42_OBJ_CACHED: ${{ steps.obj.outputs.cache-hit }}
         run: |
           call build-msvc.bat || exit /b 1
           set M42_BIN=build
