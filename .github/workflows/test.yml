@@ -172,6 +172,21 @@ jobs:
       - name: make dist
         if: runner.os != 'Windows'
         run: make dist
+      # The archive as a user gets it (#94): unpacked elsewhere, its 42mars
+      # plays two warriors, and examples/example.c builds against it through
+      # pkg-config and runs on its shared library.
+      - name: the archive works when unpacked
+        if: runner.os != 'Windows'
+        run: |
+          a="$RUNNER_TEMP/archive"
+          mkdir -p "$a"
+          tar -xzf build/42mars-*.tar.gz -C "$a"
+          d="$(echo "$a"/42mars-*)"
+          test "$("$d/bin/42mars" -b -r 10 -F 4000 warriors/dwarf.red warriors/imp.red | tail -1)" = "Results: 2 0 8"
+          export PKG_CONFIG_PATH="$d/lib/pkgconfig"
+          cc -O2 -o "$a/example" examples/example.c $(pkg-config --define-prefix --cflags --libs 42mars)
+          LD_LIBRARY_PATH="$d/lib" DYLD_LIBRARY_PATH="$d/lib" "$a/example" -r 10 -F 4000 warriors/dwarf.red warriors/imp.red > "$a/out"
+          printf '2 0 8\n0 2 8\n' | diff - "$a/out"
       # The object of lib/42mars.c (about 40 s of cl /O2) from an earlier run
       # with the same lib/, build-msvc.bat and runner image, whose MSVC made
       # it. build-msvc.bat compiles only without it. Runs on main save it and
@@ -216,6 +231,23 @@ jobs:
           Copy-Item build/42mars.lib, build/42mars-static.lib "$d/lib/"
           Copy-Item LICENSE "$d/"
           Compress-Archive -Path $d -DestinationPath "$d.zip"
+      - name: the archive works when unpacked (Windows)
+        if: runner.os == 'Windows'
+        shell: cmd
+        run: |
+          for /f "usebackq delims=" %%i in (`node -p "require('./package.json').version"`) do set "V=%%i"
+          set "A=%RUNNER_TEMP%\archive"
+          mkdir "%A%"
+          tar -xf build\42mars-%V%-windows-x64.zip -C "%A%" || exit /b 1
+          set "D=%A%\42mars-%V%-windows-x64"
+          "%D%\bin\42mars.exe" -b -r 10 -F 4000 warriors\dwarf.red warriors\imp.red > "%A%\out1" || exit /b 1
+          findstr /x /c:"Results: 2 0 8" "%A%\out1" || exit /b 1
+          where cl >nul 2>nul || for /f "usebackq delims=" %%i in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do call "%%i\VC\Auxiliary\Build\vcvars64.bat" >nul
+          cl /nologo /O2 /I "%D%\include" examples\example.c "%D%\lib\42mars.lib" /Fo"%A%\example.obj" /Fe"%A%\example.exe" || exit /b 1
+          set "PATH=%D%\bin;%PATH%"
+          "%A%\example.exe" -r 10 -F 4000 warriors\dwarf.red warriors\imp.red > "%A%\out2" || exit /b 1
+          findstr /x /c:"2 0 8" "%A%\out2" || exit /b 1
+          findstr /x /c:"0 2 8" "%A%\out2" || exit /b 1
       - uses: actions/upload-artifact@v7
         with:
           name: archive-${{ matrix.os }}
