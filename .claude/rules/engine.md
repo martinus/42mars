@@ -14,6 +14,7 @@ paths:
 - Where pMARS has undefined behavior or does not terminate, pick a behavior, list it in section 4 of the semantics doc, make the assembler warn (`pMARS ...`) when it is an expression case, and keep it out of the generators of `tools/pmars-diff.mjs` and `tools/expr-fuzz.mjs`.
 - The assembler output format (the warrior object of `assembleWasm`) is read by the UI, the tests and the wasm loader: keep it.
 - The watch (semantics doc, 3.4 and 3.6) is UI API. With and without a watch the engine gives exactly the same core, queues and scores.
+- The assembler's time and memory are bounded (`MAX_WORK`, `MAX_MEMORY` in `lib/src/asm.c`, #87): a new loop over lines, repetitions or EQU substitutions calls `work()`, and a new per-line search stays linear (a `;` search per continued line was quadratic, 1 MB took 11 s). `test/asm-c.test.js` times the sources that took hours.
 - Regression tests go through the public API (`assembleWasm`, `createWasmMars`, `lib/42mars.h`) with small warriors. When the expected value comes from pMARS, say so in the test and how it was produced.
 - Run the `engine-check` skill before calling an engine change done.
 

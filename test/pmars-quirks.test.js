@@ -221,3 +221,40 @@ test('a bad & concatenation is an error but the line is still counted', () => {
   assert.equal(w.ok, false);
   assert.deepEqual(w.warnings.map((m) => m.text), ['missing ;assert']);
 });
+
+test('substituted text has a limit: "Substitution is too complex"', () => {
+  // w gives 99 characters, v 5299 (53 times w); each `+1` adds 2. pMARS 0.9.5
+  // (`pmars -r 0`) assembles every source marked true and reports "Buffer
+  // overflow. Substitution is too complex" for every one marked false. The
+  // count leaves out whitespace and the mode (#87).
+  const defs = `w equ ${Array(50).fill('1').join('+')}\nv equ ${Array(53).fill('w').join('+')}\n`;
+  const e = (n) => `v${'+1'.repeat((n - 5299) / 2)}`; // n characters, n odd
+  const cases = [
+    [`dat ${e(5331)}`, true], [`dat ${e(5333)}`, false],
+    [`dat 11+${e(5329)}`, true], [`dat 11+${e(5331)}`, false], // 5332 and 5334
+    [`dat 1 + ${e(5329)}`, true], [`dat 1 + ${e(5331)}`, false], // spaces do not count
+    [`dat #11+${e(5329)}`, true], [`dat 1, #11+${e(5329)}`, true], // nor does the mode
+    [`dat 1, ${e(5331)}`, true], [`dat 1, ${e(5333)}`, false], // each operand alone
+    // ORG, END and PIN allow one more: 5333 and 5334
+    [`dat 0\norg 0*(${e(5329)})`, true], [`dat 0\norg 0*(11+${e(5327)})`, false],
+    [`dat 0\nend 0*(11+${e(5325)})`, true], [`dat 0\nend 0*(11+${e(5327)})`, false],
+    [`dat 0\npin 0*(11+${e(5325)})`, true], [`dat 0\npin 0*(11+${e(5327)})`, false],
+  ];
+  for (const [src, ok] of cases) assert.equal(assemble(defs + src + '\n').ok, ok, src.slice(0, 40));
+  // EQU names defined after their use are substituted in pass 2.
+  assert.equal(assemble(`dat ${e(5331)}\n${defs}`).ok, true);
+  assert.equal(assemble(`dat ${e(5333)}\n${defs}`).ok, false);
+  // A FOR count and an assert allow more: x11 gives 4095 characters, x12 8191.
+  const x = ['x0 equ 1', ...Array.from({ length: 12 }, (_, i) => `x${i + 1} equ x${i}+x${i}`)].join('\n');
+  for (const k of [11, 12]) {
+    assert.equal(assemble(`${x}\nfor 0*(x${k})+1\ndat 0\nrof\n`).ok, k === 11);
+    assert.equal(assemble(`${x}\n;assert x${k}\ndat 0\n`).ok, k === 11);
+  }
+  // FOR count: 7998 assemble, 8000 do not; an assert 7999 and 8001.
+  const big = `w equ ${Array(50).fill('1').join('+')}\nv equ ${Array(79).fill('w').join('+')}\n`; // v: 7899
+  const f = (n) => `v${'+1'.repeat((n - 7899) / 2)}`;
+  assert.equal(assemble(`${big}for 0*(${f(7993)})+1\ndat 0\nrof\n`).ok, true);
+  assert.equal(assemble(`${big}for 0*(${f(7995)})+1\ndat 0\nrof\n`).ok, false);
+  assert.equal(assemble(`${big};assert ${f(7999)}\ndat 0\n`).ok, true);
+  assert.equal(assemble(`${big};assert ${f(8001)}\ndat 0\n`).ok, false);
+});

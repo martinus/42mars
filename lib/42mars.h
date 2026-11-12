@@ -122,7 +122,11 @@ typedef struct {
 // warrior lives in it until the memory is reused. Returns M42_OK when the
 // assembler ran, also if the source has errors (m42_warrior_ok() says), and
 // M42_ERR_MEMORY when `size` was too small: try again with more, about 64
-// times the source length is usually enough. m42_warrior_pack() copies a
+// times the source length is usually enough. The work is bounded: past
+// 1,000,000 lines and FOR repetitions, or 64 MB of memory after reading the
+// source, the assembly ends with an error (docs/redcode-semantics.md,
+// section 4). 128 MB plus 64 bytes per source byte held every source
+// measured, and m42_assemble_new() tries no more. m42_warrior_pack() copies a
 // warrior into a block of its own size. `registers`: 0 (all 0), or the
 // values of the registers a..z (registers[0] is a) to start with: pMARS
 // assembles its first warrior with the registers its score formula check

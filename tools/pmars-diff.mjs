@@ -245,13 +245,15 @@ async function listings() {
 // the end of the last line, and the expressions our assembler warns about
 // with a text that starts with "pMARS": a value of 2^40 or more (pMARS takes
 // about |value| / coreSize steps to reduce it), a lone `!`, `=`, `&` or `|`
-// where an operator is expected (pMARS reads an uninitialized variable then)
-// and -2^63 divided by -1 (pMARS crashes).
+// where an operator is expected (pMARS reads an uninitialized variable then),
+// -2^63 divided by -1 (pMARS crashes), and the error about the assembler's
+// limit on FOR repetitions and memory (pMARS has none).
 function usable(src) {
   const lines = src.split('\n');
   if (lines.some((l) => l.length > 240)) return false;
   if (/\\\r?$/.test(lines[lines.length - 1] || lines[lines.length - 2] || '')) return false;
-  return !assembleWasm(src, { ...STANDARD, warriors: 1, rounds: 0 }).warnings.some((w) => w.text.startsWith('pMARS '));
+  const w = assembleWasm(src, { ...STANDARD, warriors: 1, rounds: 0 });
+  return ![...w.warnings, ...w.errors].some((m) => m.text.startsWith('pMARS '));
 }
 
 // Calls `make` until it returns a usable source.

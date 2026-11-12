@@ -45,6 +45,18 @@ for (const c of cases) {
   });
 }
 
+test('42mars stops a source on which pMARS takes very long', { skip }, () => {
+  // m42_assemble_new() natively: 38 bytes of nested FOR took 18 s and 14.7 GB
+  // before the assembler had a limit (#87). pMARS does not finish either.
+  const f = join(tmp, 'nested.red');
+  writeFileSync(f, 'for 1000000\nfor 1000000\ndat 0\nrof\nrof\n');
+  const t = performance.now();
+  const r = spawnSync(bin, ['-r', '0', f], { encoding: 'latin1', timeout: 30000 });
+  assert.equal(r.status, 3, r.stderr);
+  assert.match(r.stderr, /pMARS has no limit here/);
+  assert.ok(performance.now() - t < 3000);
+});
+
 test('42mars rejects what the engine does not support', { skip }, () => {
   const w = [join(root, 'warriors/imp.red'), join(root, 'warriors/dwarf.red')];
   for (const args of [['-V'], ['-s', '70000'], ['-F', '4000+1']]) {
