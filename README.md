@@ -1,8 +1,5 @@
 <p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/images/speed-dark.svg">
-    <img alt="Bar chart: million simulated instructions per second in native code, one thread, the same 12,000 rounds for every engine. 42mars 478, fmars 402, exMARS 0.01 279, rmars 192, pMARS 0.9.5 106." src="docs/images/speed-light.svg" width="880">
-  </picture>
+  <img alt="42mars logo: the planet Mars built from the cells of a core, with 42 written into it" src="docs/images/logo.svg" width="144">
 </p>
 
 <h1 align="center">42mars</h1>
@@ -26,6 +23,13 @@
   <a href="#written-in-a-clean-room-so-it-can-be-mit">Clean room</a> ·
   <a href="#repository-layout">Layout</a> ·
   <a href="docs/development.md">Development</a>
+</p>
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/images/speed-dark.svg">
+    <img alt="Bar chart: million simulated instructions per second in native code, one thread, the same 12,000 rounds for every engine. 42mars 478, fmars 402, exMARS 0.01 279, rmars 192, pMARS 0.9.5 106." src="docs/images/speed-light.svg" width="880">
+  </picture>
 </p>
 
 > [!NOTE]
