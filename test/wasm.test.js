@@ -7,11 +7,12 @@
 // states against digests recorded where they were those of js/mars.js
 // (test/recorded.js, test/fixtures/wasm.json); plus targeted cases.
 
-import { test } from 'node:test';
+import { test as nodeTest } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, existsSync } from 'node:fs';
 import { compileWasmMars, createWasmMars, createWasmMarsSync, packWarrior, rng, assembleWasm as assemble } from '../wasm/42mars.js';
 import { Digest, recorded } from './recorded.js';
+import { CORE, compareCore } from './engines.js';
 
 const module = await compileWasmMars();
 const check = recorded('wasm.json');
@@ -23,6 +24,18 @@ const rand = (k) => {
   state ^= state << 5; state >>>= 0;
   return state % k;
 };
+// Each test starts the generator from a seed made of its name: its random
+// cases, and so its recorded digests, do not depend on the tests before it
+// (a test can run alone, and a change to one test leaves the others).
+function test(name, ...args) {
+  const fn = args.pop();
+  nodeTest(name, ...args, (...a) => {
+    state = 2166136261;
+    for (const ch of name) state = Math.imul(state ^ ch.charCodeAt(0), 16777619) >>> 0;
+    state ||= 1;
+    return fn(...a);
+  });
+}
 const pick = (a) => a[rand(a.length)];
 
 const OPS = ['mov', 'add', 'sub', 'mul', 'div', 'mod', 'jmz', 'jmn', 'djn', 'cmp', 'slt', 'spl', 'dat', 'jmp', 'seq', 'sne', 'nop', 'ldp', 'stp'];
@@ -71,19 +84,6 @@ function snapshot(e) {
       wins: W.wins, losses: W.losses, ties: W.ties, lastResult: W.lastResult, pspace: Array.from(W.pspace),
     })),
   };
-}
-
-const CORE = ['op', 'am', 'bm', 'av', 'bv'];
-const bytes = (a) => Buffer.from(a.buffer, a.byteOffset, a.byteLength);
-
-// The cores as bytes (fast), the first different cell only when they differ.
-function compareCore(a, b, where) {
-  const x = a.core(), y = b.core();
-  for (const k of CORE) {
-    if (bytes(x[k]).equals(bytes(y[k]))) continue;
-    const i = x[k].findIndex((v, j) => v !== y[k][j]);
-    assert.fail(`${where}: ${k}[${i}] is ${y[k][i]}, the other engine has ${x[k][i]}`);
-  }
 }
 
 // Compares the states of engines a and b and adds a's to the digest d.

@@ -10,12 +10,13 @@
 // against the queue, and the core and the queues against an engine without
 // the watch, need no recording.
 
-import { test } from 'node:test';
+import { test as nodeTest } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { compileWasmMars, createWasmMarsSync, assembleWasm as assemble } from '../wasm/42mars.js';
 
 import { Digest, recorded } from './recorded.js';
+import { compareCore } from './engines.js';
 
 const module = await compileWasmMars();
 const check = recorded('watch.json');
@@ -27,6 +28,18 @@ const rand = (k) => {
   state ^= state << 5; state >>>= 0;
   return state % k;
 };
+// Each test starts the generator from a seed made of its name: its random
+// cases, and so its recorded digests, do not depend on the tests before it
+// (a test can run alone, and a change to one test leaves the others).
+function test(name, ...args) {
+  const fn = args.pop();
+  nodeTest(name, ...args, (...a) => {
+    state = 2166136261;
+    for (const ch of name) state = Math.imul(state ^ ch.charCodeAt(0), 16777619) >>> 0;
+    state ||= 1;
+    return fn(...a);
+  });
+}
 const pick = (a) => a[rand(a.length)];
 
 const OPS = ['mov', 'add', 'sub', 'mul', 'div', 'mod', 'jmz', 'jmn', 'djn', 'cmp', 'slt', 'spl', 'dat', 'jmp', 'seq', 'sne', 'nop', 'ldp', 'stp'];
@@ -66,14 +79,11 @@ const RULES = [
   { coreSize: 120, maxCycles: 1000, maxProcesses: 16, maxLength: 8, minDistance: 8, readLimit: 30, writeLimit: 60 },
 ];
 
-const bytes = (a) => Buffer.from(a.buffer, a.byteOffset, a.byteLength);
-
 // The core, the queues and the time of the watched engine x against the
 // engine w without a watch, which runs the specialized loops.
 function compareEngines(w, x, where) {
   assert.equal(x.time, w.time, `${where}: time`);
-  const a = w.core(), b = x.core();
-  for (const k of ['op', 'am', 'bm', 'av', 'bv']) assert.ok(bytes(a[k]).equals(bytes(b[k])), `${where}: core ${k}`);
+  compareCore(w, x, where);
   w.warriors.forEach((W, i) => assert.deepEqual(x.warriors[i].processes(), W.processes(), `${where}, warrior ${i}: queue`));
 }
 

@@ -31,14 +31,13 @@ const cellText = (m, a) => {
   const c = m.cell(a);
   return formatInstruction(c.op, c.mod, c.aMode, c.aVal, c.bMode, c.bVal, m.coreSize);
 };
-const queue = (w) => w.processes();
 
 test('imp copies itself forward', () => {
   const m = solo('mov.i 0, 1\n');
   m.run(3);
   for (let a = 0; a <= 3; a++) assert.equal(cellText(m, a), 'MOV.I $0, $1');
   assert.equal(cellText(m, 4), 'DAT.F $0, $0');
-  assert.deepEqual(queue(m.warriors[0]), [3]);
+  assert.deepEqual(m.warriors[0].processes(), [3]);
 });
 
 test('dwarf bombs every fourth cell', () => {
@@ -66,7 +65,7 @@ test('immediate B operand reads the current core, after the A postincrement', ()
 test('SPL queues the next instruction first, then the new process', () => {
   const m = solo('spl 2\njmp 0\njmp 0\n');
   m.run(1);
-  assert.deepEqual(queue(m.warriors[0]), [1, 2]);
+  assert.deepEqual(m.warriors[0].processes(), [1, 2]);
   assert.equal(m.warriors[0].tasks, 2);
 });
 
@@ -95,23 +94,23 @@ test('DIV.F writes the field with a non-zero divisor before the process dies', (
 test('DJN loops until the counter reaches zero', () => {
   const m = solo('djn 0, #3\ndat 0\n');
   m.run(3);
-  assert.deepEqual(queue(m.warriors[0]), [1]);
+  assert.deepEqual(m.warriors[0].processes(), [1]);
   assert.equal(m.bv[0], 0);
 });
 
 test('SEQ/SNE/CMP.I compare whole instructions, SLT compares fields', () => {
   let m = solo('seq.i a, b\ndat 0\njmp 0\na mov 1, 2\nb mov 1, 2\n');
   m.run(1);
-  assert.deepEqual(queue(m.warriors[0]), [2]);
+  assert.deepEqual(m.warriors[0].processes(), [2]);
   m = solo('seq.i a, b\ndat 0\njmp 0\na mov 1, 2\nb add 1, 2\n');
   m.run(1);
-  assert.deepEqual(queue(m.warriors[0]), [1]);
+  assert.deepEqual(m.warriors[0].processes(), [1]);
   m = solo('sne.a a, b\ndat 0\njmp 0\na dat 1, 2\nb dat 1, 9\n');
   m.run(1);
-  assert.deepEqual(queue(m.warriors[0]), [1]);
+  assert.deepEqual(m.warriors[0].processes(), [1]);
   m = solo('slt.ab #3, a\ndat 0\njmp 0\na dat 0, 4\n');
   m.run(1);
-  assert.deepEqual(queue(m.warriors[0]), [2]);
+  assert.deepEqual(m.warriors[0].processes(), [2]);
 });
 
 test('A-field indirect modes', () => {
@@ -208,9 +207,9 @@ for (const watch of [true, false]) {
       assert.equal(ghost.execCount.length, 0);
       assert.equal(ghost.territory, 0);
     }
-    assert.deepEqual(queue(ghost), [0]);
+    assert.deepEqual(ghost.processes(), [0]);
     assert.equal(m.run(4), 4);
-    assert.deepEqual(queue(ghost), [0]);
+    assert.deepEqual(ghost.processes(), [0]);
     assert.equal(ghost.alive, true);
     if (watch) {
       assert.equal(m.warriors[0].execCount[0], 4); // counted for the warrior whose code it is

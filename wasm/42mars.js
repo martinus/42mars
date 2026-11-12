@@ -1,30 +1,29 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 Martin Leitner-Ankerl
 
-// Headless simulator in WebAssembly (lib/src/mars.c), with a subset
-// of the Mars API of mars.js. Same results as `new Mars({ headless: true })`:
-// core, process queues, scores and round results. No visualizer
-// bookkeeping, no events, no trace.
+// The 42mars library (lib/42mars.h) in WebAssembly: the assembler and the
+// simulator with pMARS's results, the npm package `42mars`. The API is in
+// 42mars.d.ts and in docs/redcode-semantics.md, sections 2 and 3.
 //
 //   const m = await createWasmMars({ coreSize: 8000 });
-//   m.load(codes, { seed });            // codes: assemble() results
+//   m.load(codes, { seed });            // codes: assembleWasm() results
 //   m.startRound(); while (!m.roundOver) m.run(1e6);
 //   m.runMatch(codes, { rounds: 200, seed })   // whole match inside wasm
 //   m.runMatch(codes, { rounds: 50, seed, firstRound: 150 }) // its last 50 rounds
 //   m.runMatch(codes.map((c) => packWarrior(c)), ...)        // prepared warriors
+//   createWasmMars({ watch: true })     // records what a visualizer shows: watch(), events()
 //
-// Differences from Mars:
 // - The core size is at most 65536 (cells hold 16-bit values), maxProcesses
 //   and pSpaceSize at most 2^24, and there are 1 to 255 warriors.
 // - `seed` must be a non-negative safe integer and fixed positions
 //   non-negative integers; anything else throws a RangeError.
-// - op, am, bm, av, bv are snapshots: each read returns typed arrays decoded
-//   from the wasm core (same encoding as mars.js), reused until the next
+// - core() and op, am, bm, av, bv are snapshots: typed arrays decoded from
+//   the wasm core (op = opcode << 3 | modifier), reused until the next
 //   load(), startRound(), run(), step(), endRound() or runMatch(). Do not
 //   write into them, and read them again after running.
 // - Warrior objects have getters instead of fields; `score` and `pspace`
 //   return copies. `processes()` returns the queued addresses, the next one
-//   to run first.
+//   to run first; `queue()` the same as a view of engine memory.
 // - runMatch() stops tie rounds early by default, see there.
 
 // The rules of pMARS 0.9.5 without options (ICWS'94), as option names.
@@ -147,14 +146,19 @@ class Memory {
     return at;
   }
 
+  // Only here does the memory grow (the C code has no memory.grow): the
+  // views are renewed here, and views() does not ask the memory each time.
   ensure(end) {
     const have = this.x.memory.buffer.byteLength;
-    if (end > have) this.x.memory.grow(Math.ceil((end - have) / 65536));
+    if (end > have) {
+      this.x.memory.grow(Math.ceil((end - have) / 65536));
+      this.buffer = null;
+    }
   }
 
-  // Views of the linear memory, renewed after it grew.
+  // Views of the linear memory.
   views() {
-    if (this.buffer !== this.x.memory.buffer) {
+    if (!this.buffer) {
       this.buffer = this.x.memory.buffer;
       this.u8 = new Uint8Array(this.buffer);
       this.dv = new DataView(this.buffer);
@@ -221,7 +225,6 @@ class WasmMars {
     if (o.pSpaceSize > 1 << 24) throw new RangeError('the wasm engine supports pSpaceSize up to 2^24');
     this.coreSize = o.coreSize;
     this.x = instance.exports;
-    this.memory = this.x.memory;
     this.mem = memoryOf(this.x);
     this.structs = this.mem.keep(S_SIZE);
     this.ctx = 0;
@@ -351,7 +354,7 @@ class WasmMars {
   }
 
   // Executes up to n instructions; returns how many. Stops early when the
-  // round ends. A fraction rounds up, like mars.js.
+  // round ends. A fraction rounds up.
   run(n) {
     if (this.roundResult !== null || this.roundOver || !(n > 0)) return 0;
     const count = n >= 1.8e19 ? 2n ** 64n - 1n : BigInt(Math.ceil(n));
@@ -489,7 +492,7 @@ class WasmMars {
   get warriorsLeft() { return this.state().warriorsLeft; }
   get current() { return this.state().current; }
 
-  // Decodes the core into mars.js arrays; cached until the core can change.
+  // Decodes the core into arrays per field; cached until the core can change.
   core() {
     if (this.snapshotVersion === this.version && this.snapshot) return this.snapshot;
     const n = this.coreSize;
@@ -568,8 +571,7 @@ class WasmMars {
     return v;
   }
 
-  // The process deaths since the last call in this round, as mars.js's
-  // events: { type: 'kill', addr, warrior, time } for each, and a 'death'
+  // The process deaths since the last call in this round, as events: { type: 'kill', addr, warrior, time } for each, and a 'death'
   // after the kill of a warrior's last process. At most the last
   // DEATH_SIZE: a warrior's end also shows in warriors[i].alive and .diedAt.
   events() {

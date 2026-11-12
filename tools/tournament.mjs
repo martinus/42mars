@@ -123,10 +123,7 @@ function drain(shared, opts, module, done = () => {}) {
     const [a, b, seed, firstRound, rounds, pairing] = i32.subarray(CTL + TASK * id, CTL + TASK * (id + 1));
     // The match, or a block of its rounds, runs inside WebAssembly, with
     // early tie detection.
-    const r = wasm.runMatch([warriors[a], warriors[b]], { rounds, seed, firstRound, permute: opts.permute });
-    const [wa, wb] = r.warriors;
-    const instructions = r.instructions;
-    const played = r.results;
+    const { warriors: [wa, wb], instructions, results: played } = wasm.runMatch([warriors[a], warriors[b]], { rounds, seed, firstRound, permute: opts.permute });
     res.set([wa.wins, wa.losses, wa.ties, wb.wins, wb.losses, wb.ties, instructions], RESULT * id);
     for (const { round, survivors } of played) {
       outcomes[pairing * at.rounds + round - 1] = survivors.length === 2 ? OUTCOME_TIE : survivors[0] === 0 ? OUTCOME_A : OUTCOME_B;
