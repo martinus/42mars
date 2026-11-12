@@ -16,7 +16,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { assembleWasm, evaluateWasm } from '../wasm/42mars.js';
+import { assemble, evaluate } from '../wasm/42mars.js';
 import { recorded } from './recorded.js';
 
 const check = recorded('asm-c.json');
@@ -150,7 +150,7 @@ test('random sources give the recorded results', () => {
   for (let k = 0; k < 4000; k++) {
     const src = source(g);
     const opts = k % 7 === 0 ? { coreSize: 80, maxLength: 5 } : k % 3 === 0 ? { icws88: true } : {};
-    results.push([JSON.stringify(src), assembleWasm(src, opts)]);
+    results.push([JSON.stringify(src), assemble(src, opts)]);
   }
   check('sources', results, 100);
 });
@@ -160,19 +160,19 @@ test('random expressions give the recorded results', () => {
   const results = [];
   for (let k = 0; k < 20000; k++) {
     const e = expr(g);
-    results.push([JSON.stringify(e), evaluateWasm(e)]);
+    results.push([JSON.stringify(e), evaluate(e)]);
   }
   check('expressions', results, 100);
 });
 
 test('the C assembler on chosen cases', () => {
   const results = [];
-  const run = (src, opts) => results.push([JSON.stringify(src), assembleWasm(src, opts)]);
+  const run = (src, opts) => results.push([JSON.stringify(src), assemble(src, opts)]);
   // registers to start with (the first warrior of a pMARS run)
   run(';assert s == 2 && W == 2\n dat #s, #w\n dat #x=x+1, #a\n', { registers: { s: 2, W: 2, x: -5, a: 7 } });
   run(';assert s == 2\n dat #s, #w\n');
-  assert.equal(assembleWasm(';assert s == 2\n dat #s, #w\n', { registers: { s: 2 } }).ok, true);
-  assert.throws(() => assembleWasm(' dat 0\n', { registers: { ab: 1 } }), RangeError);
+  assert.equal(assemble(';assert s == 2\n dat #s, #w\n', { registers: { s: 2 } }).ok, true);
+  assert.throws(() => assemble(' dat 0\n', { registers: { ab: 1 } }), RangeError);
   // EQU recursion, in pass 1 and in pass 2 (defined after its use)
   run('a equ b\nb equ a\n mov a, 1\n');
   run(' mov c, 1\nc equ c\n');
@@ -198,12 +198,12 @@ test('the C assembler on chosen cases', () => {
 test('the C evaluator: limits', () => {
   // -2^63 / -1 and % -1 wrap (C would trap)
   const MIN = -(1n << 63n);
-  assert.deepEqual(evaluateWasm('(-9223372036854775807-1)/-1'), { status: 0, value: MIN });
-  assert.deepEqual(evaluateWasm('(-9223372036854775807-1)%-1'), { status: 0, value: 0n });
+  assert.deepEqual(evaluate('(-9223372036854775807-1)/-1'), { status: 0, value: MIN });
+  assert.deepEqual(evaluate('(-9223372036854775807-1)%-1'), { status: 0, value: 0n });
   // 64-bit products: the overflow status where the product does not fit
-  assert.deepEqual(evaluateWasm('3037000500*3037000500'), { status: 1, value: BigInt.asIntN(64, 3037000500n * 3037000500n) });
-  assert.deepEqual(evaluateWasm('-3037000499*3037000499'), { status: 0, value: -3037000499n * 3037000499n });
-  assert.deepEqual(evaluateWasm('4611686018427387904*-2'), { status: 0, value: MIN });
+  assert.deepEqual(evaluate('3037000500*3037000500'), { status: 1, value: BigInt.asIntN(64, 3037000500n * 3037000500n) });
+  assert.deepEqual(evaluate('-3037000499*3037000499'), { status: 0, value: -3037000499n * 3037000499n });
+  assert.deepEqual(evaluate('4611686018427387904*-2'), { status: 0, value: MIN });
   // Deep nesting: evaluated up to the C limit of 6000 nested calls, beyond
   // it not an expression (semantics doc, section 4).
   const shapes = {
@@ -212,15 +212,15 @@ test('the C evaluator: limits', () => {
     flat: [(k) => `${'1+'.repeat(k)}1`, 4000, 4001n],
     assign: [(k) => `${'a='.repeat(k)}1`, 2500, 1n],
   };
-  for (const [f, k, value] of Object.values(shapes)) assert.deepEqual(evaluateWasm(f(k)), { status: 0, value });
-  for (const [f, k] of Object.values(shapes)) assert.equal(evaluateWasm(f(3 * k)).status, -1);
+  for (const [f, k, value] of Object.values(shapes)) assert.deepEqual(evaluate(f(k)), { status: 0, value });
+  for (const [f, k] of Object.values(shapes)) assert.equal(evaluate(f(3 * k)).status, -1);
 });
 
 const forNest = (k) => `${' for 1\n'.repeat(k)} dat 0\n${' rof\n'.repeat(k)}`;
 
 test('FOR blocks nest 100 deep in C', () => {
-  assert.equal(assembleWasm(forNest(100)).ok, true);
-  const w = assembleWasm(forNest(101));
+  assert.equal(assemble(forNest(100)).ok, true);
+  const w = assemble(forNest(101));
   assert.equal(w.ok, false);
   assert.deepEqual(w.errors.map((e) => e.text), ['FOR blocks nested too deep']);
 });
@@ -244,7 +244,7 @@ const UNBOUNDED = [
 for (const [name, src, text] of UNBOUNDED) {
   test(`the assembler's work is bounded: ${name}`, () => {
     const t = performance.now();
-    const w = assembleWasm(src);
+    const w = assemble(src);
     const ms = performance.now() - t;
     assert.equal(w.ok, false);
     assert.ok(w.errors.some((e) => e.text === text), JSON.stringify(w.errors.slice(0, 3)));
@@ -256,7 +256,7 @@ test('continued lines take linear time', () => {
   // Each continued line searched the whole logical line for `;` again: 1 MB
   // of `a\` lines took 11 s natively (#87).
   const t = performance.now();
-  const w = assembleWasm('a\\\n'.repeat(500000));
+  const w = assemble('a\\\n'.repeat(500000));
   const ms = performance.now() - t;
   assert.deepEqual(w.errors.map((e) => e.text), ["unexpected '\\'"]);
   assert.ok(ms < 3000, `${ms.toFixed(0)} ms`);
@@ -268,15 +268,15 @@ test('an exception inside wasm does not break later calls', () => {
   // instance down by the frames of the FOR levels; the next call has to
   // get a fresh instance, or 100 FOR levels no longer fit.
   const src = forNest(100);
-  const at = (n) => (n === 0 ? assembleWasm(src) : at(n - 1));
+  const at = (n) => (n === 0 ? assemble(src) : at(n - 1));
   let thrown = null;
   for (let n = 0; n < 100000 && !thrown; n += 25) {
     try { at(n); } catch (e) { thrown = e; }
   }
   assert.ok(thrown instanceof RangeError || thrown instanceof WebAssembly.RuntimeError, String(thrown));
-  assert.equal(assembleWasm(src).ok, true);
+  assert.equal(assemble(src).ok, true);
 });
 
 test('a core size below 1 is a RangeError', () => {
-  assert.throws(() => assembleWasm(' dat 0\n', { coreSize: -5 }), RangeError);
+  assert.throws(() => assemble(' dat 0\n', { coreSize: -5 }), RangeError);
 });

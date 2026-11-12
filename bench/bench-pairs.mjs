@@ -16,10 +16,10 @@
 // the wasm module.
 import { readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { compileWasmMars, createWasmMarsSync, assembleWasm as assemble } from '../wasm/42mars.js';
+import { compileMars, createMarsSync, assemble } from '../wasm/42mars.js';
 import { nativeMatch } from './native-input.mjs';
 
-await compileWasmMars(); // assembleWasm() then works on every Node 20
+await compileMars(); // assemble() then works on every Node 20
 
 const argv = process.argv.slice(2);
 const opt = (name, dflt) => { const i = argv.indexOf(`--${name}`); return i >= 0 ? argv.splice(i, 2)[1] : dflt; };
@@ -45,12 +45,12 @@ if (nativeInput) {
   writeFileSync(nativeInput, pairs.map(([a, b]) => nativeMatch([a, b], rules, rand(7801), ROUNDS)).join(''));
   process.exit(0);
 }
-const module = await compileWasmMars();
+const module = await compileMars();
 let steps = 0;
 let executed = 0;
 const t0 = performance.now();
 for (const [a, b] of pairs) {
-  const r = createWasmMarsSync({}, module).runMatch([a, b], { rounds: ROUNDS, seed: rand(7801), earlyTie });
+  const r = createMarsSync({}, module).runMatch([a, b], { rounds: ROUNDS, seed: rand(7801), earlyTie });
   steps += r.results.reduce((s, x) => s + x.cycles, 0);
   executed += r.instructions;
 }

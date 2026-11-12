@@ -10,11 +10,11 @@
 import { test as nodeTest } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, existsSync } from 'node:fs';
-import { compileWasmMars, createWasmMars, createWasmMarsSync, packWarrior, rng, assembleWasm as assemble } from '../wasm/42mars.js';
+import { compileMars, createMars, createMarsSync, packWarrior, rng, assemble } from '../wasm/42mars.js';
 import { Digest, recorded } from './recorded.js';
 import { CORE, compareCore } from './engines.js';
 
-const module = await compileWasmMars();
+const module = await compileMars();
 const check = recorded('wasm.json');
 
 let state = 0x9e3779b9;
@@ -104,8 +104,8 @@ function compareState(a, b, where, d) {
 // after every chunk of random length. runMatch must give the same rounds.
 // Returns [what, digest] of the states for the recording (test/recorded.js).
 function compareMatch(o, codes, { seed, positions, rounds, steps }) {
-  const w = createWasmMarsSync(o, module);
-  const x = createWasmMarsSync({ ...o, watch: true }, module);
+  const w = createMarsSync(o, module);
+  const x = createMarsSync({ ...o, watch: true }, module);
   w.load(codes, { seed, positions });
   x.load(codes, { seed, positions });
   const where = `${JSON.stringify(o)} seed ${seed} positions ${positions} warriors ${codes.map((c) => c.name).join(', ')}`;
@@ -127,7 +127,7 @@ function compareMatch(o, codes, { seed, positions, rounds, steps }) {
   // runMatch on a fresh engine gives the same match, with and without early
   // tie detection; without it also the same final core.
   for (const earlyTie of [false, true]) {
-    const y = createWasmMarsSync(o, module);
+    const y = createMarsSync(o, module);
     const result = y.runMatch(codes, { rounds, seed, positions, earlyTie });
     const at = `${where} runMatch earlyTie ${earlyTie}`;
     assert.deepEqual(result.results, w.results, `${at}: results`);
@@ -246,8 +246,8 @@ test('runMatch in blocks with firstRound gives the rounds of the whole match whe
       const codes = Array.from({ length: nw }, () => warrior(noLdp(randomWarrior(1 + rand(o.maxLength - 1), o.coreSize, { loop: rand(2) === 0 })), { ...o, warriors: nw }));
       for (const positions of [undefined, codes.map((_, i) => i * o.minDistance)]) {
         const seed = rand(2147483646) + 1;
-        const whole = createWasmMarsSync(o, module).runMatch(codes, { rounds: 11, seed, positions });
-        const parts = blocks.map(([firstRound, rounds]) => createWasmMarsSync(o, module).runMatch(codes, { rounds, seed, positions, firstRound }));
+        const whole = createMarsSync(o, module).runMatch(codes, { rounds: 11, seed, positions });
+        const parts = blocks.map(([firstRound, rounds]) => createMarsSync(o, module).runMatch(codes, { rounds, seed, positions, firstRound }));
         const where = `${JSON.stringify(o)} ${nw} warriors seed ${seed}`;
         assert.deepEqual(parts.flatMap((p) => p.results), whole.results, where);
         assert.equal(parts.reduce((s, p) => s + p.instructions, 0), whole.instructions, where);
@@ -261,13 +261,13 @@ test('runMatch in blocks with firstRound gives the rounds of the whole match whe
   // and a block starts without that last result.
   const ldp = warrior('ldp.ab #0, flag\nsub.ab #2, flag\njmz.b die, flag\njmp 0\ndie dat 0, 0\nflag dat 0, 0\n');
   const codes = [ldp, warrior('jmp 0\n')];
-  const whole = createWasmMarsSync({}, module).runMatch(codes, { rounds: 4, seed: 7 });
+  const whole = createMarsSync({}, module).runMatch(codes, { rounds: 4, seed: 7 });
   assert.deepEqual(whole.results.map((r) => r.survivors.length), [2, 1, 2, 1]);
-  const late = createWasmMarsSync({}, module).runMatch(codes, { rounds: 2, seed: 7, firstRound: 2 });
+  const late = createMarsSync({}, module).runMatch(codes, { rounds: 2, seed: 7, firstRound: 2 });
   assert.deepEqual(late.results.map((r) => [r.round, r.survivors.length]), [[3, 2], [4, 1]]);
-  const odd = createWasmMarsSync({}, module).runMatch(codes, { rounds: 2, seed: 7, firstRound: 1 });
+  const odd = createMarsSync({}, module).runMatch(codes, { rounds: 2, seed: 7, firstRound: 1 });
   assert.deepEqual(odd.results.map((r) => [r.round, r.survivors.length]), [[2, 2], [3, 1]]);
-  assert.throws(() => createWasmMarsSync({}, module).runMatch(codes, { rounds: 2, firstRound: -1 }), RangeError);
+  assert.throws(() => createMarsSync({}, module).runMatch(codes, { rounds: 2, firstRound: -1 }), RangeError);
 });
 
 // runMatch({ pspace }) carries p-space and the last results from one block to
@@ -280,7 +280,7 @@ test('runMatch in blocks with pspace carried over gives the rounds of the whole 
     const results = [];
     let instructions = 0;
     for (const [firstRound, rounds] of blocks) {
-      const r = createWasmMarsSync(o, module).runMatch(codes, { rounds, seed, firstRound, pspace });
+      const r = createMarsSync(o, module).runMatch(codes, { rounds, seed, firstRound, pspace });
       results.push(...r.results);
       instructions += r.instructions;
       pspace = r.warriors.map((w) => w.pspace);
@@ -288,7 +288,7 @@ test('runMatch in blocks with pspace carried over gives the rounds of the whole 
     return { results, instructions, pspace };
   };
   const codes = [ldp, warrior('jmp 0\n')];
-  const whole = createWasmMarsSync({}, module).runMatch(codes, { rounds: 4, seed: 7, pspace: true });
+  const whole = createMarsSync({}, module).runMatch(codes, { rounds: 4, seed: 7, pspace: true });
   assert.deepEqual(whole.results.map((r) => r.survivors.length), [2, 1, 2, 1]);
   const rounds = playBlocks(codes, {}, 7, [[0, 1], [1, 1], [2, 1], [3, 1]]);
   assert.deepEqual(rounds.results, whole.results);
@@ -299,7 +299,7 @@ test('runMatch in blocks with pspace carried over gives the rounds of the whole 
       if (nw * o.minDistance > o.coreSize) continue;
       const cs = Array.from({ length: nw }, (_, i) => warrior(randomWarrior(1 + rand(o.maxLength - 1), o.coreSize, { pspace: true, pin: i < 2 && rand(2) ? 5 : null }), { ...o, warriors: nw }));
       const seed = rand(2147483646) + 1;
-      const all = createWasmMarsSync(o, module).runMatch(cs, { rounds: 11, seed, pspace: true });
+      const all = createMarsSync(o, module).runMatch(cs, { rounds: 11, seed, pspace: true });
       const parts = playBlocks(cs, o, seed, [[0, 3], [3, 1], [4, 0], [4, 7]]);
       const where = `${JSON.stringify(o)} ${nw} warriors seed ${seed}`;
       assert.deepEqual(parts.results, all.results, where);
@@ -307,13 +307,13 @@ test('runMatch in blocks with pspace carried over gives the rounds of the whole 
       assert.deepEqual(parts.pspace, all.warriors.map((w) => w.pspace), where);
     }
   }
-  assert.throws(() => createWasmMarsSync({}, module).runMatch(codes, { pspace: [new Int32Array(3)] }), RangeError);
+  assert.throws(() => createMarsSync({}, module).runMatch(codes, { pspace: [new Int32Array(3)] }), RangeError);
   // pspace: true starts as a match starts: the last result is coreSize - 1,
   // so this warrior dies in round 1 (and in no other round)
   const first = [warrior('ldp.ab #0, flag\nadd.ab #1, flag\njmz.b die, flag\njmp 0\ndie dat 0, 0\nflag dat 0, 0\n'), warrior('jmp 0\n')];
-  const plain = createWasmMarsSync({}, module).runMatch(first, { rounds: 3, seed: 9 });
+  const plain = createMarsSync({}, module).runMatch(first, { rounds: 3, seed: 9 });
   assert.deepEqual(plain.results.map((r) => r.survivors), [[1], [0, 1], [0, 1]]);
-  assert.deepEqual(createWasmMarsSync({}, module).runMatch(first, { rounds: 3, seed: 9, pspace: true }).results, plain.results);
+  assert.deepEqual(createMarsSync({}, module).runMatch(first, { rounds: 3, seed: 9, pspace: true }).results, plain.results);
 });
 
 // packWarrior() prepares a warrior once; the engine copies it in one block.
@@ -335,14 +335,14 @@ test('packed warriors play like the warriors they were packed from', () => {
         return p;
       });
       const seed = rand(2147483646) + 1;
-      const plain = createWasmMarsSync(o, module).runMatch(codes, { rounds: 5, seed, earlyTie: false });
-      const m = createWasmMarsSync(o, module);
+      const plain = createMarsSync(o, module).runMatch(codes, { rounds: 5, seed, earlyTie: false });
+      const m = createMarsSync(o, module);
       assert.deepEqual(m.runMatch(packed, { rounds: 5, seed, earlyTie: false }), plain, `${JSON.stringify(o)} ${nw} warriors seed ${seed}`);
-      assert.deepEqual(m.warriors.map((w) => [...w.pspace]), (() => { const q = createWasmMarsSync(o, module); q.runMatch(codes, { rounds: 5, seed, earlyTie: false }); return q.warriors.map((w) => [...w.pspace]); })());
+      assert.deepEqual(m.warriors.map((w) => [...w.pspace]), (() => { const q = createMarsSync(o, module); q.runMatch(codes, { rounds: 5, seed, earlyTie: false }); return q.warriors.map((w) => [...w.pspace]); })());
     }
   }
   const long = packWarrior(warrior('jmp 0\n'.repeat(5)));
-  assert.throws(() => createWasmMarsSync({ maxLength: 4 }, module).runMatch([long, long], { rounds: 1 }), /longer than 4/);
+  assert.throws(() => createMarsSync({ maxLength: 4 }, module).runMatch([long, long], { rounds: 1 }), /longer than 4/);
 });
 
 test('targeted: maxCycles 0, a single warrior, empty warriors and fractional run counts', () => {
@@ -354,8 +354,8 @@ test('targeted: maxCycles 0, a single warrior, empty warriors and fractional run
   got.push(compareMatch({}, [warrior('jmp 0\n'), empty('ghost')], { positions: [0, 0], rounds: 1, steps: true }));
   got.push(compareMatch({}, [empty('a'), empty('b'), empty('c')], { positions: [0, 100, 200], rounds: 3, steps: true }));
   // a fraction rounds up, 0 and less run nothing
-  const w = createWasmMarsSync({ maxCycles: 100 }, module);
-  const x = createWasmMarsSync({ maxCycles: 100, watch: true }, module);
+  const w = createMarsSync({ maxCycles: 100 }, module);
+  const x = createMarsSync({ maxCycles: 100, watch: true }, module);
   for (const e of [w, x]) { e.load([warrior('jmp 0\n'), warrior('jmp 0\n')], { seed: 9 }); e.startRound(); }
   assert.deepEqual([0.5, 1.5, 0, -3, 2.2].map((n) => [w.run(n), x.run(n)]), [[1, 1], [2, 2], [0, 0], [0, 0], [3, 3]]);
   compareState(w, x, 'fractional');
@@ -363,8 +363,8 @@ test('targeted: maxCycles 0, a single warrior, empty warriors and fractional run
 });
 
 test('targeted: endRound() in the middle of a round', () => {
-  const w = createWasmMarsSync({}, module);
-  const x = createWasmMarsSync({ watch: true }, module);
+  const w = createMarsSync({}, module);
+  const x = createMarsSync({ watch: true }, module);
   for (const e of [w, x]) {
     e.load([warrior('spl 0\njmp -1\n'), warrior('mov 0, 1\n'), warrior('jmp 0\n')], { seed: 11 });
     e.startRound();
@@ -379,7 +379,7 @@ test('targeted: endRound() in the middle of a round', () => {
 });
 
 test('targeted: placement follows pMARS\'s generator for two warriors', () => {
-  const w = createWasmMarsSync({}, module);
+  const w = createMarsSync({}, module);
   w.load([warrior('jmp 0\n'), warrior('jmp 0\n')], { seed: 5 });
   w.startRound();
   assert.equal(w.warriors[1].position, 105);
@@ -389,20 +389,20 @@ test('targeted: placement follows pMARS\'s generator for two warriors', () => {
 });
 
 test('the async constructor works and options are checked', async () => {
-  const w = await createWasmMars({ coreSize: 800 });
+  const w = await createMars({ coreSize: 800 });
   const r = w.runMatch([warrior('jmp 0\n', { coreSize: 800 }), warrior('dat 0\n', { coreSize: 800 })], { rounds: 3, seed: 1 });
   assert.deepEqual(r.warriors.map((x) => x.wins), [3, 0]);
-  assert.throws(() => createWasmMarsSync({ coreSize: 65537 }, module), RangeError);
+  assert.throws(() => createMarsSync({ coreSize: 65537 }, module), RangeError);
   assert.throws(() => w.load([warrior('jmp 0\n')], { seed: -1 }), RangeError);
   assert.throws(() => w.load([warrior('jmp 0\n')], { seed: 1.5 }), RangeError);
 });
 
 test('early tie detection skips the end of tie rounds, not with STP', () => {
   const paper = warrior('spl 0\njmp -1\n');
-  const m = createWasmMarsSync({}, module); // round by round, without early ties
+  const m = createMarsSync({}, module); // round by round, without early ties
   m.load([paper, paper], { seed: 5 });
   for (let r = 0; r < 3; r++) { m.startRound(); m.run(1e9); }
-  const w = createWasmMarsSync({}, module);
+  const w = createMarsSync({}, module);
   const r = w.runMatch([paper, paper], { rounds: 3, seed: 5 });
   assert.deepEqual(r.results, m.results);
   // Each warrior reaches 8000 processes; the last 2 * 7999 cycles are skipped.
@@ -426,7 +426,7 @@ test('early tie detection skips the end of tie rounds, not with STP', () => {
 // See test/mars.test.js: pMARS's validate.red loops forever on a compliant MARS.
 const validate = process.env.PMARS_VALIDATE;
 test('pMARS validate.red self-ties on the wasm engine', { skip: !validate || !existsSync(validate) ? 'PMARS_VALIDATE not set' : false }, () => {
-  const w = createWasmMarsSync({}, module);
+  const w = createMarsSync({}, module);
   w.load([warrior(readFileSync(validate, 'latin1'), { warriors: 1 })], { positions: [0] });
   w.startRound();
   w.run(1e6);
@@ -440,7 +440,7 @@ test('early tie when the core has no DAT, DIV, MOD or STP left', () => {
   // Two imps write MOV.I over the whole core: no process can die any more.
   const imp = w('mov.i 0, 1\n');
   const got = [compareMatch(o, [imp, imp], { seed: 1, rounds: 3, steps: false })];
-  const r = createWasmMarsSync(o, module).runMatch([imp, imp], { rounds: 3, seed: 1 });
+  const r = createMarsSync(o, module).runMatch([imp, imp], { rounds: 3, seed: 1 });
   assert.ok(r.instructions <= 3 * 4096, `executed ${r.instructions}`); // checks every 4096 at most
   // B writes JMP 0 over every other cell (about 16000 instructions), waits
   // 3000 turns, which spans checks (every 4096 instructions at most), then
@@ -455,7 +455,7 @@ test('early tie when the core has no DAT, DIV, MOD or STP left', () => {
   check('no killer left', got);
   // The setup does what it should: the DIV kills B, STP writes the
   // p-space, and the NOP version ties early.
-  const x = createWasmMarsSync(big, module);
+  const x = createMarsSync(big, module);
   assert.deepEqual(x.runMatch([loop, clear('div.ab #0, #0')], { positions: [4000, 0], rounds: 1 }).results[0].survivors, [0]);
   x.runMatch([loop, clear('stp.ab #5, #1')], { positions: [4000, 0], rounds: 1 });
   assert.equal(x.warriors[1].pspace[1], 5);

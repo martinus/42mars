@@ -70,7 +70,7 @@ The layout (also in `README.md` and `docs/development.md`; change all three toge
 
 ## The engine and its checks
 
-- One simulator, `lib/src/mars.c`; one assembler and evaluator, `lib/src/asm.c` (`assembleWasm`, `evaluateWasm` in JS). Both must agree with pMARS. A behavior change also goes into the semantics doc.
+- One simulator, `lib/src/mars.c`; one assembler and evaluator, `lib/src/asm.c` (`assemble`, `evaluate` in JS). Both must agree with pMARS. A behavior change also goes into the semantics doc.
 - The JS interface calls only functions of `lib/42mars.h`: a feature the JS side needs goes into the header first.
 - Oracles: pMARS through `tools/pmars-diff.mjs`, `tools/expr-fuzz.mjs` and `--pmars --compare` (local only, CI has no pMARS). In `npm test`: the specialized loops against the generic code of the watched loop (`test/wasm.test.js`, `test/watch.test.js`), and digests of whole results recorded while the removed JavaScript engines gave the same results (`test/recorded.js`). Rules for those digests: `.claude/rules/engine.md`.
 - Where pMARS has no defined result or takes very long, the assembler warns with a text that starts with `pMARS` (semantics doc, section 4); the generators of the tools skip such sources.

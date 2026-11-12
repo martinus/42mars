@@ -57,7 +57,7 @@ import { availableParallelism } from 'node:os';
 import { basename, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { OP } from './opcodes.js';
-import { compileWasmMars, createWasmMarsSync, packWarrior, assembleWasm as assemble } from '../wasm/42mars.js';
+import { compileMars, createMarsSync, packWarrior, assemble } from '../wasm/42mars.js';
 import { nativeMatch } from '../bench/native-input.mjs';
 
 // ------------------------------------------------------------------ tasks
@@ -116,7 +116,7 @@ function views(shared) {
 function drain(shared, opts, module, done = () => {}) {
   const { warriors, at } = shared;
   const { i32, roundsDone, res, outcomes } = views(shared);
-  const wasm = createWasmMarsSync(opts, module);
+  const wasm = createMarsSync(opts, module);
   for (;;) {
     const id = Atomics.add(i32, 0, 1);
     if (id >= at.tasks) return;
@@ -220,7 +220,7 @@ function makeTasks(o, codes, pairs) {
 // 1, 2 .. rounds as soon as every pairing has played round k, with the
 // results of rounds 1 .. k per pairing ({ a: [w, l, t], b: [w, l, t] }).
 async function runEngine(o, codes, pairs, onRound = null) {
-  const module = await compileWasmMars();
+  const module = await compileMars();
   const tasks = makeTasks(o, codes, pairs);
   const opts = { coreSize: o.size, maxCycles: o.cycles, maxProcesses: o.processes, maxLength: o.length, minDistance: o.distance, rounds: o.rounds, readLimit: o.readLimit, writeLimit: o.writeLimit, permute: Boolean(o.permute) };
   const shared = shareTasks(codes, tasks, o.rounds, pairs.length);
@@ -366,7 +366,7 @@ function benchTable(o, names, pairs, results) {
 
 async function main() {
   const o = parseArgs(process.argv.slice(2));
-  await compileWasmMars(); // the assembler is in 42mars.wasm
+  await compileMars(); // the assembler is in 42mars.wasm
   const all = collectFiles(o.files);
   if (o.bench) all.unshift(o.bench);
   if (all.length < 2) {
