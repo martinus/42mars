@@ -256,13 +256,17 @@ m42_warrior *m42_warrior_pack(const m42_warrior *w, void *dst, size_t size) {
 EXPORT(m42_assemble_new)
 m42_warrior *m42_assemble_new(const char *src, size_t len, const m42_rules *rules, unsigned flags,
                               const int64_t registers[26], int *status) {
-  // Working memory from 1 MB or 64 bytes per source byte, times 4 per try.
-  for (size_t size = len > (1u << 14) ? len * 64 : (1u << 20); size && size <= (size_t)-1 / 4; size *= 4) {
+  // Working memory from 1 MB or 64 bytes per source byte, times 4 per try,
+  // up to 128 MB more than that: the assembler's limits (MAX_WORK and
+  // MAX_MEMORY in asm.c) keep every source measured below it (#87).
+  if (len > ((size_t)-1 - ((size_t)128 << 20)) / 64) { set_status(status, M42_ERR_MEMORY); return 0; }
+  const size_t first = len > (1u << 14) ? len * 64 : (1u << 20), most = len * 64 + ((size_t)128 << 20);
+  for (size_t size = first;; size = size > most / 4 ? most : size * 4) {
     void *mem = malloc(size);
     if (!mem) break;
     m42_warrior *w;
     const int s = m42_assemble(src, len, rules, flags, registers, mem, size, &w);
-    if (s == M42_ERR_MEMORY) { free(mem); continue; }
+    if (s == M42_ERR_MEMORY) { free(mem); if (size == most) break; continue; }
     if (s != M42_OK) { free(mem); set_status(status, s); return 0; }
     // malloc's alignment is at least 8, so the packed warrior starts the
     // block, which m42_warrior_free() frees.

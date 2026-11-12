@@ -748,14 +748,19 @@ function assembleWith(x, mem, source, options) {
   }
   const out = mem.scratch(8);
   const start = mem.mark;
-  // The working memory grows by 4 until the assembler fits (42mars.h).
-  for (let size = Math.max(1 << 20, 16 * bytes.length); ; size *= 4) {
+  // The working memory grows by 4 until the assembler fits, up to 128 MB
+  // plus 64 bytes per source byte, as m42_assemble_new() (42mars.h).
+  const most = 2 ** 27 + 64 * bytes.length;
+  for (let size = Math.min(Math.max(1 << 20, 16 * bytes.length), most); ; size = Math.min(size * 4, most)) {
     if (size > 2 ** 31) throw new Error('assembleWasm: out of memory');
     mem.mark = start;
     const work = mem.scratch(size);
     // flags: M42_UTF8 1, M42_ICWS88 2
     const status = x.m42_assemble(src, bytes.length, rules, (utf8 ? 1 : 0) | (o.icws88 ? 2 : 0), regs, work, size, out);
-    if (status === M42_ERR_MEMORY) continue;
+    if (status === M42_ERR_MEMORY) {
+      if (size === most) throw new Error('assembleWasm: out of memory');
+      continue;
+    }
     check(x, mem, status);
     return readWarrior(x, mem, mem.views().dv.getUint32(out, true), utf8 ? utf8Decoder : latin1Decoder, o);
   }

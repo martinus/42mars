@@ -451,6 +451,23 @@ expanded in place, as if the text was written there, with these details:
 A `FOR ... ROF` block may be written inside one multi-line EQU body and is
 expanded when the EQU is used.
 
+Substituted text has a limit, which pMARS reports as "Buffer overflow.
+Substitution is too complex", an error. Counted are the characters of the
+text after substitution, without whitespace and without the mode character:
+
+- an instruction operand, A and B each, also with EQU names defined after
+  their use: at most 5332 characters (`dat 1, v` where `v` gives 5332
+  characters assembles, 5333 is the error);
+- the operand of `ORG`, `END` and `PIN`: at most 5333;
+- the expression of a `FOR` count or an assert: at most 7999.
+
+The engine reports `substitution too long: more than <n> characters without
+spaces`. Measured with sources whose substituted text was every length
+from 5326 to 5339 characters, in these places; at 4095 characters pMARS and
+the engine assemble, at 8191 and more both report the error. The number of
+EQU substitutions in one operand has the same limit in the engine, so that
+EQU bodies without text are bounded too (pMARS: not measured).
+
 #### FOR and ROF
 
 `[labels] FOR expression`: if labels are pending, the last one (the one
@@ -1021,6 +1038,18 @@ warning counts it compares, and the tools skip sources that get them.
 - Deep nesting. The evaluator allows 6000 nested calls of its two recursive
   functions, then the expression is bad: 2999 nested parentheses or
   register assignments, 5998 unary operators or binary operators in a row.
+- Work and memory (#87). Pass 1 counts lines read, FOR repetitions and
+  lines scanned for a `ROF`; past 1,000,000 of them, or past 64 MB of
+  working memory taken after reading the source, the assembly ends with the
+  error `pMARS has no limit here, this assembler has: FOR blocks and EQU
+  substitutions give over 1000000 lines or 64 MB`, and pass 2 stops too.
+  pMARS has no such limit: two nested `for 1000` take it 0.02 s, two nested
+  `for 1000000` (16960 repetitions each) did not end within 30 s and took
+  19 GB. Without the limit, 38 bytes of nested FOR blocks took the engine
+  18 s and 14.7 GB. `tools/pmars-diff.mjs` skips sources with this error.
+  `m42_assemble_new()` and `assembleWasm` grow the working memory up to 128 MB
+  plus 64 bytes per source byte, which held every source measured (the most:
+  161 MB for a source of 3.6 MB).
 - FOR blocks nested deeper than 100 are the error `FOR blocks nested too
   deep`, which also stops pass 1. Each level takes about 540 bytes of the
   64 KB stack of the wasm build (121 levels fit).

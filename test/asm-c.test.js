@@ -225,6 +225,43 @@ test('FOR blocks nest 100 deep in C', () => {
   assert.deepEqual(w.errors.map((e) => e.text), ['FOR blocks nested too deep']);
 });
 
+// Sources of a few bytes that took the assembler up to 18 s and 16 GB (#87).
+// Each must end quickly with an error that names the limit; 3 s leaves room
+// for a slow CI machine (locally each takes at most about 0.6 s).
+const LIMIT = 'pMARS has no limit here, this assembler has: FOR blocks and EQU substitutions give over 1000000 lines or 64 MB';
+const doubling = (n) => ['a0 equ 1+1', ...Array.from({ length: n }, (_, i) => `a${i + 1} equ a${i}+a${i}`)].join('\n');
+const chain = ['x0 equ 1', ...Array.from({ length: 1000 }, (_, i) => `x${i + 1} equ x${i}`)].join('\n');
+const UNBOUNDED = [
+  ['nested FOR', 'for 1000000\nfor 1000000\ndat 0\nrof\nrof\n', LIMIT],
+  ['EQU doubling', `${doubling(59)}\ndat a59\n`, 'substitution too long: more than 5332 characters without spaces'],
+  ['EQU doubling used before it is defined', `dat a59\n${doubling(59)}\n`, 'substitution too long: more than 5332 characters without spaces'],
+  ['an EQU instruction in nested FOR', 'x equ dat 0\nfor 100000\nfor 100000\nx\nrof\nrof\n', LIMIT],
+  ['nested FOR around an empty line', 'for 60000\nfor 60000\n\nrof\nrof\ndat 0\n', LIMIT],
+  ['nested FOR after a FOR around ;strategy', 'for 60000\n;strategy x\nrof\nfor 60000\nfor 60000\n\nrof\nrof\ndat 0\n', LIMIT],
+  ['a chain of 1000 EQU names in nested FOR', `${chain}\nfor 1000\nfor 1000\ndat x1000\nrof\nrof\n`, LIMIT],
+  ['one FOR of 2000000000', 'for 2000000000\ndat 0\nrof\n', 'too many instructions (37888, limit 100)'],
+];
+for (const [name, src, text] of UNBOUNDED) {
+  test(`the assembler's work is bounded: ${name}`, () => {
+    const t = performance.now();
+    const w = assembleWasm(src);
+    const ms = performance.now() - t;
+    assert.equal(w.ok, false);
+    assert.ok(w.errors.some((e) => e.text === text), JSON.stringify(w.errors.slice(0, 3)));
+    assert.ok(ms < 3000, `${ms.toFixed(0)} ms`);
+  });
+}
+
+test('continued lines take linear time', () => {
+  // Each continued line searched the whole logical line for `;` again: 1 MB
+  // of `a\` lines took 11 s natively (#87).
+  const t = performance.now();
+  const w = assembleWasm('a\\\n'.repeat(500000));
+  const ms = performance.now() - t;
+  assert.deepEqual(w.errors.map((e) => e.text), ["unexpected '\\'"]);
+  assert.ok(ms < 3000, `${ms.toFixed(0)} ms`);
+});
+
 test('an exception inside wasm does not break later calls', () => {
   // Call the assembler with less and less JS stack left until V8 runs out
   // of stack inside the wasm code. That leaves the C stack pointer of the

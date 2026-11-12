@@ -369,6 +369,21 @@ static const char *const ICWS88_MODES[OP_ORG][2] = {
 // level takes about 540 bytes of the 64 KB stack of the wasm build, which
 // holds 121 levels.
 #define MAX_FOR_DEPTH 100
+// pMARS refuses an operand whose text after EQU substitution, without
+// whitespace, is longer ("Substitution is too complex"): an instruction
+// operand (pass 1 holds both operands of an instruction, pass 2 checks each
+// one; ORG, END and PIN take one more), and the text of a FOR count or an
+// assert (semantics doc, 2.3). The number of EQU substitutions has the same
+// limit, so that empty bodies are bounded too.
+#define MAX_OPERAND_TEXT 5332
+#define MAX_LINE_TEXT 7999
+// Lines read in pass 1, FOR repetitions and lines scanned for a ROF, and the
+// memory taken after reading the source: past either, the assembly ends with
+// an error. pMARS has no such limits (semantics doc, section 4). They bound
+// the time and memory of an assembly, which a few bytes of nested FOR blocks
+// or EQU bodies could otherwise make take hours and gigabytes (#87).
+#define MAX_WORK 1000000
+#define MAX_MEMORY ((usize)64 << 20)
 #define PMARS_VERSION 95
 
 // s equals the uppercase `up` when uppercased (ASCII).
@@ -531,6 +546,9 @@ typedef struct {
   int stopped;
   int hasAssert;
   u32 forDepth;
+  u32 work; // see MAX_WORK
+  const u8 *base; // the arena's top after reading the source, see MAX_MEMORY
+  int exhausted; // past MAX_WORK or MAX_MEMORY: both passes stop
   // pass 2
   i64 ic2;
   i64 start;
@@ -557,6 +575,28 @@ static void message(Asm *a, int isError, i32 line, Str text) {
 }
 static void error(Asm *a, i32 line, Str text) { message(a, 1, line, text); }
 static void warning(Asm *a, i32 line, Str text) { message(a, 0, line, text); }
+
+// Counts `units` of work and checks the memory taken (MAX_WORK, MAX_MEMORY).
+// Past either limit it reports the error once and stops both passes; returns
+// 0 then.
+static int work(Asm *a, i32 line, u32 units) {
+  if (a->exhausted) return 0;
+  a->work += units;
+  if (a->work < MAX_WORK && (usize)(a->A.top - a->base) <= MAX_MEMORY) return 1;
+  a->exhausted = a->stopped = 1;
+  error(a, line, S("pMARS has no limit here, this assembler has: FOR blocks and EQU substitutions give over 1000000 lines or 64 MB"));
+  return 0;
+}
+
+// Message text from up to three pieces around a quoted or plain value.
+static Str msg3(Asm *a, const char *before, Str value, const char *after);
+
+// An operand longer than pMARS allows after substitution (MAX_OPERAND_TEXT).
+static void too_long(Asm *a, i32 line, u32 limit) {
+  Buf n = {0};
+  put_i64(&a->A, &n, limit);
+  error(a, line, msg3(a, "substitution too long: more than ", buf_str(&n), " characters without spaces"));
+}
 
 // Message text from up to three pieces around a quoted or plain value.
 static Str msg3(Asm *a, const char *before, Str value, const char *after) {
@@ -769,6 +809,8 @@ static void read_source(Asm *a, Str src, Lines *out) {
     // Reads physical line i into the scratch buffer at `at`, the way pMARS
     // does: the content is the text up to the first CR, LF or NUL, which becomes 0.
     text.n = 0;
+    int semi; // a `;` in the logical line so far, kept up to date: searching
+              // the whole line again per continued line was quadratic (#87)
     {
       const Str raw = RAW(i);
       u32 end = 0;
@@ -776,11 +818,12 @@ static void read_source(Asm *a, Str src, Lines *out) {
       scratch_write(a, raw, 0, 1);
       scratch_write(a, (Str){0, 0}, end, 1);
       put(&a->A, &text, slice(raw, 0, end));
+      semi = find_byte(slice(raw, 0, end), ';') >= 0;
       i++;
     }
     // A trailing backslash joins the next physical line, unless the logical
     // line already contains a comment. The next line is read over the `\`.
-    while (text.n && text.p[text.n - 1] == '\\' && find_byte(buf_str(&text), ';') < 0 && i < physical) {
+    while (text.n && text.p[text.n - 1] == '\\' && !semi && i < physical) {
       text.n--;
       const Str raw = RAW(i);
       u32 end = 0;
@@ -788,6 +831,7 @@ static void read_source(Asm *a, Str src, Lines *out) {
       scratch_write(a, raw, text.n, 1);
       scratch_write(a, (Str){0, 0}, text.n + end, 1);
       put(&a->A, &text, slice(raw, 0, end));
+      semi = find_byte(slice(raw, 0, end), ';') >= 0;
       i++;
     }
     if (a->A.oom) return;
@@ -1098,13 +1142,19 @@ static int expand(Asm *a, Cursor *c, const Token *tok, const Def *d, Stream *s) 
 // become numbers relative to the instruction counter (absolute for ORG, END
 // and PIN), FOR counters their iteration number, EQU names their body.
 // Returns 0 after an error.
-static int operand_text(Asm *a, Cursor *c, Stream *s, int absolute, Str *out) {
+static int operand_text(Asm *a, Cursor *c, Stream *s, int absolute, u32 limit, Str *out) {
   Buf b = {0};
+  u32 expansions = 0, spaces = 0;
   for (;;) {
-    if (a->A.oom) return 0;
+    if (a->A.oom || !work(a, c->lineNo, 0)) return 0;
+    if (b.n - spaces > limit || expansions > limit) {
+      // Past 2 * 5332 + 1 for both operands, one of them is too long.
+      too_long(a, c->lineNo, limit == MAX_LINE_TEXT ? limit : MAX_OPERAND_TEXT);
+      return 0;
+    }
     const Token tok = next_token(a, c);
     if (tok.t == T_END) { *out = buf_str(&b); return 1; }
-    if (tok.t == T_SPACE) { putc_(&a->A, &b, " "); continue; }
+    if (tok.t == T_SPACE) { putc_(&a->A, &b, " "); spaces++; continue; }
     if (tok.t != T_IDENT) { put(&a->A, &b, tok.text); continue; }
     const char *kw = ieq(tok.text, "FOR") ? "FOR" : ieq(tok.text, "ROF") ? "ROF" : ieq(tok.text, "EQU") ? "EQU" : 0;
     if (kw) {
@@ -1117,11 +1167,12 @@ static int operand_text(Asm *a, Cursor *c, Stream *s, int absolute, Str *out) {
     if (str_eqc(tok.text, "CURLINE")) put_i64(&a->A, &num, a->ic);
     else if (d && d->kind == DEF_EQU) {
       if (!expand(a, c, &tok, d, s)) return 0;
+      expansions++;
       continue;
     } else if (d && d->kind == DEF_LABEL) put_i64(&a->A, &num, absolute ? d->value : d->value - a->ic);
     else if (d && d->kind == DEF_FOR) put_counter(&a->A, &num, d->value);
     else isNumber = 0;
-    if (tok.spaceAfter) putc_(&a->A, &num, " ");
+    if (tok.spaceAfter) { putc_(&a->A, &num, " "); spaces++; }
     if (!isNumber) {
       // a forward reference or register, resolved in pass 2
       put(&a->A, &b, tok.text);
@@ -1151,7 +1202,7 @@ static void opcode_line(Asm *a, Cursor *c, Str name, int op, Stream *s) {
   Buf text = {0};
   put(&a->A, &text, scratch_string(a));
   Str operands;
-  if (!operand_text(a, c, s, pseudo, &operands)) return;
+  if (!operand_text(a, c, s, pseudo, 2 * MAX_OPERAND_TEXT + 1, &operands)) return;
   define_pending_labels(a);
   put(&a->A, &text, operands);
   Statement *st = grow(&a->A, a->statements, a->nStatements, &a->capStatements, sizeof(Statement));
@@ -1201,7 +1252,7 @@ static void for_line(Asm *a, Cursor *c, Stream *s) {
   define_pending_labels(a);
 
   Str text;
-  if (!operand_text(a, c, s, 0, &text)) return;
+  if (!operand_text(a, c, s, 0, MAX_LINE_TEXT, &text)) return;
   i64 value;
   const int status = assemble_eval(a, text, c->lineNo, &value);
   if (status < 0) {
@@ -1216,6 +1267,7 @@ static void for_line(Asm *a, Cursor *c, Stream *s) {
   int found = 0;
   i32 depth = 1;
   for (const Line *line = stream_next(s); line; line = stream_next(s)) {
+    if (!work(a, line->lineNo, 1)) return;
     depth += block_delta(a, line, times == 0);
     if (depth == 0) { found = 1; break; }
     body = grow(&a->A, body, n, &cap, sizeof(Line));
@@ -1231,7 +1283,7 @@ static void for_line(Asm *a, Cursor *c, Stream *s) {
     a->stopped = 1;
     return;
   }
-  for (i64 k = 1; k <= times && !a->stopped && !a->A.oom; k++) {
+  for (i64 k = 1; k <= times && !a->stopped && !a->A.oom && work(a, c->lineNo, 1); k++) {
     if (hasCounter) define(a, counter, new_def(a, DEF_FOR, k));
     Stream inner = {body, n, 0, 0};
     process_lines(a, &inner);
@@ -1285,7 +1337,7 @@ static void statement_line(Asm *a, const Line *line, Stream *s) {
 static void assert_line(Asm *a, const Line *line, Stream *s) {
   Cursor c = cursor(line);
   Str text;
-  if (!operand_text(a, &c, s, 0, &text)) return;
+  if (!operand_text(a, &c, s, 0, MAX_LINE_TEXT, &text)) return;
   i64 value;
   const int status = assemble_eval(a, text, line->lineNo, &value);
   if (status < 0) {
@@ -1300,7 +1352,7 @@ static void assert_line(Asm *a, const Line *line, Stream *s) {
 static void process_lines(Asm *a, Stream *s) {
   while (!a->stopped && !a->A.oom) {
     const Line *line = stream_next(s);
-    if (!line) return;
+    if (!line || !work(a, line->lineNo, 1)) return;
     if (line->assert) assert_line(a, line, s);
     else statement_line(a, line, s);
   }
@@ -1331,6 +1383,7 @@ typedef struct {
   STok peeked;
   int hasPeeked;
   int raw; // reading the opcode and modifier: no EQU expansion
+  u32 expansions; // EQU substitutions in the current expression
 } STokens;
 
 static STok st_read(Asm *a, STokens *ts) {
@@ -1356,6 +1409,7 @@ static STok st_read(Asm *a, STokens *ts) {
         *act = (Active){name, top->active};
         ts->stack = st;
         st[ts->n++] = (Frame){d->body[0].text, 0, act};
+        ts->expansions++;
         // Like a label value, the body stays apart from the text before it.
         space = 1;
         continue;
@@ -1390,7 +1444,15 @@ static int is_char(STok t, char c) { return t.text.n == 1 && t.text.p[0] == (u8)
 // Returns 0 after an error.
 static int st_expression(Asm *a, STokens *ts, int absolute, i32 line, int stopAtComma, Str *out) {
   Buf b = {0};
+  u32 spaces = 0;
+  const u32 limit = absolute ? MAX_OPERAND_TEXT + 1 : MAX_OPERAND_TEXT;
+  ts->expansions = 0;
   for (;;) {
+    if (!work(a, line, 0)) return 0;
+    if (b.n - spaces > limit || ts->expansions > limit) {
+      too_long(a, line, limit);
+      return 0;
+    }
     const STok t = st_peek(a, ts);
     if (t.t == S_END) { *out = buf_str(&b); return 1; }
     if (is_char(t, ',')) {
@@ -1400,7 +1462,7 @@ static int st_expression(Asm *a, STokens *ts, int absolute, i32 line, int stopAt
     }
     st_next(a, ts);
     if (t.t == S_ERROR) { error(a, line, t.text); return 0; }
-    if (b.n && t.space) putc_(&a->A, &b, " ");
+    if (b.n && t.space) { putc_(&a->A, &b, " "); spaces++; }
     if (t.t == S_CHAR && t.text.n == 1 && find_byte(S("#$@{}."), t.text.p[0]) >= 0) {
       error(a, line, msg3(a, "unexpected '", t.text, "' in expression"));
       return 0;
@@ -1409,7 +1471,7 @@ static int st_expression(Asm *a, STokens *ts, int absolute, i32 line, int stopAt
     if (t.def && t.def->kind == DEF_LABEL) {
       // pMARS keeps a label value apart from the text before it: `2x` with
       // x = 1 is the bad expression `2 1`, not 21.
-      if (b.n && !t.space) putc_(&a->A, &b, " ");
+      if (b.n && !t.space) { putc_(&a->A, &b, " "); spaces++; }
       put_i64(&a->A, &b, absolute ? t.def->value : t.def->value - a->ic2);
     } else if (!t.def && t.text.n == 1) {
       put(&a->A, &b, t.text); // register
@@ -1584,6 +1646,7 @@ static AsmResult *assemble(void *mem, usize size, const u8 *src, usize len, cons
 
   Lines lines = {0};
   read_source(a, (Str){src, (u32)len}, &lines);
+  a->base = a->A.top;
 
   // pass 1
   const struct { const char *name; i64 value; } predefined[] = {
@@ -1619,7 +1682,7 @@ static AsmResult *assemble(void *mem, usize size, const u8 *src, usize len, cons
   // pass 2. pMARS accepts a warrior without instructions with a warning. It
   // skips pass 2 then, so ORG, END and PIN statements are not even checked.
   if (a->ic == 0) warning(a, 0, S("no instructions"));
-  else for (u32 i = 0; i < a->nStatements && !a->A.oom; i++) parse_statement(a, &a->statements[i]);
+  else for (u32 i = 0; i < a->nStatements && !a->A.oom && !a->exhausted; i++) parse_statement(a, &a->statements[i]);
 
   if (a->ic > a->o.maxLength) {
     Buf b = {0};
