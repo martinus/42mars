@@ -14,7 +14,7 @@
 import { after } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 
 const RECORD = Boolean(process.env.RECORD_FIXTURES);
 
@@ -46,15 +46,17 @@ export class Digest {
   }
 }
 
-export const digest = (value) => new Digest().add(value).digest();
+const digest = (value) => new Digest().add(value).digest();
 
 // The recorded digests of fixture `file`. check(name, results, per) compares
 // a list of [what, digest or value] pairs with the recording, one digest per
 // group of `per`; a difference names the first `what` of its group.
 export function recorded(file) {
   const url = new URL(`./fixtures/${file}`, import.meta.url);
-  const want = RECORD ? {} : JSON.parse(readFileSync(url, 'utf8'));
-  const got = {};
+  const want = RECORD && !existsSync(url) ? {} : JSON.parse(readFileSync(url, 'utf8'));
+  // Recording replaces the groups of the checks that ran and keeps the
+  // others (a run with --test-name-pattern records only those tests).
+  const got = { ...want };
   if (RECORD) after(() => writeFileSync(url, `${JSON.stringify(got, null, '\t')}\n`));
   return function check(name, results, per = 1) {
     const groups = [];

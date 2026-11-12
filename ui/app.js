@@ -74,6 +74,7 @@ const state = {
   lastSource: 0,
   arcs: [],
   tracker: null,
+  execHeat: [], // per warrior { heat, seen }: the source panel's decaying execution counts
   lastTrace: 0,
   stances: [],
   firstHits: new Set(),
@@ -267,7 +268,7 @@ function consumeEvents(now) {
       kills++;
       state.shocks.push({ addr: e.addr, warrior: e.warrior, born: now, dur: 0.6, big: false });
     }
-    const killer = m.op[e.addr] >> 3 === OP.DAT ? owner[e.addr] - 1 : -1;
+    const killer = m.core().op[e.addr] >> 3 === OP.DAT ? owner[e.addr] - 1 : -1;
     const key = `${killer}>${e.warrior}`;
     if (killer >= 0 && killer !== e.warrior && !state.firstHits.has(key)) {
       state.firstHits.add(key);
@@ -305,13 +306,12 @@ function updateTextures() {
     B[j + 2] = 0;
     B[j + 3] = readBy[i] | ((bump[i] + 1) << 4) | (state.footprints ? 64 : 0);
   }
+  // every process, and the one that runs next with bit 7
+  const current = m.roundOver ? -1 : m.current;
   for (const w of m.warriors) {
-    for (const a of w.queue()) B[a * 4 + 2] = w.index + 1;
-  }
-  if (!m.roundOver) {
-    const c = m.warriors[m.current];
-    const next = c.queue();
-    if (next.length) B[next[0] * 4 + 2] = (c.index + 1) | 128;
+    const q = w.queue();
+    for (let k = 0; k < q.length; k++) B[q[k] * 4 + 2] = w.index + 1;
+    if (w.index === current && q.length) B[q[0] * 4 + 2] |= 128;
   }
   renderer.upload(A, B, n);
 }
@@ -359,7 +359,9 @@ const who = (i) => `<b style="color:${PALETTE_HEX[i % 8]}">${esc(state.mars.warr
 function consumeTrace(now) {
   const m = state.mars;
   const time = m.time;
-  const size = m.watch().trace.length / 4;
+  const { trace, origin } = m.watch();
+  const cells = { op: m.core().op, origin }; // what the activity tracker looks at
+  const size = trace.length / 4;
   if (time < state.lastTrace) state.lastTrace = 0;
   const from = Math.max(state.lastTrace + 1, time - size + 1, 1);
   const speed = SPEEDS[state.speedIdx];
@@ -367,8 +369,8 @@ function consumeTrace(now) {
   const life = slow ? 1.8 : speed <= 2500 ? 0.9 : 0.45;
   const arcStart = Math.max(from, time - (slow ? 59 : 24));
   for (let t = from; t <= time; t++) {
-    const e = traceEntry(m, t);
-    state.tracker.add(m, e);
+    const e = traceEntry(trace, t);
+    state.tracker.add(cells, e);
     if (t < arcStart) continue;
     const far = (x) => distance(x, e.pc, m.coreSize) > (slow ? 0 : 1);
     const arc = (to, kind) => state.arcs.push({ from: e.pc, to, kind, warrior: e.warrior, born: now, life, t });
@@ -381,11 +383,12 @@ function consumeTrace(now) {
   }
   state.lastTrace = time;
   state.tracker.decay(0.985);
-  state.arcs = state.arcs.filter((a) => held(a, m) || now - a.born < a.life * 1000).slice(-260);
+  state.arcs = state.arcs.filter((a) => held(a, time) || now - a.born < a.life * 1000).slice(-260);
 }
 
-// While paused, the lines of the last instruction stay until the next step.
-const held = (a, m) => !state.running && a.t === m.time;
+// While paused, the lines of the last instruction (at `time`) stay until
+// the next step.
+const held = (a, time) => !state.running && a.t === time;
 
 function explaining() {
   const m = state.mars;
@@ -396,7 +399,7 @@ function drawOverlay(now) {
   const m = state.mars;
   const tags = [];
   if (explaining()) {
-    const e = traceEntry(m, m.time);
+    const e = traceEntry(m.watch().trace, m.time);
     const col = PALETTE_HEX[e.warrior % 8];
     tags.push({ addr: e.pc, text: 'PC', color: col });
     const ins = m.cell(e.pc);
@@ -417,14 +420,15 @@ function drawOverlay(now) {
     $('explainer').hidden = true;
     state.explained = -1;
   }
-  const arcs = state.arcs.map((a) => ({ ...a, age: held(a, m) ? 0 : Math.min(1, (now - a.born) / (a.life * 1000)) }));
+  const time = m.time;
+  const arcs = state.arcs.map((a) => ({ ...a, age: held(a, time) ? 0 : Math.min(1, (now - a.born) / (a.life * 1000)) }));
   let focus = null;
   if (state.focus && now - state.focus.born < 2500) focus = { addr: state.focus.addr, phase: (now - state.focus.born) / 1000 };
   overlay.draw({ L: state.layout, m, arcs, tags, colors: PALETTE_CSV, dpr: state.dpr, focus, cellText: true });
 }
 
 function deathCause(m, e) {
-  const op = m.op[e.addr] >> 3;
+  const op = m.core().op[e.addr] >> 3;
   if (op === OP.DIV || op === OP.MOD) return `divided by zero at ${pad4(e.addr)}`;
   const owner = m.watch().owner[e.addr] - 1;
   if (owner < 0) return `ran into empty core at ${pad4(e.addr)}`;
@@ -656,7 +660,7 @@ function updateSourceHeat() {
   const { origin } = m.watch();
   m.warriors.forEach((w, i) => {
     const card = cards[i];
-    if (!card || !state.execHeat) return;
+    if (!card) return;
     const ins = w.code.instructions;
     const byLine = new Map();
     let max = 0;

@@ -63,10 +63,10 @@ function distance(a, b, n) {
   return Math.min(d, n - d);
 }
 
-// One trace entry of the engine's watch as an object: 4 numbers per entry
-// (pc, A pointer, B pointer, meta), instruction t at entry t % entries.
-export function traceEntry(m, t) {
-  const { trace } = m.watch();
+// One entry of the trace of the engine's watch (`watch().trace`) as an
+// object: 4 numbers per entry (pc, A pointer, B pointer, meta), instruction
+// t at entry t % entries.
+export function traceEntry(trace, t) {
   const k = 4 * (t % (trace.length / 4));
   const meta = trace[k + 3];
   const opByte = (meta >> 8) & 0xff;
@@ -179,7 +179,8 @@ export class ActivityTracker {
     this.lastSource = new Int32Array(warriors).fill(-1);
   }
 
-  classify(m, e) {
+  // cells: { op, origin }, the engine's core().op and watch().origin.
+  classify(cells, e) {
     const n = this.n;
     const FAR = this.far;
     if (e.op === OP.SPL) return ACT.split;
@@ -193,8 +194,8 @@ export class ActivityTracker {
           // Copying moves through the source, bombing reuses one source cell.
           const sameSource = e.a === this.lastSource[e.warrior];
           this.lastSource[e.warrior] = e.a;
-          const isDat = m.core().op[e.b] >> 3 === OP.DAT;
-          const org = m.watch().origin[e.a];
+          const isDat = cells.op[e.b] >> 3 === OP.DAT;
+          const org = cells.origin[e.a];
           const ownCode = org >= 0 && (org >> 16) === e.warrior && distance(e.a, e.pc, n) <= 100;
           if (e.mod === 6 && !isDat && ownCode && !sameSource) return ACT.copy;
           return near ? ACT.clear : ACT.bomb;
@@ -214,9 +215,9 @@ export class ActivityTracker {
     return ACT.loop;
   }
 
-  add(m, e) {
+  add(cells, e) {
     if (e.died || e.warrior >= this.mix.length) return;
-    this.mix[e.warrior][this.classify(m, e)] += 1;
+    this.mix[e.warrior][this.classify(cells, e)] += 1;
   }
 
   decay(f) {

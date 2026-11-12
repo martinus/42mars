@@ -19,12 +19,20 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { compileWasmMars, createWasmMarsSync, assembleWasm as assemble } from '../wasm/42mars.js';
 
+if (process.argv.includes('--headless')) {
+  console.error('--headless: the JavaScript simulator is gone (#76)');
+  process.exit(2);
+}
 const flags = ['--watch', '--wasm-match', '--wasm'];
 const earlyTie = process.argv.includes('--early-tie');
 const args = process.argv.slice(2).filter((a) => !flags.includes(a) && a !== '--early-tie');
 const mode = flags.find((f) => process.argv.includes(f)) ?? '--wasm';
 const dir = args[0];
 const ROUNDS = Number(args[1] || 200);
+if (!dir || !(Number.isInteger(ROUNDS) && ROUNDS > 0)) {
+  console.error('usage: node tools/bench.mjs <dir> [rounds] [--watch | --wasm-match [--early-tie]]');
+  process.exit(2);
+}
 const pairs = [['agony.red', 'bubbles.red'], ['bomber.red', 'chalk.red'], ['army.red', 'bananasplit.red']];
 const module = await compileWasmMars(); // also the assembler
 const codes = pairs.map((pair) => pair.map((f) => assemble(readFileSync(join(dir, f), 'latin1'))));

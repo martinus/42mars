@@ -61,7 +61,7 @@ Say the grouping and the order, one line each.
 
 ### 2. Reproduce or re-measure before you change anything
 
-- **A bug**: write the smallest warrior that shows it and run it on `$O/bin/pmars` and on our engines (`tools/pmars-diff.mjs`, `tools/asm.mjs`). The report's cause is a guess until you have seen it.
+- **A bug**: write the smallest warrior that shows it and run it on `$O/bin/pmars` and on our engine (`tools/pmars-diff.mjs`, `tools/asm.mjs`). The report's cause is a guess until you have seen it.
 - **A speed issue**: the numbers in the issue are from the day it was filed. Measure the baseline again on an idle machine (`perf-experiment` skill). If the issue says "measure first, stop if small", that measurement is the first deliverable: a PR with only the log entry, and the issue closed with the numbers, is a complete result.
 
 ### 3. Ask before you build, never after
