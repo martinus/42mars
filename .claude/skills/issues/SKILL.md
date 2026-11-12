@@ -100,8 +100,9 @@ Grep before adding a rule (`grep -rn <symbol> CLAUDE.md .claude/`): extend the b
 - `/code-review` before a PR that touches the instruction loops, an early-tie proof, the queue or cell layout, or the clean-room hook, or whose diff runs past a few hundred lines.
 - For an exactness argument (e.g. "B-operand side effects never change an instruction word"), an agent asked to find the warrior that breaks it, given only the claim and the diff. It shares your worktree: commit your work first (a local WIP commit, squashed before the push), and tell it to build mutants from copies and never run `git checkout` or `git restore` on tracked files.
 - `/simplify` after a pass that added a lot of code.
+- Review agents start without this session's context: write the diff to a file in the scratchpad (`git diff origin/main -- . ':!wasm/42mars.wasm' ':!test/fixtures/*.json'`), and give every agent the clean-room constraints of `CLAUDE.md` and the hot-loop constraint of `.claude/rules/wasm.md` in its prompt. In #78 the altitude agent of `/simplify` found the real bug (a random generator shared by recorded tests); the others found cleanups.
 
-Fix what they find before the push; say which you ran.
+Fix what they find before the push; say which you ran and what you skipped, with the reason.
 
 ### 7. engine-check, push, watch CI
 
