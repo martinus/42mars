@@ -767,12 +767,12 @@ static void read_source(Asm *a, Str src, Lines *out) {
   while (i < physical && !a->A.oom) {
     const i32 lineNo = (i32)i + 1;
     // Reads physical line i into the scratch buffer at `at`, the way pMARS
-    // does: the content is the text up to the first CR or LF, which becomes 0.
+    // does: the content is the text up to the first CR, LF or NUL, which becomes 0.
     text.n = 0;
     {
       const Str raw = RAW(i);
       u32 end = 0;
-      while (end < raw.n && raw.p[end] != '\r' && raw.p[end] != '\n') end++;
+      while (end < raw.n && raw.p[end] != '\r' && raw.p[end] != '\n' && raw.p[end]) end++;
       scratch_write(a, raw, 0, 1);
       scratch_write(a, (Str){0, 0}, end, 1);
       put(&a->A, &text, slice(raw, 0, end));
@@ -784,7 +784,7 @@ static void read_source(Asm *a, Str src, Lines *out) {
       text.n--;
       const Str raw = RAW(i);
       u32 end = 0;
-      while (end < raw.n && raw.p[end] != '\r' && raw.p[end] != '\n') end++;
+      while (end < raw.n && raw.p[end] != '\r' && raw.p[end] != '\n' && raw.p[end]) end++;
       scratch_write(a, raw, text.n, 1);
       scratch_write(a, (Str){0, 0}, text.n + end, 1);
       put(&a->A, &text, slice(raw, 0, end));
@@ -1522,8 +1522,10 @@ static void parse_statement(Asm *a, const Statement *stmt) {
   if (!ts.stack) return;
   ts.stack[ts.n++] = first;
   ts.raw = 1;
-  const int op = opcode_of(st_next(a, &ts).text);
+  const STok optok = st_next(a, &ts);
+  const int op = opcode_of(optok.text);
   ts.raw = 0;
+  if (op < 0) { error(a, line, msg3(a, "bad opcode '", optok.text, "'")); return; }
   int mod = -2; // none given
   if (is_char(st_peek(a, &ts), '.')) {
     st_next(a, &ts);

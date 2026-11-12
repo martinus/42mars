@@ -23,12 +23,15 @@ after(() => rmSync(tmp, { recursive: true, force: true }));
 const bin = program(prebuilt ?? tmp, '42mars');
 
 // P/: a PIN, an ORG, negative values and A-field modes; a source with an
-// error; a warrior that dies.
+// error; a warrior that dies; NUL bytes.
 writeFileSync(join(tmp, 'pinny.red'), ';name pinny\n pin 77\n org 2\n dat -1, 7999\n spl.b #-3, }5\nfoo jmp foo\n end\n');
 writeFileSync(join(tmp, 'broken.red'), ' mov 0\n');
 writeFileSync(join(tmp, 'die.red'), ' dat 0\n'); // alone, it dies in every round
 // registers: pMARS assembles the first warrior with what its score formula check leaves
 writeFileSync(join(tmp, 'regs.red'), ';name regs\n dat #w, #s\n dat #x, #a\n jmp 0\n');
+// A NUL byte ends the line content (#85); after an opcode, pMARS gives a syntax error.
+writeFileSync(join(tmp, 'nul.red'), 'mov\0 i b,k\ndat 5\n');
+writeFileSync(join(tmp, 'nulline.red'), ';name a\0b\ndat 1\0 garbage here\nmov 0,1\n');
 
 before(() => (prebuilt || skip ? undefined : promisify(execFile)('cc', ['-O2', '-o', bin, join(root, 'cli/42mars.c'), join(root, 'lib/42mars.c')])));
 

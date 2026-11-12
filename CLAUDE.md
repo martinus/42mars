@@ -93,7 +93,7 @@ The layout (also in `README.md` and `docs/development.md`; change all three toge
 ## Gotchas
 
 - Read large files with the Read tool in parts, not `cat`: oversized Bash output lands in the session's tool-results folder, which the clean-room hook blocks.
-- The hook refuses readers (`cat`, `grep`, `sed`, `strings`, the Read tool) on a path inside a folder whose name starts with `pmars`, `exmars` or `exhaust` (the `pmars-diff-*` temporary folder, `$O/bin/pmars`) and on `tasks/*.output`. Our own files that mention pMARS (`tools/pmars-diff.mjs`, the docs, result files) read and grep fine.
+- The hook refuses readers (`cat`, `grep`, `sed`, `strings`, the Read tool) on a path inside a folder whose name starts with `pmars`, `exmars` or `exhaust` (the `pmars-diff-*` temporary folder, `$O/bin/pmars`) and on `tasks/*.output`. Our own files that mention pMARS (`tools/pmars-diff.mjs`, the docs, result files) read and grep fine, unless `;` or `&` follows the name directly (`sed -n 1,9p test/pmars-quirks.test.js;` is refused): put a space before it.
 - The engine's `current` is an index, 0 is a valid warrior: test `m.current >= 0`, not `m.current &&`.
 - pMARS never returns on some inputs (semantics doc, section 4): always run it with a timeout.
 - Never compare a timing with a number from the log or another session: the same `42mars.wasm` ran the bench at 310M/s in one session and 359M/s in the next (10th November 2026). Measure the baseline again, alternating.

@@ -29,4 +29,10 @@
 {"args":"-r 0 P/regs.red P/regs.red","code":0,"stdout":"Program \"regs\" (length 3) by \"Anonymous\"\n\n       ORG      START\nSTART  DAT.F  #     2, #     2     \n       DAT.F  #     0, #     0     \n       JMP.B  $     0, $     0     \n\nProgram \"regs\" (length 3) by \"Anonymous\"\n\n       ORG      START\nSTART  DAT.F  #     0, #     0     \n       DAT.F  #     0, #     0     \n       JMP.B  $     0, $     0     \n\n"},
 {"args":"-A -= x=x+5 P/regs.red W/imp.red P/regs.red","code":0,"stdout":"       ORG          0\n       DAT.F  #     3, #     3     \n       DAT.F  #    15, #     0     \n       JMP.B  $     0, $     0     \n       END\n       ORG          0\n       MOV.I  $     0, $     1     \n       END\n       ORG          0\n       DAT.F  #     0, #     0     \n       DAT.F  #     0, #     0     \n       JMP.B  $     0, $     0     \n       END\n"},
 {"args":"-r 0 -= w=w+10 P/regs.red P/regs.red","code":0,"stdout":"Program \"regs\" (length 3) by \"Anonymous\"\n\n       ORG      START\nSTART  DAT.F  #    22, #     2     \n       DAT.F  #     0, #     0     \n       JMP.B  $     0, $     0     \n\nProgram \"regs\" (length 3) by \"Anonymous\"\n\n       ORG      START\nSTART  DAT.F  #     0, #     0     \n       DAT.F  #     0, #     0     \n       JMP.B  $     0, $     0     \n\n"}
+,
+{"args":"-r 0 P/nul.red","code":3,"stdout":""},
+{"args":"-8 -r 0 P/nul.red","code":3,"stdout":""},
+{"args":"-b -r 2 P/nul.red W/imp.red","code":3,"stdout":""},
+{"args":"-r 0 P/nulline.red","code":0,"stdout":"Program \"a\" (length 2) by \"Anonymous\"\n\n       ORG      START\nSTART  DAT.F  #     0, $     1     \n       MOV.I  $     0, $     1     \n\n"},
+{"args":"-8 -r 0 P/nulline.red","code":3,"stdout":""}
 ]
