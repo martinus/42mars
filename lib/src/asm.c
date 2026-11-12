@@ -476,10 +476,17 @@ typedef struct {
 typedef struct Active {
   Str name;
   const struct Active *next;
+  u8 start; // expanded at the statement start (label position)
 } Active;
 
 static int active_has(const Active *a, Str name) {
   for (; a; a = a->next) if (str_eq(a->name, name)) return 1;
+  return 0;
+}
+
+// Text expanded from `set` reads, through nested expansions, as `a`.
+static int active_within(const Active *a, const Active *set) {
+  for (; a; a = a->next) if (a == set) return 1;
   return 0;
 }
 
@@ -1133,14 +1140,14 @@ static void process_lines(Asm *a, Stream *s);
 // Substitutes an EQU body at the cursor. A multi-line body ends the current
 // line after its first line; the other lines follow as lines of their own,
 // the last one continued by the rest of the use-site line.
-static int expand(Asm *a, Cursor *c, const Token *tok, const Def *d, Stream *s) {
+static int expand(Asm *a, Cursor *c, const Token *tok, const Def *d, Stream *s, int start) {
   if (active_has(tok->active, tok->text)) {
     error(a, c->lineNo, msg3(a, "recursive EQU '", tok->text, "'"));
     return 0;
   }
   Active *act = aalloc(&a->A, sizeof(Active));
   if (!act) return 0;
-  *act = (Active){tok->text, tok->active};
+  *act = (Active){tok->text, tok->active, (u8)start};
   const Part space = {{0, 0}, 0, 1};
   const u32 ns = tok->spaceAfter ? 1 : 0;
   if (d->nBody == 1) {
@@ -1172,13 +1179,24 @@ static int expand(Asm *a, Cursor *c, const Token *tok, const Def *d, Stream *s) 
   return 1;
 }
 
+static void define_pending_labels(Asm *a);
+
 // Builds the operand text after an opcode, FOR or in an assert. Labels
 // become numbers relative to the instruction counter (absolute for ORG, END
 // and PIN), FOR counters their iteration number, EQU names their body.
-// Returns 0 after an error.
-static int operand_text(Asm *a, Cursor *c, Stream *s, int absolute, u32 limit, Str *out) {
+// Returns 0 after an error, else 1, or 2 when the statement was counted early.
+//
+// `ins` is the expansion the opcode came from, if it began at the statement
+// start (else 0: source text, FOR, assert, an EQU in an operand).
+// After its end the statement counts as done, as in pMARS: the pending labels
+// get their value, a real opcode (`counted`) increments the instruction
+// counter, and labels in the rest of the line are relative also for ORG, END
+// and PIN (semantics doc, 2.3, EQU). No out parameter: one more local in the
+// FOR recursion's frame took 100 nested FOR blocks past the C stack.
+static int operand_text(Asm *a, Cursor *c, Stream *s, int absolute, u32 limit, Str *out, const Active *ins, int counted) {
   Buf b = {0};
   u32 expansions = 0, spaces = 0;
+  int done = 1;
   for (;;) {
     if (a->A.oom || !work(a, c->lineNo, 0)) return 0;
     if (b.n - spaces > limit || expansions > limit) {
@@ -1187,9 +1205,16 @@ static int operand_text(Asm *a, Cursor *c, Stream *s, int absolute, u32 limit, S
       return 0;
     }
     const Token tok = next_token(a, c);
-    if (tok.t == T_END) { *out = buf_str(&b); return 1; }
+    if (tok.t == T_END) { *out = buf_str(&b); return done; }
     if (tok.t == T_SPACE) { putc_(&a->A, &b, " "); spaces++; continue; }
     if (tok.t != T_IDENT) { put(&a->A, &b, tok.text); continue; }
+    if (ins && !active_within(tok.active, ins)) {
+      ins = 0;
+      define_pending_labels(a);
+      if (counted) a->ic++;
+      absolute = 0;
+      done = 2;
+    }
     const char *kw = ieq(tok.text, "FOR") ? "FOR" : ieq(tok.text, "ROF") ? "ROF" : ieq(tok.text, "EQU") ? "EQU" : 0;
     if (kw) {
       error(a, c->lineNo, msg3(a, kw, (Str){0, 0}, " not allowed here"));
@@ -1200,7 +1225,7 @@ static int operand_text(Asm *a, Cursor *c, Stream *s, int absolute, u32 limit, S
     int isNumber = 1;
     if (str_eqc(tok.text, "CURLINE")) put_i64(&a->A, &num, a->ic);
     else if (d && d->kind == DEF_EQU) {
-      if (!expand(a, c, &tok, d, s)) return 0;
+      if (!expand(a, c, &tok, d, s, 0)) return 0;
       expansions++;
       continue;
     } else if (d && d->kind == DEF_LABEL) put_i64(&a->A, &num, absolute ? d->value : d->value - a->ic);
@@ -1224,7 +1249,7 @@ static void define_pending_labels(Asm *a) {
   a->nPending = 0;
 }
 
-static void opcode_line(Asm *a, Cursor *c, Str name, int op, Stream *s) {
+static void opcode_line(Asm *a, Cursor *c, Str name, int op, const Active *ins, Stream *s) {
   const int pseudo = op >= OP_ORG;
   // Characters glued to the opcode are stored right behind it in the scratch
   // buffer, followed by a space and a 0 byte if whitespace follows, else by
@@ -1236,14 +1261,19 @@ static void opcode_line(Asm *a, Cursor *c, Str name, int op, Stream *s) {
   Buf text = {0};
   put(&a->A, &text, scratch_string(a));
   Str operands;
-  if (!operand_text(a, c, s, pseudo, 2 * MAX_OPERAND_TEXT + 1, &operands)) return;
+  const i64 ic = a->ic;
+  const int done = operand_text(a, c, s, pseudo, 2 * MAX_OPERAND_TEXT + 1, &operands, ins, !pseudo);
+  if (!done) {
+    a->ic = ic; // the counter stays the number of statements
+    return;
+  }
   define_pending_labels(a);
   put(&a->A, &text, operands);
   Statement *st = grow(&a->A, a->statements, a->nStatements, &a->capStatements, sizeof(Statement));
   if (!st) return;
   a->statements = st;
   st[a->nStatements++] = (Statement){buf_str(&text), c->lineNo, (u8)pseudo};
-  if (!pseudo) a->ic++;
+  if (!pseudo && done == 1) a->ic++;
   if (op == OP_END) a->stopped = 1;
 }
 
@@ -1286,7 +1316,7 @@ static void for_line(Asm *a, Cursor *c, Stream *s) {
   define_pending_labels(a);
 
   Str text;
-  if (!operand_text(a, c, s, 0, MAX_LINE_TEXT, &text)) return;
+  if (!operand_text(a, c, s, 0, MAX_LINE_TEXT, &text, 0, 0)) return;
   i64 value;
   const int status = assemble_eval(a, text, c->lineNo, &value);
   if (status < 0) {
@@ -1365,7 +1395,12 @@ static void statement_line(Asm *a, const Line *line, Stream *s) {
     }
 
     const int op = opcode_of(tok.text);
-    if (op >= 0) { opcode_line(a, &c, tok.text, op, s); return; }
+    if (op >= 0) {
+      // Only an expansion at the statement start counts the statement early:
+      // the last body line of a multi-line EQU in an operand does not.
+      opcode_line(a, &c, tok.text, op, tok.active && tok.active->start ? tok.active : 0, s);
+      return;
+    }
     if (ieq(tok.text, "EQU")) { equ_line(a, &c, s); return; }
     if (ieq(tok.text, "FOR")) { for_line(a, &c, s); return; }
     if (ieq(tok.text, "ROF")) {
@@ -1380,7 +1415,7 @@ static void statement_line(Asm *a, const Line *line, Stream *s) {
 
     const Def *d = lookup(a, tok.text);
     if (d && d->kind == DEF_EQU) {
-      if (!expand(a, &c, &tok, d, s)) return;
+      if (!expand(a, &c, &tok, d, s, 1)) return;
       continue;
     }
     if (d) {
@@ -1397,7 +1432,7 @@ static void statement_line(Asm *a, const Line *line, Stream *s) {
 static void assert_line(Asm *a, const Line *line, Stream *s) {
   Cursor c = cursor(line);
   Str text;
-  if (!operand_text(a, &c, s, 0, MAX_LINE_TEXT, &text)) return;
+  if (!operand_text(a, &c, s, 0, MAX_LINE_TEXT, &text, 0, 0)) return;
   i64 value;
   const int status = assemble_eval(a, text, line->lineNo, &value);
   if (status < 0) {
@@ -1466,7 +1501,7 @@ static STok st_read(Asm *a, STokens *ts) {
         Active *act = aalloc(&a->A, sizeof(Active));
         Frame *st = grow(&a->A, ts->stack, ts->n, &ts->cap, sizeof(Frame));
         if (!act || !st) return (STok){S_END, {(const u8 *)"", 0}, space, 0};
-        *act = (Active){name, top->active};
+        *act = (Active){name, top->active, 0};
         ts->stack = st;
         st[ts->n++] = (Frame){d->body[0].text, 0, act};
         ts->expansions++;

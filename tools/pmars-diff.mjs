@@ -349,9 +349,20 @@ function randomSource() {
   if (rand(2)) lines.push(`k equ ${rand(7)}+${rand(3)}`);
   else lines.push('k equ 3');
   for (let i = rand(8) + 1; i > 0; i--) {
-    const r = rand(13);
+    const r = rand(15);
     if (r === 0) lines.push(`n${i} for ${rand(4)}`, `  ${ins()}`, `${label()} ${ins()}`, 'rof');
     else if (r === 1) lines.push(`m${i} equ ${ins()}`, `${label()} m${i}`);
+    else if (r >= 13) {
+      // An EQU name at the statement start whose body holds the opcode, with
+      // labels and CURLINE in the rest of the line (#116).
+      const e = `e${i}`, op = `${pick(OPS)}${pick(MODS)}`;
+      const form = rand(5);
+      if (form === 0) lines.push(`${e} equ ${op}`, `${label()} ${e} ${operand()}, ${operand()}`);
+      else if (form === 1) lines.push(`${e} equ ${op} ${operand()},`, `${label()} ${e} ${operand()}`);
+      else if (form === 2) lines.push(`${e} equ ${op} ${operand()}`, `${label()} ${e} ${pick(['-', '+'])}${val()}, ${operand()}`);
+      else if (form === 3) lines.push(`${e} equ dat 0`, `    equ ${op}`, `${label()} ${e} ${operand()}, ${operand()}`);
+      else lines.push(`${e}a equ ${op}`, `${e} equ ${e}a ${operand()},`, `${label()} ${e} ${operand()}`);
+    }
     else if (r === 2) lines.push(`${label()}`);
     else if (r === 3) lines.push(pick(['', '; a comment', ';strategy some words ', `;${pick(labels)}`]));
     else if (r === 4) lines.push('for 0', `${pick(labels)} ${pick(['', pick(labels), 'equ 1', 'dat 1', ';x'])}`, 'rof');
