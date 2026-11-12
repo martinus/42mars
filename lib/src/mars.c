@@ -540,7 +540,7 @@ M42_FORCE_INLINE int exec_core(Mars *const m, const u32 n, const u32 mask, const
     // SUB: target minus source
 #define SUBM(t, s) ((t) >= (s) ? (t) - (s) : (t) + n - (s))
     case 020: B->a = (u16)SUBM(BA, AA); break;
-    case 021: B->b = (u16)SUBM(BB, AB); break;
+    case 021: B->b = (u16)SUBM(AB, BB); break;
     case 022: B->b = (u16)SUBM(BB, AA); break;
     case 023: B->a = (u16)SUBM(BA, AB); break;
     case 024: case 026: r = BAB; set_ab(B, SUBM(r & 0xffff, AA) | SUBM(r >> 16, AB) << 16); break;
