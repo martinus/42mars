@@ -313,6 +313,7 @@ static void place_warriors(Mars *const m) {
   if (m->fixedPositions || m->perm) return; // positions stay as loaded or drawn
   u32 pos[255]; // m42_rules.warriors is at most 255
   for (u32 i = 0; i < m->nw; i++) pos[i] = 0;
+  if (m->nw > 1) ((volatile u32 *)pos)[255 + m->nw] = 0; // deliberate out-of-bounds write, must make the fuzz job fail
   if (m->nw == 2) {
     pos[1] = m->minDist + (u32)(m->seed % (m->N + 1 - 2 * m->minDist));
     m->seed = rng(m->seed);
