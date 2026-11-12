@@ -96,7 +96,7 @@ export type EvalStatus = 0 | 1 | -1 | -2;
 export interface LoadOptions {
   /** Non-negative safe integer; random when left out. Same as pmars -F for the first round. */
   seed?: number;
-  /** Fixed positions, one per warrior: no random placement. */
+  /** Fixed positions, one per warrior, each below coreSize (else a RangeError): no random placement. Warriors may overlap. */
   positions?: number[];
   /** pmars -P, two warriors without fixed positions: each position and first mover once before any repeats. The seed of pmars -P -F x is 2 * (x - minDistance). */
   permute?: boolean;
@@ -225,13 +225,14 @@ export interface WasmMars {
   /** Results of the rounds since load() or of the last runMatch(). */
   readonly results: RoundResult[];
   readonly roundResult: RoundResult | null;
+  /** Throws when a code is not ok, longer than maxLength, or does not fit the rules: an opcode above 18, a modifier above 6, a mode above 7, an A or B value or the start outside 0 .. coreSize-1 (e.g. assembled for another core size). The message names the warrior, the instruction and the field. */
   load(codes: Code[], options?: LoadOptions): void;
   startRound(): void;
   /** Executes up to n instructions and returns how many ran; stops when the round ends. */
   run(n: number): number;
   step(): void;
   endRound(): void;
-  /** Loads the warriors and plays the match inside the engine. */
+  /** Loads the warriors as load() does, with the same errors, and plays the match inside the engine. */
   runMatch(codes: Code[], options?: MatchOptions): MatchResult;
   state(): State;
   readonly round: number;

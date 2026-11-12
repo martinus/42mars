@@ -213,7 +213,9 @@ typedef struct {
   int64_t seed;               // position generator state, >= 0 (two warriors: seed =
                               // pmars -F position - min_distance; with permute,
                               // 2 * (position - min_distance))
-  const uint32_t *positions;  // 0: from the seed; else fixed, one per warrior
+  const uint32_t *positions;  // 0: from the seed; else fixed, one per warrior, each
+                              // below core_size (else M42_ERR_ARGUMENT); warriors may
+                              // overlap or be closer than min_distance
   uint8_t *log;               // 0, or m42_log_size() bytes for the round results of m42_match
   uint32_t permute;           // 1: pmars -P, every position and first mover once before
                               // any repeats; two warriors, no fixed positions
@@ -238,7 +240,11 @@ typedef struct {
 } m42_score;
 
 // Plays a match. scores: n entries; instructions: executed instructions,
-// may be 0. P-space starts empty (also with first_round > 0).
+// may be 0. P-space starts empty (also with first_round > 0). Each warrior
+// must be ok, at most max_length long and fit the rules: every field in the
+// range of m42_instruction for core_size, the start below core_size (a
+// warrior assembled for another core size may not). Else M42_ERR_WARRIOR,
+// also from m42_bench() and m42_load().
 M42_API int m42_match(m42_ctx *m, const m42_warrior *const *warriors, uint32_t n, const m42_match_options *options,
               m42_score *scores, uint64_t *instructions);
 

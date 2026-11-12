@@ -103,6 +103,28 @@ export function packWarrior(code, packed = new Int32Array(5 * code.instructions.
 
 const lengthOf = (code) => (code.packed ? code.packed.length / 5 : code.instructions.length);
 
+// Why a warrior does not fit a core of `size` cells, or null: the fields of
+// m42_instruction (42mars.h) and the start, which m42_load() checks too.
+function misfit(code, size) {
+  const inRange = (v, n) => Number.isInteger(v) && v >= 0 && v < n;
+  if (!inRange(code.start, size)) return `start ${code.start} is not below the core size ${size}`;
+  for (let k = 0; k < lengthOf(code); k++) {
+    let op, mod, aMode, aVal, bMode, bVal;
+    if (code.packed) {
+      const p = code.packed, j = 5 * k;
+      if (!inRange(p[j], 19 << 3)) return `instruction ${k} has the opcode word ${p[j]}`;
+      [op, mod, aMode, aVal, bMode, bVal] = [p[j] >> 3, p[j] & 7, p[j + 1], p[j + 2], p[j + 3], p[j + 4]];
+    } else {
+      ({ op, mod, aMode, aVal, bMode, bVal } = code.instructions[k]);
+    }
+    const bad = !inRange(op, 19) ? `opcode ${op}` : !inRange(mod, 7) ? `modifier ${mod}`
+      : !inRange(aMode, 8) ? `A mode ${aMode}` : !inRange(bMode, 8) ? `B mode ${bMode}`
+      : !inRange(aVal, size) ? `A value ${aVal}` : !inRange(bVal, size) ? `B value ${bVal}` : null;
+    if (bad) return `instruction ${k} has ${bad} (core size ${size})`;
+  }
+  return null;
+}
+
 function effectiveOptions(options) {
   const o = { ...DEFAULT_OPTIONS, ...options };
   if (!o.pSpaceSize) o.pSpaceSize = Math.floor(o.coreSize / 16);
@@ -282,12 +304,14 @@ class WasmMars {
     for (const c of codes) {
       if (!c.ok) throw new Error(`warrior '${c.name}' did not assemble`);
       if (lengthOf(c) > o.maxLength) throw new Error(`warrior '${c.name}' is longer than ${o.maxLength}`);
+      const why = misfit(c, o.coreSize);
+      if (why) throw new Error(`warrior '${c.name}' does not fit the rules: ${why}`);
     }
     if (codes.length * o.minDistance > o.coreSize) throw new Error('too many warriors for the core size and minimum distance');
     if (codes.length < 1 || codes.length > 255) throw new RangeError('the wasm engine supports 1 to 255 warriors');
     if (seed !== undefined && !isCount(seed)) throw new RangeError(`seed must be a non-negative safe integer: ${seed}`);
-    if (positions && (positions.length < codes.length || !positions.every((p) => isCount(p) && p < 2 ** 31))) {
-      throw new RangeError('positions must be non-negative integers, one per warrior');
+    if (positions && (positions.length < codes.length || !positions.every((p) => isCount(p) && p < o.coreSize))) {
+      throw new RangeError(`positions must be integers from 0 to ${o.coreSize - 1}, one per warrior`);
     }
     if (permute && (codes.length !== 2 || positions)) throw new RangeError('permute needs two warriors and no fixed positions');
     const n = codes.length;
