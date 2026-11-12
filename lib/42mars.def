@@ -44,8 +44,9 @@ EXPORTS
 	m42_end_round
 	m42_get_state
 	m42_get_warrior
-	m42_warrior_scores
+	m42_get_scores
 	m42_core
+	m42_cells
 	m42_queue
 	m42_pspace_get
 	m42_pspace_set

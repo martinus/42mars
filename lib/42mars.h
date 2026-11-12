@@ -36,6 +36,10 @@
 // pointer that is 0 on failure with the status in *status. Texts are copied
 // into caller buffers. The behavior is specified in
 // docs/redcode-semantics.md.
+//
+// Threads: a context is used by one thread at a time; different contexts
+// are independent. An m42_warrior is never written after it was made and
+// can be shared between threads, also by contexts that run at the same time.
 
 #ifndef M42_H
 #define M42_H
@@ -241,7 +245,8 @@ typedef struct {
 } m42_score;
 
 // Plays a match. scores: n entries; instructions: executed instructions,
-// may be 0. P-space starts empty (also with first_round > 0). Each warrior
+// may be 0. P-space starts empty (also with first_round > 0), unless
+// options->pspace gives it. Each warrior
 // must be ok, at most max_length long and fit the rules: every field in the
 // range of m42_instruction for core_size, the start below core_size (a
 // warrior assembled for another core size may not). Else M42_ERR_WARRIOR,
@@ -274,7 +279,10 @@ typedef struct {
   uint64_t time;           // instructions executed in this round
   int64_t cycles_left;
 } m42_state;
-M42_API int m42_get_state(const m42_ctx *m, m42_state *s);
+// The getters take sizeof of the struct: the library writes at most `size`
+// bytes, so a newer library fills the shorter struct of an older caller. A
+// size below the struct of version 1.0 is M42_ERR_ARGUMENT.
+M42_API int m42_get_state(const m42_ctx *m, m42_state *s, size_t size);
 
 typedef struct {
   uint32_t alive;
@@ -284,16 +292,25 @@ typedef struct {
   int64_t died_at;      // -1 while alive
   m42_score score;
 } m42_warrior_state;
-M42_API int m42_get_warrior(const m42_ctx *m, uint32_t w, m42_warrior_state *s);
+M42_API int m42_get_warrior(const m42_ctx *m, uint32_t w, m42_warrior_state *s, size_t size);
 
 // pMARS's score counters of warrior w, 2 * warriors - 1 of them: counter k
 // < warriors counts the rounds it survived with k + 1 warriors alive at the
 // end, counter warriors - 1 + k the rounds it died when k + 1 were left.
 // Copies up to `max` and returns the count.
-M42_API uint32_t m42_warrior_scores(const m42_ctx *m, uint32_t w, uint32_t *out, uint32_t max);
+M42_API uint32_t m42_get_scores(const m42_ctx *m, uint32_t w, uint32_t *out, uint32_t max);
 
-// A core cell: values, and the instruction word: opcode << 3 | modifier in
-// bits 0..7, A mode in bits 8..10, B mode in bits 11..13.
+// Copies cells first .. first + count - 1 of the core, around its end, as
+// instructions (line 0) and returns how many it copied: at most core_size,
+// 0 when first is not below core_size. The stable way to read the core.
+M42_API uint32_t m42_cells(const m42_ctx *m, uint32_t first, uint32_t count, m42_instruction *out);
+
+// The engine's own cells, without a copy, for visualizers. The layout of
+// m42_cell may change in a minor version; M42_CELL_LAYOUT names it, so that
+// a program can refuse to build against another one. Layout 1: values, and
+// the instruction word: opcode << 3 | modifier in bits 0..7, A mode in bits
+// 8..10, B mode in bits 11..13.
+#define M42_CELL_LAYOUT 1
 typedef struct {
   uint16_t a, b, word, pad;
 } m42_cell;
@@ -323,6 +340,7 @@ M42_API int m42_pspace_set(m42_ctx *m, uint32_t w, uint32_t i, uint32_t value);
 // 2^32; 0 is never. The per-cell arrays owner, exec_by and read_by hold a
 // warrior as index + 1, 0 for none; everywhere else a warrior is its index.
 
+// Both are compiled into the caller and stay the same in all of 1.x.
 #define M42_TRACE_SIZE 4096 // instructions in the trace, a power of two
 #define M42_DEATH_SIZE 1024 // process deaths kept, a power of two
 

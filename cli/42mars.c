@@ -337,7 +337,7 @@ static int play(Args *a, m42_warrior **w) {
   int64_t points[MAX_WARRIORS];
   memset(reg, 0, sizeof reg);
   for (int i = 0; i < n; i++) {
-    m42_warrior_scores(m, (uint32_t)i, counters[i], 2 * MAX_WARRIORS);
+    m42_get_scores(m, (uint32_t)i, counters[i], 2 * MAX_WARRIORS);
     rest[i] = (uint32_t)a->rounds;
     for (int k = 0; k < n; k++) rest[i] -= counters[i][k];
     points[i] = 0;
