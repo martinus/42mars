@@ -597,7 +597,7 @@ async function multi() {
 // --cli path/to/42mars: both programs with the same arguments on corpus
 // warriors, stdout and exit code compared. Arguments mix warrior counts,
 // listings, -b, -k, -o, -A, -=, -F or -f (never random positions), -P, -8,
-// rule changes, -@ files and some invalid options. One case in six reads
+// -V, rule changes, -@ files and some invalid options. One case in six reads
 // two or three of its warriors from stdin (`-`): corpus files put together,
 // sometimes one more or one less than the `-` read.
 const CLI = arg('cli');
@@ -629,6 +629,7 @@ async function cli() {
     else args.push('-F', String(d + rand(8000 + 1 - 2 * d)));
     if (rand(5) === 0) args.push('-P'); // with other than two warriors: exit 2
     if (rand(6) === 0) args.push('-8');
+    if (rand(8) === 0) args.push('-V'); // stdout and exit code as without it
     const ws = Array.from({ length: k }, () => pick(files));
     let input = '';
     if (k >= 2 && rand(6) === 0) {

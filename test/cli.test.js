@@ -32,6 +32,8 @@ writeFileSync(join(tmp, 'regs.red'), ';name regs\n dat #w, #s\n dat #x, #a\n jmp
 // A NUL byte ends the line content (#85); after an opcode, pMARS gives a syntax error.
 writeFileSync(join(tmp, 'nul.red'), 'mov\0 i b,k\ndat 5\n');
 writeFileSync(join(tmp, 'nulline.red'), ';name a\0b\ndat 1\0 garbage here\nmov 0,1\n');
+// -V (#92): pMARS's example of the issue
+writeFileSync(join(tmp, 'verbose.red'), ';name T\nstep equ 4\nx for 2\n  add #step, 3\nrof\nmov 2, @2\njmp -2\ndat #0, #0\n');
 // Several warriors on stdin (#93): a case's `stdin` names one of these.
 const streams = {
   'stream2.txt': ';redcode\n;name A\nmov 0, 1\nend\n;redcode\n;name B\nadd #4, 3\nmov 2, @2\njmp -2\ndat #0, #0\nend\n',
@@ -65,9 +67,20 @@ test('42mars stops a source on which pMARS takes very long', { skip }, () => {
   assert.ok(performance.now() - t < 3000);
 });
 
+test('42mars -V prints the passes to stderr in pMARS\'s format', { skip }, () => {
+  // pMARS -V on this warrior: "(    4)   add #step, 3" in pass 0, "(    4)
+  // ADD #4,3" twice in pass 1; stdout as without -V (the recorded cases).
+  const r = spawnSync(bin, ['-V', '-r', '0', join(tmp, 'verbose.red')], { encoding: 'latin1' });
+  assert.equal(r.status, 0);
+  const err = lines(r.stderr);
+  assert.match(err, /After pass 0\nInstruction \(physical line, instr\):\n\n\(    2\) step equ 4\n\(    3\) x for 2\n\(    4\)   add #step, 3\n/);
+  assert.match(err, /After pass 1\nInstruction \(physical line, instr\):\n\n\(    4\) ADD #4,3\n\(    4\) ADD #4,3\n\(    6\) MOV 2,@2\n\(    7\) JMP -2\n\(    8\) DAT #0,#0\n/);
+  assert.equal(r.stdout, spawnSync(bin, ['-r', '0', join(tmp, 'verbose.red')], { encoding: 'latin1' }).stdout);
+});
+
 test('42mars rejects what the engine does not support', { skip }, () => {
   const w = [join(root, 'warriors/imp.red'), join(root, 'warriors/dwarf.red')];
-  for (const args of [['-V'], ['-s', '70000'], ['-F', '4000+1']]) {
+  for (const args of [['-s', '70000'], ['-F', '4000+1']]) {
     const r = spawnSync(bin, ['-b', ...args, ...w], { encoding: 'latin1' });
     assert.equal(r.status, 2, args.join(' '));
     assert.equal(r.stdout, '');
