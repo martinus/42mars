@@ -11,6 +11,9 @@
 #                        lib/lib42mars.a, the shared library, lib/pkgconfig/42mars.pc
 #   make dist            build/42mars-<version>-<os>-<cpu>.tar.gz, an install
 #                        tree with the license
+#   make fuzz            the fuzz targets of test/fuzz/ with clang's libFuzzer,
+#                        ASan and UBSan, FUZZ_SECONDS each (default 60) on
+#                        FUZZ_JOBS processes (default 1); fails on any report
 #   make clean
 #
 # The version is the one of lib/42mars.h. CC, CFLAGS, LDFLAGS and PREFIX
@@ -103,7 +106,20 @@ dist: all
 	cd build && tar -czf $(DIST).tar.gz $(DIST)
 	rm -rf build/stage build/$(DIST)
 
+# Fuzz targets: clang only (libFuzzer). FUZZ_CC=clang-22 picks another one.
+FUZZ_CC ?= clang
+FUZZ_SECONDS ?= 60
+FUZZ_JOBS ?= 1
+FUZZ_TARGETS := fuzz_asm fuzz_eval fuzz_make
+
+build/fuzz/%: test/fuzz/%.c $(LIB_SOURCES)
+	@mkdir -p build/fuzz
+	$(FUZZ_CC) -g -O1 -fsanitize=fuzzer,address,undefined -fno-sanitize-recover=undefined -Ilib -o $@ $< lib/42mars.c
+
+fuzz: $(addprefix build/fuzz/,$(FUZZ_TARGETS))
+	sh test/fuzz/run.sh $(FUZZ_SECONDS) $(FUZZ_JOBS) $(FUZZ_TARGETS)
+
 clean:
 	rm -rf build
 
-.PHONY: all test install dist clean
+.PHONY: all test install dist fuzz clean
