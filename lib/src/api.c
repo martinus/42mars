@@ -490,6 +490,11 @@ int m42_match(m42_ctx *ctx, const m42_warrior *const *warriors, uint32_t n, cons
   m42_match_options o;
   if (!ctx || get_options(options, &o) != M42_OK) return M42_ERR_ARGUMENT;
   Mars *m = CTX_OF(ctx);
+  if (o.pspace) {
+    // Every value below the core size, as m42_pspace_set() checks.
+    const usize cells = (usize)(pspace_of(&m->rules) ? pspace_of(&m->rules) : 1) * n;
+    for (usize k = 0; k < cells; k++) if (o.pspace[k] >= m->rules.core_size) return M42_ERR_ARGUMENT;
+  }
   const int s = load_warriors(m, warriors, n, &o);
   if (s != M42_OK) return s;
   // end_round() writes a record per round into the log.
@@ -628,7 +633,9 @@ int m42_pspace_set(m42_ctx *ctx, uint32_t w, uint32_t i, uint32_t value) {
   const int r = ready(ctx);
   if (r != M42_OK) return r;
   u32 *cell = pspace_cell(CTX_OF(ctx), w, i);
-  if (!cell) return M42_ERR_ARGUMENT;
+  // LDP copies the value into a cell field, which must stay below the core
+  // size: the engine does not reduce it again (#88's fuzzing found it).
+  if (!cell || value >= CTX_OF(ctx)->N) return M42_ERR_ARGUMENT;
   *cell = value;
   return M42_OK;
 }
