@@ -6,10 +6,10 @@
 // Each file as `pmars -r 0 file` assembles it: as the only warrior, with the
 // registers w and s at 1, which pMARS's score formula check leaves.
 import { readFileSync } from 'node:fs';
-import { assembleWasm as assemble, compileWasmMars } from '../wasm/42mars.js';
+import { assemble, compileMars } from '../wasm/42mars.js';
 import { formatListing } from './opcodes.js';
 
-await compileWasmMars(); // assembleWasm() then works on every Node 20
+await compileMars(); // assemble() then works on every Node 20
 
 const args = process.argv.slice(2);
 const options = { registers: { w: 1, s: 1 } };

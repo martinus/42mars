@@ -167,11 +167,11 @@ npm install 42mars
 ```
 
 ```js
-import { assembleWasm, createWasmMars } from '42mars';
+import { assemble, createMars } from '42mars';
 
-const mars = await createWasmMars(); // compiles the module, so that assembleWasm() works in a browser too
-const imp = assembleWasm(';name Imp\nmov 0, 1\n');
-const dwarf = assembleWasm(';name Dwarf\nadd #4, 3\nmov 2, @2\njmp -2\ndat #0, #0\n');
+const mars = await createMars(); // compiles the module, so that assemble() works in a browser too
+const imp = assemble(';name Imp\nmov 0, 1\n');
+const dwarf = assemble(';name Dwarf\nadd #4, 3\nmov 2, @2\njmp -2\ndat #0, #0\n');
 const { warriors } = mars.runMatch([imp, dwarf], { rounds: 100, seed: 1 });
 for (const w of warriors) console.log(w.name, w.wins, w.losses, w.ties);
 ```
@@ -229,7 +229,7 @@ wasm/               the npm package: 42mars.wasm, 42mars.js (JS interface), 42ma
 ui/                 Core War Theater, the visualizer (plain ES modules, no build step)
 tools/              Node tools: asm, corpus, tournament, serve, and the comparisons with pMARS
 bench/              speed measurements and A/B timing
-test/               npm test: 361 tests on node:test; C tests in test/c/, fuzz targets in test/fuzz/, recorded results in test/fixtures/
+test/               npm test: 362 tests on node:test; C tests in test/c/, fuzz targets in test/fuzz/, recorded results in test/fixtures/
 docs/               the semantics, the plan, the performance log, development guide
 warriors/           sample warriors written for this repository, and Dewdney's Imp and Dwarf
 Makefile            native build on Linux and macOS; build-msvc.bat for Windows

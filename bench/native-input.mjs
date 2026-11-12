@@ -15,7 +15,7 @@ export function nativeMatch(codes, rules, seed, rounds) {
   const o = rules;
   const total = codes.reduce((s, c) => s + c.instructions.length, 0);
   let text = `${o.coreSize} ${o.maxProcesses} ${o.maxCycles} ${o.minDistance} ${o.pSpaceSize} ${codes.length} ${total} ${seed} ${rounds}\n`;
-  // Warriors with the same PIN share a p-space, like WasmMars.load().
+  // Warriors with the same PIN share a p-space, like Mars.load().
   const groups = new Map();
   codes.forEach((c, i) => {
     let group = i;

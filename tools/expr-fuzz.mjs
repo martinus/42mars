@@ -21,7 +21,7 @@
 
 import { spawn } from 'node:child_process';
 import { cpus } from 'node:os';
-import { assembleWasm, compileWasmMars, evaluateWasm } from '../wasm/42mars.js';
+import { assemble, compileMars, evaluate } from '../wasm/42mars.js';
 
 const args = process.argv.slice(2);
 const arg = (name, dflt) => {
@@ -29,8 +29,8 @@ const arg = (name, dflt) => {
   return i >= 0 ? args[i + 1] : dflt;
 };
 const EVAL = arg('eval');
-await compileWasmMars();
-const ourEvaluate = (e) => evaluateWasm(e);
+await compileMars();
+const ourEvaluate = (e) => evaluate(e);
 if (!EVAL) {
   console.error('usage: node tools/expr-fuzz.mjs --eval path/to/evaluator [--n 500000] [--seed 1] [--jobs n] [--show n]');
   process.exit(2);
@@ -95,7 +95,7 @@ function noise(e) {
 // Whether evaluating `text` reaches an undefined case: the assembler's
 // warnings for it in an `;assert` line.
 function isUndefined(text) {
-  return assembleWasm(`;assert ${text}\n dat 0\n`).warnings.some((w) => /^pMARS (has no defined result|crashes)/.test(w.text));
+  return assemble(`;assert ${text}\n dat 0\n`).warnings.some((w) => /^pMARS (has no defined result|crashes)/.test(w.text));
 }
 
 // ---------------------------------------------------------------- run

@@ -9,7 +9,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createWasmMarsSync, assembleWasm as assemble } from '../wasm/42mars.js';
+import { createMarsSync, assemble } from '../wasm/42mars.js';
 
 // The instruction, then distinct cells 1..11: dat #11, #1 .. dat #21, #11.
 const warrior = (ins) => ` ${ins}\n` + Array.from({ length: 11 }, (_, i) => ` dat #${11 + i}, #${i + 1}\n`).join('');
@@ -21,7 +21,7 @@ function run(engine, ins, readLimit, writeLimit, cells) {
   const opts = { coreSize: 80, maxLength: 12, minDistance: 12, readLimit, writeLimit };
   const w = assemble(warrior(ins), opts);
   assert.ok(w.ok, ins);
-  const m = createWasmMarsSync({ ...opts, watch: engine === 'watch' });
+  const m = createMarsSync({ ...opts, watch: engine === 'watch' });
   m.load([w], { positions: [0] });
   m.startRound();
   m.step();
@@ -60,7 +60,7 @@ test('read and write limits: folded offsets and the pointer cells of pMARS', () 
 test('read and write limits: the watch marks the cell written and the cell read', () => {
   // -W 4: mov.i $5, @3 writes cell 2 and reads cell 5 (see above)
   const opts = { coreSize: 80, maxLength: 12, minDistance: 12, readLimit: 80, writeLimit: 4 };
-  const m = createWasmMarsSync({ ...opts, watch: true });
+  const m = createMarsSync({ ...opts, watch: true });
   m.load([assemble(warrior('mov.i $5, @3'), opts)], { positions: [0] });
   m.startRound();
   m.watch().owner.fill(0, 1, 12); // as if cells 1..11 were not the warrior's
@@ -74,9 +74,9 @@ test('read and write limits: the watch marks the cell written and the cell read'
 
 test('a read or write limit must divide the core size, as pmars -R and -W want', () => {
   for (const opts of [{ readLimit: 3 }, { writeLimit: 8001 }, { coreSize: 800, readLimit: 30 }]) {
-    assert.throws(() => createWasmMarsSync(opts).load([assemble(' dat 0\n')], { seed: 1 }), RangeError, JSON.stringify(opts));
+    assert.throws(() => createMarsSync(opts).load([assemble(' dat 0\n')], { seed: 1 }), RangeError, JSON.stringify(opts));
   }
-  createWasmMarsSync({ readLimit: 500, writeLimit: 1 }).load([assemble(' dat 0\n')], { seed: 1 });
+  createMarsSync({ readLimit: 500, writeLimit: 1 }).load([assemble(' dat 0\n')], { seed: 1 });
 });
 
 test('read and write limits equal to the core size change nothing', () => {

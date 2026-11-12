@@ -5,13 +5,13 @@
 // simulator with pMARS's results, the npm package `42mars`. The API is in
 // 42mars.d.ts and in docs/redcode-semantics.md, sections 2 and 3.
 //
-//   const m = await createWasmMars({ coreSize: 8000 });
-//   m.load(codes, { seed });            // codes: assembleWasm() results
+//   const m = await createMars({ coreSize: 8000 });
+//   m.load(codes, { seed });            // codes: assemble() results
 //   m.startRound(); while (!m.roundOver) m.run(1e6);
 //   m.runMatch(codes, { rounds: 200, seed })   // whole match inside wasm
 //   m.runMatch(codes, { rounds: 50, seed, firstRound: 150 }) // its last 50 rounds
 //   m.runMatch(codes.map((c) => packWarrior(c)), ...)        // prepared warriors
-//   createWasmMars({ watch: true })     // records what a visualizer shows: watch(), events()
+//   createMars({ watch: true })     // records what a visualizer shows: watch(), events()
 //
 // - The core size is at most 65536 (cells hold 16-bit values), maxProcesses
 //   and pSpaceSize at most 2^24, and there are 1 to 255 warriors.
@@ -49,7 +49,7 @@ let compiled = null; // WebAssembly.Module once compiled
 
 // Compiles 42mars.wasm once (fetch in browsers, the file system in Node) and
 // returns the WebAssembly.Module.
-export async function compileWasmMars() {
+export async function compileMars() {
   if (compiled) return compiled;
   let bytes;
   if (isNode) {
@@ -67,20 +67,20 @@ export async function compileWasmMars() {
 function compileSync() {
   if (compiled) return compiled;
   const fs = isNode && typeof process.getBuiltinModule === 'function' ? process.getBuiltinModule('node:fs') : null;
-  if (!fs) throw new Error('createWasmMarsSync: call compileWasmMars() first or pass a WebAssembly.Module');
+  if (!fs) throw new Error('createMarsSync: call compileMars() first or pass a WebAssembly.Module');
   compiled = new WebAssembly.Module(fs.readFileSync(WASM_URL));
   return compiled;
 }
 
 // Async constructor, works in Node and browsers.
-export async function createWasmMars(options = {}) {
-  return new WasmMars(new WebAssembly.Instance(await compileWasmMars()), options);
+export async function createMars(options = {}) {
+  return new Mars(new WebAssembly.Instance(await compileMars()), options);
 }
 
-// Synchronous constructor: with a module from compileWasmMars(), or in Node
+// Synchronous constructor: with a module from compileMars(), or in Node
 // 20.16+ / 22.3+ without one (reads the file synchronously).
-export function createWasmMarsSync(options = {}, module = undefined) {
-  return new WasmMars(new WebAssembly.Instance(module ?? compileSync()), options);
+export function createMarsSync(options = {}, module = undefined) {
+  return new Mars(new WebAssembly.Instance(module ?? compileSync()), options);
 }
 
 // A warrior in the form the engine loads: 5 integers per instruction (op
@@ -213,15 +213,16 @@ function writeRules(mem, at, o, warriors) {
 
 const M42_OK = 0;
 const M42_ERR_MEMORY = -1;
+const M42_ERR_STATE = -5;
 // M42_TRACE_SIZE and M42_DEATH_SIZE of 42mars.h: the watch's trace
 // entries and process deaths
 const TRACE_SIZE = 4096;
 const DEATH_SIZE = 1024;
 
-function check(x, mem, status) {
-  if (status === M42_OK) return;
-  if (status === M42_ERR_MEMORY) throw new Error('wasm engine: out of memory');
-  throw new Error(`wasm engine: ${mem.cString(x.m42_status_text(status))}`);
+// Every status other than M42_OK from a function of 42mars.h is an Error
+// with the name of the method that called it and m42_status_text().
+function check(x, mem, status, method) {
+  if (status !== M42_OK) throw new Error(`${method}: ${mem.cString(x.m42_status_text(status))}`);
 }
 
 // ---------------------------------------------------------------- simulator
@@ -234,19 +235,19 @@ const S_RULES = 0, S_OPTIONS = 48, S_STATE = 88, S_WARRIOR = 120, S_VALUE = 160,
 // sizeof m42_state and m42_warrior_state, passed to the getters
 const STATE_SIZE = 32, WARRIOR_STATE_SIZE = 40;
 
-class WasmMars {
+class Mars {
   constructor(instance, options) {
     this.opt = effectiveOptions(options);
     const o = this.opt;
     if (!Number.isInteger(o.coreSize) || o.coreSize < 1 || o.coreSize > MAX_CORE) {
-      throw new RangeError(`the wasm engine supports core sizes 1 to ${MAX_CORE}`);
+      throw new RangeError(`createMars: core sizes 1 to ${MAX_CORE} are supported`);
     }
     for (const k of ['maxProcesses', 'maxCycles', 'minDistance', 'maxLength', 'pSpaceSize']) {
       if (!isCount(o[k]) || o[k] > 0xffffffff) throw new RangeError(`bad option ${k}: ${o[k]}`);
     }
     // Queues and p-spaces live in a 32-bit linear memory.
-    if (o.maxProcesses > 1 << 24) throw new RangeError('the wasm engine supports maxProcesses up to 2^24');
-    if (o.pSpaceSize > 1 << 24) throw new RangeError('the wasm engine supports pSpaceSize up to 2^24');
+    if (o.maxProcesses > 1 << 24) throw new RangeError('createMars: maxProcesses up to 2^24 is supported');
+    if (o.pSpaceSize > 1 << 24) throw new RangeError('createMars: pSpaceSize up to 2^24 is supported');
     this.coreSize = o.coreSize;
     this.x = instance.exports;
     this.mem = memoryOf(this.x);
@@ -278,22 +279,22 @@ class WasmMars {
 
   // The context, made again with a larger heap when a load has more
   // warriors than it was made for.
-  context(n) {
+  context(n, method) {
     if (n <= this.capacity) return;
     const x = this.x;
     writeRules(this.mem, this.structs + S_RULES, this.opt, n);
     const size = x.m42_ctx_size(this.structs + S_RULES);
-    if (!size) throw new RangeError('wasm engine: rules out of range');
+    if (!size) throw new RangeError(`${method}: rules out of range`);
     const heap = this.mem.keep(size);
     const ctx = x.m42_ctx_init(heap, size, this.structs + S_RULES, this.structs + S_VALUE);
-    if (!ctx) check(x, this.mem, this.statusValue());
+    if (!ctx) check(x, this.mem, this.statusValue(), method);
     this.ctx = ctx;
     this.capacity = n;
     if (this.watching) {
       const wsize = x.m42_watch_size(this.structs + S_RULES);
       const block = this.mem.keep(wsize);
       this.watchAt = x.m42_watch_attach(ctx, block, wsize, this.structs + S_VALUE);
-      if (!this.watchAt) check(x, this.mem, this.statusValue());
+      if (!this.watchAt) check(x, this.mem, this.statusValue(), method);
       this.watchViews = null;
     }
   }
@@ -301,7 +302,7 @@ class WasmMars {
   // Checks the warriors and writes them, their pointers and the options
   // into scratch memory: m42_warrior_make() per warrior. Returns the
   // address of the pointer array.
-  prepare(codes, { seed, positions, permute = false, rounds = 1, firstRound = 0, earlyTie = true, log = 0 }) {
+  prepare(codes, { seed, positions, permute = false, rounds = 1, firstRound = 0, earlyTie = true, log = 0 }, method) {
     const o = this.opt;
     for (const c of codes) {
       if (!c.ok) throw new Error(`warrior '${c.name}' did not assemble`);
@@ -310,14 +311,14 @@ class WasmMars {
       if (why) throw new Error(`warrior '${c.name}' does not fit the rules: ${why}`);
     }
     if (codes.length * o.minDistance > o.coreSize) throw new Error('too many warriors for the core size and minimum distance');
-    if (codes.length < 1 || codes.length > 255) throw new RangeError('the wasm engine supports 1 to 255 warriors');
+    if (codes.length < 1 || codes.length > 255) throw new RangeError(`${method}: 1 to 255 warriors are supported`);
     if (seed !== undefined && !isCount(seed)) throw new RangeError(`seed must be a non-negative safe integer: ${seed}`);
     if (positions && (positions.length < codes.length || !positions.every((p) => isCount(p) && p < o.coreSize))) {
       throw new RangeError(`positions must be integers from 0 to ${o.coreSize - 1}, one per warrior`);
     }
     if (permute && (codes.length !== 2 || positions)) throw new RangeError('permute needs two warriors and no fixed positions');
     const n = codes.length;
-    this.context(n);
+    this.context(n, method);
     const x = this.x;
     const mem = this.mem;
     mem.reset();
@@ -343,7 +344,7 @@ class WasmMars {
       }
       if (pin) dv.setBigInt64(pin, BigInt(c.pin), true);
       const w = x.m42_warrior_make(code, len, c.start, pin, at, size);
-      if (!w) throw new Error(`wasm engine: cannot load warrior '${c.name}'`);
+      if (!w) throw new Error(`${method}: cannot load warrior '${c.name}'`);
       mem.views().dv.setUint32(ws + 4 * i, w, true);
     }
     let pos = 0;
@@ -364,16 +365,21 @@ class WasmMars {
   }
 
   load(codes, { seed, positions, permute } = {}) {
-    const ws = this.prepare(codes, { seed, positions, permute });
-    check(this.x, this.mem, this.x.m42_load(this.ctx, ws, codes.length, this.structs + S_OPTIONS));
+    const ws = this.prepare(codes, { seed, positions, permute }, 'load');
+    check(this.x, this.mem, this.x.m42_load(this.ctx, ws, codes.length, this.structs + S_OPTIONS), 'load');
     this.warriors = codes.map((code, index) => new WarriorView(this, index, code));
     this.results = [];
     this.roundResult = null;
     this.version++;
   }
 
+  // Throws (M42_ERR_STATE) before the first load: no warriors, no context.
+  ready(method) {
+    check(this.x, this.mem, this.ctx ? this.x.m42_get_state(this.ctx, this.structs + S_STATE, STATE_SIZE) : M42_ERR_STATE, method);
+  }
+
   startRound() {
-    this.x.m42_start_round(this.ctx);
+    check(this.x, this.mem, this.ctx ? this.x.m42_start_round(this.ctx) : M42_ERR_STATE, 'startRound');
     this.roundResult = null;
     this.version++;
     this.deathsRead = 0;
@@ -381,7 +387,8 @@ class WasmMars {
 
   // Executes up to n instructions; returns how many. Stops early when the
   // round ends. A fraction rounds up.
-  run(n) {
+  run(n, method = 'run') {
+    this.ready(method);
     if (this.roundResult !== null || this.roundOver || !(n > 0)) return 0;
     const count = n >= 1.8e19 ? 2n ** 64n - 1n : BigInt(Math.ceil(n));
     const done = Number(this.x.m42_run(this.ctx, count));
@@ -391,12 +398,13 @@ class WasmMars {
   }
 
   step() {
-    this.run(1);
+    this.run(1, 'step');
   }
 
   endRound() {
+    this.ready('endRound');
     if (this.roundOver) return;
-    this.x.m42_end_round(this.ctx);
+    check(this.x, this.mem, this.x.m42_end_round(this.ctx), 'endRound');
     this.version++;
     this.recordResult();
   }
@@ -446,7 +454,7 @@ class WasmMars {
     const x = this.x;
     const nw = codes.length;
     // The log goes behind the warriors in scratch memory; prepare() resets it.
-    const ws = this.prepare(codes, { seed, positions, permute, rounds, firstRound, earlyTie });
+    const ws = this.prepare(codes, { seed, positions, permute, rounds, firstRound, earlyTie }, 'runMatch');
     const log = this.mem.scratch(x.m42_log_size(nw, rounds));
     const scores = this.mem.scratch(12 * nw); // m42_score: wins, losses, ties
     const counters = this.mem.scratch(4 * (2 * nw - 1));
@@ -468,7 +476,7 @@ class WasmMars {
       }
       this.mem.views().dv.setUint32(this.structs + S_OPTIONS + 36, ps, true);
     }
-    check(x, this.mem, x.m42_match(this.ctx, ws, nw, this.structs + S_OPTIONS, scores, this.structs + S_VALUE));
+    check(x, this.mem, x.m42_match(this.ctx, ws, nw, this.structs + S_OPTIONS, scores, this.structs + S_VALUE), 'runMatch');
     this.version++;
     const { u8, dv } = this.mem.views();
     const instructions = Number(dv.getBigUint64(this.structs + S_VALUE, true));
@@ -497,12 +505,10 @@ class WasmMars {
     return { warriors, results, instructions };
   }
 
-  // m42_state; before the first load: round 0, round over.
-  state() {
+  // m42_state; throws before the first load.
+  state(method = 'state') {
     const at = this.structs + S_STATE;
-    if (!this.ctx || this.x.m42_get_state(this.ctx, at, STATE_SIZE) !== M42_OK) {
-      return { round: 0, roundOver: true, current: 0, warriorsLeft: 0, time: 0, cyclesLeft: 0 };
-    }
+    this.ready(method);
     const { dv } = this.mem.views();
     return {
       round: dv.getUint32(at, true),
@@ -514,12 +520,12 @@ class WasmMars {
     };
   }
 
-  get round() { return this.state().round; }
-  get roundOver() { return this.state().roundOver; }
-  get time() { return this.state().time; }
-  get cyclesLeft() { return this.state().cyclesLeft; }
-  get warriorsLeft() { return this.state().warriorsLeft; }
-  get current() { return this.state().current; }
+  get round() { return this.state('round').round; }
+  get roundOver() { return this.state('roundOver').roundOver; }
+  get time() { return this.state('time').time; }
+  get cyclesLeft() { return this.state('cyclesLeft').cyclesLeft; }
+  get warriorsLeft() { return this.state('warriorsLeft').warriorsLeft; }
+  get current() { return this.state('current').current; }
 
   // Decodes the core into arrays per field; cached until the core can change.
   core() {
@@ -529,7 +535,8 @@ class WasmMars {
       op: new Uint8Array(n), am: new Uint8Array(n), bm: new Uint8Array(n),
       av: new Int32Array(n), bv: new Int32Array(n),
     };
-    const base = this.ctx ? this.x.m42_core(this.ctx) : 0;
+    if (!this.ctx) check(this.x, this.mem, M42_ERR_STATE, 'core');
+    const base = this.x.m42_core(this.ctx);
     if (base) {
       // m42_cell: uint16 a, b, word, pad
       const u16 = new Uint16Array(this.bytes().buffer, base, 4 * n);
@@ -570,8 +577,8 @@ class WasmMars {
   // the deaths-th death of the round at entry deaths % DEATH_SIZE (deaths is
   // read from the engine on each access).
   watch() {
-    if (!this.watching) throw new Error('wasm engine: created without { watch: true }');
-    if (!this.watchAt) throw new Error('wasm engine: the watch comes with the first load()');
+    if (!this.watching) throw new Error('watch: the engine was created without { watch: true }');
+    if (!this.watchAt) check(this.x, this.mem, M42_ERR_STATE, 'watch');
     const { buffer, dv } = this.mem.views();
     let v = this.watchViews;
     if (!v || v.owner.buffer !== buffer) {
@@ -632,7 +639,7 @@ class WarriorView {
   state() {
     const m = this.mars;
     const at = m.structs + S_WARRIOR;
-    check(this.x, m.mem, this.x.m42_get_warrior(m.ctx, this.index, at, WARRIOR_STATE_SIZE));
+    check(this.x, m.mem, this.x.m42_get_warrior(m.ctx, this.index, at, WARRIOR_STATE_SIZE), 'warrior state');
     const { dv } = m.mem.views();
     const died = Number(dv.getBigInt64(at + 16, true));
     return {
@@ -682,7 +689,7 @@ class WarriorView {
     const out = new Int32Array(m.opt.pSpaceSize);
     const at = m.structs + S_VALUE;
     for (let i = 1; i < out.length; i++) {
-      check(this.x, m.mem, this.x.m42_pspace_get(m.ctx, this.index, i, at));
+      check(this.x, m.mem, this.x.m42_pspace_get(m.ctx, this.index, i, at), 'pspace');
       out[i] = m.mem.views().dv.getInt32(at, true);
     }
     return out;
@@ -709,10 +716,10 @@ class WarriorView {
 // ---------------------------------------------------------------- assembler
 
 // The C assembler and evaluator (lib/src/asm.c):
-//   assembleWasm(source, options)  the warrior object (Warrior in 42mars.d.ts)
-//   evaluateWasm(text)             { status, value } of one expression
+//   assemble(source, options)  the warrior object (Warrior in 42mars.d.ts)
+//   evaluate(text)             { status, value } of one expression
 // Both use one module instance per module, created on first use. In a
-// browser, call compileWasmMars() first or pass the module.
+// browser, call compileMars() first or pass the module.
 //
 // Text goes in as Latin-1 bytes when every character is below 256 (warrior
 // files are read as latin1), else as UTF-8; the result strings are decoded
@@ -750,13 +757,13 @@ function encodeText(text) {
 const latin1Decoder = new TextDecoder('latin1');
 const utf8Decoder = new TextDecoder('utf-8');
 
-export function assembleWasm(source, options = {}, module = undefined) {
+export function assemble(source, options = {}, module = undefined) {
   return withAsm(module, (x, mem) => assembleWith(x, mem, source, options));
 }
 
 function assembleWith(x, mem, source, options) {
   const o = effectiveOptions(options);
-  if (!(o.coreSize >= 1)) throw new RangeError('assembleWasm: coreSize must be at least 1');
+  if (!(o.coreSize >= 1)) throw new RangeError('assemble: coreSize must be at least 1');
   const { bytes, utf8 } = encodeText(source);
   mem.reset();
   const rules = mem.scratch(48);
@@ -781,16 +788,16 @@ function assembleWith(x, mem, source, options) {
   // plus 64 bytes per source byte, as m42_assemble_new() (42mars.h).
   const most = 2 ** 27 + 64 * bytes.length;
   for (let size = Math.min(Math.max(1 << 20, 16 * bytes.length), most); ; size = Math.min(size * 4, most)) {
-    if (size > 2 ** 31) throw new Error('assembleWasm: out of memory');
+    if (size > 2 ** 31) throw new Error('assemble: out of memory');
     mem.mark = start;
     const work = mem.scratch(size);
     // flags: M42_UTF8 1, M42_ICWS88 2
     const status = x.m42_assemble(src, bytes.length, rules, (utf8 ? 1 : 0) | (o.icws88 ? 2 : 0), regs, work, size, out);
     if (status === M42_ERR_MEMORY) {
-      if (size === most) throw new Error('assembleWasm: out of memory');
+      if (size === most) throw new Error('assemble: out of memory');
       continue;
     }
-    check(x, mem, status);
+    check(x, mem, status, 'assemble');
     return readWarrior(x, mem, mem.views().dv.getUint32(out, true), utf8 ? utf8Decoder : latin1Decoder, o);
   }
 }
@@ -840,7 +847,7 @@ function readWarrior(x, mem, w, decoder, options) {
   };
 }
 
-export function evaluateWasm(text, module = undefined) {
+export function evaluate(text, module = undefined) {
   return withAsm(module, (x, mem) => {
     const { bytes } = encodeText(text);
     mem.reset();

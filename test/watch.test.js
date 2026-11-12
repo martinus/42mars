@@ -13,12 +13,12 @@
 import { test as nodeTest } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { compileWasmMars, createWasmMarsSync, assembleWasm as assemble } from '../wasm/42mars.js';
+import { compileMars, createMarsSync, assemble } from '../wasm/42mars.js';
 
 import { Digest, recorded } from './recorded.js';
 import { compareCore } from './engines.js';
 
-const module = await compileWasmMars();
+const module = await compileMars();
 const check = recorded('watch.json');
 
 let state = 0x2545f491;
@@ -96,8 +96,8 @@ function addWatch(d, x) {
 // Plays a match in random chunks on an engine with the watch and one
 // without; returns [what, digest of the watch after every chunk].
 function watchMatch(o, codes, seed, rounds) {
-  const w = createWasmMarsSync(o, module);
-  const x = createWasmMarsSync({ ...o, watch: true }, module);
+  const w = createMarsSync(o, module);
+  const x = createMarsSync({ ...o, watch: true }, module);
   w.load(codes, { seed });
   x.load(codes, { seed });
   const where = `${JSON.stringify(o)} seed ${seed} warriors ${codes.map((c) => c.name).join(', ')}`;
@@ -153,7 +153,7 @@ test('the trace flags agree with what each instruction did to its queue', () => 
     const nw = 2 + rand(2);
     const codes = randomCodes(o, nw);
     if (!codes) continue;
-    const w = createWasmMarsSync({ ...o, watch: true }, module);
+    const w = createMarsSync({ ...o, watch: true }, module);
     w.load(codes, { seed: rand(2147483646) + 1 });
     const n = o.coreSize;
     for (let round = 0; round < 4; round++) {
@@ -186,8 +186,8 @@ test('the trace flags agree with what each instruction did to its queue', () => 
 
 test('runMatch with a watch attached gives the same match and leaves the watch alone', () => {
   const codes = ['dwarf', 'imp'].map(sample);
-  const plain = createWasmMarsSync({}, module).runMatch(codes, { rounds: 20, seed: 5 });
-  const w = createWasmMarsSync({ watch: true }, module);
+  const plain = createMarsSync({}, module).runMatch(codes, { rounds: 20, seed: 5 });
+  const w = createMarsSync({ watch: true }, module);
   w.load(codes, { seed: 5 });
   w.startRound();
   w.run(100);
@@ -200,16 +200,16 @@ test('runMatch with a watch attached gives the same match and leaves the watch a
 test('the trace and the deaths have the sizes of 42mars.h', () => {
   const header = readFileSync(new URL('../lib/42mars.h', import.meta.url), 'latin1');
   const size = (name) => Number(header.match(new RegExp(`#define ${name} (\\d+)`))[1]);
-  const w = createWasmMarsSync({ watch: true }, module);
+  const w = createMarsSync({ watch: true }, module);
   w.load([sample('imp')]);
   assert.equal(w.watch().trace.length, 4 * size('M42_TRACE_SIZE'));
   assert.equal(w.watch().death.length, 4 * size('M42_DEATH_SIZE'));
 });
 
 test('watch() needs { watch: true } and a load()', () => {
-  assert.throws(() => createWasmMarsSync({}, module).watch(), /watch: true/);
-  assert.throws(() => createWasmMarsSync({ watch: true }, module).watch(), /first load/);
+  assert.throws(() => createMarsSync({}, module).watch(), /watch: true/);
+  assert.throws(() => createMarsSync({ watch: true }, module).watch(), /^Error: watch: no warriors loaded$/);
   // a maxLength the watch cannot number
-  const w = createWasmMarsSync({ watch: true, maxLength: 65537 }, module);
+  const w = createMarsSync({ watch: true, maxLength: 65537 }, module);
   assert.throws(() => w.load([assemble(' dat 0\n')]), /rule out of range/);
 });

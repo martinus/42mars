@@ -17,7 +17,7 @@
 // the wasm module.
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { compileWasmMars, createWasmMarsSync, assembleWasm as assemble } from '../wasm/42mars.js';
+import { compileMars, createMarsSync, assemble } from '../wasm/42mars.js';
 
 if (process.argv.includes('--headless')) {
   console.error('--headless: the JavaScript simulator is gone (#76)');
@@ -34,19 +34,19 @@ if (!dir || !(Number.isInteger(ROUNDS) && ROUNDS > 0)) {
   process.exit(2);
 }
 const pairs = [['agony.red', 'bubbles.red'], ['bomber.red', 'chalk.red'], ['army.red', 'bananasplit.red']];
-const module = await compileWasmMars(); // also the assembler
+const module = await compileMars(); // also the assembler
 const codes = pairs.map((pair) => pair.map((f) => assemble(readFileSync(join(dir, f), 'latin1'))));
 let steps = 0;
 let executed = 0;
 const t0 = performance.now();
 for (const pair of codes) {
   if (mode === '--wasm-match') {
-    const r = createWasmMarsSync({}, module).runMatch(pair, { rounds: ROUNDS, seed: 1234, earlyTie });
+    const r = createMarsSync({}, module).runMatch(pair, { rounds: ROUNDS, seed: 1234, earlyTie });
     steps += r.results.reduce((s, x) => s + x.cycles, 0);
     executed += r.instructions;
     continue;
   }
-  const m = createWasmMarsSync({ watch: mode === '--watch' }, module);
+  const m = createMarsSync({ watch: mode === '--watch' }, module);
   m.load(pair, { seed: 1234 });
   for (let r = 0; r < ROUNDS; r++) {
     m.startRound();

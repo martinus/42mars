@@ -23,7 +23,7 @@
 // (wasm/42mars.js), round by round. --wasm says the same; it is accepted
 // because logged commands carry it from the time of the JavaScript
 // simulator (removed in #76, and --headless with it).
-// --watch: with a watch attached (createWasmMars({ watch: true })), so that
+// --watch: with a watch attached (createMars({ watch: true })), so that
 // the rounds run in the loop that records the visualizer bookkeeping.
 // --wasm-match plays each battle with one runMatch() call with early tie
 // detection, which leaves the final core of some rounds different, so it
@@ -61,7 +61,7 @@ import { execFile } from 'node:child_process';
 import { mkdirSync, readFileSync, readdirSync, writeFileSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir, cpus } from 'node:os';
 import { join } from 'node:path';
-import { assembleWasm, compileWasmMars, createWasmMarsSync } from '../wasm/42mars.js';
+import { assemble, compileMars, createMarsSync } from '../wasm/42mars.js';
 import { formatListing } from './opcodes.js';
 
 const args = process.argv.slice(2);
@@ -105,10 +105,10 @@ if (args.includes('--headless')) {
 const WASM_MATCH = args.includes('--wasm-match');
 const PERMUTE = args.includes('--permute');
 const WATCH = args.includes('--watch');
-const WASM = await compileWasmMars();
+const WASM = await compileMars();
 // --icws88: every pMARS call gets -8 (rules()), every assembly icws88.
 const ICWS88 = args.includes('--icws88');
-const ourAssemble = ICWS88 ? (source, o = {}) => assembleWasm(source, { ...o, icws88: true }) : assembleWasm;
+const ourAssemble = ICWS88 ? (source, o = {}) => assemble(source, { ...o, icws88: true }) : assemble;
 if (WASM_MATCH && TRACE) {
   console.error('--wasm-match compares scores only; leave out --pmars-trace');
   process.exit(2);
@@ -252,7 +252,7 @@ function usable(src) {
   const lines = src.split('\n');
   if (lines.some((l) => l.length > 240)) return false;
   if (/\\\r?$/.test(lines[lines.length - 1] || lines[lines.length - 2] || '')) return false;
-  const w = assembleWasm(src, { ...STANDARD, warriors: 1, rounds: 0 });
+  const w = assemble(src, { ...STANDARD, warriors: 1, rounds: 0 });
   return ![...w.warnings, ...w.errors].some((m) => m.text.startsWith('pMARS '));
 }
 
@@ -470,7 +470,7 @@ async function compareBattle(files, sources, o, pos, rounds) {
   const want = lines.map((l) => l.trim().split(/\s+/).map(Number));
   const ws = sources.map((s, i) => ourAssemble(s, { ...o, warriors: files.length, rounds, registers: i === 0 ? firstRegisters(files.length) : undefined }));
   if (ws.some((w) => !w.ok)) return `${files.join(' ')}: pMARS ran it, we do not assemble it`;
-  const m = createWasmMarsSync({ ...o, rounds, watch: WATCH }, WASM);
+  const m = createMarsSync({ ...o, rounds, watch: WATCH }, WASM);
   const seed = (permute ? 2 : 1) * (pos - o.minDistance);
   if (WASM_MATCH) m.runMatch(ws, { rounds, seed, permute, earlyTie: true });
   else m.load(ws, { seed, permute });
