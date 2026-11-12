@@ -96,6 +96,25 @@ test('pmars-diff: Ctrl-C without differences so far deletes the folder', async (
   assert.deepEqual(folders(), []);
 });
 
+// The rules of #116, #118 and #119 were found with lists of small sources
+// run on pMARS and on our assembler, a script written again each time.
+test('pmars-diff: --cases compares each source of the file, split at lines ---', () => {
+  const file = join(dir, 'cases.red');
+  writeFileSync(file, ';assert 1\ndat 1\n---\n;assert 1\ns equ dat 1\nx dat 0\ns -x\n---\r\n;assert 1\nmov 0, 1\n');
+  const cases = (fake) => {
+    const tmp = mkdtempSync(join(dir, 'tmp-'));
+    return spawnSync(process.execPath, [tool, '--pmars', fake, '--only', 'cases', '--cases', file, '--jobs', '2'],
+      { encoding: 'utf8', env: { ...process.env, TMPDIR: tmp } });
+  };
+  const same = cases(agrees);
+  assert.equal(same.status, 0, same.stdout + same.stderr);
+  assert.match(same.stdout, /^cases: 0 differences in 3 cases$/m);
+  const differ = cases(silent);
+  assert.equal(differ.status, 1);
+  assert.match(differ.stdout, /^cases: 3 differences in 3 cases$/m);
+  assert.match(differ.stdout, /source: ";assert 1\\ns equ dat 1\\nx dat 0\\ns -x\\n"/);
+});
+
 // `--pmars-trace` without its binary took the next option as the binary:
 // every battle then counted as a difference (4,800 in one run).
 test('pmars-diff: an option without its value and an unknown option are refused before anything runs', () => {

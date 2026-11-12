@@ -10,7 +10,7 @@ paths:
 ---
 # Engine rules
 
-- pMARS 0.9.5 output is the truth, also where it contradicts the ICWS'94 draft. Find it by running `$O/bin/pmars`, never from its source.
+- pMARS 0.9.5 output is the truth, also where it contradicts the ICWS'94 draft. Find it by running `$O/bin/pmars`, never from its source. Many small sources at once: `node tools/pmars-diff.mjs --pmars $O/bin/pmars --only cases --cases <file>` (sources separated by lines `---`); messages go to stderr. Run a strange result twice: a field that changes from run to run is pMARS reading undefined memory (#119).
 - Where pMARS has undefined behavior or does not terminate, pick a behavior, list it in section 4 of the semantics doc, make the assembler warn (`pMARS ...`) when it is an expression case, and keep it out of the generators of `tools/pmars-diff.mjs` and `tools/expr-fuzz.mjs`.
 - The assembler output format (the warrior object of `assemble`) is read by the UI, the tests and the wasm loader: keep it.
 - The watch (semantics doc, 3.4 and 3.6) is UI API. With and without a watch the engine gives exactly the same core, queues and scores.
