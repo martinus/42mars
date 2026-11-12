@@ -87,13 +87,13 @@ The layout (also in `README.md` and `docs/development.md`; change all three toge
 
 ## Running long checks
 
-- Several checks (engine-check, A/B timing): write them into a file in the scratchpad, one command per line, and start `nohup node .claude/skills/engine-check/in-order.mjs <file> > <out> 2>&1 &`. It prints each command with its last lines and exit code and ends with `ALL DONE`; wait for that line in the background (`~/gra/CLAUDE.md`, "Shell", also for PIDs and `pgrep -f`). Read the output file with the Read tool: the clean-room hook blocks shell reads of text that mentions pmars, and the `tasks/*.output` files.
+- Several checks (engine-check, A/B timing): write them into a file in the scratchpad, one command per line, and start `nohup node .claude/skills/engine-check/in-order.mjs <file> > <out> 2>&1 &`. It prints each command with its last lines and exit code and ends with `ALL DONE`; wait for that line in the background (`~/gra/CLAUDE.md`, "Shell", also for PIDs and `pgrep -f`). Read `<out>`, not the background task's `tasks/*.output` file, which the clean-room hook blocks.
 - Timings only on an idle machine: check `uptime` and `node`/`clang` processes, other agents included. Never run pMARS checks or tests next to an A/B timing; `ab-wasm` swaps `42mars.wasm` while it runs.
 
 ## Gotchas
 
 - Read large files with the Read tool in parts, not `cat`: oversized Bash output lands in the session's tool-results folder, which the clean-room hook blocks.
-- Edit and read our own files with the Edit and Read tools when the command would mention pMARS: the hook refused `sed`, `grep` and Python on `tools/pmars-diff.mjs`, `docs/plan.md`, the semantics doc and result files because their text held `pmars`.
+- The hook refuses readers (`cat`, `grep`, `sed`, `strings`, the Read tool) on a path inside a folder whose name starts with `pmars`, `exmars` or `exhaust` (the `pmars-diff-*` temporary folder, `$O/bin/pmars`) and on `tasks/*.output`. Our own files that mention pMARS (`tools/pmars-diff.mjs`, the docs, result files) read and grep fine.
 - The engine's `current` is an index, 0 is a valid warrior: test `m.current >= 0`, not `m.current &&`.
 - pMARS never returns on some inputs (semantics doc, section 4): always run it with a timeout.
 - Never compare a timing with a number from the log or another session: the same `42mars.wasm` ran the bench at 310M/s in one session and 359M/s in the next (10th November 2026). Measure the baseline again, alternating.
