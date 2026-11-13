@@ -70,7 +70,7 @@ extern "C" {
 #define M42_VERSION_MINOR 0
 #define M42_VERSION_PATCH 0
 
-// "0.1.0": the three numbers above.
+// "1.0.0": the three numbers above.
 M42_API const char *m42_version(void);
 
 typedef enum {
