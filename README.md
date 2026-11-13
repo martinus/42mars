@@ -225,7 +225,7 @@ wasm/               the JavaScript demo: 42mars.wasm, 42mars.js (JS interface), 
 ui/                 Core War Theater, the visualizer (plain ES modules, no build step)
 tools/              Node tools: asm, corpus, tournament, serve, and the comparisons with pMARS
 bench/              speed measurements and A/B timing
-test/               npm test: 387 tests on node:test; C tests in test/c/, fuzz targets in test/fuzz/, recorded results in test/fixtures/
+test/               npm test: 390 tests on node:test; C tests in test/c/, fuzz targets in test/fuzz/, recorded results in test/fixtures/
 docs/               the semantics, the plan, the performance log, development guide
 warriors/           sample warriors written for this repository, and Dewdney's Imp and Dwarf;
                     koenigstuhl/: 5,261 hill warriors, test material without a license

@@ -12,7 +12,7 @@ How the repository is laid out, how to build and test it, how to compare it with
 | [`wasm/`](../wasm) | The JavaScript demo: [`42mars.wasm`](../wasm/42mars.wasm) (committed), [`42mars.js`](../wasm/42mars.js), the JavaScript interface over the functions of the header, and the types in [`42mars.d.ts`](../wasm/42mars.d.ts). [`build.sh`](../wasm/build.sh) builds the module. |
 | [`ui/`](../ui) | Core War Theater, the visualizer. Plain ES modules, no build step. |
 | [`tools/`](../tools) | Node programs on the wasm build: `asm` (pMARS-style listing), `corpus` (assemble a folder), `tournament` (round robin on all cores), `serve`, and the comparisons with pMARS: `pmars-diff`, `expr-fuzz`, `example-check`. [`opcodes.js`](../tools/opcodes.js) has the opcode tables and the listing format, which `ui/` and the tests use too. |
-| [`bench/`](../bench) | Everything that measures speed: `bench`, `bench-pairs`, `bench-native` (the C code built natively), `tie-ceiling`, `wasm-functions`, and `ab-wasm`, `ab-native`, `ab-tool` for alternating A/B timing. |
+| [`bench/`](../bench) | Everything that measures speed: `bench`, `bench-pairs`, `bench-native` (the C code built natively), `tie-ceiling`, `wasm-functions`, `native-loops`, and `ab-wasm`, `ab-native`, `ab-tool` for alternating A/B timing. |
 | [`test/`](../test) | `npm test`: [node:test](https://nodejs.org/api/test.html) files, the C test program in `test/c/`, the fuzz targets in `test/fuzz/` (`make fuzz`), results recorded from pMARS and from the removed JavaScript engines in `test/fixtures/`. |
 | [`docs/`](.) | The semantics, the plan, the [performance log](performance-log.md) with every speed experiment, this guide, the README chart ([`images/speed.mjs`](images/speed.mjs)) and the logo ([`images/logo.svg`](images/logo.svg)). |
 | [`warriors/`](../warriors) | Sample warriors written for this repository, and Dewdney's Imp and Dwarf. In [`warriors/koenigstuhl/`](../warriors/koenigstuhl): 5,261 warriors of the Koenigstuhl hills, downloaded 12th November 2026, without a license: test material, see its README. |
@@ -75,6 +75,7 @@ node bench/bench.mjs path/to/warriors --wasm-match         # 3 hill pairs, singl
 node bench/bench-native.mjs path/to/warriors --runs 7      # the same C code natively
 node bench/ab-wasm.mjs base.wasm wasm/42mars.wasm          # two builds, alternating
 node bench/wasm-functions.mjs base.wasm wasm/42mars.wasm   # which functions of the module changed
+node bench/native-loops.mjs                                # the native hot loops against origin/main
 node docs/images/speed.mjs                                 # redraw the README chart from its numbers
 ```
 

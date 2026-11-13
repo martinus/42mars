@@ -4,12 +4,12 @@ description: Correctness gate for any change to the assembler, the expression ev
 ---
 # Engine check
 
-Setup: `O=${COREWAR_ORACLE:-$HOME/.local/share/corewar-theater}`, `SEED=$(date +%s)` (fresh every time; report it). Steps 2 to 5 take about 3 minutes: run them in the background with `in-order.mjs` of this folder (CLAUDE.md, "Running long checks").
+Setup: `O=${COREWAR_ORACLE:-$HOME/.local/share/corewar-theater}`, `SEED=$(date +%s)` (fresh every time; report it). Steps 1 to 5 are the lines of [gate.txt](gate.txt), about 3 minutes in the background with `in-order.mjs` of this folder; its first lines have the command (CLAUDE.md, "Running long checks"). Add the options under test as lines of a copy.
 
 1. Builds (anything under `lib/` or the build script changed):
    - `wasm/build.sh && md5sum wasm/42mars.wasm` twice: the sums match. `git status` shows `42mars.wasm` modified exactly when its sources are.
    - `node bench/bench-native.mjs $O/corpus 10` builds and runs (CI does not build it; it was broken from #8 to #19).
-   - `lib/src/mars.c` or `api.c` changed: the hot loops are unchanged unless that was the point (`.claude/rules/wasm.md`, "Keep the hot loops byte-identical"), in wasm and natively.
+   - `lib/src/mars.c` or `api.c` changed: the hot loops are unchanged unless that was the point (`.claude/rules/wasm.md`, "Keep the hot loops byte-identical"), in wasm and natively (`bench/wasm-functions.mjs`, `bench/native-loops.mjs`).
 2. `PMARS_VALIDATE=$O/validate.red npm test`: all pass, none skipped. A recorded digest that changed: `.claude/rules/engine.md`, "Recorded digests"; never record again just to get green.
 3. pMARS differential, each ends with no differences (exit code 0):
    ```sh
