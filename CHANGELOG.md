@@ -10,10 +10,9 @@ The first release with that promise.
 - **`42mars`**: a command line program with pMARS 0.9.5's options, stdout and exit codes, built on the library.
 - **A JavaScript demo** (`wasm/`): the library as a WebAssembly module with a JavaScript interface (`assemble`, `evaluate`, `createMars`, `createMarsSync`, `compileMars`), no dependencies, for Node 20 and newer and browsers. Not on npm, and not covered by the promise: it may change in any release (such changes are listed here too).
 
-Since 0.9.0, the assembler gives pMARS's result for more sources, so some assemble differently: labels after an EQU opcode at the statement start (#116), `FOR` and `ROF` from an EQU (#118), a multi-line EQU in an operand (#119), and an opcode in an assert is an error, as in pMARS.
-
 Changes since 0.9.0:
 
+- The assembler gives pMARS's result for more sources, so some assemble differently: labels after an EQU opcode at the statement start (#116), `FOR` and `ROF` from an EQU (#118), a multi-line EQU in an operand (#119), and an opcode in an assert is an error, as in pMARS.
 - With as many warriors as core cells or more, the last result of a round (p-space cell 0) is the number of survivors modulo the core size (#131). It was the number itself, and an `LDP` of it made the engine address outside the core.
 
 ## 0.9.0, 12th November 2026
