@@ -104,6 +104,13 @@ for t in "$@"; do
     start "$n"
     n=$((n + 1))
   done
+  # -V counts fuzzing time only, not the time an instance spends on the
+  # inputs it takes over from the others: the main instance of fuzz_asm
+  # ran 49 minutes for -V 1800, 16 of them alone. So all of them stop at
+  # the same time too (afl-fuzz ends normally on SIGINT, exit code 0).
+  # shellcheck disable=SC2086
+  (sleep "$seconds" && kill -INT $pids 2>/dev/null) &
+  stopper=$!
   n=1
   for p in $pids; do
     if ! wait "$p"; then
@@ -113,6 +120,7 @@ for t in "$@"; do
     fi
     n=$((n + 1))
   done
+  kill "$stopper" 2>/dev/null
   runs=0
   for s in "$out"/*/fuzzer_stats; do
     e=$(sed -n 's/^execs_done *: //p' "$s")
