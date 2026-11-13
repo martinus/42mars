@@ -833,7 +833,8 @@ be a non-negative safe integer.
   single warrior in the match, its death ends the round.
 - A process that dies without being the last one: `cyclesLeft--` as usual.
 - Round end: for each warrior with processes: `score[warriorsLeft - 1]++`,
-  lastResult = warriorsLeft; others: lastResult = 0. With more than one
+  lastResult = warriorsLeft modulo coreSize (section 4); others:
+  lastResult = 0. With more than one
   warrior: a single survivor gets a win and the others a loss; otherwise the
   survivors get a tie and the dead a loss. `roundResult = { round, cycles:
   time, survivors: [indices] }`, appended to `results`. The starter advances.
@@ -1163,6 +1164,14 @@ warning counts it compares, and the tools skip sources that get them.
   '<statement>'` at the lost statement (for an assert: at the body line it
   read). The generators of `tools/pmars-diff.mjs` put multi-line EQU names only at
   the statement start.
+- The last result of a round is the number of survivors, which is no field
+  value when there are as many warriors as cells or more. pMARS refuses a
+  core smaller than warriors times `-d` and `-d 0`, so it reaches only the
+  core size itself (4 warriors of one instruction in a core of 4), and an
+  `LDP` of cell 0 then loads 4. The engine takes the last result modulo the
+  core size, so that every field stays below it (#131: with `min_distance`
+  0 the value went past it, and `LDP` made the engine address outside the
+  core).
 - pMARS keeps its scratch buffer between the warriors of one run (see "The
   scratch buffer"); the engine starts each assembly with a fresh one.
 
