@@ -28,7 +28,7 @@ paths:
 
 A change outside the loops must leave `execute`, `execute2_8000` and `execute2_any` byte-identical, call indices aside; data addresses moved by 64 or 128 were measured neutral twice but are avoidable. Check:
 - wasm: `git show origin/main:wasm/42mars.wasm > base.wasm; node bench/wasm-functions.mjs base.wasm wasm/42mars.wasm`. Its last line names the three loops, matched by size (a new function in front moves their index): "same" or "call operands only" passes. For "differs", `llvm-objdump -d --no-show-raw-insn` both and diff those three; constants that all moved by +64 are data addresses: the data section grew in front of the core.
-- native: `git archive origin/main lib | tar -x -C base/`, compile `base/lib/42mars.c` and `lib/42mars.c` with `clang -O3 -march=native -c` and `gcc -O3 -march=native -c`, each with and without `-DM42_FIXED_CONTEXT`, `objdump -d` and compare the three functions with addresses masked.
+- native: `node bench/native-loops.mjs [ref]` compiles `lib/42mars.c` of the ref (default origin/main) and of the worktree with clang and gcc `-O3 -march=native`, each with and without `-DM42_FIXED_CONTEXT`, and compares the three functions with addresses masked.
 
 What moves them, and the fixes that worked:
 - clang emits a static function in the order it is first referenced while emitting, not where it is defined. New code goes behind the loops in `mars.c` and is referenced after them in `run_some()`: called from `m42_run()` directly, `execute_watched()` came in front of the loops and pulled `warrior_died()` along (#74); a wrapper function one level down did not help. A growing function can stop being inlined and appear as a new one (#41). A small `M42_FORCE_INLINE` helper called from existing functions adds none.
