@@ -23,16 +23,18 @@ const tmp = mkdtempSync(join(tmpdir(), 'c-api-'));
 after(() => rmSync(tmp, { recursive: true, force: true }));
 
 // The builds take seconds each, so they run at the same time: the test
-// program, the example with the plain command of 42mars.h, and a syntax
-// check of the M42_FIXED_CONTEXT build with libc, which nothing else builds.
+// program, the examples with the plain commands of 42mars.h and
+// examples/parallel.c, and a syntax check of the M42_FIXED_CONTEXT build with libc, which nothing else builds.
 const run = promisify(execFile);
 const apiTest = program(prebuilt ?? tmp, 'api-test');
 const example = program(prebuilt ?? tmp, 'example');
+const parallel = program(prebuilt ?? tmp, 'parallel');
 before(() => {
   if (!hasCc) return undefined;
   return Promise.all([
     prebuilt ? null : run('cc', ['-std=c11', '-O2', '-Wall', '-Wextra', '-o', apiTest, join(root, 'test/c/api-test.c'), join(root, 'lib/42mars.c')]),
     prebuilt ? null : run('cc', ['-Ilib', '-o', example, 'examples/example.c', 'lib/42mars.c'], { cwd: root }),
+    prebuilt ? null : run('cc', ['-O2', '-pthread', '-Ilib', '-o', parallel, 'examples/parallel.c', 'lib/42mars.c'], { cwd: root }),
     run('cc', ['-std=c11', '-fsyntax-only', '-Wall', '-Wextra', '-Werror=implicit-function-declaration', '-DM42_FIXED_CONTEXT', join(root, 'lib/42mars.c')]),
   ]);
 });
@@ -135,6 +137,9 @@ test('the C library through 42mars.h agrees with the JS assembler and the wasm e
   // m42_warrior_source_end: 26 bytes up to the second ;redcode of two
   // warriors, all 17 of one, all 23 of the rest (warrior B), 0 when made
   assert.deepEqual(out.sourceEnd, [26, 17, 23, 1, 0]);
+  // m42_warrior_uses_pspace: MOV only, LDP second, STP first, LDP in a
+  // warrior with an error (not ok: 0); made with STP, made without; no warrior
+  assert.deepEqual(out.usesPspace, [0, 1, 1, 0, 1, 0, 0]);
   // m42_cells: 8 cells around the end, equal to m42_core's; first at the
   // core size, count 0 and no context copy nothing
   assert.deepEqual(out.cells, [8, 1, 0, 0, 0]);
@@ -176,6 +181,24 @@ test('examples/example.c builds with cc -Ilib examples/example.c lib/42mars.c an
   const r = createMarsSync().runMatch([codes[files.indexOf(lantern)], codes[files.indexOf(origami)]], { rounds: 100, seed: 3900 });
   assert.equal(out, r.warriors.map((w) => `${w.wins} ${w.losses} ${w.ties}\n`).join(''));
   assert.equal(out, '1 90 9\n90 1 9\n');
+});
+
+// examples/parallel.c plays the match in blocks on threads and exits with 1
+// when the sum differs from the whole match on one thread (#136).
+test('examples/parallel.c splits a match without p-space into blocks, and one with p-space not', { skip }, () => {
+  const lantern = join(warriorDir, 'lantern.red'), origami = join(warriorDir, 'origami.red');
+  const r = createMarsSync().runMatch([codes[files.indexOf(lantern)], codes[files.indexOf(origami)]], { rounds: 100, seed: 3900 });
+  const out = lines(execFileSync(parallel, ['-t', '4', '-r', '100', '-F', '4000', lantern, origami], { encoding: 'utf8' }));
+  assert.equal(out, `1 90 9\n90 1 9\n${r.instructions} instructions, 4 blocks\n`);
+
+  // Counter counts the rounds in p-space cell 1 and dies from round 4 on,
+  // Loop never dies. pmars -b -r 100 counter.red loop.red: "Results: 0 97 3".
+  // In 4 blocks of 25 rounds Counter would tie 12 times.
+  const counter = join(tmp, 'counter.red'), loop = join(tmp, 'loop.red');
+  writeFileSync(counter, ';name Counter\n ldp.ab #1, cnt\n add.ab #1, cnt\n stp.b cnt, #1\n slt.ab #3, cnt\n jmp 0\n dat 0, 0\ncnt dat 0, 0\n', 'latin1');
+  writeFileSync(loop, ';name Loop\n jmp 0\n', 'latin1');
+  const p = lines(execFileSync(parallel, ['-t', '4', '-r', '100', counter, loop], { encoding: 'utf8' }));
+  assert.match(p, /^0 97 3\n97 0 3\n\d+ instructions, 1 block \(p-space\)\n$/);
 });
 
 // build-msvc.bat links 42mars.dll with the exports listed in lib/42mars.def:

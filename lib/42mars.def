@@ -16,6 +16,7 @@ EXPORTS
 	m42_warrior_source_end
 	m42_warrior_pin
 	m42_warrior_code
+	m42_warrior_uses_pspace
 	m42_warrior_make_size
 	m42_warrior_make
 	m42_warrior_text

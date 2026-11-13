@@ -73,15 +73,18 @@ build/$(SHARED): build/42mars.o
 build/42mars: cli/42mars.c build/lib42mars.a
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ cli/42mars.c build/lib42mars.a
 
-# The test programs: api-test through the shared library, the example as
-# 42mars.h describes it.
+# The test programs: api-test through the shared library, the examples as
+# 42mars.h describes them.
 build/api-test: test/c/api-test.c build/$(SHARED)
 	$(CC) $(CFLAGS) $(LDFLAGS) $(RPATH) -o $@ test/c/api-test.c -Lbuild -l42mars
 
 build/example: examples/example.c build/lib42mars.a
 	$(CC) $(CFLAGS) $(LDFLAGS) -Ilib -o $@ examples/example.c build/lib42mars.a
 
-test: all build/api-test build/example
+build/parallel: examples/parallel.c build/lib42mars.a
+	$(CC) $(CFLAGS) -pthread $(LDFLAGS) -Ilib -o $@ examples/parallel.c build/lib42mars.a
+
+test: all build/api-test build/example build/parallel
 	M42_BIN=build node --test test/c-api.test.js test/cli.test.js
 
 install: all

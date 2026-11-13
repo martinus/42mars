@@ -1070,6 +1070,8 @@ LDP reads them, and opcodes are only copied, so when no warrior's code
 contains LDP every round gives the same result as in the whole match, and
 blocks of rounds can run on several engines (`tools/tournament.mjs` plays
 every pairing without LDP as blocks of 8 rounds, or of 1 with `--progress`).
+In C, `m42_warrior_uses_pspace()` is 1 for a warrior with LDP or STP
+(`examples/parallel.c` splits a match only when it is 0 for all).
 With `pspace` the blocks give the rounds of the whole match also with LDP:
 `pspace: true` starts as a match starts (p-space cells 0, last result
 coreSize - 1), an array per warrior (pSpaceSize cells, at least 1, cell 0

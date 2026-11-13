@@ -304,6 +304,21 @@ int main(int argc, char **argv) {
     m42_warrior_free(wo);
   }
 
+  // m42_warrior_uses_pspace(): LDP or STP anywhere in the code (#136)
+  {
+    const char *src[] = {" mov 0, 1\n", " mov 0, 1\n ldp.ab #0, 1\n", " stp.b 1, #3\n dat 0\n", " ldp #0, 1\n jmp nowhere\n"};
+    printf(",\"usesPspace\":[");
+    for (int k = 0; k < 4; k++) {
+      m42_warrior *pw = m42_assemble_new(src[k], strlen(src[k]), &r, 0, 0, &st);
+      printf("%d,", pw ? m42_warrior_uses_pspace(pw) : -1);
+      m42_warrior_free(pw);
+    }
+    const m42_instruction stp[2] = {{0, 6, 1, 1, 0, 1, 0}, {18, 1, 1, 0, 1, 3, 0}};
+    char made[256];
+    printf("%d,%d,%d]", m42_warrior_uses_pspace(m42_warrior_make(stp, 2, 0, 0, made, sizeof made)),
+           m42_warrior_uses_pspace(m42_warrior_make(stp, 1, 0, 0, made, sizeof made)), m42_warrior_uses_pspace(0));
+  }
+
   // A context of exactly m42_ctx_size() holds two warriors of max_length.
   char longest[1024] = "";
   for (uint32_t i = 0; i < r.max_length; i++) strcat(longest, " spl 0\n");
