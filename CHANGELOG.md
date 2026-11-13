@@ -2,7 +2,11 @@
 
 From 1.0.0 on, every change of the interface is listed here: the C library (`lib/42mars.h`), and the command line program `42mars`. Within 1.x they change only in a compatible way; `lib/42mars.h` names the two exceptions (the layout of `m42_cell`, the text of `m42_warrior_statement()`).
 
-## 1.0.0 (not released yet)
+## Unreleased
+
+- `m42_warrior_uses_pspace()`: 1 when a warrior has `LDP` or `STP`, so a caller knows when a match can be split into blocks of rounds on several threads (#136). `examples/parallel.c` shows that.
+
+## 1.0.0, 13th November 2026
 
 The first release with that promise.
 

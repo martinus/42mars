@@ -108,6 +108,16 @@ const m42_instruction *m42_warrior_code(const m42_warrior *w) {
   return w ? (const m42_instruction *)(const void *)RESULT(w)->ins : 0;
 }
 
+EXPORT(m42_warrior_uses_pspace)
+int m42_warrior_uses_pspace(const m42_warrior *w) {
+  const u32 n = m42_warrior_length(w);
+  for (u32 i = 0; i < n; i++) {
+    const u8 op = RESULT(w)->ins[i].op;
+    if (op == OP_LDP || op == OP_STP) return 1;
+  }
+  return 0;
+}
+
 static size_t copy_text(AsmText t, char *buf, size_t n) {
   if (buf && n) {
     const size_t k = t.n < n - 1 ? t.n : n - 1;

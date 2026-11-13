@@ -155,6 +155,14 @@ M42_API size_t m42_warrior_source_end(const m42_warrior *w);
 M42_API int m42_warrior_pin(const m42_warrior *w, int64_t *pin);
 // The instructions, m42_warrior_length() of them.
 M42_API const m42_instruction *m42_warrior_code(const m42_warrior *w);
+// 1 when the warrior's code has an LDP or STP, else 0 (also for a warrior
+// that did not assemble). Rounds of a match depend on each other only
+// through p-space: when no warrior uses it, a match can be split into blocks
+// (m42_match_options.first_round), one context per thread, and the blocks'
+// scores and instructions add up to those of the whole match
+// (examples/parallel.c). Otherwise play it in one block, or carry the
+// p-space from block to block (m42_match_options.pspace).
+M42_API int m42_warrior_uses_pspace(const m42_warrior *w);
 
 // A warrior from instructions instead of source (e.g. from an evolver):
 // ok, no texts or messages. pin may be 0. m42_warrior_make_size() bytes of

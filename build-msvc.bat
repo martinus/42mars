@@ -7,7 +7,9 @@ rem on Linux and macOS. Writes into build\:
 rem   42mars.exe            the command line program
 rem   42mars-static.lib     the library to link statically
 rem   42mars.dll            the library as a DLL, 42mars.lib its import library
-rem   api-test.exe          (through the DLL) and example.exe: the test programs
+rem   api-test.exe          (through the DLL), example.exe and parallel.exe: the
+rem                         test programs; parallel.exe needs C11 threads, which
+rem                         Visual Studio 2022 17.8 and newer have
 rem Then the tests: set M42_BIN=build and run
 rem   node --test test/c-api.test.js test/cli.test.js
 rem Runs in a Developer Command Prompt, or anywhere with Visual Studio 2019
@@ -43,3 +45,4 @@ cl %FLAGS% /LD build\42mars.obj /Fe:build\42mars.dll /link /DEF:lib\42mars.def |
 cl %FLAGS% cli\42mars.c build\42mars-static.lib /Fobuild\cli.obj /Fe:build\42mars.exe || exit /b 1
 cl %FLAGS% test\c\api-test.c build\42mars.lib /Fobuild\api-test.obj /Fe:build\api-test.exe || exit /b 1
 cl %FLAGS% /Ilib examples\example.c build\42mars-static.lib /Fobuild\example.obj /Fe:build\example.exe || exit /b 1
+cl %FLAGS% /Ilib examples\parallel.c build\42mars-static.lib /Fobuild\parallel.obj /Fe:build\parallel.exe || exit /b 1
