@@ -10,6 +10,10 @@ The first release with that promise.
 - **`42mars`**: a command line program with pMARS 0.9.5's options, stdout and exit codes, built on the library.
 - **The npm package `42mars`**: the library as a WebAssembly module with a JavaScript interface (`assemble`, `evaluate`, `createMars`, `createMarsSync`, `compileMars`), no dependencies, for Node 20 and newer and browsers.
 
+Changes since 0.9.0:
+
+- With as many warriors as core cells or more, the last result of a round (p-space cell 0) is the number of survivors modulo the core size (#131). It was the number itself, and an `LDP` of it made the engine address outside the core.
+
 ## 0.9.0, 12th November 2026
 
 A rehearsal of the release: the archives of the four native builds, the GitHub release and the npm publish ran for the first time. The interface is the one planned for 1.0.0, without the promise.

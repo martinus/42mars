@@ -227,6 +227,29 @@ test('p-space values from outside are below the core size', () => {
   assert.throws(() => m.runMatch([imp, imp], { pspace: cells(-1) }), RangeError);
 });
 
+test('the last result is below the core size, also with as many survivors as cells (#131)', () => {
+  // The last result is the number of survivors. With as many warriors as
+  // cells or more, that is no field value: LDP copied it into a cell, and
+  // the engine addressed outside the core (found by fuzz_make). The engine
+  // takes it modulo the core size (semantics doc, section 4).
+  const o = { coreSize: 2, warriors: 3, minDistance: 0, maxLength: 1, maxCycles: 10, pSpaceSize: 2 };
+  const jmp = warrior('jmp 0', o);
+  const r = engine(o).runMatch([jmp, jmp, jmp], { rounds: 1, pspace: true });
+  assert.deepEqual(r.warriors.map((w) => w.pspace[0]), [1, 1, 1]); // 3 survivors, modulo 2
+  // the p-space of that match goes into the next one
+  const next = engine(o).runMatch([jmp, jmp, jmp], { rounds: 1, pspace: r.warriors.map((w) => w.pspace) });
+  assert.equal(next.warriors.length, 3);
+  // pMARS (-s 4 -l 1 -d 1 -S 4 -c 50 -r 2, 13th November 2026): 4 warriors
+  // of one instruction in a core of 4 tie, and an LDP of cell 0 loads 4 in
+  // round 2, so a DIV.B by it does not die (Results: 0 0 0 2 0). The engine
+  // loads 0, and each process that divides by it dies, down to the last
+  // warrior.
+  const p = { coreSize: 4, warriors: 4, minDistance: 1, maxLength: 1, maxCycles: 50, pSpaceSize: 4 };
+  const ldp = warrior('ldp.ab #0, $1', p), div = warrior('div.b #0, #1', p);
+  const rounds = engine(p).runMatch([ldp, div, div, div], { rounds: 2, seed: 1 }).results;
+  assert.deepEqual(rounds.map((x) => x.survivors.length), [4, 1]);
+});
+
 test('p-space: last result starts at CORESIZE-1 and survives into the next round', () => {
   const src = 'ldp.ab #0, res\nstp.ab #42, #1\nldp.ab #1, res2\njmp 0\nres dat 0, 0\nres2 dat 0, 0\n';
   const m = engine({ maxCycles: 100 });

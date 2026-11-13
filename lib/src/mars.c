@@ -374,7 +374,9 @@ static M42_NOINLINE void end_round(Mars *const m) {
     Warrior *w = &m->war[i];
     if (w->alive) {
       w->score[m->warriorsLeft - 1]++;
-      w->lastResult = m->warriorsLeft;
+      // LDP copies it into a cell field, which must be below the core size
+      // (#131): with as many warriors as cells or more it would not be.
+      w->lastResult = m->warriorsLeft % m->N;
       survivors++;
     } else {
       w->lastResult = 0;
