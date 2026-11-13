@@ -11,9 +11,12 @@
 #                        lib/lib42mars.a, the shared library, lib/pkgconfig/42mars.pc
 #   make dist            build/42mars-<version>-<os>-<cpu>.tar.gz, an install
 #                        tree with the license
-#   make fuzz            the fuzz targets of test/fuzz/ with clang's libFuzzer,
-#                        ASan and UBSan, FUZZ_SECONDS each (default 60) on
-#                        FUZZ_JOBS processes (default 1); fails on any report
+#   make fuzz            the fuzz targets of test/fuzz/, FUZZ_SECONDS each
+#                        (default 60) on FUZZ_JOBS processes (default: one
+#                        per physical core); fails on any report. With AFL++
+#                        (afl-fuzz on the PATH, or AFL=<its folder>) through
+#                        test/fuzz/afl.sh, else clang's libFuzzer with ASan
+#                        and UBSan (FUZZ_ENGINE=libfuzzer picks it always)
 #   make clean
 #
 # The version is the one of lib/42mars.h. CC, CFLAGS, LDFLAGS and PREFIX
@@ -106,18 +109,26 @@ dist: all
 	cd build && tar -czf $(DIST).tar.gz $(DIST)
 	rm -rf build/stage build/$(DIST)
 
-# Fuzz targets: clang only (libFuzzer). FUZZ_CC=clang-22 picks another one.
+# Fuzz targets: AFL++ or libFuzzer (clang only; FUZZ_CC=clang-22 picks
+# another one).
+AFL ?= $(patsubst %/,%,$(dir $(shell command -v afl-fuzz 2>/dev/null)))
+FUZZ_ENGINE ?= $(if $(AFL),afl,libfuzzer)
 FUZZ_CC ?= clang
 FUZZ_SECONDS ?= 60
-FUZZ_JOBS ?= 1
+FUZZ_JOBS ?= $(shell sh test/fuzz/cores.sh)
 FUZZ_TARGETS := fuzz_asm fuzz_eval fuzz_make
 
 build/fuzz/%: test/fuzz/%.c $(LIB_SOURCES)
 	@mkdir -p build/fuzz
 	$(FUZZ_CC) -g -O1 -fsanitize=fuzzer,address,undefined -fno-sanitize-recover=undefined -Ilib -o $@ $< lib/42mars.c
 
+ifeq ($(FUZZ_ENGINE),afl)
+fuzz:
+	sh test/fuzz/afl.sh $(AFL) $(FUZZ_SECONDS) $(FUZZ_JOBS) $(FUZZ_TARGETS)
+else
 fuzz: $(addprefix build/fuzz/,$(FUZZ_TARGETS))
 	sh test/fuzz/run.sh $(FUZZ_SECONDS) $(FUZZ_JOBS) $(FUZZ_TARGETS)
+endif
 
 clean:
 	rm -rf build

@@ -36,7 +36,7 @@ node bench/wasm-functions.mjs old.wasm wasm/42mars.wasm           # which functi
 node tools/example-check.mjs $O/sets/t20 --pmars $O/bin/pmars     # examples/example.c (the C library) against pMARS
 make && node tools/pmars-diff.mjs --pmars $O/bin/pmars --corpus $O/corpus --cli build/42mars --only cli
 make test                                  # the C library, 42mars and the C tests
-make fuzz                                  # libFuzzer targets of test/fuzz/, 60 s each (FUZZ_SECONDS, FUZZ_JOBS)
+make fuzz                                  # targets of test/fuzz/, 60 s each, one process per core; AFL++ if found (AFL=<dir>), else libFuzzer
 make clean && make CFLAGS='-O2 -std=c11 -pedantic -Werror -DM42_PORTABLE' test   # the C11 code that MSVC compiles
 ```
 
