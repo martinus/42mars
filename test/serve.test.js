@@ -7,7 +7,7 @@
 
 import { after, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { appendFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -73,6 +73,22 @@ test('the events of a run, as they are written', { timeout: 15000 }, async () =>
   assert.deepEqual(got.slice(5).map((e) => e.ev), ['reset', 'message', 'message']);
   assert.deepEqual(got.slice(6).map((e) => JSON.parse(e.data).n), [1, 5]);
   await reader.cancel();
+});
+
+test('a wrong option or port is refused with the usage', () => {
+  const r = (args) => spawnSync(process.execPath, [join(root, 'tools/serve.mjs'), ...args], { encoding: 'utf8', timeout: 10000 });
+  for (const [args, why] of [
+    [['--runs', dir], /unknown option --runs \(--run\?\)/],
+    [['--run'], /--run needs the folder/],
+    [['80x'], /not a port: '80x'/],
+    [['70000'], /not a port/],
+    [['8000', '8001'], /one port only/],
+  ]) {
+    const p = r(args);
+    assert.equal(p.status, 2, args.join(' '));
+    assert.match(p.stderr, why);
+    assert.match(p.stderr, /usage: node tools\/serve.mjs/);
+  }
 });
 
 test('without --run there are no events, and files are served as before', { timeout: 15000 }, async () => {
