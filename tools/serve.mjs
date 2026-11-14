@@ -108,6 +108,10 @@ createServer(async (req, res) => {
   } catch {
     res.writeHead(404).end('not found');
   }
+}).on('error', (e) => {
+  if (e.code !== 'EADDRINUSE') throw e;
+  console.error(`port ${port} is in use, by another server${runDir ? '' : ' (another serve.mjs?)'}: start this one on another port, e.g.\n  node ${process.argv[1]} ${port + 1}${runDir ? ` --run ${runDir}` : ''}`);
+  process.exit(1);
 }).listen(port, '127.0.0.1', () => {
   console.log(`Core War Theater: http://127.0.0.1:${port}/`);
   if (runDir) console.log(`evolver dashboard of ${runDir}: http://127.0.0.1:${port}/ui/evolver.html`);
