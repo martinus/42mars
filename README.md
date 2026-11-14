@@ -159,7 +159,7 @@ build/42mars -b -k -r 1000 -P a.red b.red       # KotH output, all permutations
 `wasm/` holds the library as a WebAssembly module with a small JavaScript interface and TypeScript types: three files without dependencies, for Node 20 or newer and the browser. It is a demo, not on npm and not covered by the 1.x promise of the C library. Import it from the tag, or copy `wasm/42mars.js` and `wasm/42mars.wasm`:
 
 ```js
-import { assemble, createMars } from 'https://cdn.jsdelivr.net/gh/martinus/42mars@v1.0.0/wasm/42mars.js';
+import { assemble, createMars } from 'https://cdn.jsdelivr.net/gh/martinus/42mars@v1.1.0/wasm/42mars.js';
 
 const mars = await createMars(); // compiles the module, so that assemble() works in a browser too
 const imp = assemble(';name Imp\nmov 0, 1\n');

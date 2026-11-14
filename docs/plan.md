@@ -134,6 +134,11 @@ Where pMARS hangs (lines over 255 characters, a `\` at the end of the file, huge
    - `npm test` with `PMARS_VALIDATE` (none skipped), `make test`, the portable build and ASan/UBSan: pass; the visualizer against v0.9.0 (`ui-check`): the same in 4 views
    - speed, whole process on the 3 bench pairs, 7 alternating runs, median: 42mars natively 0.924 s (483M instructions/s), in WebAssembly 1.138 s (392M), pMARS 4.203 s (106M), within 1% of the README's chart, with the same wins, losses and ties
    - fuzzing: item 3; the fix of #131 went through the engine check again (seed 1794561737, 0 differences)
+6. The release gate of 1.1.0, 14th November 2026, seed 1794656201, after the sixth round of speed work changed the dispatch of the simulator:
+   - against pMARS: the engine check (`.claude/skills/engine-check/gate.txt`), `tools/pmars-diff.mjs --scale 4` with `--pmars-trace`, then with `--permute` and with `--icws88`, and 4,800 battles each with `--pmars-trace` on the Koenigstuhl folders `94nop`, `pspace-top50`, `odd` and `88` (`--icws88`), and on `94nop` with `--wasm-match`: 0 differences; the t20 tournament and `tools/example-check.mjs`: SAME
+   - `npm test` with `PMARS_VALIDATE` (391, none skipped), `make test`, the portable build and ASan/UBSan: pass; the visualizer against v1.0.0 (`ui-check`): the same in 4 views
+   - fuzzing, libFuzzer under ASan and UBSan, 5 minutes per target on 8 processes: `fuzz_asm` 2,314,056 runs, `fuzz_eval` 48,013,064 runs, `fuzz_make` 2,958,445 runs, no report
+   - speed: the README charts were measured on this code the same day; MSVC on the Windows runner: `docs/performance-log.md`
 
 ### Speed
 

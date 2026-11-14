@@ -2,8 +2,9 @@
 
 From 1.0.0 on, every change of the interface is listed here: the C library (`lib/42mars.h`), and the command line program `42mars`. Within 1.x they change only in a compatible way; `lib/42mars.h` names the two exceptions (the layout of `m42_cell`, the text of `m42_warrior_statement()`).
 
-## Unreleased
+## 1.1.0, 14th November 2026
 
+- The simulator is faster, with the same results: natively 46 to 70% on '94 hills and 9 to 14% on '88-style warriors with gcc, 32 to 58% and 6 to 14% with clang. 512 instruction words have code of their own instead of 32 ([`docs/performance.md`](docs/performance.md)). The price: gcc compiles the library in 7.8 s instead of 2.6 s, and `42mars.wasm` has 295 KB instead of 103 KB. With MSVC, which keeps 16 words, a '94 hill is 4 to 5% faster and an '88 hill 6 to 8% slower than with 1.0.0.
 - `m42_cell` has layout 2 (`M42_CELL_LAYOUT`): its fourth field, `pad` and always 0 until now, is `hot`, the number of the code the engine runs for the cell's instruction word. `m42_cells()` and everything else give the same as before.
 - `m42_warrior_uses_pspace()`: 1 when a warrior has `LDP` or `STP`, so a caller knows when a match can be split into blocks of rounds on several threads (#136). `examples/parallel.c` shows that.
 
