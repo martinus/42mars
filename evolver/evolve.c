@@ -59,7 +59,10 @@ typedef struct {
   double fractions; // probability that a far value is a fraction of the core give or take 20 (genome.h)
   uint32_t race, race_keep; // --race: the first screen rounds for all, the rest for the best race_keep only
   int prior;                // PRIOR_UNIFORM, or PRIOR_HILL: opcodes, modifiers, modes as often as in the opponents
+  int parents;              // PARENTS_VALUE: tournament of two by push-off value; PARENTS_DUEL: by their match
 } params;
+
+enum { PARENTS_VALUE, PARENTS_DUEL };
 
 enum { PRIOR_UNIFORM, PRIOR_HILL };
 
@@ -496,13 +499,15 @@ static void event_start(run *r) {
           "\"distance\":%u},\"params\":{\"panel\":%u,\"holdout\":%u,\"list\":%u,\"batch\":%u,\"survivors\":%u,"
           "\"rounds\":%u,\"screenRounds\":%u,\"benchEvery\":%u,\"benchRounds\":%u,\"initLength\":%u,"
           "\"screenFactor\":%.17g,\"alpha\":%.17g,\"reintroduce\":%.17g,\"sd\":\"%s\",\"seed\":%" PRIu64
-          ",\"select\":\"%s\",\"rotate\":%u,\"fractions\":%.17g,\"race\":%u,\"raceKeep\":%u,\"prior\":\"%s\"},"
+          ",\"select\":\"%s\",\"rotate\":%u,\"fractions\":%.17g,\"race\":%u,\"raceKeep\":%u,\"prior\":\"%s\","
+          "\"parents\":\"%s\"},"
           "\"opponents\":",
           m42_version(), p->rules.core_size, p->rules.max_cycles, p->rules.max_processes, p->rules.max_length,
           p->rules.min_distance, r->panel_n, r->hold_n, p->list, p->batch, p->survivors, p->rounds, p->screen_rounds,
           p->bench_every, p->bench_rounds, p->init_length, p->screen_factor, p->alpha, p->reintroduce,
           p->sd == SD_SUM ? "sum" : "opponent", p->seed, p->select == SELECT_VALUE ? "value" : "screen", p->rotate,
-          p->fractions, p->race, p->race_keep, p->prior == PRIOR_HILL ? "hill" : "uniform");
+          p->fractions, p->race, p->race_keep, p->prior == PRIOR_HILL ? "hill" : "uniform",
+          p->parents == PARENTS_DUEL ? "duel" : "value");
   json_str(f, p->opponents, 0);
   fputs(",\"weights\":{", f);
   const struct {
@@ -554,7 +559,8 @@ static void event_panel(run *r) {
 
 // A new member: its results against every warrior in, [other, wins, losses,
 // ties, seed], the new member warrior 0 of each match.
-static void event_enter(run *r, uint32_t slot, double screen, double estimate, double race_key, const unit *row) {
+static void event_enter(run *r, uint32_t slot, double screen, double estimate, double race_key, uint64_t rival,
+                        const unit *row) {
   FILE *f = r->events;
   const warrior *w = r->slot[slot];
   fprintf(f, "{\"type\":\"enter\",\"batch\":%u,\"id\":%" PRIu64 ",\"name\":", r->batch, w->id);
@@ -566,7 +572,8 @@ static void event_enter(run *r, uint32_t slot, double screen, double estimate, d
   json_str(f, w->ops, 0);
   fprintf(f, ",\"length\":%u,\"screen\":%.4f,\"estimate\":%.6f,\"screenPoints\":[", w->g->len, screen, estimate);
   for (uint32_t k = 0; k < r->panel_n; k++) fprintf(f, "%s%.4f", k ? "," : "", points(row[k].s[0], r->p.screen_rounds));
-  fprintf(f, "],\"raceKey\":%.6f,\"code\":", race_key);
+  fprintf(f, "],\"raceKey\":%.6f,\"rival\":%" PRId64 ",\"code\":", race_key,
+          rival == NO_ID ? (int64_t)-1 : (int64_t)rival);
   write_code(f, w->g, r->p.rules.core_size);
   fputs(",\"scores\":[", f);
   int first = 1;
@@ -620,10 +627,10 @@ static void save_state(run *r) {
   fprintf(f, "42evolve-state 1\n");
   fprintf(f, "rules %u %u %u %u %u\n", p->rules.core_size, p->rules.max_cycles, p->rules.max_processes,
           p->rules.max_length, p->rules.min_distance);
-  fprintf(f, "params %u %u %u %u %u %u %u %u %u %u %.17g %.17g %.17g %d %" PRIu64 " %d %u %.17g %u %u %d\n", p->panel,
+  fprintf(f, "params %u %u %u %u %u %u %u %u %u %u %.17g %.17g %.17g %d %" PRIu64 " %d %u %.17g %u %u %d %d\n", p->panel,
           p->holdout, p->list, p->batch, p->survivors, p->rounds, p->screen_rounds, p->bench_every, p->bench_rounds,
           p->init_length, p->screen_factor, p->alpha, p->reintroduce, p->sd, p->seed, p->select, p->rotate,
-          p->fractions, p->race, p->race_keep, p->prior);
+          p->fractions, p->race, p->race_keep, p->prior, p->parents);
   fprintf(f, "opponents %s\n", p->opponents);
   for (uint32_t i = 0; i < r->panel_n; i++) fprintf(f, "panel-id %" PRIu64 " %s\n", r->panel[i].id, r->panel[i].file);
   for (uint32_t i = 0; i < r->hold_n; i++) fprintf(f, "holdout %s\n", r->hold[i].file);
@@ -722,13 +729,13 @@ static int load_state(run *r, const char *path) {
         goto bad;
     } else if (!strncmp(line, "params ", 7)) {
       // the last ones came with --select and --rotate, --fractions, --race and
-      // --race-keep, --prior; a state without them has none of them
-      const int got = sscanf(line + 7, "%u %u %u %u %u %u %u %u %u %u %lg %lg %lg %d %" SCNu64 " %d %u %lg %u %u %d",
+      // --race-keep, --prior, --parents; a state without them has none of them
+      const int got = sscanf(line + 7, "%u %u %u %u %u %u %u %u %u %u %lg %lg %lg %d %" SCNu64 " %d %u %lg %u %u %d %d",
                              &p->panel, &p->holdout, &p->list, &p->batch, &p->survivors, &p->rounds,
                              &p->screen_rounds, &p->bench_every, &p->bench_rounds, &p->init_length, &p->screen_factor,
                              &p->alpha, &p->reintroduce, &p->sd, &p->seed, &p->select, &p->rotate, &p->fractions,
-                             &p->race, &p->race_keep, &p->prior);
-      if (got != 15 && got != 17 && got != 18 && got != 20 && got != 21) goto bad;
+                             &p->race, &p->race_keep, &p->prior, &p->parents);
+      if (got != 15 && got != 17 && got != 18 && got != 20 && got != 21 && got != 22) goto bad;
     } else if (!strncmp(line, "opponents ", 10)) {
       snprintf(p->opponents, sizeof p->opponents, "%s", line + 10);
     } else if (!strncmp(line, "panel ", 6)) { // before --rotate: the ids are 0, 1, ...
@@ -848,6 +855,7 @@ typedef struct {
   m42_warrior *w;
   uint64_t parents[2];
   uint32_t noun; // the family's noun, from the first parent
+  uint64_t rival; // the member the first parent won its tournament against, NO_ID none
   char ops[96];
   int skip;
   double screen;   // average against the panel in the screen rounds
@@ -859,11 +867,21 @@ typedef struct {
 } candidate;
 
 // Tournament of two: the member with the higher push-off value.
-static const warrior *select_parent(run *r, rng *g) {
+// Tournament of two members. --parents value: the higher push-off value
+// wins. --parents duel: the one with more points in their match against
+// each other wins (as in YACE, where winners of fights reproduce), a draw
+// goes by value. *rival: the other one.
+static const warrior *select_parent(run *r, rng *g, uint64_t *rival) {
   const uint32_t m = members(r);
   const uint32_t i = r->panel_n + rng_below(g, m), j = r->panel_n + rng_below(g, m);
   const pushoff_value *a = &r->values[i], *b = &r->values[j];
-  return r->slot[(b->value > a->value ? b : a)->index];
+  const pushoff_value *win = b->value > a->value ? b : a;
+  if (r->p.parents == PARENTS_DUEL && a->index != b->index) {
+    const double ab = r->pts[a->index * r->cap + b->index], ba = r->pts[b->index * r->cap + a->index];
+    if (ab != ba) win = ab > ba ? a : b;
+  }
+  if (rival) *rival = r->slot[(win == a ? b : a)->index]->id;
+  return r->slot[win->index];
 }
 
 typedef struct {
@@ -1051,7 +1069,7 @@ static void run_batch(run *r) {
   for (uint32_t i = 0; i < B; i++) {
     rng g = rng_seed(p->seed, 0x6272656564u + r->batch, i); // "breed"
     candidate *x = &c[i];
-    x->parents[0] = x->parents[1] = NO_ID;
+    x->parents[0] = x->parents[1] = x->rival = NO_ID;
     int reintro = 0;
     if (members(r) == 0) {
       genome_random(&x->g, &g, core,
@@ -1067,7 +1085,7 @@ static void run_batch(run *r) {
       strcpy(x->ops, "reintroduce");
       reintro = 1;
     } else {
-      const warrior *a = select_parent(r, &g), *b = select_parent(r, &g);
+      const warrior *a = select_parent(r, &g, &x->rival), *b = select_parent(r, &g, 0);
       genome_breed(&x->g, a->g, b->g, &g, core, p->rules.max_length, &r->style, x->ops, sizeof x->ops);
       x->parents[0] = a->id;
       x->noun = a->noun;
@@ -1206,7 +1224,7 @@ static void run_batch(run *r) {
     for (uint32_t j = 0; j < i; j++, fn++)
       if (slot_of[j] != UINT32_MAX) set_result(r, s, slot_of[j], f[fn].s[0]);
     rebuild_active(r);
-    event_enter(r, s, x->screen, x->estimate, x->race_key, u + at);
+    event_enter(r, s, x->screen, x->estimate, x->race_key, x->rival, u + at);
     entered++;
     if (members(r) > p->list) {
       compute_values(r);
@@ -1274,6 +1292,7 @@ static void usage(void) {
           "         [--bench-every 10] [--bench-rounds 100] [--alpha 1] [--sd opponent|sum]\n"
           "         [--reintroduce 0.02] [--init-length 10] [--seed 1] [--select screen|value] [--rotate N]\n"
           "         [--fractions p] [--race N] [--race-keep N] [--prior uniform|hill]\n"
+          "         [--parents value|duel]\n"
           "         [--size 8000] [--cycles 80000] [--processes 8000] [--length 100] [--distance 100]\n"
           "         [--threads N] [--batches N] [--seconds S]\n"
           "       42evolve <run folder> [--threads N] [--batches N] [--seconds S]   (continue a run)\n");
@@ -1314,6 +1333,10 @@ int main(int argc, char **argv) {
     else if (!strcmp(a, "--select")) {
       if (!strcmp(v, "screen")) p->select = SELECT_SCREEN;
       else if (!strcmp(v, "value")) p->select = SELECT_VALUE;
+      else usage();
+    } else if (!strcmp(a, "--parents")) {
+      if (!strcmp(v, "value")) p->parents = PARENTS_VALUE;
+      else if (!strcmp(v, "duel")) p->parents = PARENTS_DUEL;
       else usage();
     } else if (!strcmp(a, "--prior")) {
       if (!strcmp(v, "uniform")) p->prior = PRIOR_UNIFORM;
