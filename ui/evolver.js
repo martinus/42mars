@@ -102,14 +102,14 @@ function handle(e) {
       S.panel = e.panel.map((p) => p.id);
       S.slots = S.panel.slice();
       const r = e.rules, p = e.params;
-      $('run-info').textContent = `core ${r.size} · cycles ${r.cycles} · length ${r.length} · panel ${p.panel} · holdout ${p.holdout} · list ${p.list} · batch ${p.batch} · ${p.rounds} rounds · SD ${p.sd} · alpha ${p.alpha} · seed ${p.seed} · 42mars ${e.version}`;
+      $('run-info').textContent = `core ${r.size} · cycles ${r.cycles} · length ${r.length} · panel ${p.panel} · holdout ${p.holdout} · list ${p.list} · batch ${p.batch} · ${p.rounds} rounds · SD ${p.sd} · alpha ${p.alpha} · select ${p.select ?? 'screen'} · rotate ${p.rotate ?? 0} · seed ${p.seed} · 42mars ${e.version}`;
       break;
     }
     case 'panel':
       for (const [a, b, w, l, t, seed] of e.scores) setRes(a, b, w, l, t, seed, a);
       break;
     case 'enter': {
-      const x = { id: e.id, kind: 'member', name: e.name ?? `e${e.id}`, code: e.code, parents: e.parents, ops: e.ops, length: e.length, screen: e.screen, born: e.batch, died: null, alive: true, enteredAt: now, value: null };
+      const x = { id: e.id, kind: 'member', name: e.name ?? `e${e.id}`, code: e.code, parents: e.parents, ops: e.ops, length: e.length, screen: e.screen, estimate: e.estimate, born: e.batch, died: null, alive: true, enteredAt: now, value: null };
       x.hue = hueFor(e.id, e.parents);
       S.w.set(e.id, x);
       let s = S.slots.indexOf(null, S.panel.length);
@@ -120,6 +120,19 @@ function handle(e) {
       x.row = null;
       S.mapDirty = true;
       tick(`<span class="in">+</span> ${link(e.id)} <b>${f1(x.panelAvg)}</b> vs panel <span style="color:#6c7290">${esc(e.ops)}</span>`);
+      break;
+    }
+    case 'rotate': { // a new hill warrior takes the place of the oldest in the panel
+      const p = { ...e.panel, kind: 'panel' };
+      S.w.set(p.id, p);
+      const old = S.w.get(e.out);
+      if (old) old.kind = 'retired';
+      S.panel[S.panel.indexOf(e.out)] = p.id;
+      S.slots[S.slots.indexOf(e.out)] = p.id;
+      for (const [o, w, l, t, seed] of e.scores) setRes(p.id, o, w, l, t, seed, p.id);
+      for (const x of alive()) x.panelAvg = panelAvg(x.id);
+      S.mapDirty = true;
+      tick(`<span class="best">⟳</span> panel: ${link(p.id)} replaces ${esc(old?.name ?? `#${e.out}`)}`);
       break;
     }
     case 'leave': {
@@ -695,11 +708,11 @@ function renderCard() {
       ${x.id === S.bestId ? '<div class="sub" style="color:#ffc53d">★ the best against the holdout warriors so far</div>' : ''}
       <div class="sub">born in batch ${x.born}${x.alive ? ', in the list' : `, pushed off in batch ${x.died}`} · ${x.length} instructions · ${esc(x.ops)}</div>
       <div class="stats">${stat('vs panel', f1(x.panelAvg))}${stat('vs holdout', f1(x.holdout))}${stat('push-off value', f1(x.value))}
-      ${stat('distance', x.distance?.toFixed(2) ?? '–')}${stat('nearest', x.nearest !== undefined && x.nearest !== null && S.w.has(x.nearest) ? link(x.nearest) : '–')}${stat('screen', f1(x.screen))}</div>
+      ${stat('distance', x.distance?.toFixed(2) ?? '–')}${stat('nearest', x.nearest !== undefined && x.nearest !== null && S.w.has(x.nearest) ? link(x.nearest) : '–')}${stat('screen', `${f1(x.screen)}${x.estimate !== undefined ? ` <small style="color:#7f86a0">est. ${x.estimate.toFixed(0)}</small>` : ''}`)}</div>
       <div class="links">parents: ${parents}</div>
       <h4>Code</h4><pre>${listing(x.code, Number(/ORG\s+(\d+)/.exec(x.code)?.[1] ?? 0))}</pre>`;
   } else {
-    head = `<h3 style="color:${color}">${esc(x.name)}</h3><div class="sub">${esc(x.author)} · ${esc(x.file)} · ${x.kind === 'panel' ? 'panel' : 'holdout'} warrior from the hill</div>
+    head = `<h3 style="color:${color}">${esc(x.name)}</h3><div class="sub">${esc(x.author)} · ${esc(x.file)} · ${{ panel: 'panel', holdout: 'holdout', retired: 'former panel' }[x.kind]} warrior from the hill</div>
       <div class="stats">${stat('vs panel', f1(x.panelAvg))}${stat('push-off value', f1(x.value))}${stat('nearest', x.nearest !== undefined && S.w.has(x.nearest) ? link(x.nearest) : '–')}</div>
       <h4>Source</h4><pre>${esc(x.source)}</pre>`;
   }
