@@ -927,6 +927,7 @@ typedef struct {
   double estimate; // screen * (SD-score to the nearest warrior in, on the panel columns)^alpha
   double key;      // what the survivors are picked by: screen or estimate
   int out;         // --race: dropped after the first screen rounds
+  int reached;     // 0 bred, 1 evaluated (not a repeat), 2 past the screen, 3 still in the list after its batch
   double race_key; // --race: the key after the first screen rounds
   uint64_t id;
 } candidate;
@@ -1120,6 +1121,41 @@ static void score_screen(const run *r, candidate *x, const unit *row, uint32_t r
   x->key = r->p.select == SELECT_VALUE ? x->estimate : x->screen;
 }
 
+// How far the children of each change got in a batch: [bred, evaluated,
+// past the screen, still in the list after the batch]; a child with several
+// changes counts for each of them (once per name).
+typedef struct {
+  char name[24];
+  uint32_t n[4];
+} op_count;
+
+static void count_ops(op_count *t, uint32_t *tn, const char *ops, int reached) {
+  const char *seen[16];
+  uint32_t ns = 0;
+  for (const char *p = ops; *p;) {
+    while (*p == ' ') p++;
+    const char *e = p;
+    while (*e && *e != ' ') e++;
+    const size_t len = (size_t)(e - p);
+    if (!len || len >= sizeof t->name) {
+      p = e;
+      continue;
+    }
+    int dup = 0;
+    for (uint32_t k = 0; k < ns; k++) dup |= strncmp(seen[k], p, len) == 0 && seen[k][len] == 0;
+    uint32_t k = 0;
+    while (k < *tn && !(strncmp(t[k].name, p, len) == 0 && t[k].name[len] == 0)) k++;
+    if (!dup) {
+      if (k == *tn && *tn < 32) memcpy(t[k].name, p, len), t[k].name[len] = 0, (*tn)++;
+      if (k < *tn) {
+        for (int st = 0; st <= reached; st++) t[k].n[st]++;
+        if (ns < 16) seen[ns++] = t[k].name;
+      }
+    }
+    p = e;
+  }
+}
+
 static void run_batch(run *r) {
   const params *p = &r->p;
   const uint32_t B = p->batch, P = r->panel_n;
@@ -1173,6 +1209,7 @@ static void run_batch(run *r) {
     if (!x->skip) {
       seen_add(r, h);
       x->w = make_warrior(&x->g, &p->rules);
+      x->reached = 1;
       evaluated++;
     }
   }
@@ -1242,7 +1279,7 @@ static void run_batch(run *r) {
     if (!c[i].skip && !c[i].out && c[i].screen >= threshold) sv[sn++] = &c[i];
   qsort(sv, sn, sizeof *sv, by_key);
   if (sn > p->survivors) sn = p->survivors;
-  for (uint32_t i = 0; i < sn; i++) sv[i]->id = r->next_id++;
+  for (uint32_t i = 0; i < sn; i++) sv[i]->id = r->next_id++, sv[i]->reached = 2;
 
   // the rest of the rounds against the panel, all rounds against the members
   // and against the survivors before them
@@ -1326,6 +1363,8 @@ static void run_batch(run *r) {
       rebuild_active(r);
     }
   }
+  for (uint32_t i = 0; i < sn; i++)
+    if (slot_of[i] != UINT32_MAX) sv[i]->reached = 3;
   compute_values(r);
   event_values(r);
 
@@ -1341,8 +1380,16 @@ static void run_batch(run *r) {
   const double busy = (s1.busy - s0.busy) / (wall * r->pool.threads);
   fprintf(r->events,
           "{\"type\":\"batch\",\"batch\":%u,\"candidates\":%u,\"evaluated\":%u,\"raced\":%u,\"raceDropped\":%.6f,"
-          "\"survivors\":%u,\"entered\":%u,\"members\":%u}\n",
+          "\"survivors\":%u,\"entered\":%u,\"members\":%u,\"ops\":{",
           r->batch, B, evaluated, stage < p->screen_rounds ? raced : evaluated, race_dropped, sn, entered, members(r));
+  op_count ops[32];
+  uint32_t on = 0;
+  memset(ops, 0, sizeof ops);
+  for (uint32_t i = 0; i < B; i++) count_ops(ops, &on, c[i].ops, c[i].reached);
+  for (uint32_t k = 0; k < on; k++)
+    fprintf(r->events, "%s\"%s\":[%u,%u,%u,%u]", k ? "," : "", ops[k].name, ops[k].n[0], ops[k].n[1], ops[k].n[2],
+            ops[k].n[3]);
+  fputs("}}\n", r->events);
   fprintf(r->events,
           "{\"type\":\"speed\",\"batch\":%u,\"seconds\":%.4f,\"threads\":%u,\"busy\":%.4f,\"rounds\":%" PRIu64
           ",\"instructions\":%" PRIu64 ",\"candidatesPerSecond\":%.2f,\"roundsPerSecond\":%.1f}\n",

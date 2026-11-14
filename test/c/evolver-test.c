@@ -375,6 +375,66 @@ static void test_from_code(void) {
   CHECK(g.g[0].aref && g.g[0].a == 0 && !g.g[1].aref, "jmp 0 is not a reference to itself");
 }
 
+// genome_change(): every kind gives a valid genome; the four small steps
+// change only what they say.
+static void test_changes(void) {
+  rng r = rng_seed(22, 23, 24);
+  static const int fam_op[GENOME_OPCODES] = {-1, 0, 0, 1, 1, 1, 2, 2, 2, 3, 3, 4, 5, 4, 3, 3, 5};
+  uint32_t applied[CH_COUNT] = {0};
+  for (int round = 0; round < 4000; round++) {
+    genome p, q, c;
+    genome_random(&p, &r, CORE, 2 + rng_below(&r, 30), 0);
+    genome_random(&q, &r, CORE, 2 + rng_below(&r, 30), 0);
+    const int kind = (int)rng_below(&r, CH_COUNT);
+    c = p;
+    if (!genome_change(&c, &q, &r, CORE, 40, 0, kind)) continue;
+    applied[kind]++;
+    CHECK(valid(&c, 40), "%s gave an invalid genome", genome_change_name(kind));
+    if (kind < CH_RELATED_OPCODE) continue;
+    CHECK(c.len == p.len && c.start == p.start, "%s changed the length or the start", genome_change_name(kind));
+    uint32_t diff = 0;
+    for (uint32_t i = 0; i < p.len; i++) {
+      const gene *a = &p.g[i], *b = &c.g[i];
+      if (memcmp(a, b, sizeof *a) == 0) continue;
+      diff++;
+      if (kind == CH_RELATED_OPCODE) {
+        CHECK(a->op != b->op && fam_op[a->op] >= 0 && fam_op[a->op] == fam_op[b->op] && a->mod == b->mod && a->a == b->a && a->b == b->b,
+              "related-opcode %u -> %u", a->op, b->op);
+      } else if (kind == CH_RELATED_MODE) {
+        const int am = a->am != b->am, bm = a->bm != b->bm;
+        CHECK(am + bm == 1 && a->op == b->op && a->a == b->a && a->b == b->b, "related-mode changed more");
+        const uint8_t from = am ? a->am : a->bm, to = am ? b->am : b->bm;
+        const int ok = from == 0 ? to == 1 : (from == 1 || from == 2 || from == 5) ? (to == 1 || to == 2 || to == 5) : to >= 3;
+        CHECK(ok && to != 0, "related-mode %u -> %u", from, to);
+      } else {
+        const int changed_a = a->a != b->a, changed_b = a->b != b->b;
+        CHECK(changed_a + changed_b == 1 && a->op == b->op && a->am == b->am && a->bm == b->bm && a->aref == b->aref && a->bref == b->bref,
+              "%s changed more than one value", genome_change_name(kind));
+        const uint32_t was = changed_a ? a->a : a->b, now = changed_a ? b->a : b->b;
+        if (kind == CH_TUNE) {
+          const int32_t sw = was > CORE / 2 ? (int32_t)was - (int32_t)CORE : (int32_t)was;
+          int32_t d = (int32_t)now - (int32_t)was;
+          if (d > (int32_t)CORE / 2) d -= CORE;
+          if (d < -(int32_t)CORE / 2) d += CORE;
+          const int32_t most = abs(sw) / 50 > 4 ? abs(sw) / 50 : 4;
+          CHECK(d != 0 && abs(d) <= most && abs(sw) > 16, "tune moved %d from %d", d, sw);
+        } else { // shared: now equals another far value of the parent, or its negative
+          int found = 0;
+          for (uint32_t j = 0; j < p.len; j++)
+            for (int o = 0; o < 2; o++) {
+              const uint32_t v = o ? p.g[j].b : p.g[j].a;
+              if ((o ? p.g[j].bref : p.g[j].aref) || (j == i && o == changed_b)) continue;
+              found |= v == now || (CORE - v) % CORE == now;
+            }
+          CHECK(found, "shared-constant %u is no other value of the warrior", now);
+        }
+      }
+    }
+    CHECK(diff == 1, "%s changed %u instructions", genome_change_name(kind), diff);
+  }
+  for (int k = 0; k < CH_COUNT; k++) CHECK(applied[k] > 50, "%s applied only %u times", genome_change_name(k), applied[k]);
+}
+
 int main(void) {
   test_rebuild();
   test_duplicate_and_crossover();
@@ -386,6 +446,7 @@ int main(void) {
   test_fractions();
   test_weights();
   test_from_code();
+  test_changes();
   if (failures) {
     fprintf(stderr, "%d failures\n", failures);
     return 1;

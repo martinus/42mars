@@ -75,11 +75,32 @@ test('the events of a run, as they are written', { timeout: 15000 }, async () =>
   await reader.cancel();
 });
 
+test('several runs: /runs lists them, /run/<n>/events streams each', { timeout: 15000 }, async () => {
+  const dirs = ['first', 'second'].map((name) => {
+    const d = join(dir, `multi-${name}`);
+    mkdirSync(d, { recursive: true });
+    writeFileSync(join(d, 'events.jsonl'), `{"type":"start","run":"${name}"}\n`);
+    return d;
+  });
+  const url = await serve(['--run', ...dirs]); // one --run, two folders
+  assert.deepEqual(await (await fetch(`${url}/runs`)).json(), [{ index: 0, name: 'multi-first' }, { index: 1, name: 'multi-second' }]);
+  for (const [path, name] of [['/run/1/events', 'second'], ['/run/0/events', 'first'], ['/run/events', 'first']]) {
+    const res = await fetch(`${url}${path}`);
+    const reader = res.body.getReader();
+    const got = await read(reader, [], (g) => g.length >= 2);
+    assert.equal(JSON.parse(got[1].data).run, name, path);
+    await reader.cancel();
+  }
+  assert.equal((await fetch(`${url}/run/2/events`)).status, 404);
+  assert.equal((await fetch(`${url}/ui/runs.html`)).status, 200);
+});
+
 test('a wrong option or port is refused with the usage', () => {
   const r = (args) => spawnSync(process.execPath, [join(root, 'tools/serve.mjs'), ...args], { encoding: 'utf8', timeout: 10000 });
   for (const [args, why] of [
     [['--runs', dir], /unknown option --runs \(--run\?\)/],
     [['--run'], /--run needs the folder/],
+    [['--run', '--x'], /--run needs the folder/],
     [['80x'], /not a port: '80x'/],
     [['70000'], /not a port/],
     [['8000', '8001'], /one port only/],

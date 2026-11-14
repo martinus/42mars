@@ -65,6 +65,8 @@ The run folder gets `events.jsonl` (everything that happened, one JSON object pe
 - **★ best** in the header is the best warrior against the holdout warriors so far, also after the push-off removed it from the list (the same warrior as `best.red`); **strongest now** is the member with the highest average against the panel. A click opens the card. The best one has a ★ in the matrix and on the map.
 - A click on a warrior opens its card: code, scores, parents, nearest warrior, its result against each panel warrior, and every match with a **watch** button.
 
+**Several runs**: `node tools/serve.mjs --run ~/42evolve.a ~/42evolve.b ...` (one `--run`, any number of folders, so `--run ~/42evolve.*` works) serves each run's events; `ui/evolver.html?run=<n>` is the dashboard of run n (0 is the first), and [`ui/runs.html`](../ui/runs.html) shows them all on one page: the best against the holdout and the best member against the panel over the minutes of each run (the fair axis when runs share a machine), and a table with the settings in which they differ, where each stands, the speed, the families and the opcodes of the list.
+
 **Watch** opens `ui/index.html#battle=...`, which carries both warriors, the rules, the seed and the rounds. It starts in the grid layout at learn speed, every step explained (`?layout=ring` and `?speed=` before the `#` still win). The visualizer plays the same rounds as the evolver did: the WebAssembly build gives the same results as the native one, and stepping a match round by round with a watch gives the same rounds as `m42_match()`. `test/evolver.test.js` replays logged matches in the WebAssembly engine.
 
 ## First run
@@ -132,5 +134,51 @@ On the same yardstick, 9 warriors of the folder (every 120th file) score 60.2, 9
 - In the first comparison the four runs had a third of the speed of these (0.46 against 1.34 G instructions per second over their first 58 batches): tests ran on the same machine. That was the same for all four of that comparison, so it compares within itself, but the two comparisons have different budgets.
 
 About 100 against the folder, where the median hill warrior scores 145, comes out of every setting so far. More time and these options move it by 2 points.
+
+## E5, third comparison: started from our warriors
+
+14th November 2026, `--start warriors` (Dwarf, Imp, Lantern, Origami, Seeker), `--panel 80`, 16 threads each for an hour, the same yardstick as before (the 1,107 '94nop Koenigstuhl warriors). Origami alone scores 134.9 there.
+
+| Run | Batches | `best.red` | 3 best members | Origami's family in the list |
+|---|---|---|---|---|
+| `--start warriors` | 240 | 142.8 | 142.8, 143.0, 139.1 | 19 of 20 |
+| `--start warriors --prior hill --fractions 0.5` | 280 | 136.3 | 136.3, 137.1, 134.5 | 19 of 20 |
+
+- Started from Origami, the evolver gains 8 points against the 1,107 in an hour, to 143, near the median hill warrior of the sample (144.7); from random code every setting stopped at about 100. It improves a design it is given, it does not find one.
+- What it changed, in the best member at batch 121 (32 generations after Origami): the paper itself (the three `spl`, the silk loop, both bomb lines with 1773 and 1213, the bomb) is still there with small edits (one more copy line `MOV.I }3999, >-3`, `JMP` became `JMN`, modifiers), and 17 new instructions stand in front of the start, from crossover and duplication: most likely a decoy. Half of the gain against the panel came from small edits in the first 31 batches, half from three crossovers in a row at batches 91 to 94.
+- With `--prior hill` the gain is 1 to 2 points: Origami has the instruction mix of the hill already.
+- Dwarf, Imp, Seeker and Lantern left the list; Origami's family took it over in both runs.
+
+## What one change does: the mutation spectrum
+
+`build/42spectrum` (`evolver/spectrum.c`) gives a warrior 250 children per kind of change, each with exactly that one change, and plays them against 40 panel warriors with the same seeds as the parent, 50 rounds each. A child is *identical* (the same result in every round: the change hit code that does not matter), *fatal* (20 points per 100 rounds or more below the parent), *worse* (2 to 20), *the same* (within 2) or *better*; every better child plays again against the parent with other seeds and 200 rounds and is *confirmed* when it is still 1 point or more above. Besides the changes of `genome_breed()` four small steps: `related-opcode` (ADD/SUB, JMZ/JMN/DJN, SEQ/SNE/CMP/SLT, SPL/JMP, MUL/DIV/MOD, DAT/NOP), `related-mode` (`$ @ *`, `< > { }`), `shared-constant` (a far value set to another far value of the warrior or its negative), `tune` (a far value moved by up to 2%). 14th November 2026, 32 threads, 8 minutes:
+
+| Change | Origami: fatal | confirmed | Infinite Locust XLIII: fatal | confirmed | Volatile Tardigrade XVIII: fatal | confirmed |
+|---|---|---|---|---|---|---|
+| opcode | 74% | 0.8% | 29% | 0 | 11% | 0 |
+| modifier | 8% (72% identical) | 0 | 2% (58% identical) | 0 | 5% (53% identical) | 0 |
+| A mode, B mode | 46%, 23% | 0, 0 | 23%, 21% | 0, 0 | 16%, 9% | 0, 0 |
+| A operand, B operand | 56%, 28% | 0, 1.6% | 24%, 12% | 0, 0 | 0%, 3% | 0, 0.8% |
+| org | 90% | 0 | 84% | 0 | 66% | 0 |
+| replace | 87% | 0 | 34% | 0 | 12% | 0 |
+| insert | 61% | 0.8% | 28% | 1.2% | 4% | 0 |
+| delete | 94% | 0 | 41% | 0 | 43% | 0 |
+| duplicate | 51% | 3.6% | 25% | 2.8% | 3% | 0 |
+| move | 72% | 0 | 52% | 0.4% | 13% | 0 |
+| crossover-insert | 57% | 3.2% (best +14.0) | 36% | 0 | 1% | 0 |
+| crossover-replace | 94% | 1.2% | 48% | 0 | 43% | 0.4% |
+| related-opcode | 66% | 0 | 30% | 0 | 33% | 0 |
+| related-mode | 36% | 0 | 14% | 0 | 11% | 0 |
+| shared-constant | 28% | **4.0%** | 5% | 0 | 0% | **15.2%** |
+| tune | 0% | 0 | 0% | 0 | 0% | 0 |
+
+Origami (9 instructions, 149.2 against this panel), Infinite Locust XLIII (the best of the run started from it, 23 instructions, 161.2), Volatile Tardigrade XVIII (the best from random code in the second comparison, 7 instructions, 120.4). Crossover took its second parent from the next warrior of the three.
+
+- Changes that break: `org` is fatal for 66 to 90% of the children, `delete`, `replace`, `crossover-replace` and `opcode` for up to 94% on Origami. A modifier changes no result in 53 to 72%. About half of what a batch evaluates is such children.
+- Improvements are rare, and at a local optimum none: for Infinite Locust no change is confirmed better in more than 2.8% (duplicate) of its children, and by 2.3 points at most.
+- Of the new small steps only `shared-constant` pays: the most confirmed improvements for Origami and for the warrior from random code, rarely fatal. `tune` is never fatal and never confirmed better: a constant needs another value, not a near one. `related-opcode` and `related-mode` are less fatal than a random opcode or mode, but bring no improvement.
+- `crossover-insert` gives the largest steps (+14.0 for Origami with a block of its improved relative).
+
+So: shift the rates of the changes (less `org`, `delete`, `replace`, `opcode`, `modifier`; more `shared-constant`, `crossover-insert`, `duplicate`), or let the evolver learn them from the counts per change; the constant optimizer (#146) should try the values of the warrior itself and core fractions rather than near values; and a list at a local optimum needs moves of several changes or several designs at once (#147).
 
 Ideas from this, to measure in E5 (#142) against the holdout at equal time: survivors by an estimate of their push-off value (the distance to the members on the panel columns, which the screen has), a panel that rotates (a new hill warrior every few batches costs one match per member), islands with migration against the takeover by one family, and fewer `insert` and `duplicate`.

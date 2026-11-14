@@ -59,7 +59,7 @@ LIB_SOURCES := lib/42mars.c lib/42mars.h $(wildcard lib/src/*.c lib/src/*.h)
 EVOLVER_SOURCES := evolver/genome.c evolver/pushoff.c evolver/names.c $(wildcard evolver/*.h)
 DIST := 42mars-$(VERSION)-$(shell uname -s | tr A-Z a-z)-$(shell uname -m)
 
-all: build/lib42mars.a build/$(SHARED) build/42mars build/42evolve
+all: build/lib42mars.a build/$(SHARED) build/42mars build/42evolve build/42spectrum
 
 build/42mars.o: $(LIB_SOURCES)
 	@mkdir -p build
@@ -78,6 +78,10 @@ build/42mars: cli/42mars.c build/lib42mars.a
 
 build/42evolve: evolver/evolve.c $(EVOLVER_SOURCES) build/lib42mars.a
 	$(CC) $(CFLAGS) -pthread $(LDFLAGS) -Ilib -o $@ evolver/evolve.c evolver/genome.c evolver/pushoff.c evolver/names.c build/lib42mars.a -lm
+
+# 42spectrum: what one change does to a warrior (docs/evolver.md)
+build/42spectrum: evolver/spectrum.c $(EVOLVER_SOURCES) build/lib42mars.a
+	$(CC) $(CFLAGS) -pthread $(LDFLAGS) -Ilib -o $@ evolver/spectrum.c evolver/genome.c build/lib42mars.a -lm
 
 # The test programs: api-test through the shared library, the examples as
 # 42mars.h describes them.

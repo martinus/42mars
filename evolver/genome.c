@@ -235,7 +235,7 @@ static void point(genome *x, rng *r, uint32_t core, const genome_style *st, char
   else if (k < 50) g->bm = pick(r, st ? st->mode : 0, 8), add_op(ops, ops_n, "mode");
   else if (k < 70) mutate_operand(r, core, x->len, i, st, &g->aref, &g->a), add_op(ops, ops_n, "operand");
   else if (k < 90) mutate_operand(r, core, x->len, i, st, &g->bref, &g->b), add_op(ops, ops_n, "operand");
-  else if (k < 95) x->start = rng_below(r, x->len), add_op(ops, ops_n, "start");
+  else if (k < 95) x->start = rng_below(r, x->len), add_op(ops, ops_n, "org");
   else *g = random_gene(r, core, x->len, st), add_op(ops, ops_n, "replace");
 }
 
@@ -246,6 +246,9 @@ static uint32_t block(rng *r, uint32_t len) {
   return k;
 }
 
+// The probabilities of the changes here and in point(), mutate_operand() and
+// random_operand() are described in renderAbout() of ui/evolver.js: change
+// both together.
 void genome_breed(genome *child, const genome *p1, const genome *p2, rng *r, uint32_t core, uint32_t max_length,
                   const genome_style *st, char *ops, size_t ops_n) {
   if (ops_n) ops[0] = 0;
@@ -316,6 +319,173 @@ void genome_breed(genome *child, const genome *p1, const genome *p2, rng *r, uin
     }
   }
   *child = x;
+}
+
+// ---------------------------------------------------------------- one change
+
+const char *genome_change_name(int kind) {
+  static const char *const names[CH_COUNT] = {
+      "opcode", "modifier", "a-mode", "b-mode", "a-operand", "b-operand", "org", "replace", "insert", "delete",
+      "duplicate", "move", "crossover-insert", "crossover-replace", "related-opcode", "related-mode", "shared-constant",
+      "tune"};
+  return kind >= 0 && kind < CH_COUNT ? names[kind] : "?";
+}
+
+// The family of an opcode: a number shared by related ones, -1 alone (MOV).
+static int opcode_family(uint8_t op) {
+  static const int8_t fam[GENOME_OPCODES] = {-1, 0, 0, 1, 1, 1, 2, 2, 2, 3, 3, 4, 5, 4, 3, 3, 5};
+  return op < GENOME_OPCODES ? fam[op] : -1;
+}
+
+static int mode_family(uint8_t m) { return m == 1 || m == 2 || m == 5 ? 0 : m >= 3 ? 1 : -1; }
+
+static int32_t signed_value(uint32_t v, uint32_t core) { return v > core / 2 ? (int32_t)v - (int32_t)core : (int32_t)v; }
+
+// The far value operands (not references, more than 16 away from 0).
+static uint32_t far_operands(const genome *x, uint32_t core, uint32_t *at) {
+  uint32_t n = 0;
+  for (uint32_t i = 0; i < x->len; i++) {
+    if (!x->g[i].aref && abs(signed_value(x->g[i].a, core)) > 16) at[n++] = i * 2;
+    if (!x->g[i].bref && abs(signed_value(x->g[i].b, core)) > 16) at[n++] = i * 2 + 1;
+  }
+  return n;
+}
+
+static uint32_t *operand_at(genome *x, uint32_t k) { return k % 2 ? &x->g[k / 2].b : &x->g[k / 2].a; }
+
+int genome_change(genome *x, const genome *p2, rng *r, uint32_t core, uint32_t max_length, const genome_style *st,
+                  int kind) {
+  if (max_length > GENOME_MAX) max_length = GENOME_MAX;
+  const uint32_t len = x->len;
+  slot s[GENOME_MAX];
+  uint32_t n = 0;
+  uint32_t at[2 * GENOME_MAX];
+  if (kind <= CH_REPLACE) {
+    const uint32_t i = rng_below(r, len);
+    gene *g = &x->g[i];
+    switch (kind) {
+      case CH_OPCODE: g->op = pick(r, st ? st->op : 0, GENOME_OPCODES); break;
+      case CH_MODIFIER: g->mod = pick(r, st ? st->mod : 0, 7); break;
+      case CH_AMODE: g->am = pick(r, st ? st->mode : 0, 8); break;
+      case CH_BMODE: g->bm = pick(r, st ? st->mode : 0, 8); break;
+      case CH_AOPERAND: mutate_operand(r, core, len, i, st, &g->aref, &g->a); break;
+      case CH_BOPERAND: mutate_operand(r, core, len, i, st, &g->bref, &g->b); break;
+      case CH_ORG: x->start = rng_below(r, len); break;
+      default: *g = random_gene(r, core, len, st);
+    }
+    return 1;
+  }
+  switch (kind) {
+    case CH_INSERT: {
+      if (len >= max_length) return 0;
+      const uint32_t k = block(r, max_length - len), q = rng_below(r, len + 1);
+      for (uint32_t i = 0; i < q; i++) s[n++] = (slot){SLOT_A, i};
+      for (uint32_t i = 0; i < k; i++) s[n++] = (slot){SLOT_NEW, 0};
+      for (uint32_t i = q; i < len; i++) s[n++] = (slot){SLOT_A, i};
+      genome_rebuild(x, x, x, s, n, core, r, st);
+      return 1;
+    }
+    case CH_DELETE: {
+      if (len < 2) return 0;
+      const uint32_t k = block(r, len - 1), p = rng_below(r, len - k + 1);
+      for (uint32_t i = 0; i < len; i++)
+        if (i < p || i >= p + k) s[n++] = (slot){SLOT_A, i};
+      genome_rebuild(x, x, x, s, n, core, r, st);
+      return 1;
+    }
+    case CH_DUPLICATE: {
+      if (len >= max_length) return 0;
+      const uint32_t k = block(r, len < max_length - len ? len : max_length - len);
+      const uint32_t from = rng_below(r, len - k + 1), q = rng_below(r, len + 1);
+      for (uint32_t i = 0; i < q; i++) s[n++] = (slot){SLOT_A, i};
+      for (uint32_t i = 0; i < k; i++) s[n++] = (slot){SLOT_B, from + i};
+      for (uint32_t i = q; i < len; i++) s[n++] = (slot){SLOT_A, i};
+      genome_rebuild(x, x, x, s, n, core, r, st);
+      return 1;
+    }
+    case CH_MOVE: {
+      if (len < 2) return 0;
+      const uint32_t k = block(r, len - 1), from = rng_below(r, len - k + 1), q = rng_below(r, len - k + 1);
+      uint32_t others = 0;
+      int placed = 0;
+      for (uint32_t i = 0; i < len; i++) {
+        if (i >= from && i < from + k) continue;
+        if (others == q && !placed) {
+          for (uint32_t j = 0; j < k; j++) s[n++] = (slot){SLOT_A, from + j};
+          placed = 1;
+        }
+        s[n++] = (slot){SLOT_A, i};
+        others++;
+      }
+      if (!placed)
+        for (uint32_t j = 0; j < k; j++) s[n++] = (slot){SLOT_A, from + j};
+      genome_rebuild(x, x, x, s, n, core, r, st);
+      return 1;
+    }
+    case CH_XINSERT:
+    case CH_XREPLACE: {
+      if (!p2) return 0;
+      const uint32_t k = block(r, p2->len < max_length ? p2->len : max_length);
+      const uint32_t from = rng_below(r, p2->len - k + 1);
+      uint32_t cut = kind == CH_XREPLACE ? block(r, len) : 0;
+      if (cut >= len) cut = len - 1;
+      if (len - cut + k > max_length) cut = len + k - max_length;
+      if (kind == CH_XINSERT && cut) return 0; // no room to insert
+      const uint32_t q = rng_below(r, len - cut + 1);
+      for (uint32_t i = 0; i < q; i++) s[n++] = (slot){SLOT_A, i};
+      for (uint32_t i = 0; i < k; i++) s[n++] = (slot){SLOT_B, from + i};
+      for (uint32_t i = q + cut; i < len; i++) s[n++] = (slot){SLOT_A, i};
+      genome_rebuild(x, x, p2, s, n, core, r, st);
+      return 1;
+    }
+    case CH_RELATED_OPCODE: {
+      uint32_t cand[GENOME_MAX], cn = 0;
+      for (uint32_t i = 0; i < len; i++)
+        if (opcode_family(x->g[i].op) >= 0) cand[cn++] = i;
+      if (!cn) return 0;
+      gene *g = &x->g[cand[rng_below(r, cn)]];
+      uint8_t same[GENOME_OPCODES];
+      uint32_t sn = 0;
+      for (uint8_t o = 0; o < GENOME_OPCODES; o++)
+        if (o != g->op && opcode_family(o) == opcode_family(g->op)) same[sn++] = o;
+      g->op = same[rng_below(r, sn)];
+      return 1;
+    }
+    case CH_RELATED_MODE: {
+      const uint32_t i = rng_below(r, len);
+      uint8_t *m = rng_below(r, 2) ? &x->g[i].am : &x->g[i].bm;
+      if (*m == 0) {
+        *m = 1;
+        return 1;
+      }
+      uint8_t same[8];
+      uint32_t sn = 0;
+      for (uint8_t o = 1; o < 8; o++)
+        if (o != *m && mode_family(o) == mode_family(*m)) same[sn++] = o;
+      *m = same[rng_below(r, sn)];
+      return 1;
+    }
+    case CH_SHARED: {
+      const uint32_t fn = far_operands(x, core, at);
+      if (fn < 2) return 0;
+      const uint32_t to = rng_below(r, fn);
+      uint32_t from = rng_below(r, fn - 1);
+      if (from >= to) from++;
+      const uint32_t v = *operand_at(x, at[from]);
+      *operand_at(x, at[to]) = rng_below(r, 2) ? v : wrap(-(int64_t)v, core);
+      return 1;
+    }
+    case CH_TUNE: {
+      const uint32_t fn = far_operands(x, core, at);
+      if (!fn) return 0;
+      uint32_t *v = operand_at(x, at[rng_below(r, fn)]);
+      const int32_t sv = signed_value(*v, core), most = abs(sv) / 50 > 4 ? abs(sv) / 50 : 4;
+      const int32_t d = rng_range(r, 1, most) * (rng_below(r, 2) ? 1 : -1);
+      *v = wrap((int64_t)sv + d, core);
+      return 1;
+    }
+    default: return 0;
+  }
 }
 
 // ---------------------------------------------------------------- state file

@@ -24,7 +24,7 @@
 
   <main>
     <section class="panel matrix-panel">
-      <h2>Score matrix <small>evolved warriors by push-off value, against each other and the panel · points per 100 rounds · click a cell to watch the match</small></h2>
+      <h2>Score matrix <small>rows: the evolved warriors of the list, best push-off value on top (value = average score against everyone in, panel and evolved, × distance to the nearest other warrior) · columns: the same warriors, then the panel · cell: points per 100 rounds of the row against the column (3 a win, 1 a tie) · click a cell to watch the match</small></h2>
       <div class="canvas-wrap"><canvas id="matrix"></canvas></div>
       <div class="scale"><span>0</span><i></i><span>300</span></div>
     </section>
@@ -45,8 +45,14 @@
     </section>
 
     <section class="panel ticker-panel">
-      <h2>Events</h2>
-      <ol id="ticker"></ol>
+      <div class="tabs" id="tabs">
+        <button data-tab="tab-events" class="on">Events</button>
+        <button data-tab="tab-ops">Operators</button>
+        <button data-tab="tab-about">How it works</button>
+      </div>
+      <ol id="ticker" class="tab tab-events"></ol>
+      <div id="ops" class="tab tab-ops" hidden></div>
+      <div id="about" class="tab tab-about" hidden></div>
     </section>
   </main>
 
