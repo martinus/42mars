@@ -154,12 +154,15 @@ static void test_breed(void) {
   m42_instruction code[GENOME_MAX];
   static unsigned char mem[1 << 16];
   const uint32_t limits[] = {1, 5, 20, 100, GENOME_MAX};
+  genome_style half = {0}; // far values near fractions half of the time, opcodes mostly MOV
+  half.fraction = 0.5;
+  half.op[0] = 10, half.op[12] = 1;
   for (int k = 0; k < 5; k++) {
     const uint32_t max = limits[k];
     genome_random(&p1, &r, CORE, 1 + rng_below(&r, max), 0);
     genome_random(&p2, &r, CORE, 1 + rng_below(&r, max), 0);
     for (int round = 0; round < 4000; round++) {
-      genome_breed(&c, &p1, rng_below(&r, 2) ? &p2 : 0, &r, CORE, max, k == 2 ? 0.5 : 0, ops, sizeof ops);
+      genome_breed(&c, &p1, rng_below(&r, 2) ? &p2 : 0, &r, CORE, max, k == 2 ? &half : 0, ops, sizeof ops);
       CHECK(valid(&c, max), "a child of length %u is invalid (max %u, %s)", c.len, max, ops);
       CHECK(ops[0], "a child without the name of a change");
       genome_code(&c, CORE, code);
@@ -295,7 +298,9 @@ static void test_fractions(void) {
     uint32_t far = 0, near = 0, hits[5] = {0};
     for (int round = 0; round < 3000; round++) {
       genome g;
-      genome_random(&g, &r, CORE, 10, k ? 1.0 : 0.0);
+      genome_style st = {0};
+      st.fraction = k ? 1.0 : 0.0;
+      genome_random(&g, &r, CORE, 10, &st);
       for (uint32_t i = 0; i < g.len; i++) {
         const uint32_t v[2] = {g.g[i].aref ? 0 : g.g[i].a, g.g[i].bref ? 0 : g.g[i].b};
         for (int o = 0; o < 2; o++) {
@@ -315,6 +320,34 @@ static void test_fractions(void) {
   }
 }
 
+// --prior: weights decide the opcodes, modifiers and modes of new
+// instructions and of point changes; a weight 0 never comes up.
+static void test_weights(void) {
+  rng r = rng_seed(16, 17, 18);
+  genome_style st = {0};
+  st.op[0] = 3, st.op[12] = 1;   // MOV and DAT, 3:1
+  st.mod[6] = 1;                 // .I only
+  st.mode[1] = 1, st.mode[2] = 1; // $ and @
+  uint32_t ops[GENOME_OPCODES] = {0}, other = 0;
+  genome p1, c;
+  genome_random(&p1, &r, CORE, 12, &st);
+  char names[96];
+  for (int round = 0; round < 3000; round++) {
+    genome_breed(&c, &p1, &p1, &r, CORE, 40, &st, names, sizeof names);
+    p1 = c.len > 30 ? p1 : c;
+    for (uint32_t i = 0; i < c.len; i++) {
+      ops[c.g[i].op]++;
+      other += c.g[i].mod != 6 || (c.g[i].am != 1 && c.g[i].am != 2) || (c.g[i].bm != 1 && c.g[i].bm != 2);
+    }
+  }
+  CHECK(other == 0, "%u instructions with a modifier or mode of weight 0", other);
+  CHECK(ops[0] + ops[12] > 0 && ops[0] > 2 * ops[12] && ops[0] < 4 * ops[12], "MOV %u, DAT %u, not about 3:1", ops[0], ops[12]);
+  uint32_t rest = 0;
+  for (int k = 0; k < GENOME_OPCODES; k++)
+    if (k != 0 && k != 12) rest += ops[k];
+  CHECK(rest == 0, "%u instructions with an opcode of weight 0", rest);
+}
+
 int main(void) {
   test_rebuild();
   test_duplicate_and_crossover();
@@ -324,6 +357,7 @@ int main(void) {
   test_pushoff();
   test_names();
   test_fractions();
+  test_weights();
   if (failures) {
     fprintf(stderr, "%d failures\n", failures);
     return 1;

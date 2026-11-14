@@ -58,7 +58,10 @@ typedef struct {
   uint32_t rotate; // every this many batches a new hill warrior replaces the oldest of the panel, 0 never
   double fractions; // probability that a far value is a fraction of the core give or take 20 (genome.h)
   uint32_t race, race_keep; // --race: the first screen rounds for all, the rest for the best race_keep only
+  int prior;                // PRIOR_UNIFORM, or PRIOR_HILL: opcodes, modifiers, modes as often as in the opponents
 } params;
+
+enum { PRIOR_UNIFORM, PRIOR_HILL };
 
 enum { SELECT_SCREEN, SELECT_VALUE };
 
@@ -307,6 +310,7 @@ typedef struct {
   uint32_t panel_n, hold_n;
   char **reserve; // the other warriors of the folder, for --rotate, in the order they come
   uint32_t reserve_n, reserve_next, rotate_next;
+  genome_style style; // how new instructions are drawn (--fractions, --prior)
 
   // The matrix: slots 0 .. panel_n-1 are the panel, the others hold members
   // and entering candidates. wlt[a * cap + b]: a's results against b.
@@ -492,13 +496,26 @@ static void event_start(run *r) {
           "\"distance\":%u},\"params\":{\"panel\":%u,\"holdout\":%u,\"list\":%u,\"batch\":%u,\"survivors\":%u,"
           "\"rounds\":%u,\"screenRounds\":%u,\"benchEvery\":%u,\"benchRounds\":%u,\"initLength\":%u,"
           "\"screenFactor\":%.17g,\"alpha\":%.17g,\"reintroduce\":%.17g,\"sd\":\"%s\",\"seed\":%" PRIu64
-          ",\"select\":\"%s\",\"rotate\":%u,\"fractions\":%.17g,\"race\":%u,\"raceKeep\":%u},\"opponents\":",
+          ",\"select\":\"%s\",\"rotate\":%u,\"fractions\":%.17g,\"race\":%u,\"raceKeep\":%u,\"prior\":\"%s\"},"
+          "\"opponents\":",
           m42_version(), p->rules.core_size, p->rules.max_cycles, p->rules.max_processes, p->rules.max_length,
           p->rules.min_distance, r->panel_n, r->hold_n, p->list, p->batch, p->survivors, p->rounds, p->screen_rounds,
           p->bench_every, p->bench_rounds, p->init_length, p->screen_factor, p->alpha, p->reintroduce,
           p->sd == SD_SUM ? "sum" : "opponent", p->seed, p->select == SELECT_VALUE ? "value" : "screen", p->rotate,
-          p->fractions, p->race, p->race_keep);
+          p->fractions, p->race, p->race_keep, p->prior == PRIOR_HILL ? "hill" : "uniform");
   json_str(f, p->opponents, 0);
+  fputs(",\"weights\":{", f);
+  const struct {
+    const char *name;
+    const uint32_t *w;
+    uint32_t n;
+  } tables[] = {{"op", r->style.op, GENOME_OPCODES}, {"mod", r->style.mod, 7}, {"mode", r->style.mode, 8}};
+  for (int t = 0; t < 3; t++) {
+    fprintf(f, "%s\"%s\":[", t ? "," : "", tables[t].name);
+    for (uint32_t i = 0; i < tables[t].n; i++) fprintf(f, "%s%u", i ? "," : "", tables[t].w[i]);
+    fputc(']', f);
+  }
+  fputc('}', f);
   for (int k = 0; k < 2; k++) {
     fputs(k ? ",\"holdout\":[" : ",\"panel\":[", f);
     const uint32_t n = k ? r->hold_n : r->panel_n;
@@ -603,10 +620,10 @@ static void save_state(run *r) {
   fprintf(f, "42evolve-state 1\n");
   fprintf(f, "rules %u %u %u %u %u\n", p->rules.core_size, p->rules.max_cycles, p->rules.max_processes,
           p->rules.max_length, p->rules.min_distance);
-  fprintf(f, "params %u %u %u %u %u %u %u %u %u %u %.17g %.17g %.17g %d %" PRIu64 " %d %u %.17g %u %u\n", p->panel,
+  fprintf(f, "params %u %u %u %u %u %u %u %u %u %u %.17g %.17g %.17g %d %" PRIu64 " %d %u %.17g %u %u %d\n", p->panel,
           p->holdout, p->list, p->batch, p->survivors, p->rounds, p->screen_rounds, p->bench_every, p->bench_rounds,
           p->init_length, p->screen_factor, p->alpha, p->reintroduce, p->sd, p->seed, p->select, p->rotate,
-          p->fractions, p->race, p->race_keep);
+          p->fractions, p->race, p->race_keep, p->prior);
   fprintf(f, "opponents %s\n", p->opponents);
   for (uint32_t i = 0; i < r->panel_n; i++) fprintf(f, "panel-id %" PRIu64 " %s\n", r->panel[i].id, r->panel[i].file);
   for (uint32_t i = 0; i < r->hold_n; i++) fprintf(f, "holdout %s\n", r->hold[i].file);
@@ -705,13 +722,13 @@ static int load_state(run *r, const char *path) {
         goto bad;
     } else if (!strncmp(line, "params ", 7)) {
       // the last ones came with --select and --rotate, --fractions, --race and
-      // --race-keep; a state without them has none of them
-      const int got = sscanf(line + 7, "%u %u %u %u %u %u %u %u %u %u %lg %lg %lg %d %" SCNu64 " %d %u %lg %u %u",
+      // --race-keep, --prior; a state without them has none of them
+      const int got = sscanf(line + 7, "%u %u %u %u %u %u %u %u %u %u %lg %lg %lg %d %" SCNu64 " %d %u %lg %u %u %d",
                              &p->panel, &p->holdout, &p->list, &p->batch, &p->survivors, &p->rounds,
                              &p->screen_rounds, &p->bench_every, &p->bench_rounds, &p->init_length, &p->screen_factor,
                              &p->alpha, &p->reintroduce, &p->sd, &p->seed, &p->select, &p->rotate, &p->fractions,
-                             &p->race, &p->race_keep);
-      if (got != 15 && got != 17 && got != 18 && got != 20) goto bad;
+                             &p->race, &p->race_keep, &p->prior);
+      if (got != 15 && got != 17 && got != 18 && got != 20 && got != 21) goto bad;
     } else if (!strncmp(line, "opponents ", 10)) {
       snprintf(p->opponents, sizeof p->opponents, "%s", line + 10);
     } else if (!strncmp(line, "panel ", 6)) { // before --rotate: the ids are 0, 1, ...
@@ -981,6 +998,35 @@ static void rotate_panel(run *r) {
   compute_values(r);
 }
 
+// --prior hill: the weights of opcodes, modifiers and modes are how often
+// they occur in all opponents (panel, holdout and the rest of the folder),
+// plus 1 so that none is impossible. Counts only, no code.
+static void count_style(genome_style *st, const m42_warrior *w) {
+  const m42_instruction *c = m42_warrior_code(w);
+  for (uint32_t i = 0; i < m42_warrior_length(w); i++) {
+    if (c[i].opcode < GENOME_OPCODES) st->op[c[i].opcode]++;
+    if (c[i].modifier < 7) st->mod[c[i].modifier]++;
+    if (c[i].a_mode < 8) st->mode[c[i].a_mode]++;
+    if (c[i].b_mode < 8) st->mode[c[i].b_mode]++;
+  }
+}
+
+static void build_style(run *r) {
+  genome_style *st = &r->style;
+  memset(st, 0, sizeof *st);
+  st->fraction = r->p.fractions;
+  if (r->p.prior != PRIOR_HILL) return;
+  for (uint32_t i = 0; i < GENOME_OPCODES; i++) st->op[i] = 1;
+  for (uint32_t i = 0; i < 7; i++) st->mod[i] = 1;
+  for (uint32_t i = 0; i < 8; i++) st->mode[i] = 1;
+  for (uint32_t i = 0; i < r->panel_n; i++) count_style(st, r->panel[i].w);
+  for (uint32_t i = 0; i < r->hold_n; i++) count_style(st, r->hold[i].w);
+  for (uint32_t i = 0; i < r->reserve_n; i++) {
+    warrior *w = load_opponent(r, r->reserve[i], 1);
+    if (w) count_style(st, w->w), m42_warrior_free(w->w), free(w->file), free(w->source), free(w);
+  }
+}
+
 // A candidate's screen score, estimate and key from its row of screen
 // results against the panel (row[j] for panel warrior j) over `rounds`.
 static void score_screen(const run *r, candidate *x, const unit *row, uint32_t rounds) {
@@ -1010,7 +1056,7 @@ static void run_batch(run *r) {
     if (members(r) == 0) {
       genome_random(&x->g, &g, core,
                     1 + rng_below(&g, p->init_length < p->rules.max_length ? p->init_length : p->rules.max_length),
-                    p->fractions);
+                    &r->style);
       strcpy(x->ops, "random");
       x->noun = rng_below(&g, NAME_NOUNS); // a new family
     } else if (r->archive_n && rng_chance(&g, p->reintroduce)) {
@@ -1022,7 +1068,7 @@ static void run_batch(run *r) {
       reintro = 1;
     } else {
       const warrior *a = select_parent(r, &g), *b = select_parent(r, &g);
-      genome_breed(&x->g, a->g, b->g, &g, core, p->rules.max_length, p->fractions, x->ops, sizeof x->ops);
+      genome_breed(&x->g, a->g, b->g, &g, core, p->rules.max_length, &r->style, x->ops, sizeof x->ops);
       x->parents[0] = a->id;
       x->noun = a->noun;
       if (strstr(x->ops, "crossover") && b->id != a->id) x->parents[1] = b->id;
@@ -1227,7 +1273,7 @@ static void usage(void) {
           "         [--batch N] [--survivors N] [--rounds 100] [--screen-rounds 20] [--screen-factor 0.8]\n"
           "         [--bench-every 10] [--bench-rounds 100] [--alpha 1] [--sd opponent|sum]\n"
           "         [--reintroduce 0.02] [--init-length 10] [--seed 1] [--select screen|value] [--rotate N]\n"
-          "         [--fractions p] [--race N] [--race-keep N]\n"
+          "         [--fractions p] [--race N] [--race-keep N] [--prior uniform|hill]\n"
           "         [--size 8000] [--cycles 80000] [--processes 8000] [--length 100] [--distance 100]\n"
           "         [--threads N] [--batches N] [--seconds S]\n"
           "       42evolve <run folder> [--threads N] [--batches N] [--seconds S]   (continue a run)\n");
@@ -1268,6 +1314,10 @@ int main(int argc, char **argv) {
     else if (!strcmp(a, "--select")) {
       if (!strcmp(v, "screen")) p->select = SELECT_SCREEN;
       else if (!strcmp(v, "value")) p->select = SELECT_VALUE;
+      else usage();
+    } else if (!strcmp(a, "--prior")) {
+      if (!strcmp(v, "uniform")) p->prior = PRIOR_UNIFORM;
+      else if (!strcmp(v, "hill")) p->prior = PRIOR_HILL;
       else usage();
     } else if (!strcmp(a, "--rotate")) {
       if (!number) usage();
@@ -1319,6 +1369,7 @@ int main(int argc, char **argv) {
       return 2;
     }
     if (load_state(&r, state) != 0) return 1;
+    build_style(&r);
     const long size = state_events_size(state);
     if (size < 0 || truncate(events, size) != 0) {
       fprintf(stderr, "42evolve: cannot cut %s to the state\n", events);
@@ -1360,6 +1411,7 @@ int main(int argc, char **argv) {
     r.best_id = NO_ID;
     r.best_holdout = -1;
     setup_matrix(&r);
+    build_style(&r);
   }
 
   r.events = fopen(events, resume ? "ab" : "wb");
