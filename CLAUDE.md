@@ -4,7 +4,7 @@ Redcode assembler and MARS simulator as a C library (`lib/`), its WebAssembly bu
 
 Goals, in this order when they conflict:
 1. Same results as pMARS 0.9.5, quirks included: instruction count and final core of every round.
-2. The fastest MARS there is, measured on whole tournaments.
+2. The fastest MARS there is, measured on whole tournaments. The native library is what gets tuned (gcc and clang, as `make` builds it); the wasm build has to stay correct, its speed comes second (Martin, 14th November 2026).
 3. A C library others embed easily: C11 only, one public header, no global state, no hidden allocation, callable from any language. Within 1.x `lib/42mars.h` and the `42mars` program change only compatibly; `wasm/42mars.js` is a demo and may change.
 4. Clean code, written clean-room.
 
@@ -65,7 +65,8 @@ The layout (also in `README.md` and `docs/development.md`; change all three toge
 - `ui/` the visualizer, on the library's watch.
 - `docs/redcode-semantics.md`: the spec. Exact assembler and simulator behavior, the watch (3.4, 3.6), pMARS quirks, deviations (section 4). Change it together with the code.
 - `docs/performance-log.md`: every speed experiment with numbers and verdict, rejected ones too. Commands in entries before 12th November 2026 use the old paths (`tools/bench*.mjs` and the other speed tools are in `bench/` now).
-- `docs/plan.md`: status, validation, speed summary, roadmap. Update it when a roadmap item lands; keep `README.md`'s numbers and test count in sync. `docs/development.md`: the contributor's guide. `docs/images/speed-*.svg`: the README charts, from `docs/images/speed.mjs` and the numbers in it. `docs/images/logo.svg`: the logo, edited by hand, one unit is one cell; the bar of 42mars in the charts has its orange `#f0652d` (`ours` in `speed.mjs`).
+- `docs/performance.md`: the tricks behind the speed, for readers: one section per trick with its number, figures from `docs/images/performance.mjs`. Short on purpose; a new trick that is kept gets a section or a row there, the experiment itself goes into the log.
+- `docs/plan.md`: status, validation, speed summary, roadmap. Update it when a roadmap item lands; keep `README.md`'s numbers and test count in sync. `docs/development.md`: the contributor's guide. `docs/images/speed-*.svg`: the README charts, from `docs/images/speed.mjs` and the numbers in it ('94 hill pairs first, then the '88-style bench pairs); `docs/images/chart.mjs` has what it shares with `performance.mjs`. `docs/images/logo.svg`: the logo, edited by hand, one unit is one cell; the bar of 42mars in the charts has its orange `#f0652d` (`ours` in `speed.mjs`).
 - `test/fixtures/`: pMARS results (`expressions.json`, `snippets.json`, `permute.json`, `test/golden.test.js`) and recorded digests (`asm-c.json`, `wasm.json`, `watch.json`, via `test/recorded.js`). `test/engines.js`: comparing two engines.
 
 ## The engine and its checks
