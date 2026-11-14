@@ -89,6 +89,19 @@ void genome_code(const genome *x, uint32_t core, m42_instruction *out) {
   }
 }
 
+void genome_from_code(genome *x, const m42_instruction *code, uint32_t len, uint32_t start, uint32_t core) {
+  x->len = len;
+  x->start = start;
+  for (uint32_t i = 0; i < len; i++) {
+    const m42_instruction *c = &code[i];
+    gene g = {c->opcode, c->modifier, c->a_mode, c->b_mode, 0, 0, 0, c->a, c->b};
+    const uint32_t ta = (uint32_t)(((uint64_t)i + c->a) % core), tb = (uint32_t)(((uint64_t)i + c->b) % core);
+    if (c->a_mode != 0 && ta < len) g.aref = 1, g.a = ta;
+    if (c->b_mode != 0 && tb < len) g.bref = 1, g.b = tb;
+    x->g[i] = g;
+  }
+}
+
 uint64_t genome_hash(const genome *x, uint32_t core) {
   m42_instruction code[GENOME_MAX];
   genome_code(x, core, code);

@@ -348,6 +348,33 @@ static void test_weights(void) {
   CHECK(rest == 0, "%u instructions with an opcode of weight 0", rest);
 }
 
+// genome_from_code() gives back the same code, with references for the
+// operands that point into it.
+static void test_from_code(void) {
+  rng r = rng_seed(19, 20, 21);
+  genome g, back;
+  m42_instruction code[GENOME_MAX], again[GENOME_MAX];
+  uint32_t refs = 0;
+  for (int round = 0; round < 2000; round++) {
+    genome_random(&g, &r, CORE, 1 + rng_below(&r, 60), 0);
+    genome_code(&g, CORE, code);
+    genome_from_code(&back, code, g.len, g.start, CORE);
+    CHECK(valid(&back, GENOME_MAX), "an invalid genome from code");
+    genome_code(&back, CORE, again);
+    CHECK(back.len == g.len && back.start == g.start, "length or start lost");
+    for (uint32_t i = 0; i < g.len; i++) {
+      CHECK(memcmp(&code[i], &again[i], sizeof code[i]) == 0, "instruction %u changed", i);
+      refs += back.g[i].aref + back.g[i].bref;
+      if (code[i].a_mode == 0) CHECK(!back.g[i].aref, "an immediate operand became a reference");
+    }
+  }
+  CHECK(refs > 1000, "only %u references", refs);
+  // inserting an instruction in front keeps a loop: jmp to itself stays jmp 0
+  m42_instruction loop[2] = {{13, 1, 1, 1, 0, 0, 1}, {12, 5, 0, 0, 0, 0, 2}}; // jmp.b $0, $0; dat.f #0, #0
+  genome_from_code(&g, loop, 2, 0, CORE);
+  CHECK(g.g[0].aref && g.g[0].a == 0 && !g.g[1].aref, "jmp 0 is not a reference to itself");
+}
+
 int main(void) {
   test_rebuild();
   test_duplicate_and_crossover();
@@ -358,6 +385,7 @@ int main(void) {
   test_names();
   test_fractions();
   test_weights();
+  test_from_code();
   if (failures) {
     fprintf(stderr, "%d failures\n", failures);
     return 1;

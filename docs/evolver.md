@@ -23,6 +23,7 @@ Ctrl-C ends the run after the current batch. `build/42evolve runs/a` continues i
 | `--alpha x`, `--sd opponent\|sum` | 1, opponent | push-off value = average * distance^alpha; the reading of the SD-score |
 | `--reintroduce p` | 0.02 | chance that a candidate is a warrior that was pushed off earlier |
 | `--select screen\|value` | screen | what the survivors of the screen are picked by: the screen score, or the estimated push-off value (screen score times the SD-score to the nearest warrior in, on the panel columns, to the power alpha) |
+| `--start <dir>` | | the first batch starts from the warriors of the folder (as they are, then mutants of them) instead of random ones; each starts a family; an operand that points into the warrior's code becomes a reference |
 | `--parents value\|duel` | value | the tournament of two that picks a parent: the higher push-off value, or the one with more points in their match against each other (a draw by value) |
 | `--prior uniform\|hill` | uniform | how opcodes, modifiers and modes of new instructions and point changes are drawn: uniform, or as often as they occur in all warriors of `--opponents` (plus 1 each, so none is impossible) |
 | `--race N`, `--race-keep K` | 0, batch / 4 | the screen in two stages: every candidate plays the first N screen rounds, only the best K by the key the rest |

@@ -327,6 +327,33 @@ test('--parents duel: a parent beat its rival in their match, the same run on an
   assert.deepEqual(stable(events(join(tmp, 'duel3'))), stable(one));
 });
 
+test('--start: the first batch starts from the warriors of a folder', { skip }, () => {
+  const dir = join(tmp, 'start');
+  mkdirSync(dir);
+  for (const f of ['dwarf.red', 'imp.red']) copyFileSync(join(root, 'warriors', f), join(dir, f));
+  writeFileSync(join(dir, 'broken.red'), ' mov 0\n'); // does not assemble: left out with a message
+  const args = [...TINY, '--start', dir];
+  run(join(tmp, 'start1'), [...args, '--threads', '1', '--batches', '3']);
+  const one = events(join(tmp, 'start1'));
+  assert.equal(one[0].params.start ?? one[0].start, dir);
+  assert.deepEqual(one[0].startWarriors.map((w) => [w.name, w.file]), [['Dwarf', 'dwarf.red'], ['Imp', 'imp.red']]);
+  // the start warriors are candidates of batch 0 as they are; the others of batch 0 are mutants of them
+  const code = (src) => assemble(src, RULES).instructions.map((i) => [i.op, i.mod, i.aMode, i.aVal, i.bMode, i.bVal]);
+  const first = one.filter((e) => e.type === 'enter' && e.batch === 0);
+  assert.ok(first.length > 0 && first.every((e) => e.ops === 'start' || !e.ops.includes('random')));
+  const families = new Set(one[0].startWarriors.map((w) => w.family));
+  assert.ok(first.every((e) => families.has(e.name.split(' ')[1])), 'a family of a start warrior');
+  for (const e of first.filter((x) => x.ops === 'start')) {
+    const w = one[0].startWarriors.find((x) => x.family === e.name.split(' ')[1]);
+    assert.deepEqual(code(`;name x\n${e.code}`), code(readFileSync(join(dir, w.file), 'latin1')), `${e.name} is ${w.name}`);
+  }
+  assert.equal(checkValues(one), 3);
+  run(join(tmp, 'start4'), [...args, '--threads', '4', '--batches', '3']);
+  assert.deepEqual(stable(events(join(tmp, 'start4'))), stable(one));
+  // without --start nothing changes: batch 0 is random warriors
+  assert.ok(base.filter((e) => e.type === 'enter' && e.batch === 0).every((e) => e.ops === 'random'));
+});
+
 test('panel warriors never leave, also the weakest', { skip }, () => {
   // a panel of 6 tiny hill warriors and one that dies in its first cycle
   const opp = join(tmp, 'opponents');
