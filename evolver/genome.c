@@ -14,9 +14,21 @@ static uint32_t wrap(int64_t v, uint32_t core) {
   return (uint32_t)(m < 0 ? m + core : m);
 }
 
+// A far value: any value, or with probability `fraction` a fraction of the
+// core (1/2, 1/3, 2/3, 1/4, 3/4) give or take 20, the distances bombers and
+// replicators use (an idea from YACE, which adds core/2, /3 or /4 to a small
+// value in half of its numbers). Draws nothing extra with fraction 0.
+static uint32_t far_value(rng *r, uint32_t core, double fraction) {
+  if (fraction > 0 && rng_chance(r, fraction)) {
+    const uint32_t n = 2 + rng_below(r, 3), j = 1 + rng_below(r, n - 1);
+    return wrap((int64_t)core * j / n + rng_range(r, -20, 20), core);
+  }
+  return rng_below(r, core);
+}
+
 // A random operand for an instruction of a genome with n instructions:
-// a reference, a small value or any value.
-static void random_operand(rng *r, uint32_t core, uint32_t n, uint8_t *ref, uint32_t *v) {
+// a reference, a small value or a far value.
+static void random_operand(rng *r, uint32_t core, uint32_t n, double fraction, uint8_t *ref, uint32_t *v) {
   const uint32_t x = rng_below(r, 100);
   if (x < 40) {
     *ref = 1;
@@ -26,27 +38,27 @@ static void random_operand(rng *r, uint32_t core, uint32_t n, uint8_t *ref, uint
     *v = wrap(rng_range(r, -16, 16), core);
   } else {
     *ref = 0;
-    *v = rng_below(r, core);
+    *v = far_value(r, core, fraction);
   }
 }
 
-static gene random_gene(rng *r, uint32_t core, uint32_t n) {
+static gene random_gene(rng *r, uint32_t core, uint32_t n, double fraction) {
   gene g = {0};
   g.op = (uint8_t)rng_below(r, GENOME_OPCODES);
   g.mod = (uint8_t)rng_below(r, 7);
   g.am = (uint8_t)rng_below(r, 8);
   g.bm = (uint8_t)rng_below(r, 8);
-  random_operand(r, core, n, &g.aref, &g.a);
-  random_operand(r, core, n, &g.bref, &g.b);
+  random_operand(r, core, n, fraction, &g.aref, &g.a);
+  random_operand(r, core, n, fraction, &g.bref, &g.b);
   return g;
 }
 
-void genome_random(genome *x, rng *r, uint32_t core, uint32_t len) {
+void genome_random(genome *x, rng *r, uint32_t core, uint32_t len, double fraction) {
   if (len < 1) len = 1;
   if (len > GENOME_MAX) len = GENOME_MAX;
   x->len = len;
   x->start = rng_below(r, len);
-  for (uint32_t i = 0; i < len; i++) x->g[i] = random_gene(r, core, len);
+  for (uint32_t i = 0; i < len; i++) x->g[i] = random_gene(r, core, len, fraction);
 }
 
 void genome_code(const genome *x, uint32_t core, m42_instruction *out) {
@@ -109,7 +121,7 @@ size_t genome_text(const genome *x, uint32_t core, char *buf, size_t n) {
 }
 
 void genome_rebuild(genome *child, const genome *a, const genome *b, const slot *s, uint32_t n, uint32_t core,
-                    rng *r) {
+                    rng *r, double fraction) {
   uint32_t map_a[GENOME_MAX], map_b[GENOME_MAX];
   for (uint32_t i = 0; i < GENOME_MAX; i++) map_a[i] = map_b[i] = NONE;
   for (uint32_t i = 0; i < n; i++) {
@@ -133,7 +145,7 @@ void genome_rebuild(genome *child, const genome *a, const genome *b, const slot 
   for (uint32_t i = 0; i < n; i++) {
     const uint32_t idx = s[i].idx;
     if (s[i].src == SLOT_NEW) {
-      out.g[i] = random_gene(r, core, n);
+      out.g[i] = random_gene(r, core, n, fraction);
       continue;
     }
     gene g = s[i].src == SLOT_A ? a->g[idx] : b->g[idx];
@@ -169,7 +181,7 @@ static void add_op(char *ops, size_t ops_n, const char *name) {
   strcat(ops, name);
 }
 
-static void mutate_operand(rng *r, uint32_t core, uint32_t n, uint32_t i, uint8_t *ref, uint32_t *v) {
+static void mutate_operand(rng *r, uint32_t core, uint32_t n, uint32_t i, double fraction, uint8_t *ref, uint32_t *v) {
   const uint32_t x = rng_below(r, 100);
   if (*ref) {
     if (x < 50) *v = rng_below(r, n);
@@ -179,13 +191,13 @@ static void mutate_operand(rng *r, uint32_t core, uint32_t n, uint32_t i, uint8_
   }
   if (x < 35) *v = wrap((int64_t)*v + (rng_below(r, 2) ? 1 : -1) * rng_range(r, 1, 4), core);
   else if (x < 55) *v = wrap(rng_range(r, -16, 16), core);
-  else if (x < 75) *v = rng_below(r, core);
+  else if (x < 75) *v = far_value(r, core, fraction);
   else if (x < 85) *v = wrap(-(int64_t)*v, core);
   else if (x < 92) *v = rng_below(r, 2) ? wrap((int64_t)*v * 2, core) : *v / 2;
   else *ref = 1, *v = rng_below(r, n);
 }
 
-static void point(genome *x, rng *r, uint32_t core, char *ops, size_t ops_n) {
+static void point(genome *x, rng *r, uint32_t core, double fraction, char *ops, size_t ops_n) {
   const uint32_t i = rng_below(r, x->len);
   gene *g = &x->g[i];
   const uint32_t k = rng_below(r, 100);
@@ -193,10 +205,10 @@ static void point(genome *x, rng *r, uint32_t core, char *ops, size_t ops_n) {
   else if (k < 30) g->mod = (uint8_t)rng_below(r, 7), add_op(ops, ops_n, "modifier");
   else if (k < 40) g->am = (uint8_t)rng_below(r, 8), add_op(ops, ops_n, "mode");
   else if (k < 50) g->bm = (uint8_t)rng_below(r, 8), add_op(ops, ops_n, "mode");
-  else if (k < 70) mutate_operand(r, core, x->len, i, &g->aref, &g->a), add_op(ops, ops_n, "operand");
-  else if (k < 90) mutate_operand(r, core, x->len, i, &g->bref, &g->b), add_op(ops, ops_n, "operand");
+  else if (k < 70) mutate_operand(r, core, x->len, i, fraction, &g->aref, &g->a), add_op(ops, ops_n, "operand");
+  else if (k < 90) mutate_operand(r, core, x->len, i, fraction, &g->bref, &g->b), add_op(ops, ops_n, "operand");
   else if (k < 95) x->start = rng_below(r, x->len), add_op(ops, ops_n, "start");
-  else *g = random_gene(r, core, x->len), add_op(ops, ops_n, "replace");
+  else *g = random_gene(r, core, x->len, fraction), add_op(ops, ops_n, "replace");
 }
 
 // A block length for a genome of len instructions: short ones are likely.
@@ -207,7 +219,7 @@ static uint32_t block(rng *r, uint32_t len) {
 }
 
 void genome_breed(genome *child, const genome *p1, const genome *p2, rng *r, uint32_t core, uint32_t max_length,
-                  char *ops, size_t ops_n) {
+                  double fraction, char *ops, size_t ops_n) {
   if (ops_n) ops[0] = 0;
   if (max_length > GENOME_MAX) max_length = GENOME_MAX;
   genome x = *p1;
@@ -218,20 +230,20 @@ void genome_breed(genome *child, const genome *p1, const genome *p2, rng *r, uin
     const uint32_t kind = rng_below(r, 100), len = x.len;
     uint32_t n = 0;
     if (kind < 50) {
-      point(&x, r, core, ops, ops_n);
+      point(&x, r, core, fraction, ops, ops_n);
       continue;
     } else if (kind < 60 && len < max_length) { // insert new instructions
       const uint32_t k = block(r, max_length - len), q = rng_below(r, len + 1);
       for (uint32_t i = 0; i < q; i++) s[n++] = (slot){SLOT_A, i};
       for (uint32_t i = 0; i < k; i++) s[n++] = (slot){SLOT_NEW, 0};
       for (uint32_t i = q; i < len; i++) s[n++] = (slot){SLOT_A, i};
-      genome_rebuild(&x, &x, &x, s, n, core, r);
+      genome_rebuild(&x, &x, &x, s, n, core, r, fraction);
       add_op(ops, ops_n, "insert");
     } else if (kind < 70 && len > 1) { // delete a block
       const uint32_t k = block(r, len - 1), p = rng_below(r, len - k + 1);
       for (uint32_t i = 0; i < len; i++)
         if (i < p || i >= p + k) s[n++] = (slot){SLOT_A, i};
-      genome_rebuild(&x, &x, &x, s, n, core, r);
+      genome_rebuild(&x, &x, &x, s, n, core, r, fraction);
       add_op(ops, ops_n, "delete");
     } else if (kind < 77 && len < max_length) { // duplicate a block
       const uint32_t k = block(r, len < max_length - len ? len : max_length - len);
@@ -239,7 +251,7 @@ void genome_breed(genome *child, const genome *p1, const genome *p2, rng *r, uin
       for (uint32_t i = 0; i < q; i++) s[n++] = (slot){SLOT_A, i};
       for (uint32_t i = 0; i < k; i++) s[n++] = (slot){SLOT_B, from + i};
       for (uint32_t i = q; i < len; i++) s[n++] = (slot){SLOT_A, i};
-      genome_rebuild(&x, &x, &x, s, n, core, r);
+      genome_rebuild(&x, &x, &x, s, n, core, r, fraction);
       add_op(ops, ops_n, "duplicate");
     } else if (kind < 84 && len > 1) { // move a block
       const uint32_t k = block(r, len - 1), from = rng_below(r, len - k + 1);
@@ -257,7 +269,7 @@ void genome_breed(genome *child, const genome *p1, const genome *p2, rng *r, uin
       }
       if (!placed)
         for (uint32_t j = 0; j < k; j++) s[n++] = (slot){SLOT_A, from + j};
-      genome_rebuild(&x, &x, &x, s, n, core, r);
+      genome_rebuild(&x, &x, &x, s, n, core, r, fraction);
       add_op(ops, ops_n, "move");
     } else if (kind < 96 && p2) { // crossover: a block of p2 into or over a block of x
       const uint32_t k = block(r, p2->len < max_length ? p2->len : max_length);
@@ -269,10 +281,10 @@ void genome_breed(genome *child, const genome *p1, const genome *p2, rng *r, uin
       for (uint32_t i = 0; i < q; i++) s[n++] = (slot){SLOT_A, i};
       for (uint32_t i = 0; i < k; i++) s[n++] = (slot){SLOT_B, from + i};
       for (uint32_t i = q + cut; i < len; i++) s[n++] = (slot){SLOT_A, i};
-      genome_rebuild(&x, &x, p2, s, n, core, r);
+      genome_rebuild(&x, &x, p2, s, n, core, r, fraction);
       add_op(ops, ops_n, cut ? "crossover-replace" : "crossover-insert");
     } else {
-      point(&x, r, core, ops, ops_n);
+      point(&x, r, core, fraction, ops, ops_n);
     }
   }
   *child = x;

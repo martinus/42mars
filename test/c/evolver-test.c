@@ -82,7 +82,7 @@ static void test_rebuild(void) {
       s[n++] = (slot){SLOT_A, order[i]};
       kept[order[i]] = 1;
     }
-    genome_rebuild(&c, &a, &a, s, n, CORE, &r);
+    genome_rebuild(&c, &a, &a, s, n, CORE, &r, 0);
     CHECK(valid(&c, GENOME_MAX), "rebuild gave an invalid genome");
     for (uint32_t i = 0; i < n; i++) {
       if (s[i].src != SLOT_A) continue;
@@ -119,7 +119,7 @@ static void test_duplicate_and_crossover(void) {
     for (uint32_t i = 0; i < k; i++) s[n++] = (slot){SLOT_B, from + i};
     for (uint32_t i = q; i < len; i++) s[n++] = (slot){SLOT_A, i};
     // duplicate (b == a): copies reference copies inside the block, else the originals
-    genome_rebuild(&c, &a, &a, s, n, CORE, &r);
+    genome_rebuild(&c, &a, &a, s, n, CORE, &r, 0);
     CHECK(valid(&c, GENOME_MAX), "duplicate gave an invalid genome");
     for (uint32_t i = 0; i < k; i++) {
       const uint32_t at = q + i, target = a.g[from + i].a;
@@ -131,7 +131,7 @@ static void test_duplicate_and_crossover(void) {
     // crossover (b another genome): references out of the block become offsets
     tagged(&b, len);
     for (uint32_t i = 0; i < len; i++) b.g[i].b = 5000 + i;
-    genome_rebuild(&c, &a, &b, s, n, CORE, &r);
+    genome_rebuild(&c, &a, &b, s, n, CORE, &r, 0);
     CHECK(valid(&c, GENOME_MAX), "crossover gave an invalid genome");
     m42_instruction code[GENOME_MAX], bcode[GENOME_MAX];
     genome_code(&c, CORE, code);
@@ -156,10 +156,10 @@ static void test_breed(void) {
   const uint32_t limits[] = {1, 5, 20, 100, GENOME_MAX};
   for (int k = 0; k < 5; k++) {
     const uint32_t max = limits[k];
-    genome_random(&p1, &r, CORE, 1 + rng_below(&r, max));
-    genome_random(&p2, &r, CORE, 1 + rng_below(&r, max));
+    genome_random(&p1, &r, CORE, 1 + rng_below(&r, max), 0);
+    genome_random(&p2, &r, CORE, 1 + rng_below(&r, max), 0);
     for (int round = 0; round < 4000; round++) {
-      genome_breed(&c, &p1, rng_below(&r, 2) ? &p2 : 0, &r, CORE, max, ops, sizeof ops);
+      genome_breed(&c, &p1, rng_below(&r, 2) ? &p2 : 0, &r, CORE, max, k == 2 ? 0.5 : 0, ops, sizeof ops);
       CHECK(valid(&c, max), "a child of length %u is invalid (max %u, %s)", c.len, max, ops);
       CHECK(ops[0], "a child without the name of a change");
       genome_code(&c, CORE, code);
@@ -179,10 +179,10 @@ static void test_text(void) {
   char text[GENOME_MAX * 48 + 64], ops[96];
   static char src[GENOME_MAX * 48 + 128];
   m42_instruction code[GENOME_MAX];
-  genome_random(&g, &r, CORE, 8);
-  genome_random(&p2, &r, CORE, 8);
+  genome_random(&g, &r, CORE, 8, 0);
+  genome_random(&p2, &r, CORE, 8, 0);
   for (int round = 0; round < 1500; round++) {
-    genome_breed(&g, &g, &p2, &r, CORE, GENOME_MAX, ops, sizeof ops);
+    genome_breed(&g, &g, &p2, &r, CORE, GENOME_MAX, 0, ops, sizeof ops);
     const size_t len = genome_text(&g, CORE, text, sizeof text);
     CHECK(len < sizeof text, "text cut");
     const int n = snprintf(src, sizeof src, ";redcode-94nop\n;name t\n%s", text);
@@ -209,7 +209,7 @@ static void test_text(void) {
     CHECK(genome_load(&back, saved, CORE, 0) == 0 && genome_hash(&back, CORE) == genome_hash(&g, CORE) &&
               memcmp(back.g, g.g, g.len * sizeof *g.g) == 0,
           "the state form does not read back");
-    if (g.len > 40) genome_random(&g, &r, CORE, 8);
+    if (g.len > 40) genome_random(&g, &r, CORE, 8, 0);
   }
   genome bad;
   CHECK(genome_load(&bad, "2 2 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0", CORE, 0) != 0, "a start past the end loads");
@@ -285,6 +285,36 @@ static void test_names(void) {
   CHECK(strcmp(b, "Crimson Mantis IV") == 0, "fourth name %s", b);
 }
 
+// --fractions: with 1, every value that is neither a reference nor small
+// lies within 20 of 1/2, 1/3, 2/3, 1/4 or 3/4 of the core, and those come
+// up; with 0, most far values are elsewhere.
+static void test_fractions(void) {
+  rng r = rng_seed(13, 14, 15);
+  const uint32_t frac[] = {CORE / 2, CORE / 3, CORE * 2 / 3, CORE / 4, CORE * 3 / 4};
+  for (int k = 0; k < 2; k++) {
+    uint32_t far = 0, near = 0, hits[5] = {0};
+    for (int round = 0; round < 3000; round++) {
+      genome g;
+      genome_random(&g, &r, CORE, 10, k ? 1.0 : 0.0);
+      for (uint32_t i = 0; i < g.len; i++) {
+        const uint32_t v[2] = {g.g[i].aref ? 0 : g.g[i].a, g.g[i].bref ? 0 : g.g[i].b};
+        for (int o = 0; o < 2; o++) {
+          if (v[o] <= 16 || v[o] >= CORE - 16) continue; // a reference or a small value
+          far++;
+          for (int f = 0; f < 5; f++)
+            if (v[o] + 20 >= frac[f] && v[o] <= frac[f] + 20) near++, hits[f]++, f = 5;
+        }
+      }
+    }
+    if (k) {
+      CHECK(far > 1000 && near == far, "--fractions 1: %u of %u far values near a fraction", near, far);
+      for (int f = 0; f < 5; f++) CHECK(hits[f] > far / 20, "fraction %d came up %u times of %u", f, hits[f], far);
+    } else {
+      CHECK(near < far / 10, "--fractions 0: %u of %u far values near a fraction", near, far);
+    }
+  }
+}
+
 int main(void) {
   test_rebuild();
   test_duplicate_and_crossover();
@@ -293,6 +323,7 @@ int main(void) {
   test_hash();
   test_pushoff();
   test_names();
+  test_fractions();
   if (failures) {
     fprintf(stderr, "%d failures\n", failures);
     return 1;

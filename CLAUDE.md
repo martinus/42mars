@@ -16,6 +16,7 @@ Everything here is MIT and must not derive from GPL Core War code.
 - Never read source code of pMARS, exMARS, exhaust, corewar.dev or any other MARS: no files, archives, diffs, web pages, disassembled wasm.
 - Never look at branch `prototype-before-squash` (GPL-derived). `main` from `bdc9cbb` on is clean, so is branch `prototype`.
 - Never read transcripts, tool output or summaries of earlier sessions (`~/.claude/projects/**`, `tasks/*.output`): they quote GPL source read there. Start from the repo, the issue and this file.
+- The same for the source of other evolvers and optimizers (YACE, ga_war, ...: GPL or unknown): a separate agent reads it and writes the ideas in prose, without code (as for YACE, `docs/evolver.md`); the session that writes `evolver/` reads only that prose.
 - Allowed: running those engines as programs, the ICWS'94 draft, our own code and docs (also from git history, e.g. our JavaScript engine `git show fe236bb:js/mars.js`), and idea descriptions written by others ("Ideas from other simulators" in `docs/performance-log.md`).
 - Learn what pMARS does by running `$O/bin/pmars` on a warrior you wrote, or with `tools/pmars-diff.mjs`.
 - Timing scripts that need corewar.dev's engines live in `$O/cwbench/`; never open `$O/third-party/`.

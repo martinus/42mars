@@ -56,6 +56,7 @@ typedef struct {
   uint64_t seed;
   int select;      // SELECT_SCREEN: survivors by screen score; SELECT_VALUE: by estimated push-off value
   uint32_t rotate; // every this many batches a new hill warrior replaces the oldest of the panel, 0 never
+  double fractions; // probability that a far value is a fraction of the core give or take 20 (genome.h)
 } params;
 
 enum { SELECT_SCREEN, SELECT_VALUE };
@@ -490,11 +491,12 @@ static void event_start(run *r) {
           "\"distance\":%u},\"params\":{\"panel\":%u,\"holdout\":%u,\"list\":%u,\"batch\":%u,\"survivors\":%u,"
           "\"rounds\":%u,\"screenRounds\":%u,\"benchEvery\":%u,\"benchRounds\":%u,\"initLength\":%u,"
           "\"screenFactor\":%.17g,\"alpha\":%.17g,\"reintroduce\":%.17g,\"sd\":\"%s\",\"seed\":%" PRIu64
-          ",\"select\":\"%s\",\"rotate\":%u},\"opponents\":",
+          ",\"select\":\"%s\",\"rotate\":%u,\"fractions\":%.17g},\"opponents\":",
           m42_version(), p->rules.core_size, p->rules.max_cycles, p->rules.max_processes, p->rules.max_length,
           p->rules.min_distance, r->panel_n, r->hold_n, p->list, p->batch, p->survivors, p->rounds, p->screen_rounds,
           p->bench_every, p->bench_rounds, p->init_length, p->screen_factor, p->alpha, p->reintroduce,
-          p->sd == SD_SUM ? "sum" : "opponent", p->seed, p->select == SELECT_VALUE ? "value" : "screen", p->rotate);
+          p->sd == SD_SUM ? "sum" : "opponent", p->seed, p->select == SELECT_VALUE ? "value" : "screen", p->rotate,
+          p->fractions);
   json_str(f, p->opponents, 0);
   for (int k = 0; k < 2; k++) {
     fputs(k ? ",\"holdout\":[" : ",\"panel\":[", f);
@@ -600,9 +602,10 @@ static void save_state(run *r) {
   fprintf(f, "42evolve-state 1\n");
   fprintf(f, "rules %u %u %u %u %u\n", p->rules.core_size, p->rules.max_cycles, p->rules.max_processes,
           p->rules.max_length, p->rules.min_distance);
-  fprintf(f, "params %u %u %u %u %u %u %u %u %u %u %.17g %.17g %.17g %d %" PRIu64 " %d %u\n", p->panel, p->holdout,
-          p->list, p->batch, p->survivors, p->rounds, p->screen_rounds, p->bench_every, p->bench_rounds, p->init_length,
-          p->screen_factor, p->alpha, p->reintroduce, p->sd, p->seed, p->select, p->rotate);
+  fprintf(f, "params %u %u %u %u %u %u %u %u %u %u %.17g %.17g %.17g %d %" PRIu64 " %d %u %.17g\n", p->panel,
+          p->holdout, p->list, p->batch, p->survivors, p->rounds, p->screen_rounds, p->bench_every, p->bench_rounds,
+          p->init_length, p->screen_factor, p->alpha, p->reintroduce, p->sd, p->seed, p->select, p->rotate,
+          p->fractions);
   fprintf(f, "opponents %s\n", p->opponents);
   for (uint32_t i = 0; i < r->panel_n; i++) fprintf(f, "panel-id %" PRIu64 " %s\n", r->panel[i].id, r->panel[i].file);
   for (uint32_t i = 0; i < r->hold_n; i++) fprintf(f, "holdout %s\n", r->hold[i].file);
@@ -700,12 +703,13 @@ static int load_state(run *r, const char *path) {
                  &p->rules.max_length, &p->rules.min_distance) != 5)
         goto bad;
     } else if (!strncmp(line, "params ", 7)) {
-      // the last two came with --select and --rotate; a state without them has neither
-      const int got = sscanf(line + 7, "%u %u %u %u %u %u %u %u %u %u %lg %lg %lg %d %" SCNu64 " %d %u", &p->panel,
-                             &p->holdout, &p->list, &p->batch, &p->survivors, &p->rounds, &p->screen_rounds,
-                             &p->bench_every, &p->bench_rounds, &p->init_length, &p->screen_factor, &p->alpha,
-                             &p->reintroduce, &p->sd, &p->seed, &p->select, &p->rotate);
-      if (got != 15 && got != 17) goto bad;
+      // the last three came with --select, --rotate and --fractions; a state
+      // without them has none of them
+      const int got = sscanf(line + 7, "%u %u %u %u %u %u %u %u %u %u %lg %lg %lg %d %" SCNu64 " %d %u %lg",
+                             &p->panel, &p->holdout, &p->list, &p->batch, &p->survivors, &p->rounds,
+                             &p->screen_rounds, &p->bench_every, &p->bench_rounds, &p->init_length, &p->screen_factor,
+                             &p->alpha, &p->reintroduce, &p->sd, &p->seed, &p->select, &p->rotate, &p->fractions);
+      if (got != 15 && got != 17 && got != 18) goto bad;
     } else if (!strncmp(line, "opponents ", 10)) {
       snprintf(p->opponents, sizeof p->opponents, "%s", line + 10);
     } else if (!strncmp(line, "panel ", 6)) { // before --rotate: the ids are 0, 1, ...
@@ -990,8 +994,9 @@ static void run_batch(run *r) {
     x->parents[0] = x->parents[1] = NO_ID;
     int reintro = 0;
     if (members(r) == 0) {
-      genome_random(&x->g, &g, core, 1 + rng_below(&g, p->init_length < p->rules.max_length ? p->init_length
-                                                                                              : p->rules.max_length));
+      genome_random(&x->g, &g, core,
+                    1 + rng_below(&g, p->init_length < p->rules.max_length ? p->init_length : p->rules.max_length),
+                    p->fractions);
       strcpy(x->ops, "random");
       x->noun = rng_below(&g, NAME_NOUNS); // a new family
     } else if (r->archive_n && rng_chance(&g, p->reintroduce)) {
@@ -1003,7 +1008,7 @@ static void run_batch(run *r) {
       reintro = 1;
     } else {
       const warrior *a = select_parent(r, &g), *b = select_parent(r, &g);
-      genome_breed(&x->g, a->g, b->g, &g, core, p->rules.max_length, x->ops, sizeof x->ops);
+      genome_breed(&x->g, a->g, b->g, &g, core, p->rules.max_length, p->fractions, x->ops, sizeof x->ops);
       x->parents[0] = a->id;
       x->noun = a->noun;
       if (strstr(x->ops, "crossover") && b->id != a->id) x->parents[1] = b->id;
@@ -1182,6 +1187,7 @@ static void usage(void) {
           "         [--batch N] [--survivors N] [--rounds 100] [--screen-rounds 20] [--screen-factor 0.8]\n"
           "         [--bench-every 10] [--bench-rounds 100] [--alpha 1] [--sd opponent|sum]\n"
           "         [--reintroduce 0.02] [--init-length 10] [--seed 1] [--select screen|value] [--rotate N]\n"
+          "         [--fractions p]\n"
           "         [--size 8000] [--cycles 80000] [--processes 8000] [--length 100] [--distance 100]\n"
           "         [--threads N] [--batches N] [--seconds S]\n"
           "       42evolve <run folder> [--threads N] [--batches N] [--seconds S]   (continue a run)\n");
@@ -1243,6 +1249,10 @@ int main(int argc, char **argv) {
     else if (!strcmp(a, "--bench-rounds")) p->bench_rounds = u;
     else if (!strcmp(a, "--alpha")) p->alpha = d;
     else if (!strcmp(a, "--reintroduce")) p->reintroduce = d;
+    else if (!strcmp(a, "--fractions")) {
+      if (d > 1) usage();
+      p->fractions = d;
+    }
     else if (!strcmp(a, "--init-length")) p->init_length = u;
     else if (!strcmp(a, "--seed")) p->seed = (uint64_t)d;
     else if (!strcmp(a, "--size")) p->rules.core_size = u;
