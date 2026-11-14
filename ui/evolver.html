@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>42evolve</title>
+  <link rel="stylesheet" href="evolver.css">
+</head>
+<body>
+  <header class="bar">
+    <div class="brand"><span class="pulse" id="live" title="connection"></span>42<b>evolve</b></div>
+    <div class="run" id="run-info">waiting for a run</div>
+    <div class="chips">
+      <div class="chip"><span class="k">batch</span><span class="v" id="c-batch">–</span></div>
+      <div class="chip"><span class="k">warriors tried</span><span class="v" id="c-tried">–</span></div>
+      <div class="chip"><span class="k">candidates/s</span><span class="v" id="c-cps">–</span></div>
+      <div class="chip"><span class="k">rounds/s</span><span class="v" id="c-rps">–</span></div>
+      <div class="chip"><span class="k">instructions/s</span><span class="v" id="c-ips">–</span></div>
+      <div class="chip cpu"><canvas id="cpu" width="44" height="44"></canvas><span class="k">cores busy</span><span class="v" id="c-busy">–</span></div>
+    </div>
+  </header>
+
+  <main>
+    <section class="panel matrix-panel">
+      <h2>Score matrix <small>evolved warriors by push-off value, against each other and the panel · points per 100 rounds · click a cell to watch the match</small></h2>
+      <div class="canvas-wrap"><canvas id="matrix"></canvas></div>
+      <div class="scale"><span>0</span><i></i><span>300</span></div>
+    </section>
+
+    <section class="panel map-panel">
+      <h2>Novelty map <small>warriors placed by how they score against the panel · grey: hill warriors</small></h2>
+      <div class="canvas-wrap"><canvas id="map"></canvas></div>
+    </section>
+
+    <section class="panel lineage-panel">
+      <h2>Lineage <small>every warrior that entered, by birth and panel score · lines to parents</small></h2>
+      <div class="canvas-wrap"><canvas id="lineage"></canvas></div>
+    </section>
+
+    <section class="panel progress-panel">
+      <h2>Progress <small>points per 100 rounds</small></h2>
+      <div class="canvas-wrap"><canvas id="progress"></canvas></div>
+    </section>
+
+    <section class="panel ticker-panel">
+      <h2>Events</h2>
+      <ol id="ticker"></ol>
+    </section>
+  </main>
+
+  <aside class="card" id="card" hidden>
+    <button class="close" id="card-close" title="close (Esc)">×</button>
+    <div id="card-body"></div>
+  </aside>
+
+  <div class="tooltip" id="tip" hidden></div>
+  <div class="drop" id="drop" hidden>drop an events.jsonl</div>
+
+  <script type="module" src="evolver.js"></script>
+</body>
+</html>

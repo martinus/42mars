@@ -2,13 +2,21 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 Martin Leitner-Ankerl
 // Minimal static file server for the visualizer (ES modules need http://).
-// Usage: node tools/serve.mjs [port]
+// Usage: node tools/serve.mjs [port] [--run <folder of a 42evolve run>]
+//
+// With --run, /run/events streams the run's events.jsonl as Server-Sent
+// Events for the evolver dashboard (ui/evolver.html): every line as it is
+// written, and an event `reset` when the file got shorter (the run was
+// continued from its state), after which the lines come again from the start.
 import { createServer } from 'node:http';
-import { readFile } from 'node:fs/promises';
-import { extname, join, normalize, resolve } from 'node:path';
+import { open, readFile, stat } from 'node:fs/promises';
+import { basename, extname, join, normalize, resolve } from 'node:path';
 
 const root = resolve(new URL('..', import.meta.url).pathname);
-const port = Number(process.argv[2] || process.env.PORT || 8000);
+const args = process.argv.slice(2);
+const runAt = args.indexOf('--run');
+const runDir = runAt >= 0 ? resolve(args.splice(runAt, 2)[1] ?? '.') : null;
+const port = Number(args[0] || process.env.PORT || 8000);
 const types = {
   '.html': 'text/html; charset=utf-8',
   '.js': 'text/javascript; charset=utf-8',
@@ -22,9 +30,50 @@ const types = {
   '.wasm': 'application/wasm',
 };
 
+// Sends the new complete lines of the run's events.jsonl every 300 ms.
+function streamEvents(req, res) {
+  const file = join(runDir, 'events.jsonl');
+  res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', connection: 'keep-alive' });
+  res.write(`event: run\ndata: ${JSON.stringify({ name: basename(runDir) })}\n\n`);
+  let offset = 0, partial = '', busy = false;
+  const poll = async () => {
+    if (busy) return;
+    busy = true;
+    try {
+      const { size } = await stat(file);
+      if (size < offset) {
+        offset = 0;
+        partial = '';
+        res.write('event: reset\ndata: {}\n\n');
+      }
+      if (size > offset) {
+        const fh = await open(file, 'r');
+        const buf = Buffer.alloc(size - offset);
+        await fh.read(buf, 0, buf.length, offset);
+        await fh.close();
+        offset = size;
+        const lines = (partial + buf.toString('utf8')).split('\n');
+        partial = lines.pop();
+        for (const line of lines) if (line) res.write(`data: ${line}\n\n`);
+      }
+    } catch {
+      // no events.jsonl yet
+    }
+    busy = false;
+  };
+  poll();
+  const timer = setInterval(poll, 300);
+  req.on('close', () => clearInterval(timer));
+}
+
 createServer(async (req, res) => {
   const url = new URL(req.url, 'http://x');
   const path = decodeURIComponent(url.pathname);
+  if (path === '/run/events') {
+    if (runDir) streamEvents(req, res);
+    else res.writeHead(404).end('no run: node tools/serve.mjs --run <folder>');
+    return;
+  }
   if (path === '/') { // the visualizer lives in ui/
     res.writeHead(302, { location: `/ui/${url.search}` }).end();
     return;
@@ -41,4 +90,7 @@ createServer(async (req, res) => {
   } catch {
     res.writeHead(404).end('not found');
   }
-}).listen(port, '127.0.0.1', () => console.log(`Core War Theater: http://127.0.0.1:${port}/`));
+}).listen(port, '127.0.0.1', () => {
+  console.log(`Core War Theater: http://127.0.0.1:${port}/`);
+  if (runDir) console.log(`evolver dashboard of ${runDir}: http://127.0.0.1:${port}/ui/evolver.html`);
+});
