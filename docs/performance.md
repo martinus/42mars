@@ -161,4 +161,4 @@ Every idea below looked good and was built. The numbers are against the code of 
 
 ## What it costs
 
-Speed is not free here. The library compiles in 7.8 s with gcc instead of 2.6 s, and its object file grew from 186 to 399 KB. The WebAssembly module went from 101 to 288 KB, and it lost 7.5% on a 60 ms benchmark of '88-style warriors, because V8 now needs 17 ms instead of 8 to compile the loop. MSVC gets 16 cases instead of 512, since it took 2 minutes for 32, so on Windows the '94 hills run mostly generic code. I have not measured how fast that is.
+Speed is not free here. The library compiles in 7.8 s with gcc instead of 2.6 s, and its object file grew from 186 to 399 KB. The WebAssembly module went from 101 to 288 KB, and it lost 7.5% on a 60 ms benchmark of '88-style warriors, because V8 now needs 17 ms instead of 8 to compile the loop. MSVC gets 16 cases instead of 512, since it takes 2 minutes for 32 and stops optimizing with 64. So a Windows build with MSVC is where it was before: 4 to 5% faster on a '94 hill, 6 to 8% slower on an '88 hill.
