@@ -109,7 +109,7 @@ function checkValues(evs) {
   };
   const slots = start.panel.map((w) => w.id);
   const panel = new Set(slots); // the panel now
-  let checked = 0;
+  let checked = 0, duels = 0, lastValues = new Map();
   // the estimate of a newcomer: its screen points against the panel, the
   // SD-score on the panel columns to the nearest warrior in when its batch
   // started, with the standard deviations of then
@@ -149,6 +149,18 @@ function checkValues(evs) {
       for (const [o, w, l, t] of e.scores) put(e.panel.id, o, w, l, t);
       assert.equal(e.scores.length, slots.filter((x) => x !== null).length - 1, 'a new panel warrior plays everyone in');
     }
+    if (e.type === 'enter' && e.rival >= 0) {
+      // the first parent won its tournament of two against the rival: by
+      // push-off value at the start of the batch, or with --parents duel by
+      // their match against each other (a draw by value)
+      const [w] = e.parents, l = e.rival, value = (id) => lastValues.get(id) ?? -Infinity;
+      if (start.params.parents === 'duel' && w !== l && pts.get(`${w},${l}`) !== pts.get(`${l},${w}`)) {
+        assert.ok(pts.get(`${w},${l}`) > pts.get(`${l},${w}`), `${e.name}: parent ${w} lost to ${l}`);
+        duels++;
+      } else if (!start.params.rotate) {
+        assert.ok(value(w) >= value(l), `${e.name}: parent ${w} has less value than ${l}`);
+      }
+    }
     if (e.type === 'enter') {
       assert.equal(e.screenPoints.length, P);
       const screen = e.screenPoints.reduce((a, b) => a + b, 0) / P;
@@ -166,6 +178,7 @@ function checkValues(evs) {
       slots[slots.indexOf(e.id)] = null;
     }
     if (e.type === 'values') {
+      lastValues = new Map(e.values.map((v) => [v[0], v[4]]));
       const ids = slots.filter((x) => x !== null);
       assert.ok(ids.length - P <= start.params.list);
       const score = ids.map((a) => ids.map((b) => (a === b ? null : pts.get(`${a},${b}`))));
@@ -185,6 +198,7 @@ function checkValues(evs) {
       checked++;
     }
   }
+  if (start.params.parents === 'duel') assert.ok(duels > 10, `only ${duels} duels`);
   return checked;
 }
 
@@ -300,6 +314,17 @@ test('--prior hill: the weights are how often opcodes, modifiers and modes occur
   };
   assert.ok(mode[1] === Math.max(...mode));
   assert.ok(count(evs) > count(base.filter((e) => e.batch === undefined || e.batch < 2)) + 0.1, 'more $ modes with the prior');
+});
+
+test('--parents duel: a parent beat its rival in their match, the same run on any thread count', { skip }, () => {
+  assert.equal(base[0].params.parents, 'value');
+  const args = [...TINY, '--parents', 'duel'];
+  run(join(tmp, 'duel1'), [...args, '--threads', '1', '--batches', '6']);
+  const one = events(join(tmp, 'duel1'));
+  assert.equal(one[0].params.parents, 'duel');
+  assert.equal(checkValues(one), 6);
+  run(join(tmp, 'duel3'), [...args, '--threads', '3', '--batches', '6']);
+  assert.deepEqual(stable(events(join(tmp, 'duel3'))), stable(one));
 });
 
 test('panel warriors never leave, also the weakest', { skip }, () => {
