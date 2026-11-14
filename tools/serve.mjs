@@ -8,15 +8,33 @@
 // Events for the evolver dashboard (ui/evolver.html): every line as it is
 // written, and an event `reset` when the file got shorter (the run was
 // continued from its state), after which the lines come again from the start.
+import { existsSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { open, readFile, stat } from 'node:fs/promises';
 import { basename, extname, join, normalize, resolve } from 'node:path';
 
 const root = resolve(new URL('..', import.meta.url).pathname);
-const args = process.argv.slice(2);
-const runAt = args.indexOf('--run');
-const runDir = runAt >= 0 ? resolve(args.splice(runAt, 2)[1] ?? '.') : null;
-const port = Number(args[0] || process.env.PORT || 8000);
+const usage = (why) => {
+  console.error(`${why}\nusage: node tools/serve.mjs [port] [--run <folder of a 42evolve run>]`);
+  process.exit(2);
+};
+let runDir = null, portArg = null;
+for (const args = process.argv.slice(2); args.length;) {
+  const a = args.shift();
+  if (a === '--run') {
+    if (!args.length) usage('--run needs the folder of a run');
+    runDir = resolve(args.shift());
+  } else if (a.startsWith('-')) {
+    usage(`unknown option ${a}${a.startsWith('--run') ? ' (--run?)' : ''}`);
+  } else if (portArg === null) {
+    portArg = a;
+  } else {
+    usage(`one port only, not '${portArg}' and '${a}'`);
+  }
+}
+const port = Number(portArg ?? process.env.PORT ?? 8000);
+if (!Number.isInteger(port) || port < 0 || port > 65535) usage(`not a port: '${portArg ?? process.env.PORT}'`);
+if (runDir && !existsSync(join(runDir, 'events.jsonl'))) console.error(`${runDir} has no events.jsonl yet; the dashboard shows the run once 42evolve writes it`);
 const types = {
   '.html': 'text/html; charset=utf-8',
   '.js': 'text/javascript; charset=utf-8',
