@@ -28,6 +28,23 @@ const PRESETS = {
   big: { label: 'big · 55440', coreSize: 55440, maxCycles: 500000, maxProcesses: 10000, maxLength: 200, minDistance: 200 },
 };
 
+// A battle from the evolver's dashboard (ui/evolver.js): #battle= and base64
+// of { title, rules, seed, rounds, round, warriors: [{ name, source }] }, the
+// match as 42evolve played it. The rules become the preset 'battle'; the
+// match starts at `round` (1-based), the rounds before it run unseen.
+const BATTLE = (() => {
+  const m = /^#battle=([A-Za-z0-9_-]+)/.exec(location.hash);
+  if (!m) return null;
+  try {
+    const bytes = Uint8Array.from(atob(m[1].replace(/-/g, '+').replace(/_/g, '/')), (c) => c.charCodeAt(0));
+    const b = JSON.parse(new TextDecoder().decode(bytes));
+    PRESETS.battle = { label: `evolver · ${b.rules.coreSize}`, ...b.rules };
+    return b;
+  } catch {
+    return null;
+  }
+})();
+
 // instructions per second; Infinity runs as much as fits into the frame budget
 const SPEEDS = [1, 2, 5, 10, 25, 60, 150, 400, 1000, 2500, 6000, 15000, 40000, 100000, 250000, 600000, Infinity];
 
@@ -82,6 +99,8 @@ const state = {
   focus: null,
   lastStance: 0,
   explained: -1,
+  seed: null, // load() places the warriors from this seed when set (battle)
+  skipRounds: 0, // rounds to run unseen after each load (battle)
 };
 
 const renderer = (() => {
@@ -145,7 +164,11 @@ function restartMatch() {
   const opts = options();
   try {
     state.mars = createMarsSync({ ...opts, watch: true }, wasmModule);
-    state.mars.load(state.slots.map((s) => s.result));
+    state.mars.load(state.slots.map((s) => s.result), state.seed === null ? undefined : { seed: state.seed });
+    for (let k = 0; k < state.skipRounds && k < state.rounds - 1; k++) {
+      state.mars.startRound();
+      while (!state.mars.roundOver) state.mars.run(1e6);
+    }
   } catch (e) {
     state.mars = null;
     showBanner('Cannot start', e.message, '#ff7b7b');
@@ -872,13 +895,24 @@ async function main() {
   await loadSamples();
   const params = new URLSearchParams(location.search);
   const cast = (params.get('cast') || DEFAULT_CAST.join(',')).split(',').filter((k) => state.library.has(k));
-  (cast.length ? cast : DEFAULT_CAST).forEach((k, i) => setSlot(i, k));
+  if (BATTLE) {
+    BATTLE.warriors.forEach((w, i) => setSlot(i, addToLibrary(w.name, w.source)));
+    state.preset = 'battle';
+    $('preset').value = 'battle';
+    state.rounds = BATTLE.rounds;
+    $('rounds').value = state.rounds;
+    state.seed = BATTLE.seed;
+    state.skipRounds = Math.max(0, (BATTLE.round || 1) - 1);
+  } else {
+    (cast.length ? cast : DEFAULT_CAST).forEach((k, i) => setSlot(i, k));
+  }
   if (params.get('layout') === 'grid') state.layoutKind = LAYOUT_GRID;
   if (params.get('footprints') === '0') state.footprints = false;
   if (params.has('speed')) setSpeed(Number(params.get('speed')));
   if (params.has('rounds')) { state.rounds = Number(params.get('rounds')) || 10; $('rounds').value = state.rounds; }
   if (params.get('preset') in PRESETS) { state.preset = params.get('preset'); $('preset').value = state.preset; }
   restartMatch();
+  if (BATTLE && state.mars) story(`<b>${esc(BATTLE.title || 'Evolver battle')}.</b> The match as 42evolve played it: seed ${BATTLE.seed}, ${BATTLE.rounds} rounds, starting at round ${state.skipRounds + 1}.`, -1, -1);
   if (params.has('steps') && state.mars) {
     state.mars.run(Number(params.get('steps')) || 0);
     consumeTrace(performance.now());
