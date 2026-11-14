@@ -360,11 +360,14 @@ static void compute_values(run *r) {
   pushoff_values(r->pts, r->cap, r->active, r->active_n, r->p.sd, r->p.alpha, r->sigma, r->values);
 }
 
-// A member's average against the panel, points per 100 rounds.
+// A warrior's average against the panel, points per 100 rounds; a panel
+// warrior's own column does not count.
 static double panel_avg(const run *r, uint32_t slot) {
   double s = 0;
-  for (uint32_t j = 0; j < r->panel_n; j++) s += r->pts[slot * r->cap + j];
-  return r->panel_n ? s / r->panel_n : 0;
+  uint32_t n = 0;
+  for (uint32_t j = 0; j < r->panel_n; j++)
+    if (j != slot) s += r->pts[slot * r->cap + j], n++;
+  return n ? s / n : 0;
 }
 
 static uint32_t free_slot(const run *r) {

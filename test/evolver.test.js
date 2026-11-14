@@ -118,6 +118,12 @@ test('the logged values are the push-off of the logged scores', { skip }, () => 
       const score = ids.map((a) => ids.map((b) => (a === b ? null : pts.get(`${a},${b}`))));
       const js = pushoffValues(score, ids.map((_, i) => i), { variant: start.params.sd, alpha: start.params.alpha });
       assert.deepEqual(e.values.map((v) => v[0]), ids);
+      // the sixth number: the average against the panel, without the own column
+      e.values.forEach(([id, , , , , pAvg]) => {
+        const others = start.panel.filter((p) => p.id !== id);
+        const expect = others.reduce((s, p) => s + pts.get(`${id},${p.id}`), 0) / others.length;
+        assert.ok(Math.abs(pAvg - expect) < 1e-5, `panel average of ${id}: ${pAvg}, not ${expect}`);
+      });
       e.values.forEach(([id, avg, distance, nearest, value], i) => {
         const near = (x, y) => Math.abs(x - y) <= 1e-5 * Math.max(1, Math.abs(y));
         assert.ok(near(avg, js[i].avg) && near(distance, js[i].distance) && near(value, js[i].value), `values of ${id}`);
