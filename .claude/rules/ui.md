@@ -16,6 +16,8 @@ How it works:
 - Above about 240,000 instructions/s at 60 fps a frame spans more than 4096 instructions: trace consumers must cope with gaps.
 - `explain.js`: trace entries in English (`explainStep`), activity classification (`ActivityTracker`, a heuristic).
 - `window.__theater` is the app state, for debugging and the ui-check skill. URL parameters for reproducible views: `cast=lantern,origami`, `preset=nano`, `layout=grid|ring`, `speed=0..16`, `steps=N` (run N instructions, then pause), `rounds=N`, `paused`, `noguide`.
+- `#battle=` (base64url of JSON: title, rules, seed, rounds, round, warriors with name and source) is the evolver's battle view: the rules become the preset `battle`, `load()` takes the seed, the rounds before `round` run unseen. It must give the rounds of `m42_match()` with that seed (`test/evolver.test.js`).
+- `evolver.html`, `evolver.js`, `evolver.css`: the evolver's dashboard, 2D canvases on the events of a run (`docs/evolver.md`), apart from the visualizer. `window.__evolver` has `state()`, `select(id)` and `battleUrl(a, b)`. Its screenshots: Chrome's `--virtual-time-budget` never ends on the live stream (`/run/events`), so drive it over the DevTools protocol and wait in real time.
 
 Constraints:
 - 60 fps on an 8000-cell core at every speed: no allocation per frame or per trace entry in hot paths, typed arrays for per-cell data.

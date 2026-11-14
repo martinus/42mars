@@ -195,6 +195,16 @@ URL parameters: `?cast=lantern,origami,seeker` picks sample warriors, `preset=na
 
 </details>
 
+### 42evolve, the evolver
+
+```sh
+make
+build/42evolve runs/a --opponents warriors/koenigstuhl/94nop --seconds 600
+node tools/serve.mjs --run runs/a     # the dashboard: http://127.0.0.1:8000/ui/evolver.html
+```
+
+Evolves warriors against a panel of hill warriors, with a list of 20 kept by the diversity push-off of Tournament Weekend 2026, on all cores (16 threads 97.7% busy in a 10-minute run). The dashboard shows the score matrix, a map of how the warriors differ, the lineage and the progress while the run goes; a click on a match plays it in the visualizer, the same rounds the evolver scored. How it works and the first results: [`docs/evolver.md`](docs/evolver.md).
+
 ## Written in a clean room, so it can be MIT
 
 With a GPL MARS, every evolver, hill server or web app that links it or bundles its WebAssembly module has to be GPL too. With MIT you can copy `lib/42mars.c` into any project under any license. The price: nobody has to give improvements back.
@@ -218,10 +228,11 @@ lib/                the C library, the only thing you need to embed
 cli/42mars.c        the pMARS-compatible command line program
 examples/           example.c, a complete program on the library; parallel.c, a match on several threads
 wasm/               the JavaScript demo: 42mars.wasm, 42mars.js (JS interface), 42mars.d.ts; build.sh
-ui/                 Core War Theater, the visualizer (plain ES modules, no build step)
-tools/              Node tools: asm, corpus, tournament, serve, and the comparisons with pMARS
+evolver/            42evolve, the evolver: a list kept by diversity push-off, on all cores
+ui/                 Core War Theater, the visualizer, and the evolver's dashboard (plain ES modules, no build step)
+tools/              Node tools: asm, corpus, tournament, pushoff, serve, and the comparisons with pMARS
 bench/              speed measurements and A/B timing
-test/               npm test: 391 tests on node:test; C tests in test/c/, fuzz targets in test/fuzz/, recorded results in test/fixtures/
+test/               npm test: 406 tests on node:test; C tests in test/c/, fuzz targets in test/fuzz/, recorded results in test/fixtures/
 docs/               the semantics, the plan, the speed tricks, the performance log, development guide
 warriors/           sample warriors written for this repository, and Dewdney's Imp and Dwarf;
                     koenigstuhl/: 5,261 hill warriors, test material without a license
