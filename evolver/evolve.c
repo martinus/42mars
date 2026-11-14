@@ -32,6 +32,7 @@
 
 #include "42mars.h"
 #include "genome.h"
+#include "names.h"
 #include "pushoff.h"
 #include "rng.h"
 
@@ -90,6 +91,7 @@ typedef struct {
   genome *g; // members
   uint64_t parents[2];
   uint32_t born;
+  uint32_t adjective, noun, earlier; // the name (evolver/names.h)
   double holdout; // members: average against the holdout warriors, -1 not measured
   char ops[96];
 } warrior;
@@ -316,6 +318,8 @@ typedef struct {
 
   genome archive[ARCHIVE_MAX];
   uint64_t archive_id[ARCHIVE_MAX];
+  uint32_t archive_noun[ARCHIVE_MAX];
+  uint32_t names[NAME_ADJECTIVES * NAME_NOUNS]; // warriors that got each name so far
   uint32_t archive_n, archive_next;
   uint64_t seen[SEEN_MAX];
   uint32_t seen_n, seen_next;
@@ -524,7 +528,9 @@ static void event_panel(run *r) {
 static void event_enter(run *r, uint32_t slot, double screen) {
   FILE *f = r->events;
   const warrior *w = r->slot[slot];
-  fprintf(f, "{\"type\":\"enter\",\"batch\":%u,\"id\":%" PRIu64 ",\"parents\":[", r->batch, w->id);
+  fprintf(f, "{\"type\":\"enter\",\"batch\":%u,\"id\":%" PRIu64 ",\"name\":", r->batch, w->id);
+  json_str(f, w->name, 0);
+  fputs(",\"parents\":[", f);
   for (int k = 0, n = 0; k < 2; k++)
     if (w->parents[k] != NO_ID) fprintf(f, "%s%" PRIu64, n++ ? "," : "", w->parents[k]);
   fputs("],\"ops\":", f);
@@ -596,14 +602,16 @@ static void save_state(run *r) {
     const warrior *w = r->slot[r->active[i]];
     if (w->kind != MEMBER) continue;
     genome_save(w->g, text, sizeof text);
-    fprintf(f, "member %" PRIu64 " %u %" PRIu64 " %" PRIu64 " %.17g %s\nops %s\n", w->id, w->born, w->parents[0],
-            w->parents[1], w->holdout, text, w->ops);
+    fprintf(f, "member %" PRIu64 " %u %" PRIu64 " %" PRIu64 " %.17g %u %u %u %s\nops %s\n", w->id, w->born,
+            w->parents[0], w->parents[1], w->holdout, w->adjective, w->noun, w->earlier, text, w->ops);
   }
   for (uint32_t i = 0; i < r->archive_n; i++) {
     genome_save(&r->archive[i], text, sizeof text);
-    fprintf(f, "archive %" PRIu64 " %s\n", r->archive_id[i], text);
+    fprintf(f, "archive %" PRIu64 " %u %s\n", r->archive_id[i], r->archive_noun[i], text);
   }
   fprintf(f, "archive-next %u\n", r->archive_next);
+  for (uint32_t i = 0; i < NAME_ADJECTIVES * NAME_NOUNS; i++)
+    if (r->names[i]) fprintf(f, "names %u %u\n", i, r->names[i]);
   for (uint32_t i = 0; i < r->active_n; i++)
     for (uint32_t j = 0; j < i; j++) {
       const uint32_t a = r->active[i], b = r->active[j];
@@ -705,12 +713,13 @@ static int load_state(run *r, const char *path) {
       int used = 0;
       w->kind = MEMBER;
       w->g = xmalloc(sizeof *w->g);
-      if (sscanf(line + 7, "%" SCNu64 " %u %" SCNu64 " %" SCNu64 " %lg %n", &w->id, &w->born, &w->parents[0],
-                 &w->parents[1], &w->holdout, &used) != 5 ||
+      if (sscanf(line + 7, "%" SCNu64 " %u %" SCNu64 " %" SCNu64 " %lg %u %u %u %n", &w->id, &w->born,
+                 &w->parents[0], &w->parents[1], &w->holdout, &w->adjective, &w->noun, &w->earlier, &used) != 8 ||
+          w->adjective >= NAME_ADJECTIVES || w->noun >= NAME_NOUNS ||
           genome_load(w->g, line + 7 + used, p->rules.core_size, 0) != 0)
         goto bad;
       w->w = make_warrior(w->g, &p->rules);
-      snprintf(w->name, sizeof w->name, "e%" PRIu64, w->id);
+      name_text(w->name, sizeof w->name, w->adjective, w->noun, w->earlier);
       r->slot[free_slot(r)] = w;
       last = w;
     } else if (!strncmp(line, "ops ", 4) || !strcmp(line, "ops")) {
@@ -718,10 +727,15 @@ static int load_state(run *r, const char *path) {
     } else if (!strncmp(line, "archive ", 8)) {
       int used = 0;
       if (r->archive_n >= ARCHIVE_MAX ||
-          sscanf(line + 8, "%" SCNu64 " %n", &r->archive_id[r->archive_n], &used) != 1 ||
+          sscanf(line + 8, "%" SCNu64 " %u %n", &r->archive_id[r->archive_n], &r->archive_noun[r->archive_n], &used) != 2 ||
+          r->archive_noun[r->archive_n] >= NAME_NOUNS ||
           genome_load(&r->archive[r->archive_n], line + 8 + used, p->rules.core_size, 0) != 0)
         goto bad;
       r->archive_n++;
+    } else if (!strncmp(line, "names ", 6)) {
+      uint32_t i, n;
+      if (sscanf(line + 6, "%u %u", &i, &n) != 2 || i >= NAME_ADJECTIVES * NAME_NOUNS) goto bad;
+      r->names[i] = n;
     } else if (!strncmp(line, "score ", 6)) {
       uint64_t a, b;
       m42_score s;
@@ -764,6 +778,7 @@ typedef struct {
   genome g;
   m42_warrior *w;
   uint64_t parents[2];
+  uint32_t noun; // the family's noun, from the first parent
   char ops[96];
   int skip;
   double screen; // average against the panel in the screen rounds
@@ -827,10 +842,10 @@ static void bench(run *r, uint32_t slot) {
       char text[GENOME_MAX * 48 + 64];
       genome_text(w->g, r->p.rules.core_size, text, sizeof text);
       fprintf(b,
-              "%s\n;name e%" PRIu64 "\n;author 42evolve\n;strategy evolved, run seed %" PRIu64
+              "%s\n;name %s\n;author 42evolve\n;strategy evolved, warrior %" PRIu64 " of run seed %" PRIu64
               ", batch %u\n;strategy %.1f against %u holdout warriors, %.1f against the panel\n%s",
-              r->p.rules.core_size == 8000 ? ";redcode-94nop" : ";redcode", w->id, r->p.seed, r->batch, w->holdout,
-              r->hold_n, panel_avg(r, slot), text);
+              r->p.rules.core_size == 8000 ? ";redcode-94nop" : ";redcode", w->name, w->id, r->p.seed, r->batch,
+              w->holdout, r->hold_n, panel_avg(r, slot), text);
       fclose(b);
     }
   }
@@ -855,16 +870,19 @@ static void run_batch(run *r) {
       genome_random(&x->g, &g, core, 1 + rng_below(&g, p->init_length < p->rules.max_length ? p->init_length
                                                                                               : p->rules.max_length));
       strcpy(x->ops, "random");
+      x->noun = rng_below(&g, NAME_NOUNS); // a new family
     } else if (r->archive_n && rng_chance(&g, p->reintroduce)) {
       const uint32_t k = rng_below(&g, r->archive_n);
       x->g = r->archive[k];
       x->parents[0] = r->archive_id[k];
+      x->noun = r->archive_noun[k];
       strcpy(x->ops, "reintroduce");
       reintro = 1;
     } else {
       const warrior *a = select_parent(r, &g), *b = select_parent(r, &g);
       genome_breed(&x->g, a->g, b->g, &g, core, p->rules.max_length, x->ops, sizeof x->ops);
       x->parents[0] = a->id;
+      x->noun = a->noun;
       if (strstr(x->ops, "crossover") && b->id != a->id) x->parents[1] = b->id;
     }
     const uint64_t h = genome_hash(&x->g, core);
@@ -954,7 +972,11 @@ static void run_batch(run *r) {
     w->parents[1] = x->parents[1];
     w->born = r->batch;
     w->holdout = -1;
-    snprintf(w->name, sizeof w->name, "e%" PRIu64, w->id);
+    rng name = rng_seed(p->seed, 0x6e616d65u, w->id); // "name"
+    w->adjective = rng_below(&name, NAME_ADJECTIVES);
+    w->noun = x->noun;
+    w->earlier = r->names[w->adjective * NAME_NOUNS + w->noun]++;
+    name_text(w->name, sizeof w->name, w->adjective, w->noun, w->earlier);
     memcpy(w->ops, x->ops, sizeof w->ops);
     r->slot[s] = w;
     slot_of[i] = s;
@@ -980,6 +1002,7 @@ static void run_batch(run *r) {
       else {
         r->archive[r->archive_next] = *gone->g;
         r->archive_id[r->archive_next] = gone->id;
+        r->archive_noun[r->archive_next] = gone->noun;
         r->archive_next = (r->archive_next + 1) % ARCHIVE_MAX;
         if (r->archive_n < ARCHIVE_MAX) r->archive_n++;
       }
@@ -1198,8 +1221,8 @@ int main(int argc, char **argv) {
     for (uint32_t i = r.panel_n; i < r.active_n; i++)
       if (!best || r.values[i].value > best->value) best = &r.values[i];
     if (best)
-      fprintf(stderr, "batch %u: %u members, best value %.1f (e%" PRIu64 ", avg %.1f), best holdout %.1f\n",
-              r.batch - 1, members(&r), best->value, r.slot[best->index]->id, best->avg, r.best_holdout);
+      fprintf(stderr, "batch %u: %u members, best value %.1f (%s, avg %.1f), best holdout %.1f\n", r.batch - 1,
+              members(&r), best->value, r.slot[best->index]->name, best->avg, r.best_holdout);
   }
   pool_stop(&r.pool);
   fclose(r.events);

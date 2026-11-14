@@ -4,10 +4,11 @@
 // The evolver's genome (evolver/genome.c) and push-off (evolver/pushoff.c):
 // references survive every edit, every child is a valid warrior, the text of
 // a genome assembles back to its code, the state form reads back, and the
-// SD-score has the values computed by hand in test/diversity.test.js.
+// SD-score has the values computed by hand in test/diversity.test.js, and
+// warriors get names.
 // Prints "ok" and exits 0, or names the first failure and exits 1.
 //
-//   cc -O2 -Ilib -Ievolver -o evolver-test test/c/evolver-test.c evolver/genome.c evolver/pushoff.c lib/42mars.c -lm
+//   cc -O2 -Ilib -Ievolver -o evolver-test test/c/evolver-test.c evolver/genome.c evolver/pushoff.c evolver/names.c lib/42mars.c -lm
 
 #include <math.h>
 #include <stdio.h>
@@ -16,6 +17,7 @@
 
 #include "42mars.h"
 #include "genome.h"
+#include "names.h"
 #include "pushoff.h"
 
 static int failures = 0;
@@ -260,6 +262,29 @@ static void test_pushoff(void) {
   CHECK(pushoff_weakest(v, 4, 0) == 3, "alpha 0 is not the average");
 }
 
+static void test_names(void) {
+  char a[64], b[64];
+  for (uint32_t i = 0; i < NAME_ADJECTIVES; i++)
+    for (uint32_t j = 0; j < i; j++) CHECK(strcmp(name_adjective(i), name_adjective(j)) != 0, "adjective %u twice", i);
+  for (uint32_t i = 0; i < NAME_NOUNS; i++)
+    for (uint32_t j = 0; j < i; j++) CHECK(strcmp(name_noun(i), name_noun(j)) != 0, "noun %u twice", i);
+  const struct {
+    uint32_t v;
+    const char *text;
+  } roman[] = {{1, "I"}, {2, "II"}, {4, "IV"}, {9, "IX"}, {14, "XIV"}, {40, "XL"}, {90, "XC"}, {400, "CD"}, {1994, "MCMXCIV"},
+               {3999, "MMMCMXCIX"}, {4000, "4000"}};
+  for (size_t i = 0; i < sizeof roman / sizeof *roman; i++) {
+    name_roman(a, sizeof a, roman[i].v);
+    CHECK(strcmp(a, roman[i].text) == 0, "%u is %s, not %s", roman[i].v, a, roman[i].text);
+  }
+  name_text(a, sizeof a, 0, 0, 0);
+  CHECK(strcmp(a, "Crimson Mantis") == 0, "first name %s", a);
+  name_text(b, sizeof b, 0, 0, 1);
+  CHECK(strcmp(b, "Crimson Mantis II") == 0, "second name %s", b);
+  name_text(b, sizeof b, 0, 0, 3);
+  CHECK(strcmp(b, "Crimson Mantis IV") == 0, "fourth name %s", b);
+}
+
 int main(void) {
   test_rebuild();
   test_duplicate_and_crossover();
@@ -267,6 +292,7 @@ int main(void) {
   test_text();
   test_hash();
   test_pushoff();
+  test_names();
   if (failures) {
     fprintf(stderr, "%d failures\n", failures);
     return 1;
