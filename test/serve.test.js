@@ -91,6 +91,16 @@ test('a wrong option or port is refused with the usage', () => {
   }
 });
 
+test('a port in use: a message with another port, exit code 1', { timeout: 15000 }, async () => {
+  const url = await serve([]);
+  const port = Number(new URL(url).port);
+  const p = spawnSync(process.execPath, [join(root, 'tools/serve.mjs'), String(port), '--run', dir], { encoding: 'utf8', timeout: 10000 });
+  assert.equal(p.status, 1);
+  assert.match(p.stderr, new RegExp(`port ${port} is in use`));
+  assert.ok(p.stderr.includes(`node ${join(root, 'tools/serve.mjs')} ${port + 1} --run `), p.stderr);
+  assert.doesNotMatch(p.stderr, /EADDRINUSE|at Server/);
+});
+
 test('without --run there are no events, and files are served as before', { timeout: 15000 }, async () => {
   const url = await serve([]);
   assert.equal((await fetch(`${url}/run/events`)).status, 404);
