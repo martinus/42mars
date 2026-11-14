@@ -36,8 +36,29 @@ typedef size_t usize; // pointer-sized also on 64-bit Windows, where long is 32 
 #define m42_memset __builtin_memset
 #define m42_add_overflow __builtin_add_overflow
 #define m42_sub_overflow __builtin_sub_overflow
+// A build without optimization gets the 16 cases of MSVC (M42_DISPATCH_16
+// below, dispatch.h): M42_FORCE_INLINE copies the whole generic code into
+// every case then: gcc -O0 took 18 s for the library with 64 cases and 3.6 s
+// with 16, clang 4.4 s and 0.9 s.
+#ifndef __OPTIMIZE__
+#define M42_DISPATCH_16
+#endif
+
 // Hides a value from the optimizer (asm.c, umulh()).
 #define M42_OPAQUE(x) __asm__("" : "+r"(x))
+// The same for clang only, and for the wasm build only: where the
+// optimizer's rewrite of a value made the loops of mars.c slower with that
+// compiler and the others lose by hiding it (execute2(), step()).
+#ifdef __clang__
+#define M42_OPAQUE_CLANG(x) M42_OPAQUE(x)
+#else
+#define M42_OPAQUE_CLANG(x) ((void)0)
+#endif
+#ifdef __wasm__
+#define M42_OPAQUE_WASM(x) M42_OPAQUE(x)
+#else
+#define M42_OPAQUE_WASM(x) ((void)0)
+#endif
 #ifdef __clang__
 // clang turns the loop of a strlen() into a call to strlen.
 #define M42_NO_BUILTIN_STRLEN __attribute__((no_builtin("strlen")))
@@ -54,7 +75,9 @@ typedef size_t usize; // pointer-sized also on 64-bit Windows, where long is 32 
 // Only the 16 most executed instruction words get a case in step() (mars.c,
 // dispatch.h). cl /O2 takes superlinear time in the size of the loops of
 // execute2(): 141 s for lib/42mars.c with 32 cases, 37 s with 16, and the
-// program was as fast (docs/performance-log.md).
+// program was as fast (docs/performance-log.md). That was measured with
+// the generic code inside the loops; since the sixth round it is a function
+// of its own, and nobody has timed cl with more cases since.
 #define M42_DISPATCH_16
 #else
 #define M42_FORCE_INLINE static inline
@@ -66,6 +89,8 @@ typedef size_t usize; // pointer-sized also on 64-bit Windows, where long is 32 
 #define m42_memcpy memcpy
 #define m42_memset memset
 #define M42_OPAQUE(x) ((void)0)
+#define M42_OPAQUE_CLANG(x) ((void)0)
+#define M42_OPAQUE_WASM(x) ((void)0)
 #define M42_NO_BUILTIN_STRLEN
 
 // a + b and a - b with wraparound into *r; 1 on overflow.

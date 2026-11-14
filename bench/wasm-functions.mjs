@@ -12,11 +12,11 @@
 //        or the size of both and the number of differing bytes when the sizes
 //        are equal (a few bytes: call indices or data addresses moved)
 //
-// The functions are in the order of mars.c; the three largest are
-// execute2_8000, execute2_any and execute. With two modules the last line
-// compares those three, matched by size (a new function before them moves
-// their index): same, differs only in call operands (a function index after
-// the call opcode, e.g. +1 for a new export), or differs.
+// The four largest functions are the hot ones: execute2_8000, execute2_any,
+// exec_more (the cases behind the loops) and execute. With two modules the
+// last line compares those four, matched by size (a new function before
+// them moves their index): same, differs only in call operands (a function
+// index after the call opcode, e.g. +1 for a new export), or differs.
 import { readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 
@@ -52,7 +52,7 @@ function callOperandsOnly(x, y) {
   return starts.size;
 }
 
-const largest = (fns) => fns.map((f, i) => i).sort((i, j) => fns[j].length - fns[i].length).slice(0, 3);
+const largest = (fns) => fns.map((f, i) => i).sort((i, j) => fns[j].length - fns[i].length).slice(0, 4);
 
 const [fileA, fileB] = process.argv.slice(2);
 if (!fileA || process.argv.length > 4) {
@@ -80,5 +80,5 @@ if (!fileB) {
     const what = x.equals(y) ? 'same' : calls > 0 ? `call operands only (${calls})` : 'differs';
     return `${i}${i === ib[r] ? '' : `->${ib[r]}`} ${what}`;
   });
-  console.log(`the three largest (the loops): ${loops.join(', ')}`);
+  console.log(`the four largest (the loops and exec_more): ${loops.join(', ')}`);
 }

@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 Martin Leitner-Ankerl
 
-// Native benchmark driver for the library, to see what the wasm layer costs.
-// bench/bench-native.mjs writes the input (see input.h) and builds and runs
-// this file with -DM42_FIXED_CONTEXT, the context of the wasm build. A
-// second argument turns on early tie detection.
+// Native benchmark driver for the library. bench/bench-native.mjs writes
+// the input (see input.h) and builds and runs this file, by default with the
+// flags of the Makefile; with -DM42_FIXED_CONTEXT it has the one static
+// context of the wasm build. A second argument turns on early tie detection.
 // Built with -DCOUNT_INS it also prints how often each instruction word was
 // executed to stderr, "<word> <count>" per line, the input of
 // lib/src/gen-dispatch.mjs --rank.

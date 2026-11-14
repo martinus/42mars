@@ -539,7 +539,7 @@ class Mars {
     if (!this.ctx) check(this.x, this.mem, M42_ERR_STATE, 'core');
     const base = this.x.m42_core(this.ctx);
     if (base) {
-      // m42_cell: uint16 a, b, word, pad
+      // m42_cell: uint16 a, b, word, hot
       const u16 = new Uint16Array(this.bytes().buffer, base, 4 * n);
       for (let a = 0, k = 0; a < n; a++, k += 4) {
         const ins = u16[k + 2];

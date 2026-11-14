@@ -2,8 +2,8 @@
 // Copyright (c) 2026 Martin Leitner-Ankerl
 //
 // bench/wasm-functions.mjs compares the function bodies of two wasm
-// modules; its last line says whether the three largest (the hot loops)
-// are the same, differ only in call operands, or differ. Modules here are
+// modules; its last line says whether the four largest (the hot loops and
+// exec_more) are the same, differ only in call operands, or differ. Modules here are
 // built by hand: the tool reads only the code section.
 
 import { test, after } from 'node:test';
@@ -39,18 +39,23 @@ const body = (n, f) => {
 };
 const last = (a, b) => spawnSync('node', [join(root, 'bench/wasm-functions.mjs'), a, b], { encoding: 'utf8' }).stdout.trim().split('\n').at(-1);
 
-test('wasm-functions: the three largest functions, matched by size', () => {
+test('wasm-functions: the four largest functions, matched by size', () => {
   const small = [1, 2, 3];
-  const base = module('base.wasm', [small, body(300, 200), body(500, 200), body(400, 200)]);
-  assert.equal(last(base, base), 'the three largest (the loops): 2 same, 3 same, 1 same');
+  const base = module('base.wasm', [small, body(300, 200), body(500, 200), body(400, 200), body(200, 200)]);
+  assert.equal(last(base, base), 'the four largest (the loops and exec_more): 2 same, 3 same, 1 same, 4 same');
   // a new function in front, and the call index +1 (as for a new export)
-  const shifted = module('shifted.wasm', [small, [1], body(300, 201), body(500, 201), body(400, 201)]);
-  assert.equal(last(base, shifted), 'the three largest (the loops): 2->3 call operands only (1), 3->4 call operands only (1), 1->2 call operands only (1)');
+  const shifted = module('shifted.wasm', [small, [1], body(300, 201), body(500, 201), body(400, 201), body(200, 201)]);
+  assert.equal(last(base, shifted), 'the four largest (the loops and exec_more): 2->3 call operands only (1), 3->4 call operands only (1), 1->2 call operands only (1), 4->5 call operands only (1)');
   // another byte than a call operand
   const changed = body(500, 200);
   changed[100] = 0x0b;
-  const other = module('other.wasm', [small, body(300, 200), changed, body(400, 200)]);
-  assert.equal(last(base, other), 'the three largest (the loops): 2 differs, 3 same, 1 same');
+  const other = module('other.wasm', [small, body(300, 200), changed, body(400, 200), body(200, 200)]);
+  assert.equal(last(base, other), 'the four largest (the loops and exec_more): 2 differs, 3 same, 1 same, 4 same');
+  // the fourth one, which is exec_more in 42mars.wasm
+  const fourth = body(200, 200);
+  fourth[100] = 0x0b;
+  const more = module('more.wasm', [small, body(300, 200), body(500, 200), body(400, 200), fourth]);
+  assert.equal(last(base, more), 'the four largest (the loops and exec_more): 2 same, 3 same, 1 same, 4 differs');
 });
 
 test('wasm-functions refuses a third argument', () => {

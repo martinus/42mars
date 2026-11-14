@@ -323,12 +323,15 @@ M42_API uint32_t m42_cells(const m42_ctx *m, uint32_t first, uint32_t count, m42
 
 // The engine's own cells, without a copy, for visualizers. The layout of
 // m42_cell may change in a minor version; M42_CELL_LAYOUT names it, so that
-// a program can refuse to build against another one. Layout 1: values, and
-// the instruction word: opcode << 3 | modifier in bits 0..7, A mode in bits
-// 8..10, B mode in bits 11..13.
-#define M42_CELL_LAYOUT 1
+// a program can refuse to build against another one. Layout 2: values, the
+// instruction word (opcode << 3 | modifier in bits 0..7, A mode in bits
+// 8..10, B mode in bits 11..13), and `hot`, which belongs to the engine:
+// the number of the code it runs for that word, the same for equal words
+// in one build and nothing to rely on beyond that (it changes whenever the
+// engine's dispatch does). In layout 1 that field was `pad`, always 0.
+#define M42_CELL_LAYOUT 2
 typedef struct {
-  uint16_t a, b, word, pad;
+  uint16_t a, b, word, hot;
 } m42_cell;
 // The core, core_size cells, valid until the next call on m.
 M42_API const m42_cell *m42_core(const m42_ctx *m);

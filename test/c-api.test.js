@@ -96,11 +96,11 @@ test('the C library through 42mars.h agrees with the JS assembler and the wasm e
     m.startRound();
     let executed = 0;
     while (!m.roundOver) executed += m.run(1000);
-    // the hash of api-test.c over a, b, word, pad of every cell
+    // the hash of api-test.c over a, b, word of every cell
     const c = m.core();
     let h = 2166136261;
     for (let i = 0; i < m.coreSize; i++) {
-      for (const v of [c.av[i], c.bv[i], c.op[i] | (c.am[i] << 8) | (c.bm[i] << 11), 0]) h = fnv(h, v);
+      for (const v of [c.av[i], c.bv[i], c.op[i] | (c.am[i] << 8) | (c.bm[i] << 11)]) h = fnv(h, v);
     }
     assert.deepEqual(s[`r${round}`], {
       executed, time: m.time, round: m.round, hash: h,
@@ -140,8 +140,9 @@ test('the C library through 42mars.h agrees with the JS assembler and the wasm e
   // m42_warrior_uses_pspace: MOV only, LDP second, STP first, LDP in a
   // warrior with an error (not ok: 0); made with STP, made without; no warrior
   assert.deepEqual(out.usesPspace, [0, 1, 1, 0, 1, 0, 0]);
-  // m42_cells: 8 cells around the end, equal to m42_core's; first at the
-  // core size, count 0 and no context copy nothing
+  // m42_cells: 8 cells around the end, equal to m42_core's, and equal
+  // words of the core have equal `hot`; first at the core size, count 0 and
+  // no context copy nothing
   assert.deepEqual(out.cells, [8, 1, 0, 0, 0]);
   // getters: full size 0, one byte less M42_ERR_ARGUMENT (-3), more 0 with
   // the bytes behind the struct untouched; its time is what m42_run returned;
@@ -160,6 +161,8 @@ test('the C library through 42mars.h agrees with the JS assembler and the wasm e
   assert.deepEqual(out.pin, [99, 4294967295 & 7999, 0]);
   // two warriors of max_length fit into a context of m42_ctx_size()
   assert.deepEqual(out.full, [100, 0]);
+  // and a context plays in memory that starts at 1, 22, ..., 106 bytes past an allocation
+  assert.equal(out.anywhere, 1);
   // the evaluator at the edges of 64 bits, against the wasm build
   const expressions = [
     '9223372036854775807+1', '9223372036854775806+1', '-9223372036854775807-1', '-9223372036854775807-2',

@@ -1052,8 +1052,9 @@ state (`alive`, `diedAt`).
 `tools/pmars-diff.mjs` compares the core, the instruction count and the
 scores of every round with pMARS.
 
-A core cell is 8 bytes: A and B value (16 bits each) and a 16-bit word with
-the op byte and both modes. Each warrior has a ring buffer of 16-bit
+A core cell is 8 bytes: A and B value (16 bits each), a 16-bit word with
+the op byte and both modes, and 16 bits that say which code runs that word
+(below). Each warrior has a ring buffer of 16-bit
 addresses whose length is a power of two. Two warriors with `maxCycles` up
 to 80000 get linear queues instead, long enough for a whole round: a round
 runs at most `max(2 * maxCycles, 1)` instructions with alternating turns, so
@@ -1110,10 +1111,18 @@ For exactly two warriors the instruction loop keeps both queues' counters
 in local variables and alternates the two warriors without looking up the
 next one (the round ends when one of them dies).
 
-The 32 most executed instruction words (opcode, modifier and both modes;
-`HOT` in `lib/src/gen-dispatch.mjs`, generated into `lib/src/dispatch.h`)
-each have a copy of the instruction code compiled for that word, without
-run-time mode and opcode tests; all other words run the generic code. With
+The 512 most executed instruction words (opcode, modifier and both modes;
+`HOT` in `lib/src/gen-dispatch.mjs`, ranked on the Koenigstuhl hills and
+generated into `lib/src/dispatch.h`) each have a copy of the instruction
+code compiled for that word, without run-time mode and opcode tests: 256
+in the instruction loops, 256 in a function behind them, which runs the
+generic code for all other words. Every cell holds, next to its word, the
+number of the word's copy (one number for all words without a copy), and
+the loop finds the copy with a tree of compares on that number, the most
+executed words first. The number is a function of the word: loading a warrior and clearing
+the core set both, `MOV.I` copies the whole cell, and nothing else writes a
+word. It takes no part in the semantics: `CMP.I`, `SEQ.I` and `SNE.I`
+compare the words. With
 the standard settings (core size 8000, 8000 processes) a second copy of the
 two-warrior loop has the core size and the queue mask as constants. The
 core and the first two warriors' queues (up to 65536 entries) are at fixed

@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Martin Leitner-Ankerl
 //
 // bench/native-loops.mjs compares the machine code of the three hot loops
-// of two builds. Here on small C files with functions of those names.
+// and of exec_more of two builds. Here on small C files with functions of those names.
 
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -36,11 +36,12 @@ test('loopCode takes a function with its parts and masks addresses', () => {
   assert.deepEqual(loopCode(disassembly, 'execute2'), []);
 });
 
-const source = (loop, other) => `
+const source = (loop, other, more = 0) => `
 __attribute__((noinline)) int other(int x) { return x * ${other}; }
 __attribute__((noinline)) int execute(int x) { return x + 1; }
 __attribute__((noinline)) int execute2_8000(int x) { return x ^ 7; }
 __attribute__((noinline)) int execute2_any(int x) { return x * ${loop} + other(x); }
+${more ? `__attribute__((noinline)) int exec_more(int x) { return x * ${more}; }` : ''}
 `;
 const tool = (a, b) => spawnSync('node', [join(root, 'bench/native-loops.mjs'), '--cc', 'cc', '--files', a, b], { encoding: 'utf8' });
 
@@ -58,6 +59,24 @@ test('bench/native-loops.mjs: same when only another function changed, DIFFERS f
   assert.match(differs.stdout, /^cc execute2_any: DIFFERS$/m);
   assert.match(differs.stdout, /^cc -DM42_FIXED_CONTEXT execute2_any: DIFFERS$/m);
   assert.match(differs.stdout, /^cc execute: same/m);
+  assert.doesNotMatch(same.stdout, /exec_more/); // neither file has it
+});
+
+test('bench/native-loops.mjs compares exec_more where a build has it', { skip: !hasCc && 'no cc' }, () => {
+  const files = [[3, 5, 7], [3, 5, 9], [3, 5, 0]].map(([loop, other, more], k) => {
+    const f = join(tmp, `more-${k}.c`);
+    writeFileSync(f, source(loop, other, more));
+    return f;
+  });
+  const same = tool(files[0], files[0]);
+  assert.equal(same.status, 0, same.stderr);
+  assert.match(same.stdout, /^cc exec_more: same/m);
+  for (const other of [files[1], files[2]]) { // another exec_more, and none
+    const differs = tool(files[0], other);
+    assert.equal(differs.status, 1, differs.stderr);
+    assert.match(differs.stdout, /^cc exec_more: DIFFERS$/m);
+    assert.match(differs.stdout, /^cc execute: same/m);
+  }
 });
 
 test('bench/native-loops.mjs refuses unknown options', () => {

@@ -472,12 +472,47 @@ test('early tie when the core has no DAT, DIV, MOD or STP left', () => {
 // two-warrior loop, with queues longer than the fixed queue buffers, and in
 // the loop for more than two warriors.
 test('every specialized instruction word agrees with the generic code', () => {
+  // dispatch.h: the index of every word with a case, the tree of
+  // exec_more() and the tree of step(), each once for all words and once
+  // for the first 16.
   const text = readFileSync(new URL('../lib/src/dispatch.h', import.meta.url), 'utf8');
-  const words = [...text.matchAll(/^case (\d+): return EXEC\((\d+)\);/gm)].map((m) => {
-    assert.equal(m[1], m[2], 'a case passes its own word');
-    return Number(m[1]);
-  });
-  assert.ok(words.length >= 16, `only ${words.length} cases`);
+  const [, indexAll, index16, moreAll, more16, treeAll, tree16] = text.split(/^#(?:if|elif|else|endif).*$/m);
+  const cases = (part) => [...part.matchAll(/^ *case (\d+): return (\d+);/gm)].map((m) => [Number(m[1]), Number(m[2])]);
+  // A tree as a function from an index to its leaf: a word, 'more' or 'other'.
+  const walker = (part) => {
+    const lines = part.split('\n').map((l) => l.trim()).filter(Boolean);
+    let at = 0;
+    const node = () => {
+      const l = lines[at++];
+      const split = /^if \(hot < (\d+)\) \{$/.exec(l);
+      if (!split) {
+        const leaf = /^return (?:EXEC\((\d+)\)|EXEC_(MORE|OTHER)\(\));/.exec(l);
+        assert.ok(leaf, `not a leaf: ${l}`);
+        return () => (leaf[1] ? Number(leaf[1]) : leaf[2].toLowerCase());
+      }
+      const low = node();
+      assert.equal(lines[at++], '} else {');
+      const high = node();
+      assert.equal(lines[at++], '}');
+      return (hot) => (hot < Number(split[1]) ? low(hot) : high(hot));
+    };
+    const root = node();
+    assert.equal(at, lines.length, 'one tree');
+    return root;
+  };
+  const words = cases(indexAll).map((c) => c[0]);
+  assert.ok(words.length >= 64, `only ${words.length} cases`);
+  for (const [index, more, tree, count] of [[indexAll, moreAll, treeAll, words.length], [index16, more16, tree16, 16]]) {
+    const list = cases(index), other = Number(/default: return (\d+);/.exec(index)[1]);
+    assert.deepEqual(list.map((c) => c[0]), words.slice(0, count), 'the most executed words first');
+    assert.deepEqual([...list.map((c) => c[1]), other].sort((a, b) => a - b), Array.from({ length: count + 1 }, (_, i) => i), 'every index once');
+    // The index of a word leads to the case of that word: in step(), or
+    // through its leaf for exec_more() there.
+    const near = walker(tree), far = walker(more);
+    const leaf = (hot) => (near(hot) === 'more' ? far(hot) : near(hot));
+    for (const [w, hot] of list) assert.equal(leaf(hot), w, `index ${hot}`);
+    assert.equal(leaf(other), 'other', 'the words without a case run the generic code');
+  }
   const MODIFIERS = ['a', 'b', 'ab', 'ba', 'f', 'x', 'i'];
   // Operands mostly point into the warrior (a copy of an empty cell onto
   // an empty cell would hide a wrong copy) or close to it.
@@ -496,16 +531,35 @@ test('every specialized instruction word agrees with the generic code', () => {
     // queues), with enough cycles that the counters pass 2^16.
     { maxCycles: 80001, maxProcesses: 70000, maxLength: 20, minDistance: 100 },
   ];
+  // The 64 most executed words in every loop, step by step where the
+  // rounds are short (the words of the '94 hills make rounds that run to
+  // the last cycle, and the compare after every step is most of the time).
+  const short = [{ ...rules[0], maxCycles: 2000 }, rules[1]];
   const got = [];
-  for (const w of words) {
-    for (const o of rules) {
+  for (const w of words.slice(0, 64)) {
+    for (const o of [...short, rules[2]]) {
       const codes = [source(w, 2 + rand(8), o.coreSize ?? 8000), source(w, 2 + rand(8), o.coreSize ?? 8000)].map((s) => warrior(s, { ...o, warriors: 2 }));
-      got.push(compareMatch(o, codes, { seed: rand(2147483646) + 1, rounds: 3, steps: true }));
+      got.push(compareMatch(o, codes, { seed: rand(2147483646) + 1, rounds: 3, steps: o !== rules[2] }));
       got.push(compareMatch(o, [codes[0], warrior(randomWarrior(1 + rand(8), o.coreSize ?? 8000, { loop: true }), { ...o, warriors: 2 })],
         { seed: rand(2147483646) + 1, rounds: 2, steps: false }));
     }
     const o = rules[1];
     const three = [0, 1, 2].map(() => warrior(source(w, 1 + rand(6), 800), { ...o, warriors: 3 }));
+    got.push(compareMatch(o, three, { seed: rand(2147483646) + 1, rounds: 2, steps: false }));
+  }
+  // The others, 7 times as many, round by round in short rounds, a word per
+  // warrior: two words per match in one of the two-warrior loops, three in
+  // the loop for more warriors. A match costs 10 ms before its first
+  // instruction (4 engines), so one match per word and loop would take 15 s.
+  const rest = words.slice(64);
+  for (let k = 0; k < rest.length; k += 2) {
+    const o = short[(k >> 1) & 1];
+    const codes = [rest[k], rest[k + 1] ?? rest[0]].map((w) => warrior(source(w, 2 + rand(8), o.coreSize ?? 8000), { ...o, warriors: 2 }));
+    got.push(compareMatch(o, codes, { seed: rand(2147483646) + 1, rounds: 2, steps: false }));
+  }
+  for (let k = 0; k < rest.length; k += 3) {
+    const o = rules[1];
+    const three = [0, 1, 2].map((d) => warrior(source(rest[k + d] ?? rest[d], 1 + rand(6), 800), { ...o, warriors: 3 }));
     got.push(compareMatch(o, three, { seed: rand(2147483646) + 1, rounds: 2, steps: false }));
   }
   check('specialized words', got);
