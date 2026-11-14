@@ -71,7 +71,19 @@ The run folder gets `events.jsonl` (everything that happened, one JSON object pe
 | instructions per second | 2.90 billion (16 threads) |
 | threads busy | 97.7% |
 | best member against the panel | 120.0 points per 100 rounds |
-| median panel warrior against the panel | 147.2 (best 185.4, worst 26.6) |
+| median panel warrior against the panel | 151.0 (best 190.2, worst 27.3) |
 | best member against the 100 holdout warriors | 93.1, after batch 179 (49.5 after batch 9) |
 
-The best evolved warrior is still below the median hill warrior after 10 minutes, and it still climbs. A round took 87,600 instructions on average.
+The best evolved warrior is still below the median hill warrior after 10 minutes, and it still climbs. A round took 87,600 instructions on average. (The hill warriors' numbers were 147.2, 185.4 and 26.6 in the log of that run: until #144 a panel warrior's average counted its own empty column as 0.)
+
+## What a longer run shows
+
+All defaults, 32 threads, the same machine, after 144 batches (21.6 minutes, 17,153 candidates evaluated), 14th November 2026:
+
+- **The list stops improving.** Its best against the panel went 108 (batch 14), 113 (42), 121 (70), 125 (98), then stayed at 125 to batch 140. Against the holdout it was 80 at batch 19 and 83 to 86 from batch 39 on.
+- **It is tuned to the panel, not to the seeds.** The 5 best members score 121 to 123 against the panel with other seeds than the evolver's (125 to 123 with its own), and 83 to 88 against 40 holdout warriors. Hill warriors of the panel lose 19 points from panel to holdout as well (137 to 118, 14 of them, the holdout sample is harder), the members 38: about 19 points are tuning to the 40 panel warriors.
+- **One design took over.** 19 of 20 members are one family (Mosquito), 10 to 16 instructions, 104 of their about 250 instructions are `SPL`, against the panel about 31 wins, 39 losses and 30 ties per 100 rounds. The nearest other warrior is 14 to 29 SD-score away (median 15.8); among the hill warriors the median is 25.9.
+- **The screen picks for strength, the push-off for strength times distance.** Each batch the 16 best of 128 by the screen go on (the cap, every batch; all at 1.06 times the weakest member's panel average or more). 22% of them stay past their own batch, 7% for 5 batches. Their matches are about half of all matches of a batch.
+- **Most changes make a warrior a bit worse.** Against the first parent, the mean change of the panel average is -0.83 for `insert`, -0.58 for `duplicate`, -0.2 for operand, mode and modifier changes, +0.19 for `crossover-replace`; better than the parent in 23% (modifier) to 49% (`delete`, `crossover-replace`) of the warriors that entered. One panel average has a noise of about 2 points, so most of these differences are luck, and the list selects on it.
+
+Ideas from this, to measure in E5 (#142) against the holdout at equal time: survivors by an estimate of their push-off value (the distance to the members on the panel columns, which the screen has), a panel that rotates (a new hill warrior every few batches costs one match per member), islands with migration against the takeover by one family, and fewer `insert` and `duplicate`.
