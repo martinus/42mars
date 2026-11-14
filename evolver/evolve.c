@@ -60,6 +60,7 @@ typedef struct {
   uint32_t race, race_keep; // --race: the first screen rounds for all, the rest for the best race_keep only
   int prior;                // PRIOR_UNIFORM, or PRIOR_HILL: opcodes, modifiers, modes as often as in the opponents
   int parents;              // PARENTS_VALUE: tournament of two by push-off value; PARENTS_DUEL: by their match
+  char start[1024];         // --start: a folder of warriors the first batch starts from, "" random ones
 } params;
 
 enum { PARENTS_VALUE, PARENTS_DUEL };
@@ -314,6 +315,9 @@ typedef struct {
   char **reserve; // the other warriors of the folder, for --rotate, in the order they come
   uint32_t reserve_n, reserve_next, rotate_next;
   genome_style style; // how new instructions are drawn (--fractions, --prior)
+  genome *starts;     // --start: the warriors of the folder as genomes
+  uint32_t start_n, *start_noun;
+  char (*start_name)[64], **start_file;
 
   // The matrix: slots 0 .. panel_n-1 are the panel, the others hold members
   // and entering candidates. wlt[a * cap + b]: a's results against b.
@@ -445,11 +449,11 @@ static warrior *load_opponent(const run *r, const char *name, int quiet) {
   return o;
 }
 
-// All .red files of the folder that fit the rules, shuffled with the seed.
-static char **opponent_files(run *r, uint32_t *count) {
-  DIR *d = opendir(r->p.opponents);
+// The names of the .red files of a folder, sorted.
+static char **red_files(const char *dir, uint32_t *count) {
+  DIR *d = opendir(dir);
   if (!d) {
-    fprintf(stderr, "42evolve: cannot open %s\n", r->p.opponents);
+    fprintf(stderr, "42evolve: cannot open %s\n", dir);
     exit(1);
   }
   uint32_t n = 0, cap = 256;
@@ -465,6 +469,14 @@ static char **opponent_files(run *r, uint32_t *count) {
   }
   closedir(d);
   qsort(names, n, sizeof *names, by_name);
+  *count = n;
+  return names;
+}
+
+// All .red files of the folder that fit the rules, shuffled with the seed.
+static char **opponent_files(run *r, uint32_t *count) {
+  uint32_t n;
+  char **names = red_files(r->p.opponents, &n);
   uint32_t k = 0;
   for (uint32_t i = 0; i < n; i++) {
     warrior *w = load_opponent(r, names[i], 1);
@@ -481,6 +493,46 @@ static char **opponent_files(run *r, uint32_t *count) {
   }
   *count = k;
   return names;
+}
+
+// --start: the warriors of the folder that fit the rules, sorted by file
+// name, as genomes; each starts a family of its own.
+static void load_starts(run *r) {
+  if (!r->p.start[0]) return;
+  uint32_t n;
+  char **names = red_files(r->p.start, &n);
+  r->starts = xmalloc((n ? n : 1) * sizeof *r->starts);
+  r->start_noun = xmalloc((n ? n : 1) * sizeof *r->start_noun);
+  r->start_name = xmalloc((n ? n : 1) * sizeof *r->start_name);
+  r->start_file = xmalloc((n ? n : 1) * sizeof *r->start_file);
+  for (uint32_t i = 0; i < n; i++) {
+    char path[2100];
+    snprintf(path, sizeof path, "%s/%s", r->p.start, names[i]);
+    size_t len;
+    char *src = read_file(path, &len);
+    int status;
+    m42_warrior *w = src ? m42_assemble_new(src, len, &r->p.rules, 0, 0, &status) : 0;
+    free(src);
+    const uint32_t wl = w && m42_warrior_ok(w) ? m42_warrior_length(w) : 0;
+    if (!wl || wl > r->p.rules.max_length || wl > GENOME_MAX || m42_warrior_uses_pspace(w)) {
+      fprintf(stderr, "42evolve: %s does not fit the rules, not a start warrior\n", path);
+      m42_warrior_free(w);
+      free(names[i]);
+      continue;
+    }
+    const uint32_t k = r->start_n++;
+    genome_from_code(&r->starts[k], m42_warrior_code(w), wl, m42_warrior_start(w), r->p.rules.core_size);
+    m42_warrior_text(w, M42_NAME, r->start_name[k], sizeof r->start_name[k]);
+    rng g = rng_seed(r->p.seed, 0x7374617274u, k); // "start"
+    r->start_noun[k] = rng_below(&g, NAME_NOUNS);
+    r->start_file[k] = names[i];
+    m42_warrior_free(w);
+  }
+  free(names);
+  if (!r->start_n) {
+    fprintf(stderr, "42evolve: no warrior in %s fits the rules\n", r->p.start);
+    exit(1);
+  }
 }
 
 // ---------------------------------------------------------------- events
@@ -509,7 +561,17 @@ static void event_start(run *r) {
           p->fractions, p->race, p->race_keep, p->prior == PRIOR_HILL ? "hill" : "uniform",
           p->parents == PARENTS_DUEL ? "duel" : "value");
   json_str(f, p->opponents, 0);
-  fputs(",\"weights\":{", f);
+  fputs(",\"start\":", f);
+  json_str(f, p->start, 0);
+  fputs(",\"startWarriors\":[", f);
+  for (uint32_t i = 0; i < r->start_n; i++) {
+    fputs(i ? ",{\"name\":" : "{\"name\":", f);
+    json_str(f, r->start_name[i], 1);
+    fputs(",\"file\":", f);
+    json_str(f, r->start_file[i], 1);
+    fprintf(f, ",\"family\":\"%s\"}", name_noun(r->start_noun[i]));
+  }
+  fputs("],\"weights\":{", f);
   const struct {
     const char *name;
     const uint32_t *w;
@@ -632,6 +694,7 @@ static void save_state(run *r) {
           p->init_length, p->screen_factor, p->alpha, p->reintroduce, p->sd, p->seed, p->select, p->rotate,
           p->fractions, p->race, p->race_keep, p->prior, p->parents);
   fprintf(f, "opponents %s\n", p->opponents);
+  if (p->start[0]) fprintf(f, "start-dir %s\n", p->start);
   for (uint32_t i = 0; i < r->panel_n; i++) fprintf(f, "panel-id %" PRIu64 " %s\n", r->panel[i].id, r->panel[i].file);
   for (uint32_t i = 0; i < r->hold_n; i++) fprintf(f, "holdout %s\n", r->hold[i].file);
   for (uint32_t i = 0; i < r->reserve_n; i++) fprintf(f, "reserve %s\n", r->reserve[i]);
@@ -738,6 +801,8 @@ static int load_state(run *r, const char *path) {
       if (got != 15 && got != 17 && got != 18 && got != 20 && got != 21 && got != 22) goto bad;
     } else if (!strncmp(line, "opponents ", 10)) {
       snprintf(p->opponents, sizeof p->opponents, "%s", line + 10);
+    } else if (!strncmp(line, "start-dir ", 10)) {
+      snprintf(p->start, sizeof p->start, "%s", line + 10);
     } else if (!strncmp(line, "panel ", 6)) { // before --rotate: the ids are 0, 1, ...
       panel_id[pn] = pn;
       panel[pn++] = line + 6;
@@ -1071,7 +1136,19 @@ static void run_batch(run *r) {
     candidate *x = &c[i];
     x->parents[0] = x->parents[1] = x->rival = NO_ID;
     int reintro = 0;
-    if (members(r) == 0) {
+    if (members(r) == 0 && r->start_n) {
+      // the start warriors as they are, then mutants of them
+      const uint32_t k = i % r->start_n;
+      if (i < r->start_n) {
+        x->g = r->starts[k];
+        strcpy(x->ops, "start");
+        reintro = 1; // always evaluated
+      } else {
+        genome_breed(&x->g, &r->starts[k], &r->starts[(k + 1) % r->start_n], &g, core, p->rules.max_length, &r->style,
+                     x->ops, sizeof x->ops);
+      }
+      x->noun = r->start_noun[k];
+    } else if (members(r) == 0) {
       genome_random(&x->g, &g, core,
                     1 + rng_below(&g, p->init_length < p->rules.max_length ? p->init_length : p->rules.max_length),
                     &r->style);
@@ -1292,7 +1369,7 @@ static void usage(void) {
           "         [--bench-every 10] [--bench-rounds 100] [--alpha 1] [--sd opponent|sum]\n"
           "         [--reintroduce 0.02] [--init-length 10] [--seed 1] [--select screen|value] [--rotate N]\n"
           "         [--fractions p] [--race N] [--race-keep N] [--prior uniform|hill]\n"
-          "         [--parents value|duel]\n"
+          "         [--parents value|duel] [--start <dir>]\n"
           "         [--size 8000] [--cycles 80000] [--processes 8000] [--length 100] [--distance 100]\n"
           "         [--threads N] [--batches N] [--seconds S]\n"
           "       42evolve <run folder> [--threads N] [--batches N] [--seconds S]   (continue a run)\n");
@@ -1330,6 +1407,7 @@ int main(int argc, char **argv) {
     else if (!strcmp(a, "--batches")) batches = u, run_option = 1;
     else if (!strcmp(a, "--seconds")) seconds = d, run_option = 1;
     else if (!strcmp(a, "--opponents")) snprintf(p->opponents, sizeof p->opponents, "%s", v);
+    else if (!strcmp(a, "--start")) snprintf(p->start, sizeof p->start, "%s", v);
     else if (!strcmp(a, "--select")) {
       if (!strcmp(v, "screen")) p->select = SELECT_SCREEN;
       else if (!strcmp(v, "value")) p->select = SELECT_VALUE;
@@ -1393,6 +1471,7 @@ int main(int argc, char **argv) {
     }
     if (load_state(&r, state) != 0) return 1;
     build_style(&r);
+    load_starts(&r);
     const long size = state_events_size(state);
     if (size < 0 || truncate(events, size) != 0) {
       fprintf(stderr, "42evolve: cannot cut %s to the state\n", events);
@@ -1435,6 +1514,7 @@ int main(int argc, char **argv) {
     r.best_holdout = -1;
     setup_matrix(&r);
     build_style(&r);
+    load_starts(&r);
   }
 
   r.events = fopen(events, resume ? "ab" : "wb");

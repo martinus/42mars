@@ -48,6 +48,12 @@ void genome_random(genome *x, rng *r, uint32_t core_size, uint32_t len, const ge
 // The instructions of the warrior: references become offsets mod core_size.
 void genome_code(const genome *x, uint32_t core_size, m42_instruction *out);
 
+// A genome from a warrior's instructions (len 1 .. GENOME_MAX, start below
+// len): an operand that is not immediate (#) and points at an instruction of
+// the warrior becomes a reference to it, the others stay values. genome_code()
+// gives the same instructions back.
+void genome_from_code(genome *x, const m42_instruction *code, uint32_t len, uint32_t start, uint32_t core_size);
+
 // A hash of the warrior the genome gives (its code and start): equal
 // warriors have equal hashes, whatever their references.
 uint64_t genome_hash(const genome *x, uint32_t core_size);
