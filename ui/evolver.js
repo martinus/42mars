@@ -40,6 +40,7 @@ function fresh() {
     history: [], // per batch: { batch, best, mean, holdout }
     speed: null,
     bestHoldout: -1,
+    bestId: null, // the best against the holdout warriors so far
     ticker: [],
     ghosts: [], // members that left, fading out of the matrix
     mapDirty: true,
@@ -90,7 +91,7 @@ const link = (id) => (!S.w.has(id) ? '–' : `<a data-id="${id}" style="color:${
 
 function handle(e) {
   const now = performance.now();
-  chartsDirty = true;
+  chartsDirty = chipsDirty = true;
   switch (e.type) {
     case 'start': {
       S = fresh();
@@ -152,7 +153,7 @@ function handle(e) {
       for (const [h, w, l, t, seed] of e.scores) setRes(e.id, h, w, l, t, seed, e.id, e.rounds);
       x.benched = e.scores.map((s) => s[0]);
       const best = e.avg > S.bestHoldout;
-      if (best) S.bestHoldout = e.avg;
+      if (best) S.bestHoldout = e.avg, S.bestId = e.id;
       tick(`<span class="best">★</span> ${link(e.id)} scores <b>${f1(e.avg)}</b> against ${e.scores.length} holdout warriors${best ? ' <span class="best">best so far</span>' : ''}`);
       break;
     }
@@ -211,7 +212,7 @@ function drawMatrix(now) {
   });
   S.ghosts = S.ghosts.filter((g) => now - g.leftAt < 900);
   ctx.font = 'bold 11px ui-monospace, monospace';
-  const labelW = Math.min(220, Math.max(74, ...[...ms, ...S.ghosts].map((m) => ctx.measureText(m.name).width + 28))), top = 26, gap = 10;
+  const labelW = Math.min(230, Math.max(74, ...[...ms, ...S.ghosts].map((m) => ctx.measureText(`★ ${m.name}`).width + 28))), top = 26, gap = 10;
   const cols = ms.length + panel.length;
   const cw = Math.max(3, (w - labelW - gap - 10) / Math.max(1, cols));
   const ch = Math.max(6, Math.min(36, (h - top - 10) / Math.max(8, ms.length)));
@@ -237,7 +238,7 @@ function drawMatrix(now) {
     ctx.fill();
     ctx.fillStyle = sel ? '#ffc53d' : '#dfe3f0';
     ctx.font = `${sel ? 'bold ' : ''}11px ui-monospace, monospace`;
-    ctx.fillText(m.name, 20, y + ch / 2);
+    ctx.fillText(m.id === S.bestId ? `★ ${m.name}` : m.name, 20, y + ch / 2);
     matrix.rows.push({ id: m.id, y, h: ch });
     const others = [...ms, ...panel];
     for (let j = 0; j < others.length; j++) {
@@ -465,6 +466,11 @@ function drawMap(now) {
       ctx.arc(x, y, r + age / 25, 0, 7);
       ctx.stroke();
     }
+    if (p.id === S.bestId) { // the best against the holdout: a gold star
+      ctx.fillStyle = '#ffc53d';
+      ctx.font = 'bold 13px ui-monospace, monospace';
+      ctx.fillText('★', x + r + 3, y - r - 2);
+    }
     if (p.id === selected) {
       ctx.strokeStyle = '#ffc53d';
       ctx.lineWidth = 2;
@@ -608,8 +614,23 @@ function drawProgress() {
 let chipsDirty = true, tickerDirty = true, chartsDirty = true;
 const busyHistory = [];
 
+// The strongest member of the list now, by its average against the panel.
+function strongest() {
+  let top = null;
+  for (const m of alive()) if (!top || (m.panelAvg ?? 0) > (top.panelAvg ?? 0)) top = m;
+  return top;
+}
+
 function drawChips() {
   chipsDirty = false;
+  const best = S.bestId !== null ? member(S.bestId) : null;
+  $('c-best-name').textContent = best ? best.name : '–';
+  $('c-best-name').style.color = best ? hsl(best.hue) : '';
+  $('c-best-sub').textContent = best ? `${f1(best.holdout)} holdout · ${f1(best.panelAvg)} panel${best.alive ? '' : ' · left'}` : 'after the first benchmark';
+  const top = strongest();
+  $('c-top-name').textContent = top ? top.name : '–';
+  $('c-top-name').style.color = top ? hsl(top.hue) : '';
+  $('c-top-sub').textContent = top ? `${f1(top.panelAvg)} panel${top.holdout >= 0 ? ` · ${f1(top.holdout)} holdout` : ''}` : '';
   $('c-batch').textContent = S.batch >= 0 ? fmtInt(S.batch) : '–';
   $('c-tried').textContent = S.tried ? fmtBig(S.tried) : '–';
   const sp = S.speed;
@@ -671,6 +692,7 @@ function renderCard() {
   if (x.kind === 'member') {
     const parents = x.parents.map(link).join(' ') || 'none (random)';
     head = `<h3 style="color:${color}">${esc(x.name)} <small style="color:#6c7290;font-size:13px">#${x.id}</small></h3>
+      ${x.id === S.bestId ? '<div class="sub" style="color:#ffc53d">★ the best against the holdout warriors so far</div>' : ''}
       <div class="sub">born in batch ${x.born}${x.alive ? ', in the list' : `, pushed off in batch ${x.died}`} · ${x.length} instructions · ${esc(x.ops)}</div>
       <div class="stats">${stat('vs panel', f1(x.panelAvg))}${stat('vs holdout', f1(x.holdout))}${stat('push-off value', f1(x.value))}
       ${stat('distance', x.distance?.toFixed(2) ?? '–')}${stat('nearest', x.nearest !== undefined && x.nearest !== null && S.w.has(x.nearest) ? link(x.nearest) : '–')}${stat('screen', f1(x.screen))}</div>
@@ -756,6 +778,8 @@ function wire() {
     if (b) openBattle(...b.dataset.battle.split(',').map(Number));
   });
   $('card-close').addEventListener('click', () => select(null));
+  $('c-best').addEventListener('click', () => { if (S.bestId !== null) select(S.bestId); });
+  $('c-top').addEventListener('click', () => { const t = strongest(); if (t) select(t.id); });
   window.addEventListener('keydown', (e) => { if (e.key === 'Escape') select(null); });
   let depth = 0;
   window.addEventListener('dragenter', (e) => { e.preventDefault(); depth++; $('drop').hidden = false; });

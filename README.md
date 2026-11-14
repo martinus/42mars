@@ -191,7 +191,7 @@ New to Core War? Press `?` for a short guide, then **learn**: every instruction 
 | `[` `]` | slower, faster |
 | `?` | guide |
 
-URL parameters: `?cast=lantern,origami,seeker` picks sample warriors, `preset=nano`, `layout=grid`, `speed=0..16`, `steps=N` (run N instructions, then pause), `rounds=N`, `paused`, `noguide`.
+URL parameters: `?cast=lantern,origami,seeker` picks sample warriors, `preset=nano`, `layout=grid|ring`, `speed=0..16`, `steps=N` (run N instructions, then pause), `rounds=N`, `paused`, `noguide`.
 
 </details>
 
