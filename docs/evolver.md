@@ -96,4 +96,22 @@ All defaults, 32 threads, the same machine, after 144 batches (21.6 minutes, 17,
 
 - **The lists end up with `SPL` and `DJN`.** In the members of the runs of 14th November 2026, `SPL` is 16 to 33% of the instructions and `DJN` 10 to 23%, `MOV` 6% at most; the most common modes are `#` and `<` (about 25% each), direct `$` 8 to 12%. The hill warriors of the panel: `DAT` 40%, `MOV` 16%, `JMP` 9%, `SPL` 9%, `$` 72%. Many processes survive and give ties, and decrements through `<` and `{` damage the opponent as a side effect: a local optimum that random changes find at once. A bomber or a paper needs a `MOV` loop with the right pointer and step, several right choices at once, and uniform draws give `MOV` 1 time in 17 and `$` 1 time in 8. `--prior hill` draws them as often as the hill does. `--parents duel` is YACE's way out of such an optimum: there a warrior reproduces when it wins a fight against another one, so the target moves with the population instead of staying the fixed panel; here the two candidates for a parent are compared by their match in the matrix, at no extra cost.
 
+## E5, first comparison: four settings, one hour each
+
+14th November 2026, all four at once, 8 threads each on the machine above, `--batch 128`, seed 1, '94nop. Score: points per 100 rounds against all 1,107 warriors of `warriors/koenigstuhl/94nop` (`tools/tournament.mjs --bench`), for the best warrior against the holdout (`best.red`) and the 3 members with the highest panel average at the end. The 1,107 include each run's own panel, which flatters `panel80` a little more than the others.
+
+| Run | Batches | `best.red` | 3 best members | Mean of the 3 |
+|---|---|---|---|---|
+| `--panel 80` | 58 | 100.4 | 100.8, 97.0, 96.4 | 98.1 |
+| defaults | 93 | 95.8 | 97.4, 98.8, 92.1 | 96.1 |
+| `--survivors 4` | 190 | 90.4 | 92.1, 90.1, 88.0 | 90.1 |
+| `--alpha 2` | 94 | 89.0 | 80.8, 82.8, 89.7 | 84.4 |
+
+On the same yardstick, 9 warriors of the folder (every 120th file) score 60.2, 93.9, 125.5, 137.8, 144.7, 158.4, 162.5, 168.0 and 168.4 (median 144.7); Dewdney's Dwarf 66.9 and Imp 58.1, our Origami 134.9 and Lantern 90.1. Our evolved warriors tie in 44 to 48% of the rounds.
+
+- One seed per setting, and warriors of one run differ by 5 to 9 points: only `--alpha 2` is clearly worse (12 points below the defaults on the 3 members). More weight on distance kept more families but weaker ones.
+- `--survivors 4` ran twice the batches and is 6 points worse: the full matches of 16 survivors buy precision that more candidates do not make up for.
+- `--panel 80` ran 40% fewer batches and is 2 points better: tuning to the panel costs at least as much as half the candidates.
+- The defaults run is the same run as the 22-minute run on 32 threads of the section before (same seed, same batch, same survivors; the thread count does not change a run), which had 210 batches by then and the same `best.red`: from batch 79 to 210 nothing better against the holdout.
+
 Ideas from this, to measure in E5 (#142) against the holdout at equal time: survivors by an estimate of their push-off value (the distance to the members on the panel columns, which the screen has), a panel that rotates (a new hill warrior every few batches costs one match per member), islands with migration against the takeover by one family, and fewer `insert` and `duplicate`.
