@@ -903,10 +903,14 @@ async function main() {
     $('rounds').value = state.rounds;
     state.seed = BATTLE.seed;
     state.skipRounds = Math.max(0, (BATTLE.round || 1) - 1);
+    // a battle starts in the grid at learn speed: every step explained
+    state.layoutKind = LAYOUT_GRID;
+    setSpeed(Number([...document.querySelectorAll('#speed-presets button')].find((b) => b.textContent === 'learn')?.dataset.speed ?? 1));
   } else {
     (cast.length ? cast : DEFAULT_CAST).forEach((k, i) => setSlot(i, k));
   }
   if (params.get('layout') === 'grid') state.layoutKind = LAYOUT_GRID;
+  if (params.get('layout') === 'ring') state.layoutKind = LAYOUT_RING;
   if (params.get('footprints') === '0') state.footprints = false;
   if (params.has('speed')) setSpeed(Number(params.get('speed')));
   if (params.has('rounds')) { state.rounds = Number(params.get('rounds')) || 10; $('rounds').value = state.rounds; }

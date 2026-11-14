@@ -43,6 +43,11 @@ a { color: inherit; }
 .chip .k { color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: 0.1em; }
 .chip .v { font: 600 16px/1.2 var(--mono); }
 .chip.cpu { padding-left: 54px; }
+.chip.best { text-align: left; cursor: pointer; font: inherit; color: inherit; grid-template-rows: auto auto auto; min-width: 150px; max-width: 230px; }
+.chip.best .v { font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.chip.best .s { color: var(--muted); font: 11px var(--mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#c-best { border-color: #7a5d1c; background: linear-gradient(180deg, #1d1708, var(--panel)); }
+#c-best .k { color: var(--accent); }
 .chip.cpu canvas { position: absolute; left: 6px; top: 50%; margin-top: -22px; width: 44px; height: 44px; }
 
 main {

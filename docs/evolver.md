@@ -53,9 +53,10 @@ The run folder gets `events.jsonl` (everything that happened, one JSON object pe
 - **Novelty map**: classical multidimensional scaling of the rows against the panel, with the SD-score as distance. Grey points are the hill warriors, colored ones the members (a family shares a color), faint ones members that left. A newcomer flares up.
 - **Lineage**: every warrior that entered, by its batch and its score against the panel, with lines to its parents; the selected warrior's ancestors in yellow.
 - **Progress**: the best and mean member against the panel, and the best against the holdout, over the batches.
+- **★ best** in the header is the best warrior against the holdout warriors so far, also after the push-off removed it from the list (the same warrior as `best.red`); **strongest now** is the member with the highest average against the panel. A click opens the card. The best one has a ★ in the matrix and on the map.
 - A click on a warrior opens its card: code, scores, parents, nearest warrior, its result against each panel warrior, and every match with a **watch** button.
 
-**Watch** opens `ui/index.html#battle=...`, which carries both warriors, the rules, the seed and the rounds. The visualizer plays the same rounds as the evolver did: the WebAssembly build gives the same results as the native one, and stepping a match round by round with a watch gives the same rounds as `m42_match()`. `test/evolver.test.js` replays logged matches in the WebAssembly engine.
+**Watch** opens `ui/index.html#battle=...`, which carries both warriors, the rules, the seed and the rounds. It starts in the grid layout at learn speed, every step explained (`?layout=ring` and `?speed=` before the `#` still win). The visualizer plays the same rounds as the evolver did: the WebAssembly build gives the same results as the native one, and stepping a match round by round with a watch gives the same rounds as `m42_match()`. `test/evolver.test.js` replays logged matches in the WebAssembly engine.
 
 ## First run
 
