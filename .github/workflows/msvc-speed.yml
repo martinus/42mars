@@ -1,0 +1,26 @@
+name: msvc-speed
+
+# One-off: how fast is the MSVC build after the sixth round? Runs only on
+# pushes to the branch msvc-speed, which is never merged.
+
+on:
+  push:
+    branches: [msvc-speed]
+
+jobs:
+  speed:
+    runs-on: windows-latest
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - name: build the variants and time them
+        shell: cmd
+        run: |
+          for /f "usebackq delims=" %%i in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do call "%%i\VC\Auxiliary\Build\vcvars64.bat" >nul
+          git worktree add old v1.0.0 || exit /b 1
+          node .github\msvc-speed.mjs || exit /b 1
