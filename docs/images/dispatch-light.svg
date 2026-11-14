@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="880" height="376" viewBox="0 0 880 376" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif" role="img" aria-labelledby="title desc">
+<title id="title">42mars: from a cell to the code for its instruction word</title>
+<desc id="desc">Diagram: the executed cell's dispatch index goes through a tree of compares. 97.3% of the instructions of a '94 hill reach one of 256 cases in the loop, 2.2% one of 256 more cases in a function behind the loop, 0.5% the generic code.</desc>
+<rect x="0.5" y="0.5" width="879" height="375" rx="14" fill="#fcfcfb" stroke="#e6e5e0"/>
+<text x="32" y="62" font-size="34" font-weight="700" fill="#0b0b0b">42mars<tspan font-weight="400" fill="#52514e" font-size="21" dx="14">from a cell to the code for its instruction word</tspan></text>
+<text x="32" y="90" font-size="14.5" fill="#52514e">The cell carries the number of its case, so finding the code is a few compares.</text>
+<rect x="32" y="170" width="172" height="76" rx="6" fill="#e6e5e0"/>
+<text x="48" y="195" font-size="15" font-weight="600" fill="#0b0b0b">the cell to execute</text>
+<text x="48" y="214" font-size="12.5" fill="#52514e">values, word and index,</text>
+<text x="48" y="230" font-size="12.5" fill="#52514e">one load each</text>
+<rect x="244" y="162" width="216" height="92" rx="6" fill="#e6e5e0"/>
+<text x="260" y="187" font-size="15" font-weight="600" fill="#0b0b0b">compares on the index</text>
+<text x="260" y="206" font-size="12.5" fill="#52514e">a Huffman tree: 4 compares for</text>
+<text x="260" y="222" font-size="12.5" fill="#52514e">the most executed words, 6 on</text>
+<text x="260" y="238" font-size="12.5" fill="#52514e">average. No table, no indirect jump</text>
+<rect x="590" y="112" width="258" height="66" rx="6" fill="#f0652d" fill-opacity="0.22"/>
+<rect x="590" y="112" width="4" height="66" rx="2" fill="#f0652d"/>
+<text x="606" y="137" font-size="15" font-weight="600" fill="#0b0b0b">256 cases in the loop</text>
+<text x="606" y="156" font-size="12.5" fill="#52514e">code for one word each</text>
+<rect x="590" y="190" width="258" height="66" rx="6" fill="#f0652d" fill-opacity="0.22"/>
+<rect x="590" y="190" width="4" height="66" rx="2" fill="#f0652d"/>
+<text x="606" y="215" font-size="15" font-weight="600" fill="#0b0b0b">256 more cases</text>
+<text x="606" y="234" font-size="12.5" fill="#52514e">in a function behind the loop</text>
+<rect x="590" y="268" width="258" height="66" rx="6" fill="#e6e5e0"/>
+<text x="606" y="293" font-size="15" font-weight="600" fill="#0b0b0b">generic code</text>
+<text x="606" y="312" font-size="12.5" fill="#52514e">tests opcode and modes when it runs</text>
+<path d="M204,208H232V208H237" fill="none" stroke="#76756f" stroke-width="1.5" stroke-linejoin="round"/>
+<path d="M244,208l-8,-4.5v9z" fill="#76756f"/>
+<path d="M460,192H488V145H583" fill="none" stroke="#76756f" stroke-width="1.5" stroke-linejoin="round"/>
+<path d="M590,145l-8,-4.5v9z" fill="#76756f"/>
+<text x="576" y="138" text-anchor="end" font-size="13.5" font-weight="700" fill="#0b0b0b">97.3%</text>
+<path d="M460,208H488V223H583" fill="none" stroke="#76756f" stroke-width="1.5" stroke-linejoin="round"/>
+<path d="M590,223l-8,-4.5v9z" fill="#76756f"/>
+<text x="576" y="216" text-anchor="end" font-size="13.5" font-weight="700" fill="#0b0b0b">2.2%</text>
+<path d="M460,224H488V301H583" fill="none" stroke="#76756f" stroke-width="1.5" stroke-linejoin="round"/>
+<path d="M590,301l-8,-4.5v9z" fill="#76756f"/>
+<text x="576" y="294" text-anchor="end" font-size="13.5" font-weight="700" fill="#0b0b0b">0.5%</text>
+<text x="32" y="354" font-size="12" fill="#76756f">The shares are the executed instructions of the Koenigstuhl '94 hill without p-space.</text>
+</svg>

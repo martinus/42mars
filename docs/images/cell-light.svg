@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="880" height="330" viewBox="0 0 880 330" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif" role="img" aria-labelledby="title desc">
+<title id="title">42mars: a core cell is 8 bytes</title>
+<desc id="desc">A core cell has four 16-bit fields: A value, B value, instruction word (opcode, modifier, both addressing modes) and dispatch index. The two values are one 32-bit load, the whole cell one 64-bit load or store.</desc>
+<rect x="0.5" y="0.5" width="879" height="329" rx="14" fill="#fcfcfb" stroke="#e6e5e0"/>
+<text x="32" y="62" font-size="34" font-weight="700" fill="#0b0b0b">42mars<tspan font-weight="400" fill="#52514e" font-size="21" dx="14">a core cell is 8 bytes</tspan></text>
+<text x="32" y="90" font-size="14.5" fill="#52514e">Four fields of 16 bits. The standard core of 8,000 cells is 64 KB.</text>
+<rect x="81" y="142" width="178" height="64" rx="4" fill="#e6e5e0"/>
+<text x="170" y="171" text-anchor="middle" font-size="16" font-weight="600" fill="#0b0b0b">A value</text>
+<text x="170" y="191" text-anchor="middle" font-size="12.5" fill="#52514e">0 to core size − 1</text>
+<rect x="261" y="142" width="178" height="64" rx="4" fill="#e6e5e0"/>
+<text x="350" y="171" text-anchor="middle" font-size="16" font-weight="600" fill="#0b0b0b">B value</text>
+<text x="350" y="191" text-anchor="middle" font-size="12.5" fill="#52514e">0 to core size − 1</text>
+<rect x="441" y="142" width="178" height="64" rx="4" fill="#e6e5e0"/>
+<text x="530" y="171" text-anchor="middle" font-size="16" font-weight="600" fill="#0b0b0b">instruction word</text>
+<text x="530" y="191" text-anchor="middle" font-size="12.5" fill="#52514e">opcode, modifier, both modes</text>
+<rect x="621" y="142" width="178" height="64" rx="4" fill="#f0652d" fill-opacity="0.22"/>
+<rect x="621" y="142" width="178" height="4" rx="2" fill="#f0652d"/>
+<text x="710" y="171" text-anchor="middle" font-size="16" font-weight="600" fill="#0b0b0b">dispatch index</text>
+<text x="710" y="191" text-anchor="middle" font-size="12.5" fill="#52514e">which code runs this word</text>
+<text x="80" y="132" text-anchor="middle" font-size="12" fill="#76756f">byte 0</text>
+<text x="260" y="132" text-anchor="middle" font-size="12" fill="#76756f">byte 2</text>
+<text x="440" y="132" text-anchor="middle" font-size="12" fill="#76756f">byte 4</text>
+<text x="620" y="132" text-anchor="middle" font-size="12" fill="#76756f">byte 6</text>
+<text x="800" y="132" text-anchor="middle" font-size="12" fill="#76756f">8 bytes</text>
+<path d="M84,216v8h352v-8" fill="none" stroke="#76756f"/>
+<text x="260" y="243" text-anchor="middle" font-size="13" fill="#52514e">one 32-bit load: both values</text>
+<path d="M444,216v8h352v-8" fill="none" stroke="#76756f"/>
+<text x="620" y="243" text-anchor="middle" font-size="13" fill="#52514e">always written together</text>
+<path d="M84,262v8h712v-8" fill="none" stroke="#76756f"/>
+<text x="440" y="289" text-anchor="middle" font-size="13" fill="#52514e">one 64-bit load and store: MOV.I copies a whole cell, index included</text>
+</svg>

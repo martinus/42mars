@@ -1,0 +1,49 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="880" height="540" viewBox="0 0 880 540" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif" role="img" aria-labelledby="title desc">
+<title id="title">42mars: a '94 hill needs many more cases than an '88 hill</title>
+<desc id="desc">Line chart: share of executed instructions covered by the first n specialized instruction words. '88 hill: 87.24% with 32 words, 99.87% with 256. '94 hill: 69.27% with 32, 83.12% with 64, 97.26% with 256, 99.5% with 512. The 32 cases of the engine before covered 21% of the '94 hill.</desc>
+<rect x="0.5" y="0.5" width="879" height="539" rx="14" fill="#1a1a19" stroke="#2e2e2c"/>
+<text x="32" y="62" font-size="34" font-weight="700" fill="#f0efec">42mars<tspan font-weight="400" fill="#c3c2b7" font-size="21" dx="14">a '94 hill needs many more cases than an '88 hill</tspan></text>
+<text x="32" y="90" font-size="14.5" fill="#c3c2b7">Every instruction word with a case runs code compiled for that word alone.</text>
+<line x1="88" y1="418" x2="698" y2="418" stroke="#3a3a37" stroke-dasharray=""/>
+<text x="78" y="422" text-anchor="end" font-size="12" fill="#97968e">0%</text>
+<line x1="88" y1="348" x2="698" y2="348" stroke="#3a3a37" stroke-dasharray="2 3"/>
+<text x="78" y="352" text-anchor="end" font-size="12" fill="#97968e">25%</text>
+<line x1="88" y1="278" x2="698" y2="278" stroke="#3a3a37" stroke-dasharray="2 3"/>
+<text x="78" y="282" text-anchor="end" font-size="12" fill="#97968e">50%</text>
+<line x1="88" y1="208" x2="698" y2="208" stroke="#3a3a37" stroke-dasharray="2 3"/>
+<text x="78" y="212" text-anchor="end" font-size="12" fill="#97968e">75%</text>
+<line x1="88" y1="138" x2="698" y2="138" stroke="#3a3a37" stroke-dasharray="2 3"/>
+<text x="78" y="142" text-anchor="end" font-size="12" fill="#97968e">100%</text>
+<line x1="88" y1="418" x2="88" y2="423" stroke="#3a3a37"/>
+<text x="88" y="438" text-anchor="middle" font-size="12" fill="#97968e">0</text>
+<line x1="126.125" y1="418" x2="126.125" y2="423" stroke="#3a3a37"/>
+<text x="126.125" y="438" text-anchor="middle" font-size="12" fill="#97968e">32</text>
+<line x1="164.25" y1="418" x2="164.25" y2="423" stroke="#3a3a37"/>
+<text x="164.25" y="438" text-anchor="middle" font-size="12" fill="#97968e">64</text>
+<line x1="240.5" y1="418" x2="240.5" y2="423" stroke="#3a3a37"/>
+<text x="240.5" y="438" text-anchor="middle" font-size="12" fill="#97968e">128</text>
+<line x1="393" y1="418" x2="393" y2="423" stroke="#3a3a37"/>
+<text x="393" y="438" text-anchor="middle" font-size="12" fill="#97968e">256</text>
+<line x1="545.5" y1="418" x2="545.5" y2="423" stroke="#3a3a37"/>
+<text x="545.5" y="438" text-anchor="middle" font-size="12" fill="#97968e">384</text>
+<line x1="698" y1="418" x2="698" y2="423" stroke="#3a3a37"/>
+<text x="698" y="438" text-anchor="middle" font-size="12" fill="#97968e">512</text>
+<text x="393" y="460" text-anchor="middle" font-size="13" fill="#c3c2b7">number of instruction words with code of their own</text>
+<text x="88" y="124" font-size="13" fill="#c3c2b7">share of the executed instructions that run such code</text>
+<line x1="393" y1="138" x2="393" y2="418" stroke="#97968e" stroke-dasharray="4 4"/>
+<text x="385" y="395.6" text-anchor="end" font-size="12.5" fill="#c3c2b7">256 cases in the loops</text>
+<text x="401" y="395.6" font-size="12.5" fill="#c3c2b7">256 more behind a call</text>
+<path d="M 88 418 L 89.2 414.4 L 90.4 412.5 L 92.8 392.3 L 97.5 340.9 L 107.1 289.3 L 116.6 258.2 L 126.1 224.0 L 145.2 200.7 L 164.3 185.3 L 202.4 165.3 L 240.5 156.6 L 278.6 153.7 L 316.8 150.4 L 354.9 147.0 L 393.0 145.7 L 469.3 143.2 L 545.5 141.5 L 621.8 140.3 L 698.0 139.4" fill="none" stroke="#f0652d" stroke-width="2" stroke-linejoin="round"/>
+<circle cx="698" cy="139.39999999999998" r="4" fill="#f0652d" stroke="#1a1a19" stroke-width="2"/>
+<path d="M 88 418 L 89.2 361.2 L 90.4 337.8 L 92.8 299.8 L 97.5 256.0 L 107.1 218.6 L 116.6 182.8 L 126.1 173.7 L 145.2 154.4 L 164.3 148.5 L 202.4 142.0 L 240.5 140.1 L 278.6 139.8 L 316.8 139.3 L 354.9 138.9 L 393.0 138.4 L 469.3 138.1 L 545.5 138.1 L 621.8 138.1 L 698.0 138.1" fill="none" stroke="#97968e" stroke-width="2" stroke-linejoin="round"/>
+<circle cx="698" cy="138.11200000000002" r="4" fill="#97968e" stroke="#1a1a19" stroke-width="2"/>
+<rect x="712" y="151" width="10" height="10" rx="2" fill="#f0652d"/>
+<text x="728" y="160" font-size="13.5" font-weight="700" fill="#f0efec">'94 hill<tspan font-weight="400" fill="#c3c2b7" dx="6">99.5%</tspan></text>
+<rect x="712" y="131" width="10" height="10" rx="2" fill="#97968e"/>
+<text x="728" y="140" font-size="13.5" font-weight="500" fill="#f0efec">'88 hill<tspan font-weight="400" fill="#c3c2b7" dx="6">99.96%</tspan></text>
+<circle cx="126.125" cy="359.2" r="5" fill="#1a1a19" stroke="#f0652d" stroke-width="2"/>
+<text x="138.125" y="364.2" font-size="12.5" fill="#f0efec">before: 32 cases, chosen on '88-style warriors,</text>
+<text x="138.125" y="380.2" font-size="12.5" fill="#f0efec">ran 21% of the '94 hill and 96.6% of the '88 hill</text>
+<text x="32" y="490" font-size="12" fill="#97968e">Random pairs of the Koenigstuhl '94 hill without p-space (655 different words executed) and of its '88 hill (84).</text>
+<text x="32" y="508" font-size="12" fill="#97968e">The cases in the order of lib/src/gen-dispatch.mjs, ranked over 13 mixes. Counts: bench/bench-native.mjs --count.</text>
+</svg>

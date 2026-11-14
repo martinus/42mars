@@ -14,7 +14,7 @@ How the repository is laid out, how to build and test it, how to compare it with
 | [`tools/`](../tools) | Node programs on the wasm build: `asm` (pMARS-style listing), `corpus` (assemble a folder), `tournament` (round robin on all cores), `serve`, and the comparisons with pMARS: `pmars-diff`, `expr-fuzz`, `example-check`. [`opcodes.js`](../tools/opcodes.js) has the opcode tables and the listing format, which `ui/` and the tests use too. |
 | [`bench/`](../bench) | Everything that measures speed: `bench`, `bench-pairs`, `bench-native` (the C code built natively), `tie-ceiling`, `wasm-functions`, `native-loops`, and `ab-wasm`, `ab-native`, `ab-tool` for alternating A/B timing. |
 | [`test/`](../test) | `npm test`: [node:test](https://nodejs.org/api/test.html) files, the C test program in `test/c/`, the fuzz targets in `test/fuzz/` (`make fuzz`), results recorded from pMARS and from the removed JavaScript engines in `test/fixtures/`. |
-| [`docs/`](.) | The semantics, the plan, the [performance log](performance-log.md) with every speed experiment, this guide, the README chart ([`images/speed.mjs`](images/speed.mjs)) and the logo ([`images/logo.svg`](images/logo.svg)). |
+| [`docs/`](.) | The semantics, the plan, [where the speed comes from](performance.md), the [performance log](performance-log.md) with every speed experiment, this guide, the charts ([`images/speed.mjs`](images/speed.mjs) for the README, [`images/performance.mjs`](images/performance.mjs) for `performance.md`) and the logo ([`images/logo.svg`](images/logo.svg)). |
 | [`warriors/`](../warriors) | Sample warriors written for this repository, and Dewdney's Imp and Dwarf. In [`warriors/koenigstuhl/`](../warriors/koenigstuhl): 5,261 warriors of the Koenigstuhl hills, downloaded 12th November 2026, without a license: test material, see its README. |
 
 No dependencies: Node 20 or newer for the tests and tools, a C11 compiler for the library, clang 22 with the wasm32 target for the WebAssembly module.
@@ -72,14 +72,17 @@ Never compare a timing with a number from another day: the same `42mars.wasm` ra
 
 ```sh
 node bench/bench.mjs path/to/warriors --wasm-match         # 3 hill pairs, single thread
-node bench/bench-native.mjs path/to/warriors --runs 7      # the same C code natively
-node bench/ab-wasm.mjs base.wasm wasm/42mars.wasm          # two builds, alternating
+node bench/bench-native.mjs path/to/warriors --runs 7      # the library natively, as make builds it
+node bench/ab-native.mjs old/lib lib --input t20.in --early-tie --cpu 2   # two versions natively, gcc and clang, alternating
+node bench/ab-wasm.mjs base.wasm wasm/42mars.wasm          # two wasm builds, alternating
+make && node tools/tournament.mjs path/to/warriors --rounds 100 --pmars build/42mars   # a tournament on the native build
 node bench/wasm-functions.mjs base.wasm wasm/42mars.wasm   # which functions of the module changed
 node bench/native-loops.mjs                                # the native hot loops against origin/main
-node docs/images/speed.mjs                                 # redraw the README chart from its numbers
+node docs/images/speed.mjs                                 # redraw the README charts from their numbers
+node docs/images/performance.mjs                           # redraw the figures of docs/performance.md
 ```
 
-[`performance-log.md`](performance-log.md) has every idea that was tried, with the numbers, also the ones that did not help. Commands in its entries before 12th November 2026 use the old paths: the speed tools were in `tools/` then and are in `bench/` now, `gen-dispatch.mjs` is in `lib/src/`.
+[`performance.md`](performance.md) explains the tricks that are in the code. [`performance-log.md`](performance-log.md) has every idea that was tried, with the numbers, also the ones that did not help. Commands in its entries before 12th November 2026 use the old paths: the speed tools were in `tools/` then and are in `bench/` now, `gen-dispatch.mjs` is in `lib/src/`.
 
 ## Conventions
 

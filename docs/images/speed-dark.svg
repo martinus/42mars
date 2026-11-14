@@ -1,37 +1,37 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="880" height="430" viewBox="0 0 880 430" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif" role="img" aria-labelledby="title desc">
-<title id="title">42mars: speed of Core War simulators, native code, one thread</title>
-<desc id="desc">Million simulated instructions per second, one thread, the same 12,000 rounds for every engine: 42mars C 478, fmars C 402, exMARS 0.01 C 279, rmars Rust 192, pMARS 0.9.5 C 106.</desc>
-<rect x="0.5" y="0.5" width="879" height="429" rx="14" fill="#1a1a19" stroke="#2e2e2c"/>
-<text x="32" y="62" font-size="34" font-weight="700" fill="#f0efec">42mars<tspan font-weight="400" fill="#c3c2b7" font-size="21" dx="14">speed of Core War simulators, native code, one thread</tspan></text>
+<svg xmlns="http://www.w3.org/2000/svg" width="880" height="408" viewBox="0 0 880 408" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif" role="img" aria-labelledby="title desc">
+<title id="title">42mars: speed of Core War simulators, native code, '94 warriors</title>
+<desc id="desc">Million simulated instructions per second, one thread, the same 12,000 rounds for every engine: 42mars C 405, exMARS 0.01 C 243, rmars Rust 178, pMARS 0.9.5 C 102.</desc>
+<rect x="0.5" y="0.5" width="879" height="407" rx="14" fill="#1a1a19" stroke="#2e2e2c"/>
+<text x="32" y="62" font-size="34" font-weight="700" fill="#f0efec">42mars<tspan font-weight="400" fill="#c3c2b7" font-size="21" dx="14">speed of Core War simulators, native code, '94 warriors</tspan></text>
 <text x="32" y="90" font-size="14.5" fill="#c3c2b7">Every engine plays the same 12,000 rounds and gets the same wins, losses and ties.</text>
-<line x1="242" y1="110" x2="242" y2="308" stroke="#3a3a37" stroke-dasharray=""/>
-<text x="242" y="326" text-anchor="middle" font-size="12" fill="#97968e">0</text>
-<line x1="339.2" y1="110" x2="339.2" y2="308" stroke="#3a3a37" stroke-dasharray="2 3"/>
-<text x="339.2" y="326" text-anchor="middle" font-size="12" fill="#97968e">100</text>
-<line x1="436.4" y1="110" x2="436.4" y2="308" stroke="#3a3a37" stroke-dasharray="2 3"/>
-<text x="436.4" y="326" text-anchor="middle" font-size="12" fill="#97968e">200</text>
-<line x1="533.5999999999999" y1="110" x2="533.5999999999999" y2="308" stroke="#3a3a37" stroke-dasharray="2 3"/>
-<text x="533.5999999999999" y="326" text-anchor="middle" font-size="12" fill="#97968e">300</text>
-<line x1="630.8" y1="110" x2="630.8" y2="308" stroke="#3a3a37" stroke-dasharray="2 3"/>
-<text x="630.8" y="326" text-anchor="middle" font-size="12" fill="#97968e">400</text>
-<line x1="728" y1="110" x2="728" y2="308" stroke="#3a3a37" stroke-dasharray="2 3"/>
-<text x="728" y="326" text-anchor="middle" font-size="12" fill="#97968e">500</text>
-<text x="485" y="346" text-anchor="middle" font-size="13" fill="#c3c2b7">million simulated instructions per second</text>
+<line x1="242" y1="110" x2="242" y2="268" stroke="#3a3a37" stroke-dasharray=""/>
+<text x="242" y="286" text-anchor="middle" font-size="12" fill="#97968e">0</text>
+<line x1="323" y1="110" x2="323" y2="268" stroke="#3a3a37" stroke-dasharray="2 3"/>
+<text x="323" y="286" text-anchor="middle" font-size="12" fill="#97968e">100</text>
+<line x1="404" y1="110" x2="404" y2="268" stroke="#3a3a37" stroke-dasharray="2 3"/>
+<text x="404" y="286" text-anchor="middle" font-size="12" fill="#97968e">200</text>
+<line x1="485" y1="110" x2="485" y2="268" stroke="#3a3a37" stroke-dasharray="2 3"/>
+<text x="485" y="286" text-anchor="middle" font-size="12" fill="#97968e">300</text>
+<line x1="566" y1="110" x2="566" y2="268" stroke="#3a3a37" stroke-dasharray="2 3"/>
+<text x="566" y="286" text-anchor="middle" font-size="12" fill="#97968e">400</text>
+<line x1="647" y1="110" x2="647" y2="268" stroke="#3a3a37" stroke-dasharray="2 3"/>
+<text x="647" y="286" text-anchor="middle" font-size="12" fill="#97968e">500</text>
+<line x1="728" y1="110" x2="728" y2="268" stroke="#3a3a37" stroke-dasharray="2 3"/>
+<text x="728" y="286" text-anchor="middle" font-size="12" fill="#97968e">600</text>
+<text x="485" y="306" text-anchor="middle" font-size="13" fill="#c3c2b7">million simulated instructions per second</text>
 <text x="228" y="134" text-anchor="end" font-size="15" fill="#f0efec" font-weight="700">42mars<tspan font-weight="400" fill="#97968e" font-size="13" dx="7">C</tspan></text>
-<path d="M242,118h461.05903593133047a4,4 0 0 1 4,4v14a4,4 0 0 1 -4,4h-461.05903593133047z" fill="#f0652d"/>
-<text x="717.0590359313305" y="134" font-size="15" fill="#f0efec" font-weight="700">478<tspan font-weight="400" fill="#97968e" font-size="13" dx="8">4.5× pMARS</tspan></text>
-<text x="228" y="174" text-anchor="end" font-size="15" fill="#f0efec" font-weight="500">fmars<tspan font-weight="400" fill="#97968e" font-size="13" dx="7">C</tspan></text>
-<path d="M242,158h386.8341041370604a4,4 0 0 1 4,4v14a4,4 0 0 1 -4,4h-386.8341041370604z" fill="#5c5b57"/>
-<text x="642.8341041370604" y="174" font-size="15" fill="#f0efec" font-weight="500">402<tspan font-weight="400" fill="#97968e" font-size="13" dx="8">3.8× pMARS</tspan></text>
-<text x="228" y="214" text-anchor="end" font-size="15" fill="#f0efec" font-weight="500">exMARS 0.01<tspan font-weight="400" fill="#97968e" font-size="13" dx="7">C</tspan></text>
-<path d="M242,198h266.89688843a4,4 0 0 1 4,4v14a4,4 0 0 1 -4,4h-266.89688843z" fill="#5c5b57"/>
-<text x="522.89688843" y="214" font-size="15" fill="#f0efec" font-weight="500">279<tspan font-weight="400" fill="#97968e" font-size="13" dx="8">2.6× pMARS</tspan></text>
-<text x="228" y="254" text-anchor="end" font-size="15" fill="#f0efec" font-weight="500">rmars<tspan font-weight="400" fill="#97968e" font-size="13" dx="7">Rust</tspan></text>
-<path d="M242,238h182.74494678500645a4,4 0 0 1 4,4v14a4,4 0 0 1 -4,4h-182.74494678500645z" fill="#5c5b57"/>
-<text x="438.74494678500645" y="254" font-size="15" fill="#f0efec" font-weight="500">192<tspan font-weight="400" fill="#97968e" font-size="13" dx="8">1.8× pMARS</tspan></text>
-<text x="228" y="294" text-anchor="end" font-size="15" fill="#f0efec" font-weight="500">pMARS 0.9.5<tspan font-weight="400" fill="#97968e" font-size="13" dx="7">C</tspan></text>
-<path d="M242,278h98.58817076639053a4,4 0 0 1 4,4v14a4,4 0 0 1 -4,4h-98.58817076639053z" fill="#5c5b57"/>
-<text x="354.58817076639053" y="294" font-size="15" fill="#f0efec" font-weight="500">106<tspan font-weight="400" fill="#97968e" font-size="13" dx="8">reference</tspan></text>
-<text x="32" y="378" font-size="12" fill="#97968e">3 hill pairs × 4,000 rounds, 446M instructions. Whole process wall time, median of 7. Ryzen 9 7950X, GCC 16.2, Node 22.22, 12th November 2026.</text>
-<text x="32" y="396" font-size="12" fill="#97968e">pMARS -O2, exMARS -O3 -fomit-frame-pointer, fmars -O3 -march=native, rmars --release, 42mars -O3. Commands: docs/images/speed.mjs.</text>
+<path d="M242,118h323.92317609724614a4,4 0 0 1 4,4v14a4,4 0 0 1 -4,4h-323.92317609724614z" fill="#f0652d"/>
+<text x="579.9231760972461" y="134" font-size="15" fill="#f0efec" font-weight="700">405<tspan font-weight="400" fill="#97968e" font-size="13" dx="8">4.0× pMARS</tspan></text>
+<text x="228" y="174" text-anchor="end" font-size="15" fill="#f0efec" font-weight="500">exMARS 0.01<tspan font-weight="400" fill="#97968e" font-size="13" dx="7">C</tspan></text>
+<path d="M242,158h192.66928032258065a4,4 0 0 1 4,4v14a4,4 0 0 1 -4,4h-192.66928032258065z" fill="#5c5b57"/>
+<text x="448.6692803225807" y="174" font-size="15" fill="#f0efec" font-weight="500">243<tspan font-weight="400" fill="#97968e" font-size="13" dx="8">2.4× pMARS</tspan></text>
+<text x="228" y="214" text-anchor="end" font-size="15" fill="#f0efec" font-weight="500">rmars<tspan font-weight="400" fill="#97968e" font-size="13" dx="7">Rust</tspan></text>
+<path d="M242,198h140.44531107846854a4,4 0 0 1 4,4v14a4,4 0 0 1 -4,4h-140.44531107846854z" fill="#5c5b57"/>
+<text x="396.44531107846854" y="214" font-size="15" fill="#f0efec" font-weight="500">178<tspan font-weight="400" fill="#97968e" font-size="13" dx="8">1.7× pMARS</tspan></text>
+<text x="228" y="254" text-anchor="end" font-size="15" fill="#f0efec" font-weight="500">pMARS 0.9.5<tspan font-weight="400" fill="#97968e" font-size="13" dx="7">C</tspan></text>
+<path d="M242,238h78.88128996737356a4,4 0 0 1 4,4v14a4,4 0 0 1 -4,4h-78.88128996737356z" fill="#5c5b57"/>
+<text x="334.88128996737356" y="254" font-size="15" fill="#f0efec" font-weight="500">102<tspan font-weight="400" fill="#97968e" font-size="13" dx="8">reference</tspan></text>
+<text x="32" y="338" font-size="12" fill="#97968e">20 pairs of the Koenigstuhl '94 hill × 600 rounds, 941M instructions. Whole process wall time, median of 7, one thread.</text>
+<text x="32" y="356" font-size="12" fill="#97968e">pMARS -O2, exMARS -O3 -fomit-frame-pointer, rmars --release, 42mars -O3.</text>
+<text x="32" y="374" font-size="12" fill="#97968e">Ryzen 9 7950X, GCC 16.2, Node 22.22, 14th November 2026. Commands: docs/images/speed.mjs.</text>
 </svg>

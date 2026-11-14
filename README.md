@@ -28,7 +28,7 @@
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/images/speed-dark.svg">
-    <img alt="Bar chart: million simulated instructions per second in native code, one thread, the same 12,000 rounds for every engine. 42mars 478, fmars 402, exMARS 0.01 279, rmars 192, pMARS 0.9.5 106." src="docs/images/speed-light.svg" width="880">
+    <img alt="Bar chart: million simulated instructions per second in native code with '94 hill warriors, one thread, the same 12,000 rounds for every engine. 42mars 405, exMARS 0.01 243, rmars 178, pMARS 0.9.5 102." src="docs/images/speed-light.svg" width="880">
   </picture>
 </p>
 
@@ -37,12 +37,12 @@
 
 ## Why 42mars
 
-- **Fast.** 478 million simulated instructions per second on one thread natively, 390 million in WebAssembly. That is 4.5 and 3.7 times pMARS 0.9.5 in [the benchmark above](#speed). Natively it is the fastest of the 8 builds I measured there. Rounds that can only end in a tie are stopped early, with an exact proof, so the scores stay the same.
+- **Fast.** 405 million simulated instructions per second on one thread with '94 hill warriors, 527 million with '88-style ones. That is 4.0 and 5.0 times pMARS 0.9.5 in [the two benchmarks below](#speed), and natively it is the fastest of the builds I measured there. The WebAssembly build runs at 317 and 380 million. Rounds that can only end in a tie are stopped early, with an exact proof, so the scores stay the same. [Where the speed comes from](docs/performance.md) has the tricks, with the numbers.
 - **The results of pMARS 0.9.5, quirks included.** Not only the same scores: the same instruction count and the same final core in every round. A differential test against a pMARS binary finds 0 differences in 9,600 battles, 567 hill warrior listings, 3,000 random sources and 1.8 million random expressions ([validation](docs/plan.md#validation)). CI runs it on every pull request against pMARS built from source: scores, listings and the output of `42mars`. The instruction count and core of every round need a patched pMARS and are compared locally.
 - **The whole of Redcode.** `EQU`, `FOR`/`ROF`, `CURLINE`, registers `a` to `z`, `;assert`, `PIN`, p-space, ICWS'88 mode (`-8`), read and write limits, `-P` permutations. Also the weird stuff warriors depend on: `x equ 2+3` then `dat #x*2` gives `#8`, and a buffer bug in pMARS that turns `dat#9` at the end of a line into `dat #90`. 565 of 567 hill warriors assemble, and pMARS rejects the other 2 too.
 - **MIT licensed.** Every other MARS I know of with pMARS's results is GPL. 42mars was [written in a clean room](#written-in-a-clean-room-so-it-can-be-mit) so that it can be MIT.
 - **A C library that is easy to embed.** One header, [`lib/42mars.h`](lib/42mars.h), and one file to compile, [`lib/42mars.c`](lib/42mars.c). C11, no global state, no hidden allocation, no callbacks, so any language with a C FFI can call it. Builds with gcc, clang and MSVC; CI runs it on Linux (x64, arm64), macOS and Windows, and under ASan and UBSan.
-- **Everywhere.** A command line program with pMARS's options and output, a WebAssembly build with a JavaScript interface (98 KB, no dependencies), and Core War Theater, a WebGL2 visualizer that explains every instruction while it runs.
+- **Everywhere.** A command line program with pMARS's options and output, a WebAssembly build with a JavaScript interface (288 KB, no dependencies), and Core War Theater, a WebGL2 visualizer that explains every instruction while it runs.
 
 ## Compared with other simulators
 
@@ -53,26 +53,42 @@
 | Compilers | gcc, clang, MSVC | not checked | not checked | gcc or clang only (computed goto); code generation needs Guile 1.8 | Rust |
 | Results | identical to pMARS 0.9.5: scores, instruction count and final core of every round | the reference | same scores on the benchmark rounds, and on 3,160 hill pairings (corewar.dev's build) | same scores on 3,160 hill pairings, no p-space | follows pMARS 0.9.6-dev: 46 of 3,160 hill pairings differ from 0.9.5, all with the same warrior |
 | Assembler | all of pMARS 0.9.5, quirks included | the reference | pMARS's | rejects many hill warriors, so it got `pmars -A` output | its own |
-| Speed, one thread, [million instructions/s](#speed) | **478** (C), **390** (WebAssembly) | 106 (C), 64 (WebAssembly) | 279 (C), 151 (WebAssembly) | 402 | 192 |
+| Speed, one thread, [million instructions/s](#speed), '94 warriors | **405** (C), **317** (WebAssembly) | 102 | 243 | cannot run them | 178 |
+| The same with '88-style warriors | **527** (C), **380** (WebAssembly) | 105 (C), 64 (WebAssembly) | 278 (C), 150 (WebAssembly) | 398 | 193 |
 | Use from other code | C library: one header, no global state | program | C, with a Ruby interface | C, generated per instruction set | Python module |
 | In the browser | WebAssembly module, no dependencies | corewar.dev's build | corewar.dev's build | not checked | not checked |
 
-exMARS in C is release 0.01 from 2003, built with its own Makefile; the WebAssembly numbers of exMARS and pMARS are from the builds that [corewar.dev](https://corewar.dev/) runs. fmars is generated for the instruction words of a hill (109 here) and runs only warriors made of those. All rows come from my own runs on the [same 12,000 rounds](#speed) and on the 80 warriors of [this hill collection](https://github.com/n1LS/redcode-warriors), [details in the performance log](docs/performance-log.md).
+exMARS in C is release 0.01 from 2003, built with its own Makefile; the WebAssembly numbers of exMARS and pMARS are from the builds that [corewar.dev](https://corewar.dev/) runs. fmars is generated for the instruction words of a hill (109 here) and runs only warriors made of those. All rows come from my own runs on the [same rounds](#speed) and on the 80 warriors of [this hill collection](https://github.com/n1LS/redcode-warriors), [details in the performance log](docs/performance-log.md).
 
 ## Speed
 
-One thread, the 3 hill pairs of [`bench/bench.mjs`](bench/bench.mjs) with 4,000 rounds each, all engines with identical results. Whole process wall time, median of 7, Ryzen 9 7950X, 12th November 2026 ([commands](docs/images/speed.mjs)).
+One thread, all engines with identical results in every pair. Whole process wall time, median of 7, Ryzen 9 7950X, 14th November 2026 ([commands](docs/images/speed.mjs)). Two workloads of 12,000 rounds each:
 
-| Engine | Seconds | Million instructions/s |
-|---|---|---|
-| **42mars**, C | **0.932** | **478** |
-| fmars 0.0.207 | 1.109 | 402 |
-| **42mars**, WebAssembly | **1.144** | **390** |
-| exMARS 0.01 | 1.600 | 279 |
-| rmars | 2.321 | 192 |
-| exMARS, corewar.dev's WebAssembly build | 2.957 | 151 |
-| pMARS 0.9.5 | 4.225 | 106 |
-| pMARS, corewar.dev's WebAssembly build | 6.917 | 64 |
+- **'94**: 20 pairs of the [Koenigstuhl](warriors/koenigstuhl/README.md) '94 hill without p-space, 600 rounds each, 941 million instructions. These warriors execute 655 different instruction words.
+- **'88-style**: the 3 hill pairs of [`bench/bench.mjs`](bench/bench.mjs), 4,000 rounds each, 446 million instructions, 26 different instruction words.
+
+| Engine | '94: seconds | '94: million instructions/s | '88-style: seconds | '88-style: million instructions/s |
+|---|---|---|---|---|
+| **42mars**, C | **2.324** | **405** | **0.846** | **527** |
+| fmars 0.0.207 | cannot run them | | 1.119 | 398 |
+| **42mars**, WebAssembly | **2.966** | **317** | **1.175** | **380** |
+| exMARS 0.01 | 3.875 | 243 | 1.606 | 278 |
+| rmars | 5.276 | 178 | 2.310 | 193 |
+| exMARS, corewar.dev's WebAssembly build | not measured | | 2.979 | 150 |
+| pMARS 0.9.5 | 9.195 | 102 | 4.231 | 105 |
+| pMARS, corewar.dev's WebAssembly build | not measured | | 6.998 | 64 |
+
+<details>
+<summary>Chart for '88-style warriors</summary>
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/images/speed-88-dark.svg">
+    <img alt="Bar chart: million simulated instructions per second in native code with '88-style warriors, one thread, the same 12,000 rounds for every engine. 42mars 527, fmars 398, exMARS 0.01 278, rmars 193, pMARS 0.9.5 105." src="docs/images/speed-88-light.svg" width="880">
+  </picture>
+</p>
+
+</details>
 
 <details>
 <summary>WebAssembly chart</summary>
@@ -80,7 +96,7 @@ One thread, the 3 hill pairs of [`bench/bench.mjs`](bench/bench.mjs) with 4,000 
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/images/speed-wasm-dark.svg">
-    <img alt="Bar chart: million simulated instructions per second in WebAssembly, one thread, the same 12,000 rounds for every engine. 42mars 390, exMARS 151, pMARS 64." src="docs/images/speed-wasm-light.svg" width="880">
+    <img alt="Bar chart: million simulated instructions per second in WebAssembly with '88-style warriors, one thread, the same 12,000 rounds for every engine. 42mars 380, exMARS 150, pMARS 64." src="docs/images/speed-wasm-light.svg" width="880">
   </picture>
 </p>
 
@@ -91,11 +107,11 @@ The times include starting Node and compiling the module, about 0.07 s per run.
 <details>
 <summary>Tournaments on all cores</summary>
 
-80 hill warriors round robin, 100 rounds, 31 threads (10th November 2026): 42mars in WebAssembly 2.96 s, corewar.dev's exMARS 5.4 s, pMARS 10.8 s. fmars beats the WebAssembly build here, 2.88 s against 3.19 s (8th November 2026); 42mars natively takes 2.47 s. More in [`docs/plan.md`](docs/plan.md#speed) and [`docs/performance-log.md`](docs/performance-log.md).
+80 hill warriors round robin, 100 rounds, 31 threads (10th November 2026): 42mars in WebAssembly 2.96 s, corewar.dev's exMARS 5.4 s, pMARS 10.8 s. fmars beats the WebAssembly build here, 2.88 s against 3.19 s (8th November 2026). 42mars natively, one process per pairing, takes 2.35 s against 2.90 s for its WebAssembly build in the same session (14th November 2026). More in [`docs/plan.md`](docs/plan.md#speed) and [`docs/performance-log.md`](docs/performance-log.md).
 
 </details>
 
-Most of the speed comes from an 8-byte cell, a loop specialized for two warriors, separate code for the 32 most executed instruction words, and exact early ties.
+Most of the speed comes from an 8-byte cell, a loop specialized for two warriors, separate code for the 512 most executed instruction words, and exact early ties. [`docs/performance.md`](docs/performance.md) explains each of them.
 
 ## Quick start
 
@@ -225,8 +241,8 @@ wasm/               the JavaScript demo: 42mars.wasm, 42mars.js (JS interface), 
 ui/                 Core War Theater, the visualizer (plain ES modules, no build step)
 tools/              Node tools: asm, corpus, tournament, serve, and the comparisons with pMARS
 bench/              speed measurements and A/B timing
-test/               npm test: 390 tests on node:test; C tests in test/c/, fuzz targets in test/fuzz/, recorded results in test/fixtures/
-docs/               the semantics, the plan, the performance log, development guide
+test/               npm test: 391 tests on node:test; C tests in test/c/, fuzz targets in test/fuzz/, recorded results in test/fixtures/
+docs/               the semantics, the plan, the speed tricks, the performance log, development guide
 warriors/           sample warriors written for this repository, and Dewdney's Imp and Dwarf;
                     koenigstuhl/: 5,261 hill warriors, test material without a license
 Makefile            native build on Linux and macOS; build-msvc.bat for Windows
@@ -242,7 +258,7 @@ flowchart LR
   pmars(["pMARS binary, black box"]) -. compared by .-> tools
 ```
 
-[`docs/development.md`](docs/development.md) explains how to build, test, compare with pMARS and measure speed. [`docs/plan.md`](docs/plan.md) has the design, the validation and the roadmap, [`docs/redcode-semantics.md`](docs/redcode-semantics.md) the exact behavior of assembler and simulator.
+[`docs/development.md`](docs/development.md) explains how to build, test, compare with pMARS and measure speed. [`docs/performance.md`](docs/performance.md) explains where the speed comes from. [`docs/plan.md`](docs/plan.md) has the design, the validation and the roadmap, [`docs/redcode-semantics.md`](docs/redcode-semantics.md) the exact behavior of assembler and simulator.
 
 ## License
 
