@@ -4,9 +4,11 @@
 # The C library and the 42mars program, with gcc or clang on Linux and macOS
 # (GNU make 3.81 or newer). Windows with MSVC: build-msvc.bat.
 #
-#   make                 build/lib42mars.a, the shared library, build/42mars
+#   make                 build/lib42mars.a, the shared library, build/42mars,
+#                        build/42evolve (the evolver, POSIX threads)
 #   make test            the C tests of the Node test suite on these builds
-#                        (test/c-api.test.js, test/cli.test.js; needs Node 20+)
+#                        (test/c-api.test.js, test/cli.test.js,
+#                        test/evolver.test.js; needs Node 20+)
 #   make install         into $(DESTDIR)$(PREFIX): bin/42mars, include/42mars.h,
 #                        lib/lib42mars.a, the shared library, lib/pkgconfig/42mars.pc
 #   make dist            build/42mars-<version>-<os>-<cpu>.tar.gz, an install
@@ -54,9 +56,10 @@ RPATH = -Wl,-rpath,'$$ORIGIN'
 endif
 
 LIB_SOURCES := lib/42mars.c lib/42mars.h $(wildcard lib/src/*.c lib/src/*.h)
+EVOLVER_SOURCES := evolver/genome.c evolver/pushoff.c $(wildcard evolver/*.h)
 DIST := 42mars-$(VERSION)-$(shell uname -s | tr A-Z a-z)-$(shell uname -m)
 
-all: build/lib42mars.a build/$(SHARED) build/42mars
+all: build/lib42mars.a build/$(SHARED) build/42mars build/42evolve
 
 build/42mars.o: $(LIB_SOURCES)
 	@mkdir -p build
@@ -73,6 +76,9 @@ build/$(SHARED): build/42mars.o
 build/42mars: cli/42mars.c build/lib42mars.a
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ cli/42mars.c build/lib42mars.a
 
+build/42evolve: evolver/evolve.c $(EVOLVER_SOURCES) build/lib42mars.a
+	$(CC) $(CFLAGS) -pthread $(LDFLAGS) -Ilib -o $@ evolver/evolve.c evolver/genome.c evolver/pushoff.c build/lib42mars.a -lm
+
 # The test programs: api-test through the shared library, the examples as
 # 42mars.h describes them.
 build/api-test: test/c/api-test.c build/$(SHARED)
@@ -84,8 +90,11 @@ build/example: examples/example.c build/lib42mars.a
 build/parallel: examples/parallel.c build/lib42mars.a
 	$(CC) $(CFLAGS) -pthread $(LDFLAGS) -Ilib -o $@ examples/parallel.c build/lib42mars.a
 
-test: all build/api-test build/example build/parallel
-	M42_BIN=build node --test test/c-api.test.js test/cli.test.js
+build/evolver-test: test/c/evolver-test.c $(EVOLVER_SOURCES) build/lib42mars.a
+	$(CC) $(CFLAGS) $(LDFLAGS) -Ilib -Ievolver -o $@ test/c/evolver-test.c evolver/genome.c evolver/pushoff.c build/lib42mars.a -lm
+
+test: all build/api-test build/example build/parallel build/evolver-test
+	M42_BIN=build node --test test/c-api.test.js test/cli.test.js test/evolver.test.js
 
 install: all
 	install -d $(DESTDIR)$(BINDIR) $(DESTDIR)$(INCLUDEDIR) $(DESTDIR)$(LIBDIR)/pkgconfig
