@@ -67,10 +67,10 @@ extern "C" {
 // JavaScript package (package.json); a release is tagged
 // v<major>.<minor>.<patch>.
 #define M42_VERSION_MAJOR 1
-#define M42_VERSION_MINOR 0
+#define M42_VERSION_MINOR 1
 #define M42_VERSION_PATCH 0
 
-// "1.0.0": the three numbers above.
+// "1.1.0": the three numbers above.
 M42_API const char *m42_version(void);
 
 typedef enum {
