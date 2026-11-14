@@ -87,6 +87,22 @@ void genome_rebuild(genome *child, const genome *a, const genome *b, const slot 
 void genome_breed(genome *child, const genome *p1, const genome *p2, rng *r, uint32_t core_size, uint32_t max_length,
                   const genome_style *style, char *ops, size_t ops_n);
 
+// One change of a given kind, for measuring what each does (42spectrum):
+// the changes of genome_breed() one by one, and four that make small steps.
+// Returns 0 when the kind does not apply (e.g. insert at the longest length).
+enum {
+  CH_OPCODE, CH_MODIFIER, CH_AMODE, CH_BMODE, CH_AOPERAND, CH_BOPERAND, CH_ORG, CH_REPLACE,
+  CH_INSERT, CH_DELETE, CH_DUPLICATE, CH_MOVE, CH_XINSERT, CH_XREPLACE,
+  CH_RELATED_OPCODE, // another opcode of the same family (ADD/SUB, JMZ/JMN/DJN, SEQ/SNE/CMP/SLT, ...)
+  CH_RELATED_MODE,   // another mode of the same family ($ @ *, < > { }; # becomes $)
+  CH_SHARED,         // a far value set to another far value of the warrior, or its negative
+  CH_TUNE,           // a far value moved by up to 2% of its size (at least 4)
+  CH_COUNT
+};
+const char *genome_change_name(int kind);
+int genome_change(genome *x, const genome *p2, rng *r, uint32_t core_size, uint32_t max_length,
+                  const genome_style *style, int kind);
+
 // Text form for the state file: "len start" then 8 numbers per instruction.
 size_t genome_save(const genome *x, char *buf, size_t n);
 // Reads that form; 0 on success, -1 on a malformed or out-of-range genome.

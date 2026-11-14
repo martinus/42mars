@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>42evolve runs</title>
+  <link rel="stylesheet" href="evolver.css">
+  <style>
+    main.runs { display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) auto; grid-template-areas: none; }
+    .chart-panel { min-height: 320px; }
+    .legend { display: flex; flex-wrap: wrap; gap: 6px 18px; padding: 0 13px 10px; font: 12px var(--mono); color: #aab0c8; }
+    .legend i { display: inline-block; width: 18px; height: 3px; vertical-align: middle; margin-right: 6px; border-radius: 2px; }
+    .legend i.dash { background: repeating-linear-gradient(90deg, currentColor 0 4px, transparent 4px 7px) !important; }
+    .table-panel { overflow: auto; }
+    table.runs { border-collapse: collapse; font: 12px/1.45 var(--mono); margin: 0 13px 12px; min-width: calc(100% - 26px); }
+    table.runs th, table.runs td { padding: 4px 12px 4px 0; border-bottom: 1px solid #151827; text-align: left; vertical-align: top; }
+    table.runs th { color: var(--muted); font-weight: 400; white-space: nowrap; }
+    table.runs thead th { color: var(--text); font-weight: 700; font-size: 13px; }
+    table.runs thead th a { text-decoration: none; border-bottom: 1px dotted #555b78; }
+    table.runs td.lead { color: var(--accent); font-weight: 700; }
+    table.runs .sub { color: var(--muted); }
+  </style>
+</head>
+<body>
+  <header class="bar">
+    <div class="brand"><span class="pulse" id="live" title="connection"></span>42<b>evolve</b> runs</div>
+    <div class="run" id="info">waiting for runs</div>
+  </header>
+  <main class="runs">
+    <section class="panel chart-panel">
+      <h2>Progress over time <small>solid: best against the holdout so far · dashed: best member against the panel · points per 100 rounds, minutes of the run</small></h2>
+      <div class="canvas-wrap"><canvas id="chart"></canvas></div>
+      <div class="legend" id="legend"></div>
+    </section>
+    <section class="panel table-panel">
+      <h2>Side by side <small>click a run for its dashboard · the best value of a row in yellow</small></h2>
+      <div id="table"></div>
+    </section>
+  </main>
+  <div class="tooltip" id="tip" hidden></div>
+  <script type="module" src="runs.js"></script>
+</body>
+</html>

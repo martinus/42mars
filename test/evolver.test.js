@@ -25,6 +25,7 @@ const tmp = mkdtempSync(join(tmpdir(), 'evolver-test-'));
 after(() => rmSync(tmp, { recursive: true, force: true }));
 const evolve = program(prebuilt ?? tmp, '42evolve');
 const unit = program(prebuilt ?? tmp, 'evolver-test');
+const spectrum = program(prebuilt ?? tmp, '42spectrum');
 const skip = noCc || (process.platform === 'win32' && 'POSIX only') || (prebuilt && !existsSync(evolve) && `no 42evolve in ${prebuilt}`) || false;
 
 async function build() {
@@ -35,6 +36,7 @@ async function build() {
   await Promise.all([
     cc('cc', ['-O2', '-pthread', '-I', join(root, 'lib'), '-o', evolve, src('evolve.c'), src('genome.c'), src('pushoff.c'), src('names.c'), lib, '-lm']),
     cc('cc', ['-O2', '-I', join(root, 'lib'), '-I', join(root, 'evolver'), '-o', unit, join(root, 'test/c/evolver-test.c'), src('genome.c'), src('pushoff.c'), src('names.c'), lib, '-lm']),
+    cc('cc', ['-O2', '-pthread', '-I', join(root, 'lib'), '-o', spectrum, src('spectrum.c'), src('genome.c'), lib, '-lm']),
   ]);
 }
 
@@ -213,7 +215,31 @@ function checkOrder(evs, key) {
   for (const [batch, keys] of byBatch) for (let i = 1; i < keys.length; i++) assert.ok(keys[i - 1] >= keys[i] - 1e-4, `batch ${batch}: ${keys}`);
 }
 
+// The batch event counts, per change, its children [bred, evaluated, past
+// the screen, still in the list after the batch]; they agree with the
+// newcomers and leavers of the batch.
+function checkOps(evs) {
+  let batches = 0;
+  for (const b of evs.filter((e) => e.type === 'batch')) {
+    const enters = evs.filter((e) => e.type === 'enter' && e.batch === b.batch);
+    const left = new Set(evs.filter((e) => e.type === 'leave' && e.batch === b.batch).map((e) => e.id));
+    const has = (e, op) => e.ops.split(' ').includes(op);
+    let bred = 0;
+    for (const [op, [n0, n1, n2, n3]] of Object.entries(b.ops)) {
+      assert.ok(n0 >= n1 && n1 >= n2 && n2 >= n3, `${op} in batch ${b.batch}`);
+      assert.equal(n2, enters.filter((e) => has(e, op)).length, `${op} past the screen in batch ${b.batch}`);
+      assert.equal(n3, enters.filter((e) => has(e, op) && !left.has(e.id)).length, `${op} still in after batch ${b.batch}`);
+      bred += n0;
+    }
+    assert.ok(bred >= b.candidates, `batch ${b.batch}: ${bred} children counted for ${b.candidates} candidates`);
+    for (const e of enters) for (const op of e.ops.split(' ')) assert.ok(b.ops[op], `${op} of ${e.name} not counted`);
+    batches++;
+  }
+  return batches;
+}
+
 test('survivors of the screen enter by their screen score', { skip }, () => {
+  assert.equal(checkOps(base), 6);
   assert.equal(base[0].params.select, 'screen');
   assert.equal(base[0].params.fractions, 0);
   checkOrder(base, 'screen');
@@ -230,6 +256,7 @@ test('--select value --rotate 2: survivors by estimated value, a panel that chan
   assert.deepEqual(rot.map((e) => e.batch), [2, 4]);
   assert.deepEqual(rot.map((e) => e.out), one[0].panel.slice(0, 2).map((p) => p.id));
   assert.equal(checkValues(one), 6);
+  assert.equal(checkOps(one), 6);
   checkOrder(one, 'estimate');
   // and that is another order than the screen's in some batch
   const enters = one.filter((e) => e.type === 'enter');
@@ -338,9 +365,14 @@ test('--start: the first batch starts from the warriors of a folder', { skip }, 
   assert.equal(one[0].params.start ?? one[0].start, dir);
   assert.deepEqual(one[0].startWarriors.map((w) => [w.name, w.file]), [['Dwarf', 'dwarf.red'], ['Imp', 'imp.red']]);
   // the start warriors are candidates of batch 0 as they are; the others of batch 0 are mutants of them
-  const code = (src) => assemble(src, RULES).instructions.map((i) => [i.op, i.mod, i.aMode, i.aVal, i.bMode, i.bVal]);
+  const code = (src) => {
+    const w = assemble(src, RULES);
+    return [w.start, ...w.instructions.map((i) => [i.op, i.mod, i.aMode, i.aVal, i.bMode, i.bVal])];
+  };
   const first = one.filter((e) => e.type === 'enter' && e.batch === 0);
   assert.ok(first.length > 0 && first.every((e) => e.ops === 'start' || !e.ops.includes('random')));
+  // 'start' is only a start warrior as it is; a moved ORG is 'org'
+  assert.ok(one.filter((e) => e.type === 'enter' && e.ops.split(' ').includes('start')).every((e) => e.ops === 'start' && e.batch === 0));
   const families = new Set(one[0].startWarriors.map((w) => w.family));
   assert.ok(first.every((e) => families.has(e.name.split(' ')[1])), 'a family of a start warrior');
   for (const e of first.filter((x) => x.ops === 'start')) {
@@ -352,6 +384,35 @@ test('--start: the first batch starts from the warriors of a folder', { skip }, 
   assert.deepEqual(stable(events(join(tmp, 'start4'))), stable(one));
   // without --start nothing changes: batch 0 is random warriors
   assert.ok(base.filter((e) => e.type === 'enter' && e.batch === 0).every((e) => e.ops === 'random'));
+});
+
+test('42spectrum: every child of every change counted once, the same result on any thread count', { skip }, () => {
+  const args = ['--opponents', join(root, 'warriors/koenigstuhl/tiny'), '--size', '800', '--cycles', '8000', '--processes', '800',
+    '--length', '20', '--distance', '20', '--panel', '6', '--children', '12', '--rounds', '8', '--confirm-rounds', '16'];
+  const runIt = (threads, out) => {
+    const r = spawnSync(spectrum, [...args, '--threads', threads, '--json', out, join(root, 'warriors/dwarf.red'), join(root, 'warriors/imp.red')], { encoding: 'utf8', timeout: 120000 });
+    assert.equal(r.status, 0, r.stderr);
+    return JSON.parse(readFileSync(out, 'utf8'));
+  };
+  const one = runIt('1', join(tmp, 'spectrum1.json'));
+  assert.deepEqual(runIt('3', join(tmp, 'spectrum3.json')), one);
+  assert.deepEqual(one.warriors.map((w) => w.name), ['Dwarf', 'Imp']);
+  for (const w of one.warriors) {
+    assert.equal(Object.keys(w.changes).length, 18);
+    for (const [name, c] of Object.entries(w.changes)) {
+      assert.equal(c.tried, 12);
+      assert.ok(c.applied <= c.tried);
+      assert.equal(c.identical + c.fatal + c.worse + c.same + c.better, c.applied, `${w.name} ${name}`);
+      assert.ok(c.confirmed <= c.better && c.sameCode <= c.identical);
+    }
+  }
+  // Dwarf has no far values at core 800: shared-constant and tune do not apply
+  assert.equal(one.warriors[0].changes['shared-constant'].applied, 0);
+  assert.equal(one.warriors[0].changes.tune.applied, 0);
+  assert.equal(one.warriors[0].changes.opcode.applied, 12);
+  assert.equal(one.warriors[1].changes.delete.applied, 0); // Imp has 1 instruction
+  // a new modifier for Dwarf's DAT changes the code but no result
+  assert.ok(one.warriors[0].changes.modifier.identical > one.warriors[0].changes.modifier.sameCode);
 });
 
 test('panel warriors never leave, also the weakest', { skip }, () => {

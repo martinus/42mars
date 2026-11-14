@@ -44,6 +44,8 @@ function fresh() {
     ticker: [],
     ghosts: [], // members that left, fading out of the matrix
     mapDirty: true,
+    opTotals: new Map(), // change -> [children, evaluated, past the screen, still in after the batch]
+    opBatches: [], // per batch: { batch, ops }
     mapIds: [],
     view: null,
   };
@@ -173,6 +175,15 @@ function handle(e) {
     case 'batch': {
       S.batch = e.batch;
       S.tried += e.evaluated;
+      if (e.ops) {
+        for (const [op, n] of Object.entries(e.ops)) {
+          const t = S.opTotals.get(op) ?? [0, 0, 0, 0];
+          n.forEach((v, i) => { t[i] += v; });
+          S.opTotals.set(op, t);
+        }
+        S.opBatches.push({ batch: e.batch, ops: e.ops });
+        opsDirty = true;
+      }
       const ms = alive();
       const pa = ms.map((m) => m.panelAvg ?? 0);
       S.history.push({ batch: e.batch, best: pa.length ? Math.max(...pa) : 0, mean: pa.length ? pa.reduce((a, b) => a + b, 0) / pa.length : 0, holdout: S.bestHoldout });
@@ -671,6 +682,97 @@ function drawTicker() {
   $('ticker').innerHTML = S.ticker.map((t) => `<li>${t}</li>`).join('');
 }
 
+// ------------------------------------------------------------------ operators and how it works
+
+// What each change does; the probabilities are in renderAbout() (genome.c).
+const OP_DOCS = {
+  opcode: 'a new opcode for one instruction',
+  modifier: 'a new modifier for one instruction',
+  mode: 'a new addressing mode for an A or B operand',
+  operand: 'a new A or B value or reference of one instruction',
+  org: 'moves the start (ORG) to another instruction',
+  replace: 'replaces one instruction with a new random one',
+  insert: 'inserts one or more new random instructions',
+  delete: 'deletes a block of instructions',
+  duplicate: 'copies a block of the warrior to another place in it',
+  move: 'moves a block to another place',
+  'crossover-insert': 'inserts a block of a second parent',
+  'crossover-replace': 'replaces a block with a block of a second parent',
+  reintroduce: 'a warrior pushed off earlier, back as it was',
+  random: 'a random warrior (first batch)',
+  start: 'a start warrior as it is (--start)',
+};
+
+let opsDirty = true, opsWindow = 0; // 0: the whole run, else the last this many batches
+
+function renderOps() {
+  opsDirty = false;
+  const from = opsWindow ? S.batch - opsWindow + 1 : -Infinity;
+  const totals = new Map();
+  for (const b of S.opBatches) {
+    if (b.batch < from) continue;
+    for (const [op, n] of Object.entries(b.ops)) {
+      const t = totals.get(op) ?? [0, 0, 0, 0];
+      n.forEach((v, i) => { t[i] += v; });
+      totals.set(op, t);
+    }
+  }
+  // from the newcomers: lasted 5 batches, change of the panel average against the first parent
+  const extra = new Map();
+  for (const x of S.w.values()) {
+    if (x.kind !== 'member' || x.born < from) continue;
+    for (const op of new Set(x.ops.split(' '))) {
+      const t = extra.get(op) ?? { old: 0, lasted: 0, gain: 0, compared: 0 };
+      if (S.batch - x.born >= 5) {
+        t.old++;
+        if ((x.died ?? S.batch) - x.born >= 5) t.lasted++;
+      }
+      const parent = S.w.get(x.parents[0]);
+      if (parent?.kind === 'member' && parent.panelAvg !== undefined && x.panelAvg !== undefined) t.gain += x.panelAvg - parent.panelAvg, t.compared++;
+      extra.set(op, t);
+    }
+  }
+  const rows = [...totals].sort((a, b) => b[1][0] - a[1][0]);
+  if (!S.opBatches.length) {
+    $('ops').innerHTML = '<p class="ops-note">This run\'s log has no counts per change: 42evolve writes them since #145 (14th November 2026). The newcomers\' changes are in their cards.</p>';
+    return;
+  }
+  const maxStay = Math.max(1e-9, ...rows.map(([, n]) => n[3] / Math.max(1, n[0])));
+  const pct = (a, b) => (b ? `${((100 * a) / b).toFixed(1)}%` : '–');
+  $('ops').innerHTML = `<div class="ops-toggle">children of each change in
+      <button data-window="0" class="${opsWindow ? '' : 'on'}">the whole run</button>
+      <button data-window="20" class="${opsWindow === 20 ? 'on' : ''}">the last 20 batches</button></div>
+    <table class="ops-table"><tr><th>change</th><th title="children with this change">children</th><th title="share that got past the screen and entered the list">screen</th><th title="share still in the list after their own batch">kept</th><th title="of the children that entered at least 5 batches ago, how many stayed 5 batches or more">5+</th><th title="mean change of the average against the panel, child minus first parent, over the children that entered">Δ</th></tr>
+    ${rows.map(([op, n]) => {
+      const x = extra.get(op);
+      const stay = n[3] / Math.max(1, n[0]);
+      const gain = x?.compared ? x.gain / x.compared : null;
+      return `<tr title="${esc(OP_DOCS[op] ?? op)}"><td>${esc(op)}</td><td>${n[0].toLocaleString('en-US')}</td><td>${pct(n[2], n[0])}</td>
+        <td><span class="bar" style="width:${Math.round((22 * stay) / maxStay)}px"></span>${pct(n[3], n[0])}</td>
+        <td>${x?.old ? `${x.lasted}/${x.old}` : '–'}</td>
+        <td class="${gain === null ? '' : gain < 0 ? 'neg' : 'pos'}">${gain === null ? '–' : `${gain >= 0 ? '+' : ''}${gain.toFixed(2)}`}</td></tr>`;
+    }).join('')}</table>
+    <p class="ops-note">A child with several changes counts for each of them. <b>Screen</b>: it scored well enough in the first ${S.start?.params.screenRounds ?? ''} rounds against the panel to play the full matches and enter the list. <b>Kept</b>: it was still in the list after its own batch, so the push-off kept it. <b>5+</b>: of the children that entered 5 or more batches ago, how many stayed 5 batches. <b>Δ</b>: its average against the panel minus the first parent's, for the children that entered. Hover a row for what the change does.</p>`;
+}
+
+function renderAbout() {
+  const st = S.start;
+  if (!st) return;
+  const p = st.params, r = st.rules;
+  const list = p.list, P = st.panel.length;
+  $('about').innerHTML = `
+    <h3>The rules</h3><p>'94 Redcode without p-space, core ${r.size}, ${r.cycles.toLocaleString('en-US')} cycles, at most ${r.processes} processes and ${r.length} instructions, distance ${r.distance}. A match is ${p.rounds} rounds; a win is 3 points, a tie 1. Scores are points per 100 rounds: 300 wins every round, 100 ties every round.</p>
+    <h3>Opponents</h3><p>From <code>${esc(st.opponents)}</code>: a <b>panel</b> of ${P} hill warriors that every evolved warrior plays${p.rotate ? `; every ${p.rotate} batches the panel warrior that is in longest makes room for another one of the folder` : ' and that never changes'}, and a <b>holdout</b> of ${st.holdout.length} that only the benchmark plays.</p>
+    <h3>The list (the hill)</h3><p>${list} evolved warriors. Each has a row of scores against <b>everyone in</b>: the ${P} panel warriors and the other evolved ones. Its <b>push-off value</b> is the average of that row × (the SD-score to the nearest other warrior, panel or evolved)<sup>${p.alpha}</sup>. The SD-score adds up, column by column, how far two rows differ, ${p.sd === 'sum' ? 'over the sum of the columns\' standard deviations (Eq. 6 of Ismael 2025)' : 'each column divided by its standard deviation (the pseudocode of Ismael 2025)'}. When a newcomer makes it ${list + 1}, the lowest value leaves. Strong <i>and</i> different stays; a clone of a strong warrior has distance 0 and goes first. The matrix shows the list by this value.</p>
+    <h3>A batch</h3><p>${p.batch} children are bred from the list. Each plays ${p.race && p.race < p.screenRounds ? `${p.race} rounds against each panel warrior, the best ${p.raceKeep} of them the rest of ` : ''}${p.screenRounds} rounds against each panel warrior: the <b>screen</b>. At most ${p.survivors} go on, picked by ${p.select === 'value' ? 'their estimated push-off value (screen score × distance to the nearest warrior in, on the panel columns)' : 'their screen score'}, and only if they reach ${p.screenFactor} × the weakest member's panel average once the list is full. They play the other ${p.rounds - p.screenRounds} rounds against the panel and ${p.rounds} rounds against every member, then enter one by one, each followed by the push-off. Children equal to one of the last 16,384 are skipped.</p>
+    <h3>Parents</h3><p>A tournament of two random members: ${p.parents === 'duel' ? 'the one with more points in their match against each other wins (a draw by push-off value)' : 'the higher push-off value wins'}. A crossover takes a second parent the same way. ${p.reintroduce ? `With probability ${p.reintroduce} a child is instead a warrior pushed off earlier, as it was.` : ''}${st.startWarriors?.length ? ` The first batch started from ${st.startWarriors.map((w) => esc(w.name)).join(', ')} (<code>${esc(st.start)}</code>) and mutants of them.` : ' The first batch is random warriors of up to ' + p.initLength + ' instructions.'}</p>
+    <h3>Mutation</h3><p>A child gets 1 change, and another one with probability 0.35 each time, up to 6 (1.5 on average). A change is:</p>
+    <p>54% a <b>point change</b> of one instruction: opcode 15%, modifier 15%, A mode 10%, B mode 10%, A operand 20%, B operand 20%, ORG 5%, the whole instruction new 5%;<br>
+    10% <b>insert</b> new instructions · 10% <b>delete</b> a block · 7% <b>duplicate</b> a block · 7% <b>move</b> a block · 12% <b>crossover</b>: a block of the second parent inserted, or put over a block (50:50). A block is 1 instruction, and one more with probability 0.6 each time.</p>
+    <p>Operands are <b>references</b> to an instruction of the warrior, kept across inserts and moves, or <b>values</b>. A changed reference points somewhere else (50%), at a neighbour (25%) or becomes a value (25%); a changed value moves by 1 to 4 (35%), becomes a new small value up to ±16 (20%), a far value (20%), its negative (10%), double or half (7%), or a reference (8%). New instructions: operands 40% references, 40% small values, 20% far values${p.fractions ? `; far values are near 1/2, 1/3, 2/3, 1/4 or 3/4 of the core with probability ${p.fractions}` : ''}. Opcodes, modifiers and modes are drawn ${p.prior === 'hill' ? 'as often as in the hill warriors of the folder' : 'uniformly'}.</p>
+    <h3>Benchmark</h3><p>Every ${p.benchEvery} batches the member with the best panel average plays the ${st.holdout.length} holdout warriors, ${p.benchRounds} rounds each. The best of those so far is <b>★ best</b> (and <code>best.red</code>).</p>`;
+}
+
 // ------------------------------------------------------------------ the card
 
 function listing(code, start) {
@@ -791,6 +893,18 @@ function wire() {
     if (b) openBattle(...b.dataset.battle.split(',').map(Number));
   });
   $('card-close').addEventListener('click', () => select(null));
+  $('tabs').addEventListener('click', (e) => {
+    const b = e.target.closest('button[data-tab]');
+    if (!b) return;
+    for (const x of $('tabs').querySelectorAll('button')) x.classList.toggle('on', x === b);
+    for (const t of document.querySelectorAll('.ticker-panel .tab')) t.hidden = !t.classList.contains(b.dataset.tab);
+    if (b.dataset.tab === 'tab-ops') renderOps();
+    if (b.dataset.tab === 'tab-about') renderAbout();
+  });
+  $('ops').addEventListener('click', (e) => {
+    const b = e.target.closest('button[data-window]');
+    if (b) opsWindow = Number(b.dataset.window), renderOps();
+  });
   $('c-best').addEventListener('click', () => { if (S.bestId !== null) select(S.bestId); });
   $('c-top').addEventListener('click', () => { const t = strongest(); if (t) select(t.id); });
   window.addEventListener('keydown', (e) => { if (e.key === 'Escape') select(null); });
@@ -824,7 +938,8 @@ function load(text) {
 }
 
 function connect() {
-  source = new EventSource('/run/events');
+  const run = new URLSearchParams(location.search).get('run');
+  source = new EventSource(run === null ? '/run/events' : `/run/${Number(run)}/events`);
   source.addEventListener('run', (e) => { document.title = `42evolve · ${JSON.parse(e.data).name}`; });
   source.addEventListener('reset', () => { S = fresh(); selected = null; renderCard(); });
   source.onopen = () => $('live').classList.add('on');
@@ -837,7 +952,7 @@ function connect() {
   };
 }
 
-let lastMap = 0, lastFrame = 0;
+let lastMap = 0, lastFrame = 0, lastOps = 0;
 function frame(now) {
   ease = 1 - Math.exp(-Math.min(500, now - (lastFrame || now)) / 110);
   lastFrame = now;
@@ -851,6 +966,7 @@ function frame(now) {
   }
   if (chipsDirty) drawChips();
   if (tickerDirty) drawTicker();
+  if (opsDirty && !$('ops').hidden && now - lastOps > 1000) lastOps = now, renderOps();
   requestAnimationFrame(frame);
 }
 
