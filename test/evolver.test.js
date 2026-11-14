@@ -70,6 +70,15 @@ test('the same seed gives the same run on 1 and 4 threads, and after a resume', 
   run(join(tmp, 'four'), [...TINY, '--threads', '4', '--batches', '6']);
   assert.deepEqual(stable(events(join(tmp, 'four'))), stable(base));
   run(join(tmp, 'resumed'), [...TINY, '--threads', '3', '--batches', '2']);
+  // the state as 42evolve wrote it before --select and --rotate: runs started
+  // then continue the same way
+  const file = join(tmp, 'resumed', 'state.txt');
+  const state = readFileSync(file, 'latin1');
+  const old = state.replace(/^(params( \S+){15}) \S+ \S+$/m, '$1').replace(/^panel-id \d+ /gm, 'panel ')
+    .replace(/^(reserve|reserve-next|rotate-next|slot) .*\n/gm, '');
+  assert.notEqual(old, state);
+  assert.doesNotMatch(old, /^(reserve|panel-id)/m);
+  writeFileSync(file, old);
   run(join(tmp, 'resumed'), ['--threads', '2', '--batches', '4']);
   const resumed = events(join(tmp, 'resumed'));
   assert.equal(resumed.filter((e) => e.type === 'resume').length, 1);
@@ -88,8 +97,9 @@ test('a run folder takes no new evolution options', { skip }, () => {
 
 // The matrix after every event, with slots given out as 42evolve does
 // (the lowest free one), and the push-off values of tools/diversity.js.
-test('the logged values are the push-off of the logged scores', { skip }, () => {
-  const start = base[0];
+// Returns the number of values events checked.
+function checkValues(evs) {
+  const start = evs[0];
   const rounds = start.params.rounds;
   const P = start.panel.length;
   const pts = new Map(); // "a,b" -> points per 100 rounds of a against b
@@ -98,10 +108,53 @@ test('the logged values are the push-off of the logged scores', { skip }, () => 
     pts.set(`${b},${a}`, ((3 * l + t) * 100) / rounds);
   };
   const slots = start.panel.map((w) => w.id);
+  const panel = new Set(slots); // the panel now
   let checked = 0;
-  for (const e of base) {
+  // the estimate of a newcomer: its screen points against the panel, the
+  // SD-score on the panel columns to the nearest warrior in when its batch
+  // started, with the standard deviations of then
+  let snap = null;
+  const estimate = (e) => {
+    if (!snap || snap.batch !== e.batch) {
+      const ids = slots.filter((x) => x !== null);
+      const cols = slots.slice(0, P);
+      const sigma = cols.map((k) => {
+        const v = ids.filter((r) => r !== k).map((r) => pts.get(`${r},${k}`));
+        const mean = v.reduce((a, b) => a + b, 0) / v.length;
+        return Math.sqrt(v.reduce((a, b) => a + (b - mean) ** 2, 0) / v.length);
+      });
+      snap = { batch: e.batch, ids, cols, sigma: new Map(cols.map((k, i) => [k, sigma[i]])) };
+    }
+    let best = Infinity;
+    for (const o of snap.ids) {
+      let num = 0, den = 0, sum = 0;
+      snap.cols.forEach((k, i) => {
+        if (k === o) return;
+        const d = Math.abs(e.screenPoints[i] - pts.get(`${o},${k}`)), sg = snap.sigma.get(k);
+        if (start.params.sd === 'sum') num += d, den += sg;
+        else if (sg > 0) sum += d / sg;
+      });
+      best = Math.min(best, start.params.sd === 'sum' ? (den > 0 ? num / den : 0) : sum);
+    }
+    if (best === Infinity) best = 0;
+    return e.screen * best ** start.params.alpha;
+  };
+  for (const e of evs) {
     if (e.type === 'panel') for (const [a, b, w, l, t] of e.scores) put(a, b, w, l, t);
+    if (e.type === 'rotate') {
+      assert.ok(panel.has(e.out) && !panel.has(e.panel.id) && !pts.has(`${e.panel.id},${e.out}`), `rotate ${e.out} -> ${e.panel.id}`);
+      panel.delete(e.out);
+      panel.add(e.panel.id);
+      slots[slots.indexOf(e.out)] = e.panel.id;
+      for (const [o, w, l, t] of e.scores) put(e.panel.id, o, w, l, t);
+      assert.equal(e.scores.length, slots.filter((x) => x !== null).length - 1, 'a new panel warrior plays everyone in');
+    }
     if (e.type === 'enter') {
+      assert.equal(e.screenPoints.length, P);
+      const screen = e.screenPoints.reduce((a, b) => a + b, 0) / P;
+      assert.ok(Math.abs(screen - e.screen) < 1e-3, `screen of ${e.id}`);
+      const est = estimate(e);
+      assert.ok(Math.abs(est - e.estimate) <= 1e-4 * Math.max(1, est), `estimate of ${e.id}: ${e.estimate}, not ${est}`);
       let s = slots.indexOf(null, P);
       if (s < 0) s = slots.push(null) - 1;
       slots[s] = e.id;
@@ -109,7 +162,7 @@ test('the logged values are the push-off of the logged scores', { skip }, () => 
       assert.equal(e.scores.length, slots.filter((x) => x !== null).length - 1, 'an entering warrior plays everyone in');
     }
     if (e.type === 'leave') {
-      assert.ok(!start.panel.some((w) => w.id === e.id), `panel warrior ${e.id} left`);
+      assert.ok(!panel.has(e.id), `panel warrior ${e.id} left`);
       slots[slots.indexOf(e.id)] = null;
     }
     if (e.type === 'values') {
@@ -120,8 +173,8 @@ test('the logged values are the push-off of the logged scores', { skip }, () => 
       assert.deepEqual(e.values.map((v) => v[0]), ids);
       // the sixth number: the average against the panel, without the own column
       e.values.forEach(([id, , , , , pAvg]) => {
-        const others = start.panel.filter((p) => p.id !== id);
-        const expect = others.reduce((s, p) => s + pts.get(`${id},${p.id}`), 0) / others.length;
+        const others = [...panel].filter((p) => p !== id);
+        const expect = others.reduce((sum, p) => sum + pts.get(`${id},${p}`), 0) / others.length;
         assert.ok(Math.abs(pAvg - expect) < 1e-5, `panel average of ${id}: ${pAvg}, not ${expect}`);
       });
       e.values.forEach(([id, avg, distance, nearest, value], i) => {
@@ -132,7 +185,63 @@ test('the logged values are the push-off of the logged scores', { skip }, () => 
       checked++;
     }
   }
-  assert.equal(checked, 6);
+  return checked;
+}
+
+test('the logged values are the push-off of the logged scores', { skip }, () => {
+  assert.equal(checkValues(base), 6);
+});
+
+// The warriors of one batch enter in the order of what they were picked by.
+function checkOrder(evs, key) {
+  const byBatch = new Map();
+  for (const e of evs.filter((x) => x.type === 'enter')) (byBatch.get(e.batch) ?? byBatch.set(e.batch, []).get(e.batch)).push(e[key]);
+  for (const [batch, keys] of byBatch) for (let i = 1; i < keys.length; i++) assert.ok(keys[i - 1] >= keys[i] - 1e-4, `batch ${batch}: ${keys}`);
+}
+
+test('survivors of the screen enter by their screen score', { skip }, () => {
+  assert.equal(base[0].params.select, 'screen');
+  checkOrder(base, 'screen');
+});
+
+test('--select value --rotate 2: survivors by estimated value, a panel that changes, the same run on any thread count', { skip }, () => {
+  const args = [...TINY, '--select', 'value', '--rotate', '2', '--survivors', '8'];
+  run(join(tmp, 'rot1'), [...args, '--threads', '1', '--batches', '6']);
+  const one = events(join(tmp, 'rot1'));
+  assert.equal(one[0].params.select, 'value');
+  assert.equal(one[0].params.rotate, 2);
+  // rotations before batches 2 and 4, each of the oldest panel warrior
+  const rot = one.filter((e) => e.type === 'rotate');
+  assert.deepEqual(rot.map((e) => e.batch), [2, 4]);
+  assert.deepEqual(rot.map((e) => e.out), one[0].panel.slice(0, 2).map((p) => p.id));
+  assert.equal(checkValues(one), 6);
+  checkOrder(one, 'estimate');
+  // and that is another order than the screen's in some batch
+  const enters = one.filter((e) => e.type === 'enter');
+  assert.ok(enters.some((e, i) => i && enters[i - 1].batch === e.batch && enters[i - 1].screen < e.screen - 1e-4), 'estimate and screen agree everywhere');
+  // the new panel warriors' matches play the same in the WebAssembly engine
+  const code = new Map(one[0].panel.map((w) => [w.id, w.source]));
+  for (const e of one) {
+    if (e.type === 'enter') code.set(e.id, `;name x\n${e.code}`);
+    if (e.type === 'rotate') code.set(e.panel.id, e.panel.source);
+  }
+  const m = createMarsSync(RULES);
+  let replayed = 0;
+  for (const e of rot) {
+    const members = e.scores.filter(([o]) => !one[0].panel.some((p) => p.id === o));
+    assert.ok(members.length > 0);
+    for (const [o, w, l, t, seed] of [e.scores[0], ...members.slice(0, 3)]) {
+      const r = m.runMatch([assemble(e.panel.source, RULES), assemble(code.get(o), RULES)], { seed, rounds: one[0].params.rounds });
+      assert.deepEqual([r.warriors[0].wins, r.warriors[0].losses, r.warriors[0].ties], [w, l, t], `${e.panel.name} against ${o}`);
+      replayed++;
+    }
+  }
+  assert.ok(replayed >= 6);
+  run(join(tmp, 'rot4'), [...args, '--threads', '4', '--batches', '6']);
+  assert.deepEqual(stable(events(join(tmp, 'rot4'))), stable(one));
+  run(join(tmp, 'rot-resumed'), [...args, '--threads', '3', '--batches', '3']);
+  run(join(tmp, 'rot-resumed'), ['--threads', '2', '--batches', '3']);
+  assert.deepEqual(stable(events(join(tmp, 'rot-resumed'))), stable(one));
 });
 
 test('panel warriors never leave, also the weakest', { skip }, () => {

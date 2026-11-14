@@ -54,7 +54,11 @@ typedef struct {
   double screen_factor, alpha, reintroduce;
   int sd;
   uint64_t seed;
+  int select;      // SELECT_SCREEN: survivors by screen score; SELECT_VALUE: by estimated push-off value
+  uint32_t rotate; // every this many batches a new hill warrior replaces the oldest of the panel, 0 never
 } params;
+
+enum { SELECT_SCREEN, SELECT_VALUE };
 
 static params default_params(void) {
   params p;
@@ -299,6 +303,8 @@ typedef struct {
 
   warrior *panel, *hold; // p.panel and p.holdout of them (fewer if the folder has fewer)
   uint32_t panel_n, hold_n;
+  char **reserve; // the other warriors of the folder, for --rotate, in the order they come
+  uint32_t reserve_n, reserve_next, rotate_next;
 
   // The matrix: slots 0 .. panel_n-1 are the panel, the others hold members
   // and entering candidates. wlt[a * cap + b]: a's results against b.
@@ -484,11 +490,11 @@ static void event_start(run *r) {
           "\"distance\":%u},\"params\":{\"panel\":%u,\"holdout\":%u,\"list\":%u,\"batch\":%u,\"survivors\":%u,"
           "\"rounds\":%u,\"screenRounds\":%u,\"benchEvery\":%u,\"benchRounds\":%u,\"initLength\":%u,"
           "\"screenFactor\":%.17g,\"alpha\":%.17g,\"reintroduce\":%.17g,\"sd\":\"%s\",\"seed\":%" PRIu64
-          "},\"opponents\":",
+          ",\"select\":\"%s\",\"rotate\":%u},\"opponents\":",
           m42_version(), p->rules.core_size, p->rules.max_cycles, p->rules.max_processes, p->rules.max_length,
           p->rules.min_distance, r->panel_n, r->hold_n, p->list, p->batch, p->survivors, p->rounds, p->screen_rounds,
           p->bench_every, p->bench_rounds, p->init_length, p->screen_factor, p->alpha, p->reintroduce,
-          p->sd == SD_SUM ? "sum" : "opponent", p->seed);
+          p->sd == SD_SUM ? "sum" : "opponent", p->seed, p->select == SELECT_VALUE ? "value" : "screen", p->rotate);
   json_str(f, p->opponents, 0);
   for (int k = 0; k < 2; k++) {
     fputs(k ? ",\"holdout\":[" : ",\"panel\":[", f);
@@ -528,7 +534,7 @@ static void event_panel(run *r) {
 
 // A new member: its results against every warrior in, [other, wins, losses,
 // ties, seed], the new member warrior 0 of each match.
-static void event_enter(run *r, uint32_t slot, double screen) {
+static void event_enter(run *r, uint32_t slot, double screen, double estimate, const unit *row) {
   FILE *f = r->events;
   const warrior *w = r->slot[slot];
   fprintf(f, "{\"type\":\"enter\",\"batch\":%u,\"id\":%" PRIu64 ",\"name\":", r->batch, w->id);
@@ -538,7 +544,9 @@ static void event_enter(run *r, uint32_t slot, double screen) {
     if (w->parents[k] != NO_ID) fprintf(f, "%s%" PRIu64, n++ ? "," : "", w->parents[k]);
   fputs("],\"ops\":", f);
   json_str(f, w->ops, 0);
-  fprintf(f, ",\"length\":%u,\"screen\":%.4f,\"code\":", w->g->len, screen);
+  fprintf(f, ",\"length\":%u,\"screen\":%.4f,\"estimate\":%.6f,\"screenPoints\":[", w->g->len, screen, estimate);
+  for (uint32_t k = 0; k < r->panel_n; k++) fprintf(f, "%s%.4f", k ? "," : "", points(row[k].s[0], r->p.screen_rounds));
+  fputs("],\"code\":", f);
   write_code(f, w->g, r->p.rules.core_size);
   fputs(",\"scores\":[", f);
   int first = 1;
@@ -592,15 +600,21 @@ static void save_state(run *r) {
   fprintf(f, "42evolve-state 1\n");
   fprintf(f, "rules %u %u %u %u %u\n", p->rules.core_size, p->rules.max_cycles, p->rules.max_processes,
           p->rules.max_length, p->rules.min_distance);
-  fprintf(f, "params %u %u %u %u %u %u %u %u %u %u %.17g %.17g %.17g %d %" PRIu64 "\n", p->panel, p->holdout, p->list,
-          p->batch, p->survivors, p->rounds, p->screen_rounds, p->bench_every, p->bench_rounds, p->init_length,
-          p->screen_factor, p->alpha, p->reintroduce, p->sd, p->seed);
+  fprintf(f, "params %u %u %u %u %u %u %u %u %u %u %.17g %.17g %.17g %d %" PRIu64 " %d %u\n", p->panel, p->holdout,
+          p->list, p->batch, p->survivors, p->rounds, p->screen_rounds, p->bench_every, p->bench_rounds, p->init_length,
+          p->screen_factor, p->alpha, p->reintroduce, p->sd, p->seed, p->select, p->rotate);
   fprintf(f, "opponents %s\n", p->opponents);
-  for (uint32_t i = 0; i < r->panel_n; i++) fprintf(f, "panel %s\n", r->panel[i].file);
+  for (uint32_t i = 0; i < r->panel_n; i++) fprintf(f, "panel-id %" PRIu64 " %s\n", r->panel[i].id, r->panel[i].file);
   for (uint32_t i = 0; i < r->hold_n; i++) fprintf(f, "holdout %s\n", r->hold[i].file);
+  for (uint32_t i = 0; i < r->reserve_n; i++) fprintf(f, "reserve %s\n", r->reserve[i]);
+  fprintf(f, "reserve-next %u\nrotate-next %u\n", r->reserve_next, r->rotate_next);
   fprintf(f, "batch %u\nnext %" PRIu64 "\nbest %" PRIu64 " %.17g\nevents %ld\n", r->batch, r->next_id, r->best_id,
           r->best_holdout, events_size);
   char text[GENOME_MAX * 40 + 64];
+  // the members' slots: a later newcomer takes the lowest free one, so a
+  // resumed run needs the holes where they were
+  for (uint32_t i = 0; i < r->active_n; i++)
+    if (r->slot[r->active[i]]->kind == MEMBER) fprintf(f, "slot %" PRIu64 " %u\n", r->slot[r->active[i]]->id, r->active[i]);
   for (uint32_t i = 0; i < r->active_n; i++) {
     const warrior *w = r->slot[r->active[i]];
     if (w->kind != MEMBER) continue;
@@ -670,7 +684,9 @@ static int load_state(run *r, const char *path) {
   char *text = read_file(path, &len);
   if (!text) return -1;
   char **panel = xmalloc(len * sizeof *panel / 8 + 8), **hold = xmalloc(len * sizeof *hold / 8 + 8);
+  uint64_t *panel_id = xmalloc(len * sizeof *panel_id / 8 + 8);
   uint32_t pn = 0, hn = 0;
+  r->reserve = xmalloc(len * sizeof *r->reserve / 6 + 8);
   params *p = &r->p;
   char *save = 0, **rest = xmalloc(len * sizeof(char *) / 4 + 8);
   uint32_t rn = 0;
@@ -684,14 +700,23 @@ static int load_state(run *r, const char *path) {
                  &p->rules.max_length, &p->rules.min_distance) != 5)
         goto bad;
     } else if (!strncmp(line, "params ", 7)) {
-      if (sscanf(line + 7, "%u %u %u %u %u %u %u %u %u %u %lg %lg %lg %d %" SCNu64, &p->panel, &p->holdout, &p->list,
-                 &p->batch, &p->survivors, &p->rounds, &p->screen_rounds, &p->bench_every, &p->bench_rounds,
-                 &p->init_length, &p->screen_factor, &p->alpha, &p->reintroduce, &p->sd, &p->seed) != 15)
-        goto bad;
+      // the last two came with --select and --rotate; a state without them has neither
+      const int got = sscanf(line + 7, "%u %u %u %u %u %u %u %u %u %u %lg %lg %lg %d %" SCNu64 " %d %u", &p->panel,
+                             &p->holdout, &p->list, &p->batch, &p->survivors, &p->rounds, &p->screen_rounds,
+                             &p->bench_every, &p->bench_rounds, &p->init_length, &p->screen_factor, &p->alpha,
+                             &p->reintroduce, &p->sd, &p->seed, &p->select, &p->rotate);
+      if (got != 15 && got != 17) goto bad;
     } else if (!strncmp(line, "opponents ", 10)) {
       snprintf(p->opponents, sizeof p->opponents, "%s", line + 10);
-    } else if (!strncmp(line, "panel ", 6)) {
+    } else if (!strncmp(line, "panel ", 6)) { // before --rotate: the ids are 0, 1, ...
+      panel_id[pn] = pn;
       panel[pn++] = line + 6;
+    } else if (!strncmp(line, "panel-id ", 9)) {
+      int used = 0;
+      if (sscanf(line + 9, "%" SCNu64 " %n", &panel_id[pn], &used) != 1 || !used) goto bad;
+      panel[pn++] = line + 9 + used;
+    } else if (!strncmp(line, "reserve ", 8)) {
+      r->reserve[r->reserve_n++] = xstrdup(line + 8);
     } else if (!strncmp(line, "holdout ", 8)) {
       hold[hn++] = line + 8;
     } else {
@@ -701,14 +726,25 @@ static int load_state(run *r, const char *path) {
   p->rules.rounds = p->rounds;
   p->rules.warriors = 2;
   load_list(r, &r->panel, &r->panel_n, panel, pn, PANEL, 0);
+  for (uint32_t i = 0; i < pn; i++) r->panel[i].id = panel_id[i];
   load_list(r, &r->hold, &r->hold_n, hold, hn, HOLDOUT, pn);
   setup_matrix(r);
   warrior *last = 0;
+  uint64_t *slot_id = xmalloc(r->cap * sizeof *slot_id);
+  uint32_t *slot_at = xmalloc(r->cap * sizeof *slot_at), slots = 0;
   for (uint32_t i = 0; i < rn; i++) {
     line = rest[i];
+    if (!strncmp(line, "slot ", 5)) { // before the member lines; states before them have none
+      if (slots >= r->cap || sscanf(line + 5, "%" SCNu64 " %u", &slot_id[slots], &slot_at[slots]) != 2 ||
+          slot_at[slots] < r->panel_n || slot_at[slots] >= r->cap)
+        goto bad;
+      slots++;
+      continue;
+    }
     if (sscanf(line, "batch %u", &r->batch) == 1 || sscanf(line, "next %" SCNu64, &r->next_id) == 1 ||
         sscanf(line, "best %" SCNu64 " %lg", &r->best_id, &r->best_holdout) == 2 ||
         sscanf(line, "archive-next %u", &r->archive_next) == 1 || sscanf(line, "seen-next %u", &r->seen_next) == 1 ||
+        sscanf(line, "reserve-next %u", &r->reserve_next) == 1 || sscanf(line, "rotate-next %u", &r->rotate_next) == 1 ||
         !strncmp(line, "events ", 7) || !strcmp(line, "end"))
       continue;
     if (!strncmp(line, "member ", 7)) {
@@ -723,7 +759,11 @@ static int load_state(run *r, const char *path) {
         goto bad;
       w->w = make_warrior(w->g, &p->rules);
       name_text(w->name, sizeof w->name, w->adjective, w->noun, w->earlier);
-      r->slot[free_slot(r)] = w;
+      uint32_t at = UINT32_MAX;
+      for (uint32_t k = 0; k < slots; k++)
+        if (slot_id[k] == w->id) at = slot_at[k];
+      if (at != UINT32_MAX && r->slot[at]) goto bad;
+      r->slot[at != UINT32_MAX ? at : free_slot(r)] = w;
       last = w;
     } else if (!strncmp(line, "ops ", 4) || !strcmp(line, "ops")) {
       if (last) snprintf(last->ops, sizeof last->ops, "%s", line[3] ? line + 4 : "");
@@ -753,12 +793,15 @@ static int load_state(run *r, const char *path) {
       goto bad;
     }
   }
+  free(slot_id);
+  free(slot_at);
   rebuild_active(r);
   compute_values(r);
   ok = 1;
 bad:
   free(text);
   free(panel);
+  free(panel_id);
   free(hold);
   free(rest);
   if (!ok) fprintf(stderr, "42evolve: %s is not a state file of this version\n", path);
@@ -784,7 +827,9 @@ typedef struct {
   uint32_t noun; // the family's noun, from the first parent
   char ops[96];
   int skip;
-  double screen; // average against the panel in the screen rounds
+  double screen;   // average against the panel in the screen rounds
+  double estimate; // screen * (SD-score to the nearest warrior in, on the panel columns)^alpha
+  double key;      // what the survivors are picked by: screen or estimate
   uint64_t id;
 } candidate;
 
@@ -811,9 +856,9 @@ static speed pool_speed(const pool *p) {
   return s;
 }
 
-static int by_screen(const void *a, const void *b) {
+static int by_key(const void *a, const void *b) {
   const candidate *x = *(candidate *const *)a, *y = *(candidate *const *)b;
-  if (x->screen != y->screen) return x->screen < y->screen ? 1 : -1;
+  if (x->key != y->key) return x->key < y->key ? 1 : -1;
   return x < y ? -1 : 1;
 }
 
@@ -854,11 +899,86 @@ static void bench(run *r, uint32_t slot) {
   }
 }
 
+// The candidate's SD-score to the nearest warrior in, from its screen results
+// against the panel (row[j] for panel warrior j) and the panel columns of the
+// others, raised to alpha: its push-off value is about screen * this. The
+// standard deviations are those of the last compute_values().
+static double estimated_distance(const run *r, const unit *row, uint32_t rounds) {
+  double best = INFINITY;
+  for (uint32_t i = 0; i < r->active_n; i++) {
+    const uint32_t o = r->active[i];
+    double num = 0, den = 0, sum = 0;
+    for (uint32_t k = 0; k < r->panel_n; k++) {
+      if (k == o) continue;
+      const double d = fabs(points(row[k].s[0], rounds) - r->pts[o * r->cap + k]);
+      if (r->p.sd == SD_SUM) num += d, den += r->sigma[k];
+      else if (r->sigma[k] > 0) sum += d / r->sigma[k];
+    }
+    const double dist = r->p.sd == SD_SUM ? (den > 0 ? num / den : 0) : sum;
+    if (dist < best) best = dist;
+  }
+  if (best == INFINITY) best = 0;
+  return r->p.alpha == 1 ? best : pow(best, r->p.alpha);
+}
+
+// --rotate: the panel warrior that is in longest makes room for the next
+// warrior of the pool, which goes to the end of the pool. The new one plays
+// everyone in, as warrior 0 with the seed of the other (it has the highest id).
+static void rotate_panel(run *r) {
+  if (!r->reserve_n) return;
+  const uint32_t i = r->rotate_next;
+  r->rotate_next = (i + 1) % r->panel_n;
+  warrior *w = load_opponent(r, r->reserve[r->reserve_next], 0);
+  if (!w) exit(1);
+  warrior *old = &r->panel[i];
+  const uint64_t out = old->id;
+  free(r->reserve[r->reserve_next]);
+  r->reserve[r->reserve_next] = old->file;
+  r->reserve_next = (r->reserve_next + 1) % r->reserve_n;
+  m42_warrior_free(old->w);
+  free(old->source);
+  w->kind = PANEL;
+  w->id = r->next_id++;
+  *old = *w;
+  free(w);
+  unit *u = xmalloc(r->active_n * sizeof *u);
+  uint32_t n = 0;
+  for (uint32_t k = 0; k < r->active_n; k++) {
+    const uint32_t o = r->active[k];
+    if (o != i) u[n++] = (unit){old->w, r->slot[o]->w, seed_for(r, r->slot[o]->id), 0, r->p.rounds, {{0}}, 0, 0};
+  }
+  pool_run(&r->pool, u, n);
+  FILE *f = r->events;
+  fprintf(f, "{\"type\":\"rotate\",\"batch\":%u,\"out\":%" PRIu64 ",\"panel\":{\"id\":%" PRIu64 ",\"name\":", r->batch,
+          out, old->id);
+  json_str(f, old->name, 1);
+  fputs(",\"author\":", f);
+  json_str(f, old->author, 1);
+  fputs(",\"file\":", f);
+  json_str(f, old->file, 1);
+  fputs(",\"source\":", f);
+  json_str(f, old->source, 1);
+  fputs("},\"scores\":[", f);
+  n = 0;
+  for (uint32_t k = 0; k < r->active_n; k++) {
+    const uint32_t o = r->active[k];
+    if (o == i) continue;
+    set_result(r, i, o, u[n].s[0]);
+    fprintf(f, "%s[%" PRIu64 ",%u,%u,%u,%" PRId64 "]", n ? "," : "", r->slot[o]->id, u[n].s[0].wins, u[n].s[0].losses,
+            u[n].s[0].ties, u[n].seed);
+    n++;
+  }
+  fputs("]}\n", f);
+  free(u);
+  compute_values(r);
+}
+
 static void run_batch(run *r) {
   const params *p = &r->p;
   const uint32_t B = p->batch, P = r->panel_n;
   const double t0 = now();
   const speed s0 = pool_speed(&r->pool);
+  if (p->rotate && r->batch && r->batch % p->rotate == 0) rotate_panel(r);
   candidate *c = xmalloc(B * sizeof *c);
   const uint32_t core = p->rules.core_size;
   uint32_t evaluated = 0;
@@ -910,6 +1030,8 @@ static void run_batch(run *r) {
     double s = 0;
     for (uint32_t j = 0; j < P; j++, n++) s += points(u[n].s[0], p->screen_rounds);
     c[i].screen = P ? s / P : 0;
+    c[i].estimate = c[i].screen * estimated_distance(r, u + n - P, p->screen_rounds);
+    c[i].key = p->select == SELECT_VALUE ? c[i].estimate : c[i].screen;
   }
 
   // survivors: at least screen_factor of the weakest member's panel average
@@ -926,7 +1048,7 @@ static void run_batch(run *r) {
   uint32_t sn = 0;
   for (uint32_t i = 0; i < B; i++)
     if (!c[i].skip && c[i].screen >= threshold) sv[sn++] = &c[i];
-  qsort(sv, sn, sizeof *sv, by_screen);
+  qsort(sv, sn, sizeof *sv, by_key);
   if (sn > p->survivors) sn = p->survivors;
   for (uint32_t i = 0; i < sn; i++) sv[i]->id = r->next_id++;
 
@@ -993,7 +1115,7 @@ static void run_batch(run *r) {
     for (uint32_t j = 0; j < i; j++, fn++)
       if (slot_of[j] != UINT32_MAX) set_result(r, s, slot_of[j], f[fn].s[0]);
     rebuild_active(r);
-    event_enter(r, s, x->screen);
+    event_enter(r, s, x->screen, x->estimate, u + at);
     entered++;
     if (members(r) > p->list) {
       compute_values(r);
@@ -1059,7 +1181,7 @@ static void usage(void) {
           "usage: 42evolve <run folder> --opponents <dir> [--panel 40] [--holdout 100] [--list 20]\n"
           "         [--batch N] [--survivors N] [--rounds 100] [--screen-rounds 20] [--screen-factor 0.8]\n"
           "         [--bench-every 10] [--bench-rounds 100] [--alpha 1] [--sd opponent|sum]\n"
-          "         [--reintroduce 0.02] [--init-length 10] [--seed 1]\n"
+          "         [--reintroduce 0.02] [--init-length 10] [--seed 1] [--select screen|value] [--rotate N]\n"
           "         [--size 8000] [--cycles 80000] [--processes 8000] [--length 100] [--distance 100]\n"
           "         [--threads N] [--batches N] [--seconds S]\n"
           "       42evolve <run folder> [--threads N] [--batches N] [--seconds S]   (continue a run)\n");
@@ -1097,7 +1219,14 @@ int main(int argc, char **argv) {
     else if (!strcmp(a, "--batches")) batches = u, run_option = 1;
     else if (!strcmp(a, "--seconds")) seconds = d, run_option = 1;
     else if (!strcmp(a, "--opponents")) snprintf(p->opponents, sizeof p->opponents, "%s", v);
-    else if (!strcmp(a, "--sd")) {
+    else if (!strcmp(a, "--select")) {
+      if (!strcmp(v, "screen")) p->select = SELECT_SCREEN;
+      else if (!strcmp(v, "value")) p->select = SELECT_VALUE;
+      else usage();
+    } else if (!strcmp(a, "--rotate")) {
+      if (!number) usage();
+      p->rotate = u;
+    } else if (!strcmp(a, "--sd")) {
       if (!strcmp(v, "opponent")) p->sd = SD_OPPONENT;
       else if (!strcmp(v, "sum")) p->sd = SD_SUM;
       else usage();
@@ -1170,8 +1299,10 @@ int main(int argc, char **argv) {
     }
     load_list(&r, &r.panel, &r.panel_n, names, pn, PANEL, 0);
     load_list(&r, &r.hold, &r.hold_n, names + pn, hn, HOLDOUT, pn);
-    for (uint32_t i = 0; i < count; i++) free(names[i]);
-    free(names);
+    for (uint32_t i = 0; i < pn + hn; i++) free(names[i]);
+    r.reserve = names; // the rest, for --rotate
+    r.reserve_n = count - pn - hn;
+    memmove(r.reserve, names + pn + hn, r.reserve_n * sizeof *r.reserve);
     r.next_id = (uint64_t)pn + hn;
     r.best_id = NO_ID;
     r.best_holdout = -1;

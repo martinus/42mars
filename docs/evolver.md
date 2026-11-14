@@ -22,6 +22,8 @@ Ctrl-C ends the run after the current batch. `build/42evolve runs/a` continues i
 | `--screen-factor x` | 0.8 | a candidate needs this share of the weakest member's panel average after the screen |
 | `--alpha x`, `--sd opponent\|sum` | 1, opponent | push-off value = average * distance^alpha; the reading of the SD-score |
 | `--reintroduce p` | 0.02 | chance that a candidate is a warrior that was pushed off earlier |
+| `--select screen\|value` | screen | what the survivors of the screen are picked by: the screen score, or the estimated push-off value (screen score times the SD-score to the nearest warrior in, on the panel columns, to the power alpha) |
+| `--rotate N` | 0 | every N batches the oldest panel warrior makes room for the next warrior of the folder that is neither in the panel nor in the holdout; it plays everyone in once |
 | `--bench-every N`, `--bench-rounds N` | 10, 100 | the best member against the panel plays the holdout every N batches |
 | `--init-length N` | 10 | the longest random warrior of the start |
 | `--size --cycles --processes --length --distance` | pMARS's | the rules, e.g. `--size 800 --cycles 8000 --processes 800 --length 20 --distance 20` for the tiny hill |
@@ -42,6 +44,8 @@ The run folder gets `events.jsonl` (everything that happened, one JSON object pe
 **Names.** Each warrior that enters gets a name of its own adjective and its family's noun, which it takes from its first parent: a child of "Crimson Mantis" may be "Sneaky Mantis", a warrior bred from nothing starts a new family. A name given before gets a Roman numeral ("Sneaky Mantis II"), so names are unique in a run. 128 adjectives and 128 nouns ([`evolver/names.c`](../evolver/names.c)); the dashboard colors a family alike too. The number of a warrior (`id`) stays the key in the events.
 
 **All cores.** One thread per hardware thread, each with its own `m42_ctx`, takes matches from one shared queue; the main thread plays too. A match is one pair and one block of rounds, at most 100 rounds, so the queue has no long tail at the end of a phase. On the run below, 16 threads were 97.7% busy over 600 s, measured as time inside `m42_match()` over threads times wall time. The plan in #142 had batches bred one batch behind so that no thread waits at the end of a batch; with matches this small that was not needed.
+
+**Two answers to the long run below.** `--select value` picks the survivors of the screen by an estimate of their push-off value instead of their strength: the screen gives a candidate's row against the panel, so its SD-score to every warrior in can be computed on the panel columns. Every newcomer logs its `estimate` and its `screenPoints`, also with `--select screen`. `--rotate N` replaces the oldest panel warrior every N batches with the next one of the folder (those that leave go to the end of that queue), so the list cannot tune itself to 40 fixed opponents; the event `rotate` has the new warrior and its matches. Whether they help is E5: measured against the holdout at equal time.
 
 **What it does not have yet.** An LLM as mutation operator, islands, an opponent ladder (the panel is a random sample of the folder, weak and strong warriors), MSVC (it needs POSIX threads and `dirent.h`).
 
