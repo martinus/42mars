@@ -108,7 +108,7 @@ function handle(e) {
       for (const [a, b, w, l, t, seed] of e.scores) setRes(a, b, w, l, t, seed, a);
       break;
     case 'enter': {
-      const x = { id: e.id, kind: 'member', name: `e${e.id}`, code: e.code, parents: e.parents, ops: e.ops, length: e.length, screen: e.screen, born: e.batch, died: null, alive: true, enteredAt: now, value: null };
+      const x = { id: e.id, kind: 'member', name: e.name ?? `e${e.id}`, code: e.code, parents: e.parents, ops: e.ops, length: e.length, screen: e.screen, born: e.batch, died: null, alive: true, enteredAt: now, value: null };
       x.hue = hueFor(e.id, e.parents);
       S.w.set(e.id, x);
       let s = S.slots.indexOf(null, S.panel.length);
@@ -210,7 +210,8 @@ function drawMatrix(now) {
     m.row += (i - m.row) * ease;
   });
   S.ghosts = S.ghosts.filter((g) => now - g.leftAt < 900);
-  const labelW = 74, top = 26, gap = 10;
+  ctx.font = 'bold 11px ui-monospace, monospace';
+  const labelW = Math.min(220, Math.max(74, ...[...ms, ...S.ghosts].map((m) => ctx.measureText(m.name).width + 28))), top = 26, gap = 10;
   const cols = ms.length + panel.length;
   const cw = Math.max(3, (w - labelW - gap - 10) / Math.max(1, cols));
   const ch = Math.max(6, Math.min(36, (h - top - 10) / Math.max(8, ms.length)));
@@ -287,7 +288,7 @@ function warriorTip(id) {
   const x = S.w.get(id);
   if (!x) return '';
   if (x.kind !== 'member') return `<b>${esc(x.name)}</b> by ${esc(x.author)}<br>${f1(x.panelAvg)} against the panel`;
-  return `<b style="color:${hsl(x.hue)}">${x.name}</b> · batch ${x.born}${x.alive ? '' : ` to ${x.died}`}<br>${f1(x.panelAvg)} vs panel · value ${f1(x.value)}<br>nearest ${esc(nameOf(x.nearest))} at ${x.distance?.toFixed(2) ?? '–'}${x.holdout >= 0 ? `<br>holdout ${f1(x.holdout)}` : ''}`;
+  return `<b style="color:${hsl(x.hue)}">${esc(x.name)}</b> #${x.id} · batch ${x.born}${x.alive ? '' : ` to ${x.died}`}<br>${f1(x.panelAvg)} vs panel · value ${f1(x.value)}<br>nearest ${esc(nameOf(x.nearest))} at ${x.distance?.toFixed(2) ?? '–'}${x.holdout >= 0 ? `<br>holdout ${f1(x.holdout)}` : ''}`;
 }
 
 // ---------------- the novelty map: classical MDS of the rows against the panel
@@ -669,7 +670,7 @@ function renderCard() {
   let head;
   if (x.kind === 'member') {
     const parents = x.parents.map(link).join(' ') || 'none (random)';
-    head = `<h3 style="color:${color}">${x.name}</h3>
+    head = `<h3 style="color:${color}">${esc(x.name)} <small style="color:#6c7290;font-size:13px">#${x.id}</small></h3>
       <div class="sub">born in batch ${x.born}${x.alive ? ', in the list' : `, pushed off in batch ${x.died}`} · ${x.length} instructions · ${esc(x.ops)}</div>
       <div class="stats">${stat('vs panel', f1(x.panelAvg))}${stat('vs holdout', f1(x.holdout))}${stat('push-off value', f1(x.value))}
       ${stat('distance', x.distance?.toFixed(2) ?? '–')}${stat('nearest', x.nearest !== undefined && x.nearest !== null && S.w.has(x.nearest) ? link(x.nearest) : '–')}${stat('screen', f1(x.screen))}</div>

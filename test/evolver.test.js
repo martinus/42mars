@@ -33,8 +33,8 @@ async function build() {
   await cc('cc', ['-O2', '-c', '-o', lib, join(root, 'lib/42mars.c')]);
   const src = (f) => join(root, 'evolver', f);
   await Promise.all([
-    cc('cc', ['-O2', '-pthread', '-I', join(root, 'lib'), '-o', evolve, src('evolve.c'), src('genome.c'), src('pushoff.c'), lib, '-lm']),
-    cc('cc', ['-O2', '-I', join(root, 'lib'), '-I', join(root, 'evolver'), '-o', unit, join(root, 'test/c/evolver-test.c'), src('genome.c'), src('pushoff.c'), lib, '-lm']),
+    cc('cc', ['-O2', '-pthread', '-I', join(root, 'lib'), '-o', evolve, src('evolve.c'), src('genome.c'), src('pushoff.c'), src('names.c'), lib, '-lm']),
+    cc('cc', ['-O2', '-I', join(root, 'lib'), '-I', join(root, 'evolver'), '-o', unit, join(root, 'test/c/evolver-test.c'), src('genome.c'), src('pushoff.c'), src('names.c'), lib, '-lm']),
   ]);
 }
 
@@ -151,6 +151,26 @@ test('panel warriors never leave, also the weakest', { skip }, () => {
   assert.ok(evs.some((e) => e.type === 'leave'), 'the list was full and someone left');
 });
 
+test('every warrior has its own name, and its family name from its first parent', { skip }, () => {
+  const entered = base.filter((e) => e.type === 'enter');
+  const names = entered.map((e) => e.name);
+  assert.equal(new Set(names).size, names.length);
+  const noun = new Map();
+  let children = 0;
+  for (const e of entered) {
+    const m = /^([A-Z][a-z]+) ([A-Z][a-z]+)(?: ([IVXLCDM]+))?$/.exec(e.name);
+    assert.ok(m, e.name);
+    noun.set(e.id, m[2]);
+    if (e.parents.length && noun.has(e.parents[0])) {
+      assert.equal(m[2], noun.get(e.parents[0]), `${e.name}, child of ${e.parents[0]}`);
+      children++;
+    }
+  }
+  assert.ok(children > 10);
+  const best = readFileSync(join(tmp, 'one/best.red'), 'latin1');
+  assert.ok(names.includes(/^;name (.*)$/m.exec(best)[1]));
+});
+
 test('a logged match plays the same in the WebAssembly engine', { skip }, () => {
   const start = base[0];
   const code = new Map(start.panel.map((w) => [w.id, w.source]));
@@ -180,9 +200,9 @@ test('the best warrior against the holdout warriors is in best.red', { skip }, (
   assert.ok(benches.every((b) => [1, 3, 5].includes(b.batch) && b.scores.length === base[0].holdout.length));
   const best = benches.reduce((x, y) => (y.avg > x.avg ? y : x));
   const text = readFileSync(join(tmp, 'one/best.red'), 'latin1');
-  assert.match(text, new RegExp(`^;name e${best.id}$`, 'm'));
+  const entered = base.find((e) => e.type === 'enter' && e.id === best.id);
+  assert.match(text, new RegExp(`^;name ${entered.name}$`, 'm'));
   const w = assemble(text, RULES);
   assert.ok(w.ok);
-  const entered = base.find((e) => e.type === 'enter' && e.id === best.id);
   assert.equal(w.instructions.length, entered.length);
 });
