@@ -76,8 +76,11 @@ typedef size_t usize; // pointer-sized also on 64-bit Windows, where long is 32 
 // dispatch.h). cl /O2 takes superlinear time in the size of the loops of
 // execute2(): 141 s for lib/42mars.c with 32 cases, 37 s with 16, and the
 // program was as fast (docs/performance-log.md). That was measured with
-// the generic code inside the loops; since the sixth round it is a function
-// of its own, and nobody has timed cl with more cases since.
+// the generic code inside the loops. With it in exec_more() (sixth round)
+// more cases would pay: 32 in the loops and 96 in exec_more() are 32% faster
+// on a '94 hill, for 114 s instead of 22 s of cl. With 64 in the loops, or
+// 160 in exec_more(), cl stops optimizing and the program is 2 to 3 times
+// slower. MSVC is no target for speed (Martin, 14th November 2026): 16.
 #define M42_DISPATCH_16
 #else
 #define M42_FORCE_INLINE static inline

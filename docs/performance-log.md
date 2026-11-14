@@ -1945,6 +1945,52 @@ its wasm build 1.144 → 1.175 s, the other engines within 1%. On the '94
 pairs 42mars is 4.0 times pMARS and 1.7 times exMARS 0.01, on the bench
 pairs 5.0 and 1.9 times.
 
+### MSVC after the sixth round: 4 to 5% faster on a '94 hill, 6 to 8% slower on an '88 hill, and left so (14th November 2026)
+
+The sixth round was never built with MSVC. Before the release of 1.1.0 a
+one-off workflow on a branch (`msvc-speed`, not merged) built the `42mars`
+program with `cl /std:c11 /O2` (MSVC 19.51) on GitHub's `windows-latest`
+runner (4 vCPUs, AMD EPYC): from v1.0.0, from `main`, and from `main` with
+other numbers of cases for MSVC, written as "cases in the loops + cases in
+`exec_more()`" (`parts(count, near)` of `gen-dispatch.mjs` for the reduced
+variant). Whole processes on 20 pairs of `warriors/koenigstuhl/94nop`
+(every 27th file, two by two) and 20 of `88` (every 17th, with `-8`), 300
+rounds each from `-F 1334`, 5 alternating runs, median. All variants gave
+the results of v1.0.0 in every pair. Two runs on two runners; the changes
+are against v1.0.0 of the same run:
+
+| Variant | `cl` on `lib/42mars.c` | '94 hill | '88 hill |
+|---|---|---|---|
+| v1.0.0: 16 cases of the old list, generic code in the loops | 34.0 s, 28.3 s | 3.891 s, 3.121 s | 1.996 s, 1.555 s |
+| `main`: 16 + 0 | 27.1 s, 22.3 s | +4.6%, +4.0% | -5.7%, -7.9% |
+| 16 + 48 | 32.2 s | +18.9% | -1.7% |
+| 16 + 112 | 53.3 s | +18.3% | -1.2% |
+| 16 + 176 | 28.0 s | -41.9% | -36.9% |
+| 16 + 240 | 35.7 s | -43.3% | -33.9% |
+| 24 + 104 | 70.4 s | +22.9% | -1.6% |
+| 32 + 32 | 95.3 s | +29.1% | -1.8% |
+| 32 + 96 | 127.9 s, 113.5 s | +34.8%, +32.3% | +6.2%, +2.0% |
+| 32 + 160 | 99.8 s | -13.3% | -18.0% |
+| 48 + 80 | 257.9 s | +36.9% | +4.0% |
+| 64 + 64 | 34.5 s | -59.6% | -73.6% |
+| 64 + 192 | 30.4 s | -63.1% | -73.9% |
+
+Findings:
+- As it is, the MSVC build of 1.1.0 is 4 to 5% faster than 1.0.0 on the '94
+  hill and 6 to 8% slower on the '88 hill. Its 16 cases are 46% of the
+  '94 hill's instructions (the old 16: 19%) and 71% of the '88 hill's (the
+  old 16: 84%), and the generic code is behind a call now.
+- The cases in the loops are what counts for MSVC: 32 + 32 beats 16 + 112.
+  They cost compile time as before, 95 to 128 s for 32 and 258 s for 48.
+- There is a cliff. With 64 cases in the loops, or 160 and more in
+  `exec_more()`, `cl` is done in 30 s and the program is 2 to 4 times
+  slower: it gave up on optimizing those functions.
+
+Verdict: left at 16 (Martin: MSVC is not a primary target for speed). If
+that changes, 16 + 48 is nearly free (5 s more of `cl`, +19% on the '94
+hill, -2% on the '88 hill against 1.0.0), and 32 + 96 is the best the
+runner showed below 2 minutes of `cl`.
+
 ## Ideas from other simulators
 
 exMARS (Martin Ankerl, 2003, based on exhaust and pMARS) and the exMARS fork
