@@ -17,11 +17,13 @@ const RUNS = 5, ROUNDS = 300, COMPILE_LIMIT = 15 * 60;
 const variants = [
   { name: 'v1.0.0 (16 cases of the old list)', tree: join(root, 'old') },
   { name: 'main (16 cases)', tree: root },
-  { name: '16 + 48', near: 16, count: 64 },
-  { name: '16 + 112', near: 16, count: 128 },
-  { name: '16 + 240', near: 16, count: 256 },
+  { name: '24 + 104', near: 24, count: 128 },
+  { name: '32 + 32', near: 32, count: 64 },
   { name: '32 + 96', near: 32, count: 128 },
-  { name: '64 + 192', near: 64, count: 256 },
+  { name: '32 + 160', near: 32, count: 192 },
+  { name: '48 + 80', near: 48, count: 128 },
+  { name: '64 + 64', near: 64, count: 128 },
+  { name: '16 + 176', near: 16, count: 192 },
 ];
 
 const out = [];
