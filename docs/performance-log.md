@@ -13,7 +13,7 @@ core), Fedora, Node 22.22, clang 22. Numbers from a busy machine are marked.
 | Name | Command | What it is |
 |---|---|---|
 | bench | `node bench/bench.mjs <corpus> [--headless\|--wasm\|--wasm-match]` | 3 hill pairs (agony/bubbles, bomber/chalk, army/bananasplit), 200 rounds each, 22,667,265 instructions, single thread. Report median and range of at least 7 fresh processes. |
-| native | `node bench/bench-native.mjs <corpus> --runs 7` | the same battles on `lib/src/mars.c` built natively with `clang -O3 -march=native` |
+| native | `node bench/bench-native.mjs <corpus> --runs 7`; A/B: `node bench/ab-native.mjs <A> <B> --input <file> --early-tie --cpu <n>` (a version is a copy of `lib/`, or a `mars.c`) | the library built natively as `make` builds it (`-O3 -fPIC`, the context in caller memory), since the sixth round the build that is tuned. Up to the fifth round "native" was `clang -O3 -march=native -DM42_FIXED_CONTEXT`, the wasm build's code natively (`--flags`) |
 | corpus pairs | `node bench/bench-pairs.mjs <corpus> [--early-tie]` | 40 random corpus pairs (fixed generator, `--seed 1`), 30 rounds each, `runMatch`, single thread, 78,859,469 instructions; broader instruction mix than the bench. Before November 2026 an ad-hoc script with the same shape, so older corpus-pair numbers are relative only |
 | t20 | `node tools/tournament.mjs <first 20 corpus files> --rounds 100 --seed 1 --jobs 1 --engine wasm` | 190 pairings, single thread, includes early ties |
 | t80 | same with the first 80 corpus files, `--jobs 16` and `--jobs 31` | 3,160 pairings, the tournament number |
@@ -1426,6 +1426,524 @@ built for this under a one-time hook exception Martin asked for; the session
 read its `Makefile`, `bench.sh`, `doc.txt` and the first 30 lines of the
 register-width/MUL patch (not applied), wrote no engine code, and deleted
 the source tree afterwards (`$COREWAR_ORACLE/README.md`, `bin/exmars`).
+
+### Sixth round: a dispatch index in every cell and 512 specialized words; '94 hills 32 to 70% faster natively, '88 hills 6 to 14% (14th November 2026)
+
+From this round on the native library is what gets tuned, not the wasm
+build (Martin, 14th November 2026). The measure is the library as `make`
+builds it: `-O3 -fPIC`, the context in caller memory, with gcc 16.2.1 (what
+`cc` is here) and clang 22.1.8. Until now the native numbers of this log
+were `clang -O3 -march=native -DM42_FIXED_CONTEXT`, the wasm build's code
+natively; `bench/bench-native.mjs --flags` still builds that.
+
+The round has two halves, and the second one overturned part of the first.
+All earlier rounds, and the first half of this one, were measured on one
+corpus (t20, t80, corpus pairs, the bench), whose warriors are mostly in
+the style of ICWS'88: they execute 26 to 94 different instruction words,
+and the 32 words with a case were 96 to 99.9% of their instructions. The
+Koenigstuhl hills in `warriors/koenigstuhl` were never run. A '94 hill
+executes 200 to 1,020 different words; with the 32 words of `main` 79% of
+94nop's instructions ran the generic code, and `main` plays 94nop at 220M
+instructions/s where it plays the '88 hill at 420M. A code review of the
+first half found it: its 64 cases, ranked on the old corpus again, and the
+generic code behind a call made the '94 hills 12 to 23% slower than `main`.
+The second half ranks the words over 13 mixes, 9 of them hills, and has
+512 cases.
+
+Method: `bench/ab-native.mjs` (rewritten for this: several inputs, several
+compilers, `--cpu`; a version is a copy of `lib/` or a `mars.c`), every run
+pinned to CPU 2, which Martin locked to a fixed frequency. The ranges of 3
+runs are within 0.3% then, so 3 runs screen and 5 confirm. Every run
+executes a fresh copy of its binary: in the morning, with the machine in
+use, one file of a build ran 5% slower than six copies of it, every time
+(the path and the size of the environment made no difference, the cause
+was not found). In the night runs before that, builds of the same source
+agreed within 0.3%. Every variant executed exactly the instructions of
+`main` on every input.
+
+The inputs, all with early ties. Hills: random pairs of a Koenigstuhl hill
+with its settings, `node bench/bench-pairs.mjs warriors/koenigstuhl/<hill>
+--pairs P --rounds R <settings> --native-input <file>`:
+
+| Input | Pairs × rounds | Settings | Different words executed |
+|---|---|---|---|
+| 94nop | 300 × 20 | | 655 |
+| pspace (`pspace-top50`) | 200 × 20 | | 319 |
+| tiny | 600 × 200 | `--size 800 --processes 800 --cycles 8000 --length 20 --distance 20` | 1,023 |
+| nano | 1500 × 800 | `--size 80 --processes 80 --cycles 800 --length 5 --distance 5` | 280 |
+| lp | 300 × 20 | `--processes 8 --length 200 --distance 200` | 384 |
+| x | 20 × 10 | `--size 55440 --processes 10000 --cycles 500000 --length 200 --distance 200` | 203 |
+| odd | 150 × 10 | `--length 800 --distance 800` | 575 |
+| 88 | 200 × 20 | | 84 |
+| icws | 150 × 20 | `--size 8192 --cycles 100000` | 75 |
+| t20, t80s, corpus pairs, bench | as before; t80s is every 8th pairing of t80, the bench has 2,000 rounds | | 43, 62, 94, 26 |
+
+Everything of this round against `main` (its whole `lib/`, `git archive
+origin/main lib`), exactly the flags of the Makefile, 5 runs, M
+instructions/s, median (range):
+
+| Input | gcc `main` | gcc now | | clang `main` | clang now | |
+|---|---|---|---|---|---|---|
+| 94nop | 220.1 (219.8–223.2) | 358.6 (358.6–358.8) | +62.9% | 236.7 (235.6–237.3) | 348.3 (347.2–350.3) | +47.1% |
+| pspace | 207.6 (207.2–208.9) | 352.8 (352.2–352.9) | +69.9% | 221.4 (220.5–222.2) | 348.7 (347.9–349.1) | +57.5% |
+| tiny | 186.9 (185.8–188.4) | 283.4 (283.0–283.7) | +51.6% | 201.5 (199.2–203.0) | 278.0 (277.7–278.4) | +38.0% |
+| nano | 212.3 (212.1–212.7) | 309.4 (308.3–309.9) | +45.7% | 222.2 (220.9–222.6) | 293.3 (291.2–295.7) | +32.0% |
+| lp | 199.7 (199.1–201.8) | 307.2 (305.3–307.5) | +53.8% | 218.0 (217.6–219.3) | 295.4 (288.8–301.6) | +35.5% |
+| x | 224.3 (224.0–226.1) | 361.4 (350.9–361.6) | +61.1% | 235.5 (234.1–236.3) | 333.2 (328.6–339.1) | +41.5% |
+| odd | 240.3 (239.5–240.7) | 371.4 (370.8–372.1) | +54.6% | 248.1 (247.8–251.3) | 361.4 (359.4–363.9) | +45.7% |
+| 88 | 420.3 (419.8–420.7) | 466.6 (466.3–467.1) | +11.0% | 402.9 (400.6–404.9) | 460.7 (450.0–462.7) | +14.3% |
+| icws | 380.9 (379.4–383.3) | 434.3 (433.6–435.2) | +14.0% | 386.9 (386.4–392.9) | 410.5 (397.1–423.6) | +6.1% |
+| t20 | 423.4 (422.5–424.2) | 468.7 (468.3–469.5) | +10.7% | 414.6 (414.0–416.5) | 468.0 (466.3–470.1) | +12.9% |
+| corpus pairs | 404.9 (404.3–405.0) | 451.1 (450.9–451.9) | +11.4% | 391.5 (389.4–393.7) | 440.3 (437.3–446.3) | +12.5% |
+| t80s | 431.2 (431.0–431.5) | 477.0 (476.6–477.4) | +10.6% | 424.6 (423.8–425.1) | 468.2 (458.4–474.1) | +10.3% |
+| bench | 473.0 (473.0–473.2) | 516.7 (515.5–517.3) | +9.2% | 491.7 (490.6–492.8) | 528.5 (523.6–546.9) | +7.5% |
+
+What is in the code at the end of the round:
+- the dispatch index of the word in every cell (`Cell.hot`) and Huffman
+  trees of compares on it (first half, 1)
+- 256 cases in the instruction loops, 256 more in one function behind them
+  (`exec_more()`), the generic code for the rest (second half)
+- the index and the two values of the instruction loaded with loads of
+  their own (first half, 9; for every compiler since the second half)
+- for clang the loop counter hidden behind the loop of `execute2()` (first
+  half, 4), for the wasm build the index hidden from the optimizer
+- the core cleared through locals (first half, 6), and the warrior records
+  64-byte aligned ("Found on the way")
+
+Built in the first half and gone again by the end of the second: the
+shares in the compares of the tree (3), the alignment of the loop
+functions (7), the tie proof (8) and gcc without partial redundancy
+elimination (10).
+
+The wasm build, `bench/ab-wasm.mjs` (not pinned), 7 runs, t80 5, and the
+hills with `bench/bench-pairs.mjs --early-tie` (3 alternating runs), median
+(range):
+
+| Measure | `main` | this round | change |
+|---|---|---|---|
+| 94nop, 100 pairs × 20 rounds, M/s | 235.9 (233.8–236.8) | 299.0 (298.5–299.3) | +26.7% |
+| tiny, 300 pairs × 200 rounds, M/s | 193.2 (193.0–196.5) | 247.8 (246.9–248.1) | +28.3% |
+| bench, M/s | 360.7 (357.1–368.3) | 333.7 (330.4–338.8) | -7.5% |
+| corpus pairs, no early ties, M/s | 352.7 (344.8–356.9) | 346.3 (333.7–348.5) | -1.8% |
+| t20, s | 3.02 (3.00–3.11) | 2.97 (2.92–3.09) | -1.7% |
+| t80, 16 jobs, s | 2.96 (2.96–2.99) | 2.93 (2.93–2.99) | -1.0% |
+| t80, 31 jobs, s | 2.75 (2.75–2.76) | 2.68 (2.67–2.75) | -2.5% |
+
+The bench is three matches in 60 ms, and V8 now needs 17 ms instead of 8
+to compile the loop with its optimizing compiler.
+
+#### Second half: the hills
+
+What the mixes execute, and what the cases of each state cover (share of
+the executed instructions that run the generic code):
+
+| Mix | `main`, 32 cases | first half, 64 cases of the old corpus | 256 + 256 cases of 13 mixes |
+|---|---|---|---|
+| 94nop | 79.0% | 77.7% | 0.50% (2.2% more in `exec_more()`) |
+| pspace | 80.5% | 77.4% | 0.13% (0.8%) |
+| tiny | 84.7% | 83.0% | 1.18% (3.3%) |
+| nano | 83.5% | 83.3% | 0.47% (2.2%) |
+| lp | 69.0% | 65.2% | 0.11% (2.0%) |
+| 88 | 3.4% | 0.3% | 0.04% (0.1%) |
+| t20 | 1.3% | 0.0% | 0.00% |
+
+The ranking is `gen-dispatch.mjs --rank` over the count files of the 13
+inputs above (t80 whole), each weighted equally. Compares per instruction
+in the final trees: 5.0 to 5.5 on the '88-style mixes, 6.7 to 7.5 on the
+'94 hills (`main`: 5.5 for a word with a case).
+
+Each variant against the one named, 3 runs, gcc / clang:
+
+| Variant | '94 hills (94nop, pspace, tiny, nano, lp) | '88-style (t20, corpus pairs, 88) | Verdict |
+|---|---|---|---|
+| first half (64 cases of the old corpus, generic code behind a call) against `main` | -21% / -20%, -21% / -21%, -20% / -22%, -23% / -21%, -12% / -18% | +21% / +27% | the review's finding |
+| 128 cases in the loops, ranked over old and new mixes, against `main` | +60% / +45%, +65% / +38%, +39% / +7%, +36% / +2%, +47% / +7% | +12% / +10%, +13% / +8% | |
+| 256 cases | +63% / +51%, +65% / +56%, +49% / +36%, +46% / +29%, +56% / +35% | +10% / +10%, +11% / +11% | kept |
+| 384 cases against 256 | gcc +1% to +3%; clang -4% and -5% on 94nop and pspace, +1% to +4% on the others | gcc +1% to +2%, clang -6% | rejected |
+| 512 cases against 256 | gcc 0% to +4%; clang -4% and -8%, 0% to +3% | gcc +2%, clang -11% and -7% | rejected: clang's code for the larger loops |
+| 94nop three times the weight of the other mixes, against equal weights | gcc +2%, +1%, -2%, 0%, -3%; clang 0%, -2%, +3%, +3%, 0% | gcc 0%, clang -3% to -5% | rejected, no difference |
+| the '88-style mixes five times the weight | -5% to -8% | gcc +3%, clang -2% | rejected: for clang the size of the loops costs on the '88 mixes, not the depth of their words |
+| one jump table on the index (`switch (hot)`) instead of the tree, 256 cases | -18% to -28% / -11% to -17% | -23% / -24%, -24% / -21% | rejected, again |
+| the tree for 5 levels, then jump tables | -1% to -3% / -1% to -11% | -2% / -10%, -3% / -8% | rejected |
+| two levels, 256 cases in all: 32, 64, 96 or 128 in the loops, the others in a function behind them, against 256 in the loops | 64: -6% to -9% / -6% to -21%; 128: -2% to -3% / 0% to -4% | 64: -4% / -3%; 128: 0% / -1% | rejected: it does not bring the '88 mixes back either |
+| two levels: 256 in the loops and 256 more behind them (512 in all) against 256 | +1% to +3% / +2% to +4% | 0% to +1% / 0% | kept: object file 400 KB instead of 310 KB, gcc compiles it in 7.8 s instead of 6.7 s |
+| 512 more behind them (768 in all) | as 256 more | | rejected |
+| rare words in the case of an equal word (same code, another modifier or an unused mode) | not built: it covers 0.4 of 94nop's 2.3 points of generic code, 2.0 of tiny's 5.1 | | open |
+
+With 256 cases in the loops the three compiler-specific lines of the first
+half were measured again (94nop / tiny / t20 / 88, 3 runs, each line taken
+out):
+
+| Line | gcc | clang | Verdict |
+|---|---|---|---|
+| `#pragma GCC optimize("no-tree-pre", "no-gcse")` | 0.0% / +0.2% / -0.1% / 0.0% | not for clang | removed: nothing left of its 2 to 4% |
+| the fields of the instruction with loads of their own, gcc only | without: -0.5% / -1.8% / -2.9% / -2.0% | with them too: +3.4% / +2.7% / +4.6% / +4.4% | now for every compiler, no macro |
+| the shares in the compares (`M42_PROBABLY`) | without: -0.2% / +0.2% / -0.1% / -0.3% | without: +1.8% / +4.1% / +0.8% / -0.3% | removed |
+| the loop functions on a cache line (`M42_LOOP`) | without: -0.3% / -0.4% / -0.1% / 0.0% | without: 0.0% / -1.0% / 0.0% / -0.1% | removed with the three above: gcc +0.2% / +0.1% / +0.1% / -0.2%, clang +1.8% / +1.5% / +4.2% / +3.5% against the state before |
+| `M42_OPAQUE_CLANG(h)` | not for gcc | without: -5.1% / +0.8% / -7.2% / -6.4% | stays |
+| `M42_OPAQUE_WASM(hot)` | | wasm without it: bench -10.5%, pairs -3.7%, t20 +6.1% time; 570 64-bit compares in the module instead of 21 | stays |
+
+So a pragma and three macros of the first half are gone again. They were
+tuned to the 64 cases and stopped mattering with 256, the same thing the
+'88 corpus did to the whole first half one level up.
+
+What it costs: the object file of the library is 399 KB (gcc) instead of
+186 KB, gcc compiles it in 7.8 s instead of 2.6 s and clang in 2.5 s
+instead of 1.0 s, and the wasm module is 295 KB instead of 103 KB. A build
+without optimization, and MSVC, compile 16 cases (`M42_DISPATCH_16`): gcc
+`-O0` needs 18 s for 64 cases and 3.6 s for 16. MSVC was not built: with
+16 cases more than half of a '94 hill's instructions run the generic code
+behind a call there, so the Windows build is likely slower than 1.0.0 on
+those hills until someone times `cl` with more cases.
+
+The lesson for the method is in the perf-experiment skill: a dispatch
+change is judged on the hills, never on '88-style inputs alone.
+
+#### First half: tuned on the '88-style corpus alone
+
+Everything from here to "Tie rounds" was measured on t20, the corpus pairs,
+t80s and the bench only, with a list of 64 words ranked on that corpus. The
+steps and their numbers stand as measured; the totals of this half do not
+describe the final code. Built with `-fno-strict-aliasing
+-ffp-contract=off` on top of the Makefile's flags, which `bench-native.mjs`
+added until the second half (gcc's `main` is 2% slower with them, clang's
+loops for two warriors are the same).
+
+The dispatch alone (changes 1 to 5 below, the same instructions as `main`),
+M instructions/s, median (range):
+
+| Compiler | Input | `main` | changes 1 to 5 | change |
+|---|---|---|---|---|
+| gcc | t20 | 416.5 (416.0–416.5) | 476.5 (475.9–476.8) | +14.4% |
+| gcc | corpus pairs | 395.5 (393.7–396.0) | 452.4 (452.0–452.7) | +14.4% |
+| gcc | t80s | 423.0 (422.5–423.2) | 482.9 (475.7–483.4) | +14.2% |
+| gcc | bench | 469.2 (468.9–469.8) | 531.5 (530.6–531.9) | +13.3% |
+| clang | t20 | 410.7 (407.8–412.8) | 525.6 (525.2–526.3) | +28.0% |
+| clang | corpus pairs | 387.1 (385.0–389.2) | 494.4 (493.6–494.9) | +27.7% |
+| clang | t80s | 417.7 (412.8–418.1) | 530.3 (529.8–530.7) | +27.0% |
+| clang | bench | 484.7 (481.0–486.2) | 574.9 (574.7–575.5) | +18.6% |
+
+The other loops, 3 runs: t20 with core size 8192 (`execute2_any()`) gcc
+390.5 → 445.9 (+14.2%), clang 399.9 → 480.4 (+20.1%); 8 warriors of t20 in
+one core (`execute()`, 4 matches of 400 rounds) gcc 313.5 → 353.0 (+12.6%),
+clang 336.8 → 353.6 (+5.0%). The program, `build/42mars -b -r 4000 -F 1334`
+on the 3 bench pairs as in the README's chart (`make`, so gcc; whole
+processes, 5 alternating runs): 0.925 s (0.922–0.926) → 0.783 s
+(0.783–0.785), 482 → 569M/s, the same wins, losses and ties (before the
+loads of the values of 9, which add 1 to 2% for gcc). The README's
+chart and table are not changed: they are one measurement of all engines,
+and the others were not run again.
+
+The wasm build with changes 1 to 5, `bench/ab-wasm.mjs`: bench +7.5%,
+corpus pairs +4.2%, t20 -4.0% time, t80 -3.4% with 16 jobs and -5.4% with
+31.
+
+#### What changed in the first half
+
+The dispatch, five changes, each measured on top of the ones before it (3
+runs; t20 / corpus pairs / bench, t80s where it was run). Smaller ones
+follow below (6 to 10).
+
+| Change | gcc | clang |
+|---|---|---|
+| 1. The dispatch index of the instruction word in the cell's padding (`Cell.hot`), and a Huffman tree of compares on it instead of the switch on the word. 32 cases as before | +7.2% / +5.8% / +3.1% | +6.4% / +5.6% / +2.0% |
+| 2. The generic code as a function of its own (`exec_generic()`) | +1.8% / +1.1% / +4.2% | +7.9% / +5.8% / +7.5% |
+| 3. Every compare of the tree with the share of its likelier side (`M42_PROBABLY`) | +2.5% / +3.3% / +5.4% | +4.7% / +4.1% / +4.2% |
+| 4. The loop counter hidden from the code behind the loop (`M42_OPAQUE_CLANG(h)`) | +0.8% / 0.0% / +0.7%; with 2 and 3 in: -2.4% / -1.8% / -1.9%, so clang only | +11.1% / +5.9% / +11.3% |
+| 1 to 4 together against `main`, 32 cases (4 for clang only) | +12.4% / +9.5% / +11.8% | +26.2% / +22.3% / +20.5% |
+| 5. 64 cases instead of 32 | +4.4% / +6.8% / +3.4%, t80s +6.1% | +1.0% / +4.3% / +0.3%, t80s +3.3% |
+
+1. The switch on the 14-bit word was a balanced tree of compares: 3 or 4
+   range tests, then up to 3 tests for equality, 5.5 conditional branches
+   per instruction on the four mixes, the same for the most and the least
+   executed word, although 8 words are 66% of the executions. The padding of
+   the 8-byte cell now holds the number of the word's case, a function of
+   the word that `load()` and `start_round()` set and that `MOV.I` copies
+   with the cell. Nothing else writes a word. The index of a word without a
+   case is a number too, so no leaf has to test for equality, and the
+   indices are the leaves of a Huffman tree from left to right, so every
+   subtree is a range: 4.3 compares on average with 32 cases (4.4 with 64),
+   3 for the words above 9%. The public `m42_cell` shows the field: it is
+   `hot` instead of `pad` and `M42_CELL_LAYOUT` is 2.
+2. Inlined into the loops, the generic code was most of their code
+   (`execute2_8000()`: 3,910 lines of x86 with 32 cases, 2,977 with 64
+   cases and the generic code outside). clang kept the context pointer on
+   the stack and loaded it for every queue and core access. A call costs
+   more per generic instruction, which is why more cases pay now (5).
+3. The Huffman tree knows how likely each side of each compare is, and the
+   compilers lay out the likelier side as the straight path. Removed in
+   the second half: with 256 cases it costs clang 1 to 4% on the '94 hills.
+4. clang saw that `h` counts the pairs and gave the code behind the loop
+   counters of its own inside it: `-2 * pairs` in 64 bits, `-h`, and `h +
+   1` in a stack slot. An empty `asm` on `h` behind the loop removes them.
+   The arithmetic behind the loop from one 32-bit difference did not
+   (+0.4% / +0.1% / +1.0%). gcc has no such counters and loses 2% with
+   the `asm`.
+5. With the generic code behind a call, 64 cases beat 32 (on this corpus:
+   the second half has 256 in the loops and 256 behind them). 16: -8% to -13%
+   for gcc, -12% to -18% for clang; 24: 0 to -4% and -4% to -9%; 40: +2%
+   and -3% to -4%; 48: +3% to +5% and 0 to -2%; 80: +2% to +5% and -1% to
+   +4%; 96 (all words the four mixes execute but 0): +2% to +5% and -1%
+   to +5%. 64 words are 99.94% of the executed instructions of the four
+   mixes; `HOT` in `gen-dispatch.mjs` now has each word's share.
+
+6. `start_round()` clears the core through locals. With the core and
+   `m->N` both reached through the context pointer, clang read `m->N`
+   again after every store and cleared one cell per loop pass (4 x86
+   instructions per cell; with the static context of the wasm build the
+   clear was vectorized, which is why the second round measured 0.3% for
+   the round start). clang +0.7% / +0.6% / -0.2%, t80s +0.9%; gcc 0.
+7. The loops start on a cache line (`M42_LOOP`, `aligned(64)` on
+   `execute()`, `execute2_8000()`, `execute2_any()` and `exec_generic()`).
+   Alone: gcc +0.1% on t20 and 0.0% on the bench, clang 0.0% and +1.1%.
+   It is there for what it prevents: the code of 8, which never runs on
+   the bench, cost gcc 1.0% on t20 and 0.5% on the bench just by being
+   in the file, and 0.3% with the loops aligned.
+   Removed in the second half, where it made no difference anymore.
+8. A third exact tie proof for trapped warriors: built, measured and
+   removed again, see "Tie rounds" below.
+9. gcc only: `step()` loads the dispatch index and the two values of the
+   cell with loads of their own, the index first (`M42_LOAD_FIELDS`),
+   instead of one 64-bit load that it takes apart. The index: gcc +1.4% /
+   +1.5% / +2.3%, t80s +1.3%; clang -0.4% / -0.6% / -2.2%, t80s -0.5%. The
+   values, measured after 10: gcc +1.4% / +1.1% / +2.0%, t80s +2.3%; clang
+   -1.1% / -0.7% / -0.3%. So clang keeps the copy of the cell. gcc then
+   does 8.1 loads per simulated instruction instead of 6.2 and needs 10.35
+   cycles instead of 10.55: a 16-bit load takes its data from a 16-bit
+   store into that field that is still on its way, the 64-bit load of the
+   cell has to wait for it (fourth round, forwarding). In the second half
+   clang gains 3 to 5% from it too, and it is in the code for every
+   compiler.
+10. gcc only: no partial redundancy elimination (`#pragma GCC
+   optimize("no-tree-pre", "no-gcse")` in `platform.h`, for the whole
+   translation unit). On top of 9: +3.4% / +4.2% / +2.8% as options on the
+   command line; the index of 9 and 10 together as they are in the source:
+   +4.8% / +5.7% / +4.8%, t80s +4.6% (10 alone +1.6% / +3.8% / +1.9%, t80s
+   +2.0%). With other options the two give: `-O2 -fPIC` +4.8% / +5.6%
+   (t20 / pairs), `-O3 -fPIC -march=native` +5.2% / +6.4%, `-O3` +3.7% /
+   +4.3%, `-Os -fPIC` +1.9% / +1.8%.
+   With it gcc runs 40.9 x86 instructions and 10.54 cycles per simulated
+   instruction on t20 instead of 42.2 and 10.93, and `execute2_8000()` has
+   98 stack references instead of 138: PRE left copies of values behind
+   (`movzwl %r8w,%eax` of a register that a `movzwl` load had just
+   filled). This is a compiler option in the source, which Martin decided
+   against for the wasm build script on 10th November: it is one line to
+   remove. On top of it no other gcc pass is worth more than 1% (22
+   tried; `-fno-tree-sink` and `-fno-crossjumping` +0.9% each). Removed in
+   the second half: with 256 cases it changes nothing (0.0% on 94nop and
+   88, +0.2% on tiny, -0.1% on t20).
+
+Where the time goes, `perf stat` on t20, per simulated instruction:
+
+| Build | x86 instructions | cycles | branches | branch misses | loads |
+|---|---|---|---|---|---|
+| `main`, gcc | 47.9 | 12.62 | 9.96 | 0.066 | 6.87 |
+| `main`, clang | 49.0 | 12.87 | 7.38 | 0.068 | 8.66 |
+| change 1, gcc | 45.7 | 11.74 | 6.71 | 0.065 | 7.12 |
+| change 1, clang | 51.2 | 12.03 | 6.93 | 0.063 | 10.37 |
+| changes 1 to 4, 32 cases, gcc | 45.0 | 11.49 | 6.83 | 0.065 | 5.98 |
+| changes 1 to 4, 32 cases, clang | 42.3 | 10.16 | 7.44 | 0.067 | 6.47 |
+
+With change 1 clang ran more instructions than before and was still 6%
+faster, and the computed goto below ran 20% fewer for the same cycles: the
+instruction count does not predict the time natively either. Top-down
+(`perf stat -M PipelineL1,PipelineL2`, gcc, t20): `main` retiring 57.9%,
+backend bound 22.4% (memory 19.6%), frontend bound 13.3%, bad speculation
+6.5%; change 1: 60.8%, 20.0% (17.3%), 11.5%, 7.4%.
+
+How 2 to 4 were found: a profile-guided clang build of change 1
+(`-fprofile-instr-generate`, trained on t80s) was 8% faster (t20 438 →
+473, pairs 412 → 446, bench 492 → 520), with 2.3 loads fewer per simulated
+instruction. So the profile told clang something the source did not. With
+changes 2 to 4 in, the profile is worth 1% (t20 518.6 → 523.8). gcc's
+profile-guided build was slower both times (t20 448 → 436 and 460 → 442).
+
+The 16 cases that MSVC builds (`-DM42_DISPATCH_16` with gcc and clang, `main`
+with 16 against this round with 16): gcc +4.4% / -1.1% / +2.5%, t80s -0.4%;
+clang +9.7% / +3.2% / +8.9%, t80s +4.5%. MSVC itself was not built: `cl`
+needed 141 s for 32 cases when the generic code was inside the loops, and
+nobody has timed it with the generic code outside. More cases for MSVC
+need a run of CI's Windows job.
+
+#### Rejected in the first half
+
+| Idea | Result | Verdict |
+|---|---|---|
+| A tree on the instruction word with weights: range tests placed by the shares, equality tests in the leaves, no index in the cell (4.9 branches per instruction instead of 5.5) | gcc +1.6% / +0.3% / -3.7%, clang +3.2% / +0.2% / -6.4%; `-march=native -DM42_FIXED_CONTEXT` -0.9% / -2.3% / -10.9% | rejected: natively the switch already had a jump table for the 10 hot words between 2310 and 2409 |
+| A jump table on the index (`switch (hot)`, dense) | clang, fixed context, t20: 434.2 → 405.4 (-6.6%) | rejected, as in the second round: one indirect jump for all words |
+| Threaded code: a label per case and turn, a table of label addresses indexed by the index, every case ends with the pop of the other warrior's instruction and its own `goto *` (`execute2_8000()` only, on change 1) | gcc: t20 and pairs as change 1, t80s -1.4%, bench -5.0% against it; clang -7% to -24% against `main`. gcc merged the 66 jumps into 12, clang into 8. gcc, t20, per simulated instruction: 36.5 x86 instructions instead of 45.7, 11.80 cycles instead of 11.74, 0.083 branch misses instead of 0.065, frontend bound 23.9% (latency 14.5%), bad speculation 11.5% | rejected. The compares of the tree are predicted better than the jumps, and the instructions they cost are not what limits the loop |
+| The index loaded on its own before the cell (`C[pc].hot`), instead of from the cell's copy | gcc +2.3% / +2.3% / +3.0%, t80s +2.0%; clang -2.0% / -1.0% / -1.6%, t80s -1.3% | rejected: one compiler's gain is the other's loss |
+| `SPL`: the new process queued after the common push at the end of `exec_core()`, so that no case has a push of its own (clang had merged the pushes into one with a variable step, 5 instructions) | clang -5.5% / -4.7% / -2.6%, t80s -5.8%; gcc 0 | rejected |
+| `DJN.A`/`.B`/`.AB`/`.BA` from one 16-bit load: test and decrement the value read once, where the B mode is no post-increment (measured last, on everything else) | gcc +1.2% / +0.7% / +0.9%, t80s +0.3%; clang -0.3% / -0.1% / -1.0%, t80s -0.3% | rejected: one compiler's gain is the other's loss |
+| gcc only, after 9: the B values of `ADD.AB`, `JMZ.B`, `DJN.B` and the like as 16-bit loads of one field instead of a 32-bit load and a shift, where the B mode is no post-increment | gcc -3.3% / -4.0% / -0.6%, t80s -4.2% | rejected. What helped at the fetch of the instruction hurts at its B operand |
+| Words that run the same share a leaf of the tree: `spl.b $ #` with `spl.b $ $`, `jmp.b $ #` with `jmp.b $ $`, `dat.f # #` with `dat.f $ $`, `spl.b @ #` with `spl.b @ $` (60 leaves; `DAT` 7.3% at depth 4 instead of two leaves at 5). In the index only, so no case has two labels as in the third round | gcc +0.6% / +2.0% / +0.2%, t80s +2.4%; clang -3.8% / -2.3% / -2.4%, t80s -2.5% | rejected. Open for gcc alone; with every equal word in the index (7 modifiers and 4 B modes of `SPL`) it would also widen what runs specialized |
+| The index hidden from the optimizer for every compiler (what the wasm build needs, below) | gcc -1.3% / -1.0% / -0.7%, clang -0.8% / -0.8% / -2.3% | wasm only (`M42_OPAQUE_WASM`) |
+| gcc options, to find what holds gcc 10% behind clang (changes 1 to 4, 32 cases; t20 / pairs): `-fno-tree-pre` +2.8% / +3.6%, `-fno-tree-vrp` +2.7% / +2.4%, `-fno-tree-sink` +2.0% / +1.3%, 20 others within 1% or slower (`-fno-if-conversion` -6% / -8%) | no single cause | nothing changed |
+| clang options on the final code: `-mllvm -tail-dup-size=0` +1.4% / +1.3%; `-disable-lsr`, sink and hoist off together +0.8% / +0.9%; 11 others slower | below 1.5% | nothing changed |
+
+The three LLVM options of 9th November were worth 3% natively then;
+changes 2 and 4 took what they gave.
+
+#### The wasm build
+
+The first build of change 1 was slower in wasm: bench -6.6%, pairs -4.1%,
+t20 +4.6% (7 runs). clang for wasm32 loads the cell as one 64-bit value and
+had turned every compare of the tree into `i64.gt_u` of that value against
+a 64-bit constant, which V8 loads into a register first. With the index
+hidden from the optimizer (`M42_OPAQUE_WASM(hot)`, an empty `asm`) the tree
+compares 32-bit values, and the wasm build gains too (table above).
+
+#### Tie rounds: where a new proof could come from
+
+`bench/tie-ceiling.c` got a second oracle in a scratch copy (not in the
+repository): per tie round the last instruction at which a process of each
+warrior died. A warrior is safe from the earlier of that and of the count
+proof; a proof of the form "no process dies anymore" could stop the round
+when both are. Share of all instructions executed today:
+
+| | tie rounds today | after the last death | closed loops of any size (#27) |
+|---|---|---|---|
+| t20 | 35.7% | 8.3% | 1.5% |
+| t80 | 47.1% | 17.7% | 5.4% |
+| 400 corpus pairs | 56.2% | 24.0% | 11.5% |
+
+So most of what is left are rounds in which nobody dies and the executed
+cells still change, or the loops write through pointers. By the process
+counts at the end, t80: both at 8,000 processes 5.0% of all executed
+instructions (2.9% after the last death), both with one process 4.4%
+(3.7%), one against 8,000 3.2% (1.7%). The rounds at 8,000 against 8,000
+are two warriors caught in each other's traps (`banzai2` against `charon2`:
+all 16,000 processes on `spl 0` and `jmp -1`), often with a decrement in
+the trap (`spl 0, <-1`).
+
+A proof for those, checked in the oracle at every tie check: from all
+queued addresses follow the control flow (both ways at every conditional).
+It holds when no reached cell is `DAT`, `DIV`, `MOD`, `LDP` or `STP`, every
+jump target and every written cell is at a fixed place, and no instruction
+writes a field that a reached instruction needs (its word, the value that
+addresses its operand, the pointer of an indirect operand). Then by
+induction the reached cells keep what is needed, the processes stay on
+them, and nobody dies (semantics doc, 3.7).
+
+| | saved, share of all executed instructions | rounds | wrong proofs |
+|---|---|---|---|
+| t20 | 0.27% | 37 of 19,000 | 0 |
+| t80 | 2.21% | 3,483 of 316,000 | 0 |
+| 400 corpus pairs | 3.10% | 161 of 12,000 | 0 |
+
+The same without writes at all (a frozen core) saves 0.08%, 0.88% and
+0.65%; with constant conditions decided instead of both ways 0.27%, 2.32%
+and 3.48%. Where the proof fails after the last death, t80: a `DAT` in
+reach 7.9% of all executed instructions, a write through a pointer that
+changes 5.2%, a write to a field that is needed 1.5% (the first failure
+found counts, so the three overlap).
+
+Built as a function `settled()` in `mars.c`, tried from `tie_check()`, and
+removed again the same day. What a try costs decided the schedule (p4 is
+this round without the proof; time for the whole input, gcc / clang):
+
+| Schedule | t20 | corpus pairs | t80s | bench |
+|---|---|---|---|---|
+| tries at 0, 1024 and then 1.5 times as late (11 per round of 160,000), `%` for every address, conflicts tested at the end | +1.8% / +1.0% | +0.5% / -0.1% | +1.5% / +0.6% | +2.1% / +1.9% |
+| the same, times doubling (8 tries), no division, a conflict ends the try at once | +1.4% / +0.4% | -0.8% / -1.4% | +0.7% / -0.4% | +1.1% / +0.1% |
+| that with the loops aligned (7 above) | +0.4% / +0.4% | -1.5% / -1.5% | -0.6% / -0.8% | +0.3% / +0.7% |
+| first try at 4096, then 3 times as late (4 tries), loops aligned: the last one | +0.3% / +0.1% | -1.9% / -1.7% | -0.4% / -0.7% | +0.1% / 0.0% |
+
+With the last schedule it executed 0.16% fewer instructions on t20, 1.44%
+on t80s (1.7% on all of t80: 16,055M instead of 16,335M) and 2.70% on the
+corpus pairs. The time fell by less than the instructions: the skipped
+ones are `SPL` and `JMP` in a trap, the cheapest there are. A failed try
+looked at about 30 cells, the body of a warrior, and a try that held
+passed over both queues. `bench/tie-ceiling.mjs`, which plays every round
+to its end and fails when an early tie stops a round that is none, ran
+all 347,000 rounds of t20, t80 and the corpus pairs with it: no wrong tie.
+
+Verdict: removed (Martin: 190 lines for a slowdown on part of the inputs is
+not a good deal). It gained 0.4 to 1.9% of the time on the mixes with
+old-style warriors and lost 0.1 to 0.3% on t20 and the bench. A proof of
+this kind has to cost nothing where it does not apply, or be much smaller.
+Its test had a lesson of its own: the first version let 5 of 9 mutants of
+the proof through, because its warriors did their damage before the
+proof's first try, after 4096 instructions.
+
+Found on the way: the warrior records were declared with 128-byte
+alignment, and the context's heap is 64-byte aligned. They were at a
+multiple of 128 only through the size of `Mars`; the fields of the tie
+proof moved them, and UBSan reported it in 24 of the 54 C tests. They are 64-byte
+aligned now (no change in speed, 3 runs), and `test/c/api-test.c` plays a
+match in a context at 6 odd offsets.
+
+Also looked at: `execute()` for clang has no stack traffic in its loop (21
+stack references in the function); after this round the loop function has
+98% of the cycles on t20 and the bench, `start_round()` 0.7 to 1.8%, the
+tie checks 0.7%. Top-down on t20 at the end (`perf stat -M
+PipelineL1,PipelineL2`): gcc retiring 59%, backend bound 20% (memory 18.5%),
+frontend bound 14%, bad speculation 7%; clang 62%, 14% (12%), 16%, 8%. Per
+simulated instruction gcc 41.0 x86 instructions and 10.5 cycles (before the
+loads of 9), clang 40.5 and 10.0, 0.064 and 0.067 branch misses, spread
+over the whole tree: no branch has more than 2% of them.
+
+The whole t80 natively, as a tournament would run it: its 3,160 pairings in
+160 input files for `bench-native`, handed out by `xargs -P` (wall time with
+process starts and reading the input, 3 runs, before the loads of 9 and
+with the tie proof of 8 still in):
+
+| | `main` | this round |
+|---|---|---|
+| gcc, 16 processes | 2.74 s | 2.28 s |
+| gcc, 32 processes | 2.38 s | 1.91 s |
+| clang, 16 processes | 2.75 s | 2.17 s |
+| clang, 32 processes | 2.36 s | 1.90 s |
+
+`tools/tournament.mjs` on the wasm build takes 2.85 s with 16 jobs and
+2.57 s with 31. The tool already plays a tournament on the native build:
+`--pmars` takes any program with pMARS's options, so `--pmars build/42mars`
+(`make`, gcc) starts one native process per pairing. With a browser running
+on the machine, 3 runs each, native against the wasm engine: t80 with 16
+jobs 2.39 to 2.40 s against 2.89 to 2.90 s, with 31 jobs 1.98 to 2.00 s
+against 2.62 to 2.64 s, t20 with 1 job 2.43 s against 2.90 s; `--compare` gives
+SAME for all 3,160 pairings. The 3,160 process starts are about 0.3 s of
+that (#25), which a native driver with threads would save: still the open
+item it was. These times are of the first half's build. With the build at
+the end of the round, later the same day and with the machine in use: t80
+with 31 jobs 2.33 to 2.36 s natively against 2.89 to 2.91 s on the wasm
+engine (whole process, 3 alternating runs).
+
+State: natively, the library as `make` builds it, with early ties: 94nop
+gcc 359M instructions/s and clang 348M (`main` 220M and 237M), t20 gcc
+469M and clang 468M (`main` 423M and 415M). In WebAssembly: 94nop 299M/s
+(`main` 236M), t20 2.97 s (3.02 s), t80 2.93 s with 16 jobs and 2.68 s with
+31 (2.96 s and 2.75 s).
+
+### All engines as whole processes again, now also on a '94 hill (14th November 2026)
+
+The README charts, measured again after the sixth round, as on 12th
+November (whole processes, 7 alternating runs, median and range), every
+process pinned to CPU 2. A second workload is new, because the bench pairs
+are '88-style: 20 pairs of `warriors/koenigstuhl/94nop` (every 27th file of
+the sorted folder, two by two; `docs/images/speed.mjs` lists them), 600
+rounds each from `-F 1334`, 940,856,125 instructions. All engines gave the
+same wins, losses and ties in every pair of both workloads (exMARS 0.01
+prints the second warrior's wins and the ties only). fmars is generated for
+109 instruction words and cannot run the '94 pairs; corewar.dev's builds
+were not run on them.
+
+| Engine | '94 pairs, s | M instructions/s | bench pairs, s | M instructions/s |
+|---|---|---|---|---|
+| 42mars, `build/42mars` (`make`, `-O3`) | 2.324 (2.321–2.326) | 405 | 0.846 (0.843–0.849) | 527 |
+| fmars 0.0.207 (`bin/xfmars`) | | | 1.119 (1.101–1.133) | 398 |
+| 42mars, WebAssembly `runMatch()` | 2.966 (2.946–3.255) | 317 | 1.175 (1.162–1.212) | 380 |
+| 42mars, WebAssembly, no early ties | | | 1.195 (1.172–1.202) | 373 |
+| exMARS 0.01, native | 3.875 (3.857–3.911) | 243 | 1.606 (1.603–1.618) | 278 |
+| rmars 215fadc, `--threads 1` | 5.276 (5.242–5.641) | 178 | 2.310 (2.299–2.332) | 193 |
+| exMARS, corewar.dev's WebAssembly build | | | 2.979 (2.964–2.993) | 150 |
+| pMARS 0.9.5 | 9.195 (9.179–9.941) | 102 | 4.231 (4.220–4.252) | 105 |
+| pMARS, corewar.dev's WebAssembly build | | | 6.998 (6.961–7.248) | 64 |
+
+Against 12th November on the bench pairs: 42mars natively 0.932 → 0.846 s,
+its wasm build 1.144 → 1.175 s, the other engines within 1%. On the '94
+pairs 42mars is 4.0 times pMARS and 1.7 times exMARS 0.01, on the bench
+pairs 5.0 and 1.9 times.
 
 ## Ideas from other simulators
 

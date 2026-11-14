@@ -6,8 +6,9 @@
 // "Keep the hot loops byte-identical"): compiles lib/42mars.c of a git ref
 // and of the working tree with clang and gcc at -O3 -march=native, each
 // without and with -DM42_FIXED_CONTEXT, and compares the machine code of
-// execute, execute2_8000 and execute2_any (with their .cold and other
-// parts), addresses masked. bench/wasm-functions.mjs does the same for wasm.
+// execute, execute2_8000, execute2_any and exec_more, the cases behind the
+// loops (with their .cold and other parts), addresses masked. A function
+// that neither build has is left out. bench/wasm-functions.mjs does the same for wasm.
 //
 //   node bench/native-loops.mjs [ref]             ref default origin/main
 //   node bench/native-loops.mjs --files a.c b.c   two translation units
@@ -24,7 +25,7 @@ import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 
-const LOOPS = ['execute', 'execute2_8000', 'execute2_any'];
+const LOOPS = ['execute', 'execute2_8000', 'execute2_any', 'exec_more'];
 const run = promisify(execFile);
 
 function fail(message) {
@@ -97,7 +98,10 @@ async function main() {
       const code = b.objects.map((o) => execFileSync('objdump', ['-d', '--no-show-raw-insn', o], { encoding: 'utf8', maxBuffer: 1 << 28 }));
       for (const name of LOOPS) {
         const [x, y] = code.map((d) => loopCode(d, name));
-        if (!x.length) throw new Error(`${b.cc} ${b.define}: no function ${name}`);
+        if (!x.length && !y.length) {
+          if (name !== 'exec_more') throw new Error(`${b.cc} ${b.define}: no function ${name}`);
+          continue; // before the sixth round
+        }
         const same = x.length === y.length && x.every((l, k) => l === y[k]);
         if (!same) differs++;
         console.log(`${b.cc}${b.define ? ` ${b.define}` : ''} ${name}: ${same ? `same (${x.length} lines)` : 'DIFFERS'}`);

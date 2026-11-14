@@ -67,8 +67,8 @@ static unsigned core_hash(const m42_ctx *m, uint32_t n) {
   const m42_cell *c = m42_core(m);
   uint32_t h = 2166136261u;
   for (uint32_t i = 0; i < n; i++) {
-    const uint32_t v[4] = {c[i].a, c[i].b, c[i].word, c[i].pad};
-    for (int k = 0; k < 4; k++) h = fnv(h, v[k]);
+    const uint32_t v[3] = {c[i].a, c[i].b, c[i].word}; // not `hot`, the engine's own
+    for (int k = 0; k < 3; k++) h = fnv(h, v[k]);
   }
   return h;
 }
@@ -269,6 +269,14 @@ int main(int argc, char **argv) {
       same = x.opcode == (c.word & 255) >> 3 && x.modifier == (c.word & 7) && x.a_mode == (c.word >> 8 & 7) &&
              x.b_mode == (c.word >> 11 & 7) && x.a == c.a && x.b == c.b && x.line == 0;
     }
+    // m42_cell.hot is the same for equal words, in the whole core: the
+    // empty cells, the warriors' code and what they copied in 200 steps.
+    static uint32_t hot[1 << 14]; // of a word, plus 1; 0: not seen yet
+    for (uint32_t k = 0; same && k < N; k++) {
+      const m42_cell c = core[k];
+      if (c.word >= 1 << 14 || (hot[c.word] && hot[c.word] != c.hot + 1u)) same = 0;
+      else hot[c.word] = c.hot + 1u;
+    }
     m42_instruction all[1];
     printf(",\"cells\":[%u,%d,%u,%u,%u", got, same, m42_cells(m, N, 1, all), m42_cells(m, 0, 0, all), m42_cells(0, 0, 1, all));
     union { m42_state s; unsigned char b[sizeof(m42_state) + 8]; } us;
@@ -328,6 +336,19 @@ int main(int argc, char **argv) {
   const m42_warrior *bigs[2] = {big, big};
   m42_score sc[2];
   printf(",\"full\":[%u,%d]", m42_warrior_length(big), m42_match(m2, bigs, 2, &o, sc, 0));
+
+  // A context works wherever its memory starts: m42_ctx_init() aligns it to
+  // 64 bytes, and nothing in it may need more (the warrior records wanted
+  // 128, which UBSan reports as soon as the heap starts at an odd multiple
+  // of 64).
+  int anywhere = 1;
+  char *shifted = malloc(size + 128);
+  for (size_t off = 1; off < 128 && anywhere; off += 21) {
+    m42_ctx *m3 = m42_ctx_init(shifted + off, size, &r, &st);
+    anywhere = m3 && m42_match(m3, bigs, 2, &o, sc, 0) == M42_OK;
+  }
+  free(shifted);
+  printf(",\"anywhere\":%d", anywhere);
 
   // Warriors that do not fit the rules of the context (#86): assembled for a
   // core of 8000, played in one of 800, refused by match, load and bench;

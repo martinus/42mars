@@ -4,6 +4,7 @@ From 1.0.0 on, every change of the interface is listed here: the C library (`lib
 
 ## Unreleased
 
+- `m42_cell` has layout 2 (`M42_CELL_LAYOUT`): its fourth field, `pad` and always 0 until now, is `hot`, the number of the code the engine runs for the cell's instruction word. `m42_cells()` and everything else give the same as before.
 - `m42_warrior_uses_pspace()`: 1 when a warrior has `LDP` or `STP`, so a caller knows when a match can be split into blocks of rounds on several threads (#136). `examples/parallel.c` shows that.
 
 ## 1.0.0, 13th November 2026

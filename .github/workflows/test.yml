@@ -206,9 +206,10 @@ jobs:
         with:
           path: build/42mars.obj
           key: msvc-obj-${{ steps.image.outputs.version }}-${{ hashFiles('lib/**', 'build-msvc.bat') }}
-      # Under a minute. The limit catches cl /O2 slowing down again: with all
-      # 32 cases of dispatch.h (M42_DISPATCH_16 in platform.h) the library
-      # alone took 2 minutes or more.
+      # Under a minute. The limit catches cl /O2 slowing down again: with 32
+      # cases of dispatch.h instead of 16 (M42_DISPATCH_16 in platform.h) and
+      # the generic code inside the loops the library alone took 2 minutes
+      # or more.
       - name: build-msvc.bat and the tests
         if: runner.os == 'Windows'
         timeout-minutes: 2

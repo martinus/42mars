@@ -31,7 +31,10 @@
 // --pmars runs the same tournament with pMARS processes instead of the
 // engine (for timing), --compare runs both and checks that every pairing has
 // the same wins, losses and ties. Each job is a /bin/sh that starts the pMARS
-// processes.
+// processes. Any program with pMARS's options and output will do: with
+// --pmars build/42mars (after make) the tournament runs on the native
+// library, a process per pairing, 80 warriors on 31 jobs in 2.35 s against
+// 2.90 s on the wasm engine (14th November 2026).
 //
 // --jobs is the number of threads, the main thread included (default: all
 // hardware threads). They take tasks from one shared list until it is empty.

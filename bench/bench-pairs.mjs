@@ -7,6 +7,11 @@
 // runMatch() on the wasm engine in one thread, and prints the rate.
 // Usage: node bench/bench-pairs.mjs <warrior dir> [--pairs 40] [--rounds 30]
 //        [--seed 1] [--early-tie] [--native-input file]
+//        [--size 8000] [--processes 8000] [--cycles 80000] [--length 100]
+//        [--distance 100]
+//   --size ...   the rules, for a hill with other settings than pMARS's
+//                defaults (warriors/koenigstuhl/README.md has them), named
+//                as in tools/tournament.mjs
 //   --early-tie  stop rounds that must end in a tie early (as the
 //                tournament does). The rate is then the effective one: the
 //                sum of the round times per second.
@@ -29,6 +34,11 @@ const ROUNDS = Number(opt('rounds', 30));
 let seed = Number(opt('seed', 1)) >>> 0 || 1;
 const earlyTie = flag('early-tie');
 const nativeInput = opt('native-input', null);
+const rules = {
+  coreSize: Number(opt('size', 8000)), maxProcesses: Number(opt('processes', 8000)), maxCycles: Number(opt('cycles', 80000)),
+  maxLength: Number(opt('length', 100)), minDistance: Number(opt('distance', 100)),
+};
+const positions = rules.coreSize + 1 - 2 * rules.minDistance; // seeds 0 .. positions - 1: one per start position
 const dir = argv[0];
 const rand = (k) => {
   seed ^= seed << 13; seed >>>= 0;
@@ -37,12 +47,12 @@ const rand = (k) => {
   return seed % k;
 };
 const codes = readdirSync(dir).filter((f) => /\.red$/i.test(f)).sort()
-  .map((f) => assemble(readFileSync(join(dir, f), 'latin1'), { warriors: 2 }))
+  .map((f) => assemble(readFileSync(join(dir, f), 'latin1'), { ...rules, warriors: 2 }))
   .filter((c) => c.ok && c.instructions.length > 0);
 const pairs = Array.from({ length: PAIRS }, () => [codes[rand(codes.length)], codes[rand(codes.length)]]);
 if (nativeInput) {
-  const rules = { coreSize: 8000, maxProcesses: 8000, maxCycles: 80000, minDistance: 100, pSpaceSize: 500 };
-  writeFileSync(nativeInput, pairs.map(([a, b]) => nativeMatch([a, b], rules, rand(7801), ROUNDS)).join(''));
+  const native = { ...rules, pSpaceSize: Math.floor(rules.coreSize / 16) };
+  writeFileSync(nativeInput, pairs.map(([a, b]) => nativeMatch([a, b], native, rand(positions), ROUNDS)).join(''));
   process.exit(0);
 }
 const module = await compileMars();
@@ -50,7 +60,7 @@ let steps = 0;
 let executed = 0;
 const t0 = performance.now();
 for (const [a, b] of pairs) {
-  const r = createMarsSync({}, module).runMatch([a, b], { rounds: ROUNDS, seed: rand(7801), earlyTie });
+  const r = createMarsSync(rules, module).runMatch([a, b], { rounds: ROUNDS, seed: rand(positions), earlyTie });
   steps += r.results.reduce((s, x) => s + x.cycles, 0);
   executed += r.instructions;
 }
