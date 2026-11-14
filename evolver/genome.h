@@ -32,8 +32,11 @@ typedef struct {
   gene g[GENOME_MAX];
 } genome;
 
+// `fraction`, here and below: the probability that a far value is a
+// fraction of the core give or take 20 instead of any value (--fractions).
+
 // A random genome of len instructions.
-void genome_random(genome *x, rng *r, uint32_t core_size, uint32_t len);
+void genome_random(genome *x, rng *r, uint32_t core_size, uint32_t len, double fraction);
 
 // The instructions of the warrior: references become offsets mod core_size.
 void genome_code(const genome *x, uint32_t core_size, m42_instruction *out);
@@ -63,13 +66,13 @@ typedef struct {
 // duplicated block) or else the value of its offset. New instructions
 // reference anything in the child. The start follows A's start.
 void genome_rebuild(genome *child, const genome *a, const genome *b, const slot *s, uint32_t n, uint32_t core_size,
-                    rng *r);
+                    rng *r, double fraction);
 
 // A child of p1 (p2: a second parent for crossover, may be 0) with 1 or more
 // random changes, at most max_length instructions. Writes the names of the
 // changes into ops (space separated, cut at ops_n).
 void genome_breed(genome *child, const genome *p1, const genome *p2, rng *r, uint32_t core_size, uint32_t max_length,
-                  char *ops, size_t ops_n);
+                  double fraction, char *ops, size_t ops_n);
 
 // Text form for the state file: "len start" then 8 numbers per instruction.
 size_t genome_save(const genome *x, char *buf, size_t n);

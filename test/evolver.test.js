@@ -74,7 +74,7 @@ test('the same seed gives the same run on 1 and 4 threads, and after a resume', 
   // then continue the same way
   const file = join(tmp, 'resumed', 'state.txt');
   const state = readFileSync(file, 'latin1');
-  const old = state.replace(/^(params( \S+){15}) \S+ \S+$/m, '$1').replace(/^panel-id \d+ /gm, 'panel ')
+  const old = state.replace(/^(params( \S+){15})( \S+)+$/m, '$1').replace(/^panel-id \d+ /gm, 'panel ')
     .replace(/^(reserve|reserve-next|rotate-next|slot) .*\n/gm, '');
   assert.notEqual(old, state);
   assert.doesNotMatch(old, /^(reserve|panel-id)/m);
@@ -201,6 +201,7 @@ function checkOrder(evs, key) {
 
 test('survivors of the screen enter by their screen score', { skip }, () => {
   assert.equal(base[0].params.select, 'screen');
+  assert.equal(base[0].params.fractions, 0);
   checkOrder(base, 'screen');
 });
 
