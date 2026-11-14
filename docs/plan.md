@@ -250,7 +250,7 @@ A C library and a pMARS-compatible command line program, with a JavaScript demo 
 
 - E1, done: [`tools/pushoff.mjs`](../tools/pushoff.mjs) ranks a tournament by the diversity push-off of Tournament Weekend 2026, with both readings of the SD-score. Open: which reading reproduces the published ranking of the '94nop tournament of 15th November 2026.
 - E2 to E4, done: [`evolver/`](../evolver): typed operands, block changes and crossover, a list of 20 kept by push-off against a panel of 40 hill warriors, a screen of 20 rounds, a holdout benchmark, one queue of matches for all threads, the same run for any thread count and after a resume. 10 minutes on '94nop: 97.7% of 16 threads busy, best member 120 points against the panel (median hill warrior 151), 93 against the holdout. A 22-minute run on 32 threads stops at 125 against the panel and 85 against the holdout, one family takes over, the list is tuned to the panel ([`evolver.md`](evolver.md)).
-- E5: experiments: the tiny hill, from random warriors against templates of our own, islands, an opponent ladder, the screen settings. Each into a log.
+- E5, started: two comparisons of four settings for an hour each ([`evolver.md`](evolver.md)): every setting ends at about 100 against the 1,107 hill warriors (median hill warrior 145), `--prior hill` brings `MOV` and `$` back, `--parents duel` is 10 points worse. To do: the tiny hill, from random warriors against templates of our own, islands, an opponent ladder, the screen settings. Each into a log.
 - E6, E7, done: [`ui/evolver.html`](../ui/evolver.html) with the score matrix, the novelty map, the lineage and the progress, live through `tools/serve.mjs --run`; `ui/index.html#battle=` plays a logged match.
 
 ### M1: engine parity

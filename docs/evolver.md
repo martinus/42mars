@@ -114,4 +114,22 @@ On the same yardstick, 9 warriors of the folder (every 120th file) score 60.2, 9
 - `--panel 80` ran 40% fewer batches and is 2 points better: tuning to the panel costs at least as much as half the candidates.
 - The defaults run is the same run as the 22-minute run on 32 threads of the section before (same seed, same batch, same survivors; the thread count does not change a run), which had 210 batches by then and the same `best.red`: from batch 79 to 210 nothing better against the holdout.
 
+## E5, second comparison: the new options, one hour each
+
+14th November 2026, the same way as the first, all four with `--panel 80` (the best of the first comparison) and therefore the same 100 holdout warriors.
+
+| Run | Batches | `best.red` | 3 best members | Mean of the 3 | Opcodes of the list | `$` |
+|---|---|---|---|---|---|---|
+| `--panel 80` | 163 | 101.0 | 98.9, 103.0, 99.7 | 100.5 | DJN 25%, SPL 23% | 3% |
+| `--prior hill --fractions 0.5` | 172 | 101.4 | 102.2, 100.4, 95.3 | 99.3 | SPL 49%, MOV 27%, DJN 10%, DAT 7% | 47% |
+| `--select value --rotate 10` | 160 | 100.7 | 98.4, 98.6, 98.3 | 98.4 | SPL 36%, DJN 22%, DAT 9% | 7% |
+| `--parents duel` | 123 | 90.1 | 88.4, 90.1, 91.3 | 89.9 | SPL 21%, MUL 10%, DJN 10% | 10% |
+
+- Three settings end at the same place, 98 to 101; `--parents duel` is 10 points lower. Picking parents by their match alone pays nothing here.
+- `--prior hill` changes what evolves: `MOV` 27% and `$` 47% instead of at most 6% and 12%, and fewer ties (38 to 41% of the rounds instead of 42 to 48%), at the same score. SPL with MOV and direct addressing is how papers are built.
+- The `--panel 80` run is the same run as the one of the first comparison (the same events, also with the later build), now 163 batches instead of 58: 100.5 instead of 98.1. 
+- In the first comparison the four runs had a third of the speed of these (0.46 against 1.34 G instructions per second over their first 58 batches): tests ran on the same machine. That was the same for all four of that comparison, so it compares within itself, but the two comparisons have different budgets.
+
+About 100 against the folder, where the median hill warrior scores 145, comes out of every setting so far. More time and these options move it by 2 points.
+
 Ideas from this, to measure in E5 (#142) against the holdout at equal time: survivors by an estimate of their push-off value (the distance to the members on the panel columns, which the screen has), a panel that rotates (a new hill warrior every few batches costs one match per member), islands with migration against the takeover by one family, and fewer `insert` and `duplicate`.
