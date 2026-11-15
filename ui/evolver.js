@@ -104,6 +104,9 @@ function handle(e) {
       S = fresh();
       S.start = e;
       S.rounds = e.params.rounds;
+      if (e.params.mapElites) { // the matrix panel shows the archive
+        document.querySelector('.matrix-panel h2').innerHTML = 'MAP-Elites archive <small>a cell for each kind of style: rows the copies a warrior makes of its own code, columns its processes and the cells it reads far from home · in each cell the warrior with the best average against the panel (points per 100 rounds) · click a cell for its warrior</small>';
+      }
       for (const p of e.panel) S.w.set(p.id, { ...p, kind: 'panel' });
       for (const p of e.holdout) S.w.set(p.id, { ...p, kind: 'holdout' });
       S.panel = e.panel.map((p) => p.id);
@@ -128,6 +131,24 @@ function handle(e) {
       x.row = null;
       S.mapDirty = true;
       if (!quiet.has(e.id)) tick(`<span class="in">+</span> ${link(e.id)} <b>${f1(x.panelAvg)}</b> vs panel <span style="color:#6c7290">${esc(e.ops)}</span>${x.newFamily ? ` <span class="new-family">new family: ${f1(e.parentDifference)} points from ${link(e.parents[0])}</span>` : ''}`);
+      break;
+    }
+    case 'elite': { // --map-elites: a warrior takes a cell, the one there leaves
+      const x = { id: e.id, kind: 'member', name: e.name, code: e.code, parents: e.parents, ops: e.ops, length: e.length, screen: e.screen, born: e.batch, died: null, alive: true, enteredAt: now, value: null, newFamily: !!e.newFamily, cell: e.index, cellXyz: e.cell, style: e.style };
+      x.hue = hueFor(e.id, e.parents, x.newFamily);
+      S.w.set(e.id, x);
+      const old = e.replaced ? S.w.get(e.replaced.id) : null;
+      if (old) {
+        old.alive = false;
+        old.died = e.batch;
+        S.slots[S.slots.indexOf(old.id)] = e.id;
+      } else S.slots.push(e.id);
+      for (const [o, w, l, t, seed] of e.scores) setRes(e.id, o, w, l, t, seed, e.id);
+      x.panelAvg = panelAvg(e.id);
+      S.cells ??= new Map();
+      S.cells.set(e.index, e.id);
+      S.mapDirty = true;
+      tick(`<span class="in">+</span> ${link(e.id)} <b>${f1(x.panelAvg)}</b> vs panel takes cell ${e.cell.join('·')}${old ? ` from ${link(old.id)} (${f1(e.replaced.avg)})` : ', a new cell'} <span style="color:#6c7290">${esc(e.ops)}</span>`);
       break;
     }
     case 'rotate': { // a new hill warrior takes the place of the oldest in the panel
@@ -241,7 +262,61 @@ function mouseOf(canvas) {
 
 const matrix = { cells: [], rows: [] };
 
+// --map-elites: the archive as a grid instead of the matrix. Rows: copies of
+// its own code; columns: processes, within each the cells read far from home.
+// A cell's color is its warrior's average against the panel.
+const GRID_ROWS = ['copies <20', '20–199', '200–599', '600+'];
+const GRID_TASKS = ['1 process', '2–49', '50–249', '250+'];
+const GRID_READ = ['<50', '<300', '300+'];
+function drawGrid(now) {
+  const canvas = $('matrix');
+  const { ctx, w, h } = fit(canvas);
+  const left = 92, top = 44, cw = (w - left - 10) / 12, ch = Math.min(90, (h - top - 10) / 4);
+  ctx.font = '10px ui-monospace, monospace';
+  ctx.textBaseline = 'middle';
+  ctx.fillStyle = '#7f86a0';
+  GRID_TASKS.forEach((t, i) => ctx.fillText(t, left + i * 3 * cw + 4, 12));
+  ctx.fillText('reads', 6, 30);
+  ctx.fillText('processes', 6, 12);
+  for (let c = 0; c < 12; c++) ctx.fillText(GRID_READ[c % 3], left + c * cw + 3, 30);
+  GRID_ROWS.forEach((r, i) => ctx.fillText(r, 6, top + i * ch + ch / 2));
+  const hv = mouseOf(canvas);
+  let target = null;
+  for (let index = 0; index < 48; index++) {
+    const row = Math.floor(index / 12), col = index % 12;
+    const x = left + col * cw, y = top + row * ch;
+    const id = S.cells?.get(index), m = id !== undefined ? S.w.get(id) : null;
+    ctx.fillStyle = m ? scoreColor(m.panelAvg ?? 0) : '#0d1020';
+    ctx.fillRect(x + 1, y + 1, cw - 2, ch - 2);
+    if (m) {
+      const age = Math.max(0, now - (m.enteredAt ?? 0));
+      if (age < 1500) {
+        ctx.fillStyle = `rgba(255,255,255,${0.55 * Math.exp(-age / 350)})`;
+        ctx.fillRect(x + 1, y + 1, cw - 2, ch - 2);
+      }
+      ctx.fillStyle = (m.panelAvg ?? 0) > 180 ? '#10131f' : '#e8ebf5';
+      ctx.font = 'bold 12px ui-monospace, monospace';
+      ctx.fillText(f1(m.panelAvg), x + 5, y + ch / 2 - 7);
+      ctx.font = '9px ui-monospace, monospace';
+      ctx.fillText(m.name.slice(0, Math.max(4, Math.floor(cw / 6))), x + 5, y + ch / 2 + 8);
+      if (selected === m.id || m.id === S.bestId) {
+        ctx.strokeStyle = selected === m.id ? '#ffc53d' : '#ffffff';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(x + 2, y + 2, cw - 4, ch - 4);
+      }
+      if (hv && hv.x >= x && hv.x < x + cw && hv.y >= y && hv.y < y + ch) target = m;
+    }
+    ctx.font = '10px ui-monospace, monospace';
+  }
+  if (hv) {
+    hv.target = target ? { select: target.id } : null;
+    if (target) showTip(hv, warriorTip(target.id));
+    else hideTip();
+  }
+}
+
 function drawMatrix(now) {
+  if (S.start?.params?.mapElites) return drawGrid(now);
   const canvas = $('matrix');
   const { ctx, w, h } = fit(canvas);
   if (!S.start) return;
@@ -338,6 +413,7 @@ function warriorTip(id) {
   const x = S.w.get(id);
   if (!x) return '';
   if (x.kind !== 'member') return `<b>${esc(x.name)}</b> by ${esc(x.author)}<br>${f1(x.panelAvg)} against the panel`;
+  if (x.cell !== undefined) return `<b style="color:${hsl(x.hue)}">${esc(x.name)}</b> #${x.id} · batch ${x.born}${x.alive ? '' : ` to ${x.died}`}<br>${f1(x.panelAvg)} vs panel · cell ${x.cellXyz.join('·')}<br>${esc(x.style?.kind ?? '')}${x.holdout >= 0 ? `<br>holdout ${f1(x.holdout)}` : ''}`;
   return `<b style="color:${hsl(x.hue)}">${esc(x.name)}</b> #${x.id} · batch ${x.born}${x.alive ? '' : ` to ${x.died}`}<br>${f1(x.panelAvg)} vs panel · value ${f1(x.value)}<br>nearest ${esc(nameOf(x.nearest))} at ${x.distance?.toFixed(2) ?? '–'}${x.holdout >= 0 ? `<br>holdout ${f1(x.holdout)}` : ''}`;
 }
 
