@@ -84,7 +84,8 @@ main {
 .ops-table th { color: var(--muted); font-weight: 400; text-align: right; padding: 3px 4px; white-space: nowrap; }
 .ops-table th:first-child, .ops-table td:first-child { text-align: left; }
 .ops-table td { text-align: right; padding: 3px 4px; border-bottom: 1px solid #151827; white-space: nowrap; }
-.ops-table .bar { display: inline-block; height: 7px; border-radius: 3px; background: #5dff9a; vertical-align: middle; margin-right: 5px; opacity: 0.8; }
+.ops-table .ops-track { width: 30px; text-align: left; padding-left: 2px; }
+.ops-table .ops-bar { display: inline-block; height: 7px; border-radius: 3px; background: #5dff9a; vertical-align: middle; opacity: 0.8; }
 .ops-table .neg { color: #ff5a8a; }
 .ops-table .pos { color: #5dff9a; }
 .ops-note { color: var(--muted); margin: 8px 0 0; font: 11px/1.45 var(--sans); }

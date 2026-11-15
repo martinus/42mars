@@ -37,6 +37,9 @@ function fresh() {
     w: new Map(), // id -> warrior
     res: new Map(), // "a:b" -> { w, l, t, seed, first, rounds }: a's results against b
     slots: [], // member ids in 42evolve's slot order, null for a free slot
+    spec: new Map(), // --specialists: protected member id -> [{ panel, score, median }]
+    specOf: new Map(), // panel id -> its protected member id
+    pickKind: new Map(), // --panel-choice kinds: file -> kind of style
     panel: [], // ids
     batch: -1,
     tried: 0,
@@ -104,7 +107,11 @@ function handle(e) {
       S = fresh();
       S.start = e;
       S.rounds = e.params.rounds;
-      if (e.params.mapElites) { // the matrix panel shows the archive
+      if (e.params.crowding) { // the matrix panel shows the archive, no cells
+        document.querySelector('.matrix-panel h2').innerHTML = 'Crowding archive <small>a warrior competes with its nearest by SD-score against the panel; one unlike all takes the place of the weaker of the closest pair · rows the archive, best first, columns the panel warriors · click a cell to watch the match</small>';
+      } else if (e.params.specialists) {
+        document.querySelector('.matrix-panel h2 small').insertAdjacentHTML('beforeend', ' · <span style="color:#ffc53d">◆</span> a protected member, outlined in the column of the panel warrior it is clearly best against');
+      } else if (e.params.mapElites) { // the matrix panel shows the archive
         document.querySelector('.matrix-panel h2').innerHTML = 'MAP-Elites archive <small>a cell for each kind of style: rows the copies a warrior makes of its own code, columns its processes and the cells it reads far from home · in each cell the warrior with the best average against the panel (points per 100 rounds) · click a cell for its warrior</small>';
       }
       for (const p of e.panel) S.w.set(p.id, { ...p, kind: 'panel' });
@@ -148,7 +155,11 @@ function handle(e) {
       S.cells ??= new Map();
       S.cells.set(e.index, e.id);
       S.mapDirty = true;
-      tick(`<span class="in">+</span> ${link(e.id)} <b>${f1(x.panelAvg)}</b> vs panel takes cell ${e.cell.join('·')}${old ? ` from ${link(old.id)} (${f1(e.replaced.avg)})` : ', a new cell'} <span style="color:#6c7290">${esc(e.ops)}</span>`);
+      const how = !e.rule ? `takes cell ${e.cell.join('·')}${old ? ` from ${link(old.id)} (${f1(e.replaced.avg)})` : ', a new cell'}`
+        : e.rule === 'near' ? `beats its nearest ${link(old.id)} (${f1(e.replaced.avg)})`
+        : e.rule === 'far' ? `<span class="new-family">unlike all</span>, replaces ${link(old.id)} (${f1(e.replaced.avg)}) of the closest pair`
+        : 'a free place';
+      tick(`<span class="in">+</span> ${link(e.id)} <b>${f1(x.panelAvg)}</b> vs panel ${how} <span style="color:#6c7290">${esc(e.ops)}</span>`);
       break;
     }
     case 'rotate': { // a new hill warrior takes the place of the oldest in the panel
@@ -189,6 +200,21 @@ function handle(e) {
       }
       delete x.opponents;
       if (!quiet.has(e.id)) tick(`<span class="out">−</span> ${link(e.id)} pushed off, value ${f1(e.value)}, nearest ${link(e.nearest)}`);
+      break;
+    }
+    case 'pick': // the panel picked; --panel-choice kinds also names each one's kind
+      for (const p of e.picked) if (p.kind) S.pickKind.set(p.file, p.kind);
+      break;
+    case 'specialists': { // --specialists: the member protected for each panel warrior
+      const spec = new Map(), specOf = new Map();
+      for (const [o, m, score, , median] of e.protected) {
+        if (!spec.has(m)) spec.set(m, []);
+        spec.get(m).push({ panel: o, score, median });
+        specOf.set(o, m);
+        if (S.specOf.get(o) !== m) tick(`<span class="best">◆</span> ${link(m)} protected: best against ${esc(nameOf(o))}, <b>${f1(score)}</b> where the members' median is ${f1(median)}`);
+      }
+      S.spec = spec;
+      S.specOf = specOf;
       break;
     }
     case 'values':
@@ -271,18 +297,22 @@ const GRID_READ = ['<50', '<300', '300+'];
 function drawGrid(now) {
   const canvas = $('matrix');
   const { ctx, w, h } = fit(canvas);
-  const left = 92, top = 44, cw = (w - left - 10) / 12, ch = Math.min(90, (h - top - 10) / 4);
+  const crowd = !!S.start.params.crowding; // no cells: only the matrix of the archive
+  const left = 92, top = crowd ? -12 : 44, cw = (w - left - 10) / 12, ch = crowd ? 0 : Math.min(56, (h * 0.42 - top) / 4);
   ctx.font = '10px ui-monospace, monospace';
   ctx.textBaseline = 'middle';
   ctx.fillStyle = '#7f86a0';
-  GRID_TASKS.forEach((t, i) => ctx.fillText(t, left + i * 3 * cw + 4, 12));
-  ctx.fillText('reads', 6, 30);
-  ctx.fillText('processes', 6, 12);
-  for (let c = 0; c < 12; c++) ctx.fillText(GRID_READ[c % 3], left + c * cw + 3, 30);
-  GRID_ROWS.forEach((r, i) => ctx.fillText(r, 6, top + i * ch + ch / 2));
+  if (!crowd) {
+    GRID_TASKS.forEach((t, i) => ctx.fillText(t, left + i * 3 * cw + 4, 12));
+    ctx.fillText('reads', 6, 30);
+    ctx.fillText('processes', 6, 12);
+    for (let c = 0; c < 12; c++) ctx.fillText(GRID_READ[c % 3], left + c * cw + 3, 30);
+    GRID_ROWS.forEach((r, i) => ctx.fillText(r, 6, top + i * ch + ch / 2));
+  }
   const hv = mouseOf(canvas);
+  if (hv) hv.target = null; // set again below, for what is under the mouse now
   let target = null;
-  for (let index = 0; index < 48; index++) {
+  for (let index = 0; index < (crowd ? 0 : 48); index++) {
     const row = Math.floor(index / 12), col = index % 12;
     const x = left + col * cw, y = top + row * ch;
     const id = S.cells?.get(index), m = id !== undefined ? S.w.get(id) : null;
@@ -295,8 +325,8 @@ function drawGrid(now) {
         ctx.fillRect(x + 1, y + 1, cw - 2, ch - 2);
       }
       ctx.fillStyle = (m.panelAvg ?? 0) > 180 ? '#10131f' : '#e8ebf5';
-      ctx.font = 'bold 12px ui-monospace, monospace';
-      ctx.fillText(f1(m.panelAvg), x + 5, y + ch / 2 - 7);
+      ctx.font = `bold ${cw < 46 ? 11 : 12}px ui-monospace, monospace`;
+      ctx.fillText(cw < 46 ? String(Math.round(m.panelAvg ?? 0)) : f1(m.panelAvg), x + 4, y + ch / 2 - 7); // narrow cells: no decimal
       ctx.font = '9px ui-monospace, monospace';
       ctx.fillText(m.name.slice(0, Math.max(4, Math.floor(cw / 6))), x + 5, y + ch / 2 + 8);
       if (selected === m.id || m.id === S.bestId) {
@@ -308,7 +338,48 @@ function drawGrid(now) {
     }
     ctx.font = '10px ui-monospace, monospace';
   }
-  if (hv) {
+  // below the grid: the cells' warriors (best first) against each panel
+  // warrior, a cell per match, as the matrix of the list; a click watches it
+  const ms = alive().sort((a, b) => (b.panelAvg ?? 0) - (a.panelAvg ?? 0));
+  const panel = S.panel.map(member).sort((a, b) => (b.panelAvg ?? 0) - (a.panelAvg ?? 0));
+  const mTop = top + 4 * ch + 34, rowH = Math.max(1, Math.min(14, (h - mTop - 8) / Math.max(1, ms.length)));
+  const names = rowH >= 9, mLeft = names ? 150 : 22, colW = Math.max(1, (w - mLeft - 10) / Math.max(1, panel.length));
+  ctx.font = '10px ui-monospace, monospace';
+  ctx.fillStyle = '#7f86a0';
+  ctx.fillText(`the warriors of the ${crowd ? 'archive' : 'cells'}, best first, against the ${panel.length} panel warriors · click a cell to watch the match`, 6, mTop - 14);
+  const key = `${S.version}:${panel.length}`;
+  matrix.cells = [];
+  ms.forEach((m, i) => {
+    const y = mTop + i * rowH;
+    if (m.cellKey !== key) m.cellKey = key, m.cellColors = panel.map((o) => (resOf(m.id, o.id) ? scoreColor(points(resOf(m.id, o.id))) : null));
+    ctx.fillStyle = selected === m.id ? '#ffc53d' : hsl(m.hue);
+    if (names) {
+      ctx.font = `${selected === m.id ? 'bold ' : ''}10px ui-monospace, monospace`;
+      ctx.fillText(`${f1(m.panelAvg)} ${m.name}`.slice(0, 22), 6, y + rowH / 2);
+    } else ctx.fillRect(4, y, 12, Math.max(1, rowH - (rowH >= 4 ? 1 : 0)));
+    panel.forEach((o, j) => {
+      const c = m.cellColors[j];
+      if (!c) return;
+      ctx.fillStyle = c;
+      ctx.fillRect(mLeft + j * colW, y, Math.max(1, colW - (colW >= 4 ? 1 : 0)), Math.max(1, rowH - (rowH >= 4 ? 1 : 0)));
+    });
+    if (hv && hv.y >= y && hv.y < y + rowH) {
+      if (hv.x < mLeft) target = target ?? m;
+      else {
+        const j = Math.floor((hv.x - mLeft) / colW);
+        if (j >= 0 && j < panel.length && resOf(m.id, panel[j].id)) {
+          const r = resOf(m.id, panel[j].id);
+          ctx.strokeStyle = '#ffffff';
+          ctx.lineWidth = 1.5;
+          ctx.strokeRect(mLeft + j * colW - 0.5, y - 0.5, colW, rowH);
+          hv.target = { battle: [m.id, panel[j].id] };
+          showTip(hv, `<b>${esc(m.name)}</b> vs <b>${esc(nameOf(panel[j].id))}</b><br>${r.w} wins · ${r.l} losses · ${r.t} ties<br>${f1(points(r))} points per 100 rounds<br><span style="color:#7f86a0">seed ${r.seed} · click to watch</span>`);
+          return;
+        }
+      }
+    }
+  });
+  if (hv && !hv.target?.battle) {
     hv.target = target ? { select: target.id } : null;
     if (target) showTip(hv, warriorTip(target.id));
     else hideTip();
@@ -332,7 +403,7 @@ function drawMatrix(now) {
   // a list of 100 (--list) still fits: thin cells without gaps, names only while rows are high enough
   const ch = Math.max(1, Math.min(36, (h - top - 10) / Math.max(8, ms.length)));
   const names = ch >= 12;
-  const labelW = names ? Math.min(230, Math.max(74, ...[...ms, ...S.ghosts].map((m) => ctx.measureText(`★ ${m.name}`).width + 28))) : 22;
+  const labelW = names ? Math.min(230, Math.max(74, ...[...ms, ...S.ghosts].map((m) => ctx.measureText(`★ ${m.name}`).width + (S.start.params.specialists ? 42 : 28)))) : 22;
   const cols = ms.length + panel.length;
   const cw = Math.max(1, (w - labelW - gap - 10) / Math.max(1, cols));
   const cg = cw >= 4 ? 1 : 0, rg = ch >= 4 ? 1 : 0;
@@ -363,8 +434,16 @@ function drawMatrix(now) {
       ctx.fillStyle = sel ? '#ffc53d' : '#dfe3f0';
       ctx.font = `${sel ? 'bold ' : ''}11px ui-monospace, monospace`;
       ctx.fillText(m.id === S.bestId ? `★ ${m.name}` : m.name, 20, y + ch / 2);
+      if (S.spec.has(m.id)) { // --specialists: a protected member
+        ctx.fillStyle = '#ffc53d';
+        ctx.fillText('◆', labelW - 14, y + ch / 2);
+      }
     } else {
       ctx.fillRect(4, y, 12, Math.max(1, ch - rg)); // the family's color, no room for the name
+      if (S.spec.has(m.id)) { // --specialists: a protected member
+        ctx.fillStyle = '#ffc53d';
+        ctx.fillRect(17, y, 4, Math.max(1, ch - rg));
+      }
     }
     matrix.rows.push({ id: m.id, y, h: ch });
     // the cells' colors once per update (columnsKey), not per frame: with a
@@ -385,6 +464,13 @@ function drawMatrix(now) {
         ctx.fillRect(x, y, cw - cg, ch - rg);
       }
       matrix.cells.push({ x, y, w: cw, h: ch, a: m.id, b: o.id });
+    }
+    for (const { panel: o } of S.spec.get(m.id) ?? []) { // the cell it is protected for
+      const j = others.findIndex((x) => x.id === o);
+      if (j < 0) continue;
+      ctx.strokeStyle = '#ffc53d';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(colX(j) + 0.5, y + 0.5, Math.max(2, cw - cg - 1), Math.max(2, ch - rg - 1));
     }
     ctx.globalAlpha = 1;
   };
@@ -412,9 +498,13 @@ function drawMatrix(now) {
 function warriorTip(id) {
   const x = S.w.get(id);
   if (!x) return '';
-  if (x.kind !== 'member') return `<b>${esc(x.name)}</b> by ${esc(x.author)}<br>${f1(x.panelAvg)} against the panel`;
+  if (x.kind !== 'member') {
+    const kind = S.pickKind.get(x.file), sp = S.specOf.get(id);
+    return `<b>${esc(x.name)}</b> by ${esc(x.author)}<br>${f1(x.panelAvg)} against the panel${kind ? `<br>${esc(kind)}` : ''}${sp !== undefined ? `<br><span style="color:#ffc53d">◆</span> best against it: ${esc(nameOf(sp))}` : ''}`;
+  }
   if (x.cell !== undefined) return `<b style="color:${hsl(x.hue)}">${esc(x.name)}</b> #${x.id} · batch ${x.born}${x.alive ? '' : ` to ${x.died}`}<br>${f1(x.panelAvg)} vs panel · cell ${x.cellXyz.join('·')}<br>${esc(x.style?.kind ?? '')}${x.holdout >= 0 ? `<br>holdout ${f1(x.holdout)}` : ''}`;
-  return `<b style="color:${hsl(x.hue)}">${esc(x.name)}</b> #${x.id} · batch ${x.born}${x.alive ? '' : ` to ${x.died}`}<br>${f1(x.panelAvg)} vs panel · value ${f1(x.value)}<br>nearest ${esc(nameOf(x.nearest))} at ${x.distance?.toFixed(2) ?? '–'}${x.holdout >= 0 ? `<br>holdout ${f1(x.holdout)}` : ''}`;
+  const sp = (S.spec.get(id) ?? []).map((s) => `<br><span style="color:#ffc53d">◆</span> protected: best against ${esc(nameOf(s.panel))}, ${f1(s.score)} (median ${f1(s.median)})`).join('');
+  return `<b style="color:${hsl(x.hue)}">${esc(x.name)}</b> #${x.id} · batch ${x.born}${x.alive ? '' : ` to ${x.died}`}<br>${f1(x.panelAvg)} vs panel · value ${f1(x.value)}<br>nearest ${esc(nameOf(x.nearest))} at ${x.distance?.toFixed(2) ?? '–'}${x.holdout >= 0 ? `<br>holdout ${f1(x.holdout)}` : ''}${sp}`;
 }
 
 // ---------------- the novelty map: classical MDS of the rows against the panel
@@ -511,6 +601,24 @@ function computeMap() {
     if (!w.mapPos) w.mapPos = w.kind === 'member' && w.parents.length && S.w.get(w.parents[0])?.mapPos ? [...S.w.get(w.parents[0]).mapPos] : [...t];
   });
   S.mapIds = ids;
+  // the labels of the axes: for each direction on screen, the 2 panel
+  // warriors whose scores (of the members) go most with it, up and down
+  const mem = ids.map((id, i) => i).filter((i) => S.w.get(ids[i]).kind === 'member');
+  const axis = (d) => {
+    if (mem.length < 3) return null;
+    const c = (k) => {
+      const xs = mem.map((i) => S.w.get(ids[i]).mapTarget[d]), ys = mem.map((i) => F[i * P + k]);
+      const mx = xs.reduce((a, b) => a + b, 0) / xs.length, my = ys.reduce((a, b) => a + b, 0) / ys.length;
+      let sxy = 0, sxx = 0, syy = 0;
+      xs.forEach((x, j) => { sxy += (x - mx) * (ys[j] - my), sxx += (x - mx) ** 2, syy += (ys[j] - my) ** 2; });
+      return sxx && syy ? sxy / Math.sqrt(sxx * syy) : 0;
+    };
+    const short = (n) => (n.length > 16 ? `${n.slice(0, 15)}…` : n);
+    const r = panel.map((p, k) => [short(nameOf(p)), c(k)]).sort((a, b) => b[1] - a[1]);
+    return { plus: r.slice(0, 2).map((x) => x[0]).join(', '), minus: r.slice(-2).reverse().map((x) => x[0]).join(', ') };
+  };
+  const ax = axis(0), ay = axis(1);
+  S.mapAxes = ax && ay ? [ax, ay] : null;
 }
 
 function drawMap(now) {
@@ -535,12 +643,31 @@ function drawMap(now) {
   const pad = 28, sx = (w - 2 * pad) / Math.max(1e-9, vx1 - vx0), sy = (h - 2 * pad) / Math.max(1e-9, vy1 - vy0), s = Math.min(sx, sy);
   const cx = (vx0 + vx1) / 2, cy = (vy0 + vy1) / 2;
   const X = (p) => w / 2 + (p.mapPos[0] - cx) * s, Y = (p) => h / 2 + (p.mapPos[1] - cy) * s;
-  // faint rings for depth
-  ctx.strokeStyle = '#161a2b';
-  for (let r = 60; r < Math.max(w, h); r += 60) {
-    ctx.beginPath();
-    ctx.arc(w / 2, h / 2, r, 0, 7);
-    ctx.stroke();
+  // the axes: the two directions in which the warriors' scores differ most;
+  // each end names the panel warriors the members toward it score more against
+  ctx.strokeStyle = '#1c2033';
+  ctx.setLineDash([2, 4]);
+  ctx.beginPath();
+  ctx.moveTo(pad / 2, h / 2), ctx.lineTo(w - pad / 2, h / 2);
+  ctx.moveTo(w / 2, pad / 2), ctx.lineTo(w / 2, h - pad / 2);
+  ctx.stroke();
+  ctx.setLineDash([]);
+  if (S.mapAxes) {
+    ctx.font = '10px ui-monospace, monospace';
+    ctx.fillStyle = '#7f86a0';
+    const [ax, ay] = S.mapAxes;
+    ctx.textBaseline = 'top';
+    ctx.textAlign = 'right';
+    ctx.fillText(`better against ${ax.plus} →`, w - 6, h / 2 + 4);
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'bottom';
+    ctx.fillText(`← better against ${ax.minus}`, 6, h / 2 - 4);
+    ctx.textBaseline = 'top';
+    ctx.fillText(`↑ better against ${ay.minus}`, w / 2 + 5, 4);
+    ctx.textBaseline = 'bottom';
+    ctx.fillText(`↓ better against ${ay.plus}`, w / 2 + 5, h - 4);
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
   }
   const hv = mouseOf(canvas);
   let near = null, nearD = 14;
@@ -685,16 +812,7 @@ function drawLineage() {
     ctx.lineTo(X(c), Y(c.panelAvg ?? 0));
     ctx.stroke();
   };
-  if (!line) {
-    // nothing selected: only the warriors in the list, to their parents, faint
-    for (const x of all) {
-      if (!x.alive) continue;
-      x.parents.forEach((pid, k) => {
-        const p = S.w.get(pid);
-        if (p?.kind === 'member') edge(p, x, hsl(x.hue, 70, 55, k ? 0.18 : 0.3), 1, k > 0);
-      });
-    }
-  }
+  ctx.setLineDash([]); // a crossover edge leaves the dash set: the rings below were dashed
   const hv = mouseOf(canvas);
   let near = null, nearD = 10;
   for (const x of all) {
@@ -927,17 +1045,17 @@ function renderOps() {
   $('ops').innerHTML = `<div class="ops-toggle">children of each change in
       <button data-window="0" class="${opsWindow ? '' : 'on'}">the whole run</button>
       <button data-window="20" class="${opsWindow === 20 ? 'on' : ''}">the last 20 batches</button></div>
-    <table class="ops-table"><tr><th>change</th><th title="children with this change">children</th><th title="share that got past the screen and entered the list">screen</th><th title="share still in the list after their own batch">kept</th><th title="of the children that entered at least 5 batches ago, how many stayed 5 batches or more">5+</th><th title="mean change of the average against the panel, child minus first parent, over the children that entered">Δ</th></tr>
+    <table class="ops-table"><tr><th>change</th><th title="children with this change">children</th><th title="share that got past the screen and entered the list">screen</th><th title="share still in the list after their own batch">kept</th><th></th><th title="of the children that entered at least 5 batches ago, how many stayed 5 batches or more">5+</th><th title="mean change of the average against the panel, child minus first parent, over the children that entered">Δ</th></tr>
     ${rows.map(([op, n]) => {
       const x = extra.get(op);
       const stay = n[3] / Math.max(1, n[0]);
       const gain = x?.compared ? x.gain / x.compared : null;
       return `<tr title="${esc(OP_DOCS[op] ?? op)}"><td>${esc(op)}</td><td>${n[0].toLocaleString('en-US')}</td><td>${pct(n[2], n[0])}</td>
-        <td><span class="bar" style="width:${Math.round((22 * stay) / maxStay)}px"></span>${pct(n[3], n[0])}</td>
+        <td>${pct(n[3], n[0])}</td><td class="ops-track"><span class="ops-bar" style="width:${Math.round((28 * stay) / maxStay)}px"></span></td>
         <td>${x?.old ? `${x.lasted}/${x.old}` : '–'}</td>
         <td class="${gain === null ? '' : gain < 0 ? 'neg' : 'pos'}">${gain === null ? '–' : `${gain >= 0 ? '+' : ''}${gain.toFixed(2)}`}</td></tr>`;
     }).join('')}</table>
-    <p class="ops-note">A child with several changes counts for each of them. <b>Screen</b>: it scored well enough in the first ${S.start?.params.screenRounds ?? ''} rounds against the panel to play the full matches and enter the list. <b>Kept</b>: it was still in the list after its own batch, so the push-off kept it. <b>5+</b>: of the children that entered 5 or more batches ago, how many stayed 5 batches. <b>Δ</b>: its average against the panel minus the first parent's, for the children that entered. Hover a row for what the change does.</p>`;
+    <p class="ops-note">A child with several changes counts for each of them. <b>Screen</b>: it scored well enough in the first ${S.start?.params.screenRounds ?? ''} rounds against the panel to play the full matches and enter the list. <b>Kept</b>: it was still in the list after its own batch, so the push-off kept it; the green bar compares the kept shares, the longest bar is the change whose children were kept most often. <b>5+</b>: of the children that entered 5 or more batches ago, how many stayed 5 batches. <b>Δ</b>: its average against the panel minus the first parent's, for the children that entered. Hover a row for what the change does.</p>`;
 }
 
 // The weights of genome_mix_default(), for logs from before --changes.

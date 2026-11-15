@@ -121,7 +121,43 @@ function checkValues(evs) {
   const played = new Map(); // "a,b" -> rounds of that result
   const slots = start.panel.map((w) => w.id);
   const panel = new Set(slots); // the panel now
-  let checked = 0, duels = 0, lastValues = new Map(), parentDistances = 0, pushoffs = 0, niches = 0;
+  let checked = 0, duels = 0, lastValues = new Map(), parentDistances = 0, pushoffs = 0, niches = 0, specials = 0, specialParents = 0;
+  // --specialists: per panel warrior the member best against it (the first
+  // in the list on a tie), when ahead of the members' median there by more
+  // than 2 standard errors of its score: [panel id, member id, score, se, median]
+  const specialistsNow = (ids) => {
+    const out = [];
+    for (const o of ids) {
+      if (!panel.has(o)) continue;
+      const ms = ids.filter((m) => !panel.has(m));
+      if (!ms.length) continue;
+      const xs = ms.map((m) => pts.get(`${m},${o}`)).sort((a, b) => a - b);
+      const med = xs.length % 2 ? xs[(xs.length - 1) / 2] : (xs[xs.length / 2 - 1] + xs[xs.length / 2]) / 2;
+      let best = ms[0];
+      for (const m of ms) if (pts.get(`${m},${o}`) > pts.get(`${best},${o}`)) best = m;
+      const x = pts.get(`${best},${o}`), e = se.get(`${best},${o}`);
+      if (x - med > 2 * e) out.push([o, best, x, e, med]);
+    }
+    return out;
+  };
+  let protectedNow = new Set(); // at the start of the batch, for the parents
+  // --sharing c: the average of the push-off value weighted, panel warrior j
+  // by 1 / (members' mean against it + c), a member's column by the mean of
+  // those; the weights of the last 'sharing' event (uniform before the first)
+  let shareW = null, sharings = 0, sharedLeaves = 0;
+  const share = (v, ids, score) => {
+    if (!shareW) return v;
+    return v.map((x, i) => {
+      let num = 0, den = 0;
+      ids.forEach((b, j) => {
+        if (j === i) return;
+        const w = panel.has(b) ? shareW.w.get(b) : shareW.member;
+        num += w * score[i][j], den += w;
+      });
+      const avg = den > 0 ? num / den : 0;
+      return { ...x, avg, value: avg * (start.params.alpha === 1 ? x.distance : x.distance ** start.params.alpha) };
+    });
+  };
   const styleOf = new Map(); // id -> kind of style (--niche)
   // the estimate of a newcomer: its screen points against the panel, the
   // SD-score on the panel columns to the nearest warrior in when its batch
@@ -161,6 +197,10 @@ function checkValues(evs) {
       slots[slots.indexOf(e.out)] = e.panel.id;
       for (const [o, w, l, t] of e.scores) put(e.panel.id, o, w, l, t);
       assert.equal(e.scores.length, slots.filter((x) => x !== null).length - 1, 'a new panel warrior plays everyone in');
+    }
+    if (e.type === 'enter' && start.params.specialists && e.rival < 0 && e.parents.length && e.ops !== 'reintroduce') { // a protected parent
+      assert.ok(protectedNow.has(e.parents[0]), `${e.name}: parent ${e.parents[0]} is not protected`);
+      specialParents++;
     }
     if (e.type === 'enter' && e.rival >= 0) {
       // the first parent won its tournament of two against the rival: by
@@ -215,24 +255,51 @@ function checkValues(evs) {
       const score = ids.map((a) => ids.map((b) => (a === b ? null : pts.get(`${a},${b}`))));
       const columns = start.params.diversity === 'panel' ? ids.map((id) => panel.has(id)) : null;
       const noise = start.params.noise ? { se: ids.map((a) => ids.map((b) => (a === b ? 0 : se.get(`${a},${b}`)))), z: start.params.noise } : {};
-      const v = pushoffValues(score, ids.map((_, i) => i), { variant: start.params.sd, alpha: start.params.alpha, columns, ...noise });
+      const v = share(pushoffValues(score, ids.map((_, i) => i), { variant: start.params.sd, alpha: start.params.alpha, columns, ...noise }), ids, score);
       let keep = new Set(ids.map((id, i) => (panel.has(id) ? i : -1)).filter((i) => i >= 0));
-      if (start.params.niche) {
-        const count = new Map();
-        for (const id of ids) if (!panel.has(id)) count.set(styleOf.get(id), (count.get(styleOf.get(id)) ?? 0) + 1);
-        const junk = new Set(['dies at once', 'writes little (scanner, or waits)']);
+      if (start.params.niche || start.params.specialists) {
         const safe = new Set(keep);
-        ids.forEach((id, i) => { if (!panel.has(id) && !junk.has(styleOf.get(id)) && count.get(styleOf.get(id)) <= start.params.niche) safe.add(i); });
+        if (start.params.niche) {
+          const count = new Map();
+          for (const id of ids) if (!panel.has(id)) count.set(styleOf.get(id), (count.get(styleOf.get(id)) ?? 0) + 1);
+          const junk = new Set(['dies at once', 'writes little (scanner, or waits)']);
+          ids.forEach((id, i) => { if (!panel.has(id) && !junk.has(styleOf.get(id)) && count.get(styleOf.get(id)) <= start.params.niche) safe.add(i); });
+        }
+        if (start.params.specialists) for (const [, m] of specialistsNow(ids)) safe.add(ids.indexOf(m));
         const plain = weakest(v, keep);
         if (safe.size < ids.length) keep = safe;
-        if (weakest(v, keep) !== plain) niches++; // the protection changed who left
+        if (weakest(v, keep) !== plain) niches++, specials++; // the protection changed who left
       }
       assert.equal(ids[weakest(v, keep)], e.id, `batch ${e.batch}: ${e.id} left, the push-off says ${ids[weakest(v, keep)]}`);
+      if (shareW) { // the plain average would have pushed out another one
+        const plain = pushoffValues(score, ids.map((_, i) => i), { variant: start.params.sd, alpha: start.params.alpha, columns, ...noise });
+        if (ids[weakest(plain, keep)] !== e.id) sharedLeaves++;
+      }
       pushoffs++;
     }
     if (e.type === 'leave') {
       assert.ok(!panel.has(e.id), `panel warrior ${e.id} left`);
       slots[slots.indexOf(e.id)] = null;
+    }
+    if (e.type === 'sharing') { // the weights from the members' means at the end of the batch
+      const ids = slots.filter((x) => x !== null), ms = ids.filter((m) => !panel.has(m));
+      const c = start.params.sharing, w = new Map();
+      for (const o of ids.filter((x) => panel.has(x))) {
+        const mean = ms.length ? ms.reduce((a, m) => a + pts.get(`${m},${o}`), 0) / ms.length : 0;
+        w.set(o, 1 / (mean + c));
+      }
+      assert.deepEqual(e.weights.map((x) => x[0]), [...w.keys()], `sharing after batch ${e.batch}`);
+      e.weights.forEach(([o, x, mean]) => assert.ok(Math.abs(x - w.get(o)) <= 1e-12 && Math.abs(mean - (1 / w.get(o) - c)) < 1e-5, `weight of ${o}: ${x}, not ${w.get(o)}`));
+      const member = [...w.values()].reduce((a, b) => a + b, 0) / w.size;
+      assert.ok(Math.abs(e.member - member) <= 1e-12, `member weight ${e.member}, not ${member}`);
+      shareW = { w: new Map(e.weights.map(([o, x]) => [o, x])), member: e.member };
+      sharings++;
+    }
+    if (e.type === 'specialists') {
+      const ids = slots.filter((x) => x !== null), js = specialistsNow(ids);
+      assert.deepEqual(e.protected.map((x) => x.slice(0, 2)), js.map((x) => x.slice(0, 2)), `specialists after batch ${e.batch}`);
+      e.protected.forEach((x, i) => x.slice(2).forEach((y, k) => assert.ok(Math.abs(y - js[i][2 + k]) < 1e-5, `specialist ${x[1]}`)));
+      protectedNow = new Set(js.map((x) => x[1]));
     }
     if (e.type === 'values') {
       lastValues = new Map(e.values.map((v) => [v[0], v[4]]));
@@ -243,7 +310,7 @@ function checkValues(evs) {
       const score = ids.map((a) => ids.map((b) => (a === b ? null : pts.get(`${a},${b}`))));
       const noise = start.params.noise ? { se: ids.map((a) => ids.map((b) => (a === b ? 0 : se.get(`${a},${b}`)))), z: start.params.noise } : {};
       const columns = start.params.diversity === 'panel' ? ids.map((id) => panel.has(id)) : null; // --diversity panel
-      const js = pushoffValues(score, ids.map((_, i) => i), { variant: start.params.sd, alpha: start.params.alpha, columns, ...noise });
+      const js = share(pushoffValues(score, ids.map((_, i) => i), { variant: start.params.sd, alpha: start.params.alpha, columns, ...noise }), ids, score);
       assert.deepEqual(e.values.map((v) => v[0]), ids);
       // the sixth number: the average against the panel, without the own column
       e.values.forEach(([id, , , , , pAvg]) => {
@@ -262,7 +329,11 @@ function checkValues(evs) {
   if (start.params.parents === 'duel') assert.ok(duels > 10, `only ${duels} duels`);
   assert.ok(parentDistances > 0, 'no difference to a parent checked');
   checkValues.pushoffs = pushoffs;
-  checkValues.niches = niches; // push-offs where --niche changed who left
+  checkValues.niches = niches; // push-offs where --niche or --specialists changed who left
+  checkValues.specials = specials;
+  checkValues.specialParents = specialParents; // children of a protected parent
+  checkValues.sharings = sharings;
+  checkValues.sharedLeaves = sharedLeaves; // push-offs where the weights changed who left
   return checked;
 }
 
@@ -740,6 +811,86 @@ test('--niche 4: the last 4 members of a kind of style do not leave; the same ru
   assert.deepEqual(stable(events(join(tmp, 'niche-resumed'))), stable(one));
 });
 
+test('--specialists --panel-choice kinds: the member clearly best against a panel warrior stays, a panel of every kind; the same run on any thread count and after a resume', { skip }, () => {
+  assert.equal(base[0].params.specialists, false);
+  const BATCHES = 20;
+  const args = [...TINY, '--specialists', '--panel-choice', 'kinds', '--pick-sample', '40', '--list', '16', '--panel-rounds', '200', '--survivors', '8'];
+  run(join(tmp, 'spec1'), [...args, '--threads', '1', '--batches', String(BATCHES)]);
+  const one = events(join(tmp, 'spec1'));
+  assert.deepEqual([one[0].params.specialists, one[0].params.panelChoice], [true, 'kinds']);
+  // every push-off with the protection replayed, every specialists event recomputed
+  assert.equal(checkValues(one), BATCHES);
+  assert.ok(checkValues.specials >= 2, `the protection changed who left in ${checkValues.specials} push-offs`);
+  assert.ok(checkValues.specialParents >= 5, `${checkValues.specialParents} children of a protected parent`);
+  assert.equal(one.filter((e) => e.type === 'specialists').length, BATCHES);
+  // the panel: the kinds take turns, each kind's strongest first
+  const picks = one.find((e) => e.type === 'pick').picked;
+  const kinds = [...new Set(picks.map((p) => p.kind))];
+  assert.ok(kinds.length >= 3, kinds.join(', '));
+  assert.deepEqual(picks.slice(0, kinds.length).map((p) => p.kind).sort(), [...kinds].sort(), 'one of each kind first');
+  for (const k of kinds) {
+    const ranks = picks.filter((p) => p.kind === k).map((p) => p.rank);
+    assert.equal(ranks[0], Math.min(...ranks), `${k}: the strongest first`);
+  }
+  // a kind gets its next pick only when no kind has fewer (while it has warriors left)
+  const seen = new Map();
+  for (const p of picks) {
+    const n = seen.get(p.kind) ?? 0;
+    const fewer = kinds.filter((k) => (seen.get(k) ?? 0) < n && picks.slice(picks.indexOf(p)).some((q) => q.kind === k));
+    assert.deepEqual(fewer, [], `${p.file} (${p.kind}) before a pick of ${fewer.join(', ')}`);
+    seen.set(p.kind, n + 1);
+  }
+  run(join(tmp, 'spec3'), [...args, '--threads', '3', '--batches', String(BATCHES)]);
+  assert.deepEqual(stable(events(join(tmp, 'spec3'))), stable(one));
+  run(join(tmp, 'spec-resumed'), [...args, '--threads', '2', '--batches', String(BATCHES >> 1)]);
+  run(join(tmp, 'spec-resumed'), ['--threads', '4', '--batches', String(BATCHES - (BATCHES >> 1))]);
+  assert.deepEqual(stable(events(join(tmp, 'spec-resumed'))), stable(one));
+});
+
+test('--sharing 20: the average weighted by how hard each panel warrior is for the members; the same run on any thread count and after a resume', { skip }, () => {
+  assert.equal(base[0].params.sharing, 0);
+  const BATCHES = 16;
+  const args = [...TINY, '--sharing', '20', '--list', '16', '--panel-rounds', '200', '--survivors', '8'];
+  run(join(tmp, 'share1'), [...args, '--threads', '1', '--batches', String(BATCHES)]);
+  const one = events(join(tmp, 'share1'));
+  assert.equal(one[0].params.sharing, 20);
+  // every weight from the members' means, every push-off and value with them
+  assert.equal(checkValues(one), BATCHES);
+  assert.equal(checkValues.sharings, BATCHES);
+  assert.ok(checkValues.sharedLeaves >= 2, `the weights changed who left in ${checkValues.sharedLeaves} push-offs`);
+  // an early leave (--stage) is decided on the first-stage results, weighted
+  // the same: the leaver's average is its entering row with the weights
+  run(join(tmp, 'share-stage'), [...args, '--stage', '20', '--threads', '2', '--batches', '12']);
+  const st = events(join(tmp, 'share-stage'));
+  assert.equal(checkValues(st), 12);
+  let weights = null, early = 0;
+  const P = new Set(st[0].panel.map((x) => x.id));
+  const enters = new Map(st.filter((e) => e.type === 'enter').map((e) => [e.id, e]));
+  for (const e of st) {
+    if (e.type === 'sharing') weights = { w: new Map(e.weights.map(([o, x]) => [o, x])), member: e.member };
+    if (e.type === 'leave' && e.early) {
+      let num = 0, den = 0;
+      for (const [o, wi, l, t] of enters.get(e.id).scores) {
+        const x = weights ? (P.has(o) ? weights.w.get(o) : weights.member) : 1;
+        num += x * ((3 * wi + t) * 100) / (wi + l + t), den += x;
+      }
+      assert.ok(Math.abs(num / den - e.avg) < 1e-4, `early leave of ${e.id}: ${e.avg}, weighted ${num / den}`);
+      if (weights) early++;
+    }
+  }
+  assert.ok(early >= 3, `${early} early leaves with weights`);
+  const w = one.filter((e) => e.type === 'sharing').at(-1).weights.map((x) => x[1]);
+  assert.ok(Math.max(...w) / Math.min(...w) > 1.5 && Math.max(...w) / Math.min(...w) <= 300 / 20 + 1, `weights ${Math.min(...w)} to ${Math.max(...w)}`);
+  run(join(tmp, 'share3'), [...args, '--threads', '3', '--batches', String(BATCHES)]);
+  assert.deepEqual(stable(events(join(tmp, 'share3'))), stable(one));
+  run(join(tmp, 'share-resumed'), [...args, '--threads', '2', '--batches', String(BATCHES >> 1)]);
+  run(join(tmp, 'share-resumed'), ['--threads', '4', '--batches', String(BATCHES - (BATCHES >> 1))]);
+  assert.deepEqual(stable(events(join(tmp, 'share-resumed'))), stable(one));
+  // refused together with --rotate
+  const r = spawnSync(evolve, [join(tmp, 'share-rot'), ...args, '--rotate', '2', '--batches', '1'], { encoding: 'utf8' });
+  assert.notEqual(r.status, 0);
+});
+
 test('--optimize: the constants of a warrior, steps confirmed with other seeds, the same on any thread count', { skip }, () => {
   // a stone whose step of 100 bombs 8 cells of a core of 800
   const file = join(tmp, 'badstep.red');
@@ -804,7 +955,9 @@ test('--map-elites: cells by style, each with its best warrior; the same run on 
   run(join(tmp, 'me1'), [...args, '--threads', '1', '--batches', '8']);
   const one = events(join(tmp, 'me1'));
   assert.equal(one[0].params.mapElites, true);
+  assert.deepEqual([one[0].params.panel, one[0].params.panelChoice], [80, 'random']); // the defaults of --map-elites
   const st = one[0], P = st.panel.length;
+  const scoresOf = new Map();
   const opp = st.panel.slice(0, 3).map((w) => assemble(w.source, RULES));
   const m = createMarsSync({ ...RULES, watch: true });
   const bin = (x, edges) => edges.filter((e) => x >= e).length;
@@ -824,11 +977,17 @@ test('--map-elites: cells by style, each with its best warrior; the same run on 
     for (const [, w, l, t] of e.scores) assert.equal(w + l + t, 100);
     const avg = e.scores.reduce((sum, [, w, , t]) => sum + 3 * w + t, 0) / P;
     assert.ok(Math.abs(avg - e.avg) < 1e-6, `${e.name}: ${avg} against ${e.avg}`);
-    // better than the one it replaced, which was the cell's warrior
+    // better than the one it replaced, which was the cell's warrior: by more
+    // than 2 standard errors of the differences per panel warrior
     const before = cells.get(e.index);
+    scoresOf.set(e.id, e.scores);
     if (before) {
       assert.deepEqual([e.replaced.id, e.replaced.avg.toFixed(4)], [before[0], before[1].toFixed(4)]);
-      assert.ok(e.avg > e.replaced.avg, `${e.name} took a cell with less`);
+      const old = scoresOf.get(e.replaced.id);
+      const d = e.scores.map(([o, w, , t], j) => { assert.equal(old[j][0], o); return 3 * w + t - (3 * old[j][1] + old[j][3]); });
+      const mean = d.reduce((a, b) => a + b, 0) / P, se = Math.sqrt(d.reduce((a, b) => a + (b - mean) ** 2, 0) / (P - 1) / P);
+      assert.ok(Math.abs(mean - e.replaced.gain) < 1e-6 && Math.abs(se - e.replaced.se) < 1e-6, `${e.name}: ${mean} ${se} against ${JSON.stringify(e.replaced)}`);
+      assert.ok(mean > 2 * se, `${e.name} took a cell by ${mean}, standard error ${se}`);
       replaced++;
     } else assert.equal(e.replaced, undefined);
     cells.set(e.index, [e.id, e.avg]);
@@ -844,6 +1003,74 @@ test('--map-elites: cells by style, each with its best warrior; the same run on 
   run(join(tmp, 'me-resumed'), [...args, '--threads', '2', '--batches', '3']);
   run(join(tmp, 'me-resumed'), ['--threads', '3', '--batches', '5']);
   assert.deepEqual(stable(events(join(tmp, 'me-resumed'))), stable(one));
+});
+
+test('--map-elites crowding: a child competes with its nearest by SD-score; one unlike all replaces the weaker of the closest pair; the same run on any thread count and after a resume', { skip }, () => {
+  const rules = TINY.slice(0, TINY.indexOf('--panel'));
+  const args = ['--map-elites', 'crowding', ...rules, '--seed', '9', '--panel', '40', '--holdout', '8', '--rounds', '40', '--screen-rounds', '10',
+    '--panel-rounds', '100', '--batch', '48', '--list', '12', '--bench-every', '3'];
+  run(join(tmp, 'cr1'), [...args, '--threads', '1', '--batches', '12']);
+  const one = events(join(tmp, 'cr1'));
+  assert.deepEqual([one[0].params.mapElites, one[0].params.crowding], [true, true]);
+  const P = one[0].panel.length;
+  const pts = (scores) => scores.map(([, w, l, t]) => (3 * w + t) * 100 / (w + l + t));
+  const places = new Map(); // place -> { id, avg, row }
+  const sigmaOf = () => [...Array(P).keys()].map((j) => {
+    const xs = [...places.keys()].sort((a, b) => a - b).map((c) => places.get(c).row[j]);
+    const mean = xs.reduce((a, b) => a + b, 0) / xs.length;
+    return Math.sqrt(xs.reduce((a, x) => a + (x - mean) ** 2, 0) / xs.length);
+  });
+  const dist = (a, b, sigma) => a.reduce((s, x, j) => (sigma[j] > 0 ? s + Math.abs(x - b[j]) / sigma[j] : s), 0);
+  const close = (a, b) => Math.abs(a - b) < 1e-6 * Math.max(1, Math.abs(b));
+  const count = { empty: 0, near: 0, far: 0 };
+  let sigma = null, batch = -1;
+  for (const e of one.filter((x) => x.type === 'elite')) {
+    if (e.batch !== batch) batch = e.batch, sigma = null;
+    const row = pts(e.scores);
+    assert.equal(row.length, P);
+    assert.ok(close(row.reduce((a, b) => a + b, 0) / P, e.avg), e.name);
+    count[e.rule]++;
+    if (e.rule === 'empty') {
+      assert.ok(places.size < 12 && !places.has(e.index), e.name);
+      assert.ok([...Array(e.index).keys()].every((c) => places.has(c)), `${e.name}: the first free place`);
+      assert.equal(e.replaced, undefined);
+    } else {
+      assert.equal(places.size, 12);
+      sigma ??= sigmaOf(); // once a batch, from the full archive
+      const order = [...places.keys()].sort((a, b) => a - b);
+      let near = -1, dn = Infinity, pa = -1, pb = -1, dp = Infinity;
+      for (const c of order) { const d = dist(row, places.get(c).row, sigma); if (d < dn) dn = d, near = c; }
+      for (const a of order) for (const b of order) {
+        if (b <= a) continue;
+        const d = dist(places.get(a).row, places.get(b).row, sigma);
+        if (d < dp) dp = d, pa = a, pb = b;
+      }
+      assert.ok(close(e.distance, dn) && close(e.pair, dp), `${e.name}: ${e.distance} ${e.pair} against ${dn} ${dp}`);
+      const old = places.get(e.index);
+      assert.equal(e.replaced.id, old.id);
+      if (e.rule === 'near') { // its nearest, beaten by more than 2 standard errors of the paired differences
+        assert.ok(dn <= dp && e.index === near, `${e.name}: nearest ${near}, took ${e.index}`);
+        const d = row.map((x, j) => x - old.row[j]);
+        const mean = d.reduce((a, b) => a + b, 0) / P, se = Math.sqrt(d.reduce((a, b) => a + (b - mean) ** 2, 0) / (P - 1) / P);
+        assert.ok(close(mean, e.replaced.gain) && mean > 2 * se, `${e.name}: ${mean} ${se}`);
+        assert.equal(e.newFamily, false);
+      } else { // farther than the closest pair: the weaker of that pair, by a higher average, and above half of the archive
+        assert.ok(dn > dp, e.name);
+        const weak = places.get(pa).avg < places.get(pb).avg ? pa : pb;
+        assert.equal(e.index, weak, `${e.name}: the pair ${pa} ${pb}`);
+        assert.ok(e.avg > old.avg, e.name);
+        assert.ok(2 * [...places.values()].filter((x) => x.avg < e.avg).length >= 12, `${e.name}: ${e.avg} below the median`);
+        assert.equal(e.newFamily, e.parents.length > 0);
+      }
+    }
+    places.set(e.index, { id: e.id, avg: e.avg, row });
+  }
+  assert.ok(count.empty === 12 && count.near > 2 && count.far > 2, JSON.stringify(count));
+  run(join(tmp, 'cr4'), [...args, '--threads', '4', '--batches', '12']);
+  assert.deepEqual(stable(events(join(tmp, 'cr4'))), stable(one));
+  run(join(tmp, 'cr-resumed'), [...args, '--threads', '2', '--batches', '5']);
+  run(join(tmp, 'cr-resumed'), ['--threads', '3', '--batches', '7']);
+  assert.deepEqual(stable(events(join(tmp, 'cr-resumed'))), stable(one));
 });
 
 test('--start: the first batch starts from the warriors of a folder', { skip }, () => {
