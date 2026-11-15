@@ -23,6 +23,9 @@ Ctrl-C ends the run after the current batch. `build/42evolve runs/a` continues i
 | `--rounds N`, `--screen-rounds N` | 100, 20 | rounds per match; the first of them are the screen |
 | `--screen-factor x` | 0.8 | a candidate needs this share of the weakest member's panel average after the screen |
 | `--alpha x`, `--sd opponent\|sum` | 1, opponent | push-off value = average * distance^alpha; the reading of the SD-score |
+| `--diversity all\|panel` | all | the columns of the push-off's SD-score: everyone in, or the panel only (the average stays over everyone). Among warriors of one design the results against each other differ in small details, so their rows look different by the evolved columns; against the fixed panel two warriors of one design score alike |
+| `--panel-rounds N` | `--rounds` | rounds of a match against a panel warrior, at least `--rounds`: less noise in the panel's columns. Matches are played in blocks of at most 100 rounds, so the threads end a step together |
+| `--niche N` | 0 | each kind of style (`tools/style.js`) keeps at least N members: the push-off takes the weakest of the others, so a design that is losing the list keeps N places to improve in, and the leading one can still grow to the rest. The two kinds of junk ("dies at once", "writes little") get no places. Every newcomer's style is measured when it enters (`style` in its `enter` event): 2 rounds against each of the first 3 panel warriors with the watch, as `tools/style.js` does. A first version capped the largest kind instead (`--niche 0.4`: at most 32 of 80); with two kinds at their cap the other 16 places held warriors that scored 4 against the panel and could not be pushed out |
 | `--noise z` | 0 | the SD-score counts a column only as far as the difference is larger than z standard errors of the two scores: max(0, \|a_k - b_k\| - z sqrt(se_ak² + se_bk²)), each standard error from the wins, losses and ties of its match (#148); 0 is the plain SD-score of the tournament |
 | `--reintroduce p` | 0.02 | chance that a candidate is a warrior that was pushed off earlier |
 | `--select screen\|value` | screen | what the survivors of the screen are picked by: the screen score, or the estimated push-off value (screen score times the SD-score to the nearest warrior in, on the panel columns, to the power alpha) |
@@ -69,11 +72,54 @@ The run folder gets `events.jsonl` (everything that happened, one JSON object pe
 - **Lineage**: every warrior that entered, by its batch and its score against the panel; the warriors in the list with faint lines to their parents, a ring where a new family starts. A click on a warrior shows its line: its first parents in yellow, crossover parents dashed in cyan, its descendants in white, everything else dimmed.
 - **Progress**: the best and mean member against the panel, and the best against the holdout, over the batches.
 - **★ best** in the header is the best warrior against the holdout warriors so far, also after the push-off removed it from the list (the same warrior as `best.red`); **strongest now** is the member with the highest average against the panel. A click opens the card. The best one has a ★ in the matrix and on the map.
-- A click on a warrior opens its card: code, scores, parents, nearest warrior, its result against each panel warrior, and every match with a **watch** button.
+- A click on a warrior opens its card: code, scores, parents, nearest warrior, its style (below), its result against each panel warrior, and every match with a **watch** button.
 
 **Several runs**: `node tools/serve.mjs --run ~/42evolve.a ~/42evolve.b ...` (one `--run`, any number of folders, so `--run ~/42evolve.*` works) serves each run's events; `ui/evolver.html?run=<n>` is the dashboard of run n (0 is the first), and [`ui/runs.html`](../ui/runs.html) shows them all on one page: the best against the holdout and the best member against the panel over the minutes of each run (the fair axis when runs share a machine), and a table with the settings in which they differ, where each stands, the speed, the families and the opcodes of the list.
 
 **Watch** opens `ui/index.html#battle=...`, which carries both warriors, the rules, the seed and the rounds. It starts in the grid layout at learn speed, every step explained (`?layout=ring` and `?speed=` before the `#` still win). The visualizer plays the same rounds as the evolver did: the WebAssembly build gives the same results as the native one, and stepping a match round by round with a watch gives the same rounds as `m42_match()`. `test/evolver.test.js` replays logged matches in the WebAssembly engine.
+
+## E5, eighth comparison: diversity measured against the panel
+
+15th November 2026, one run on 32 threads at nice 10, an hour: a list of 80, a panel of 20 warriors picked as before (the 10 of the sixth comparison plus `omms.red`, `harbinger.red`, `hfb.red`, `unpit.red`, `mandragora.red`, `forty.red`, `gigolo.red`, `perseus.red`, `outcast.red`, `geist.red`: papers, a stone with imps, a vampire, scanners), `--screen-members 10 --diversity panel --panel-rounds 500 --fill`, `--stage` at its default. The push-off's average is over everyone, its SD-score over the 20 panel columns only, each of 500 rounds.
+
+| Run | Batches | `best.red` | 3 best by panel average | 3 best by row average |
+|---|---|---|---|---|
+| seventh comparison: list 90, 10 panel, distance over all | 2,884 | 93.4 | 87.7, 79.7, 88.6 | 78.7, 88.1, 79.6 |
+| list 80, 20 panel, `--diversity panel --panel-rounds 500` | 3,237 | **119.1** | 119.1, 115.2, 118.8 | 113.4, 110.2, 109.4 |
+
+The first run from random code above 102 against the 1,107: 17.5 points above the best before, near the median hill warrior of the sample (144.7) by a third of the way. The list by style (below), graded at four points of the run:
+
+| Batch | Mean vs panel | Writes fields | Throws copies | Reads first (scanner) |
+|---|---|---|---|---|
+| 729 | 68.1 | 38 | 31 | 9 |
+| 1,460 | 75.3 | 52 | 17 | 11 |
+| 2,191 | 83.8 | 22 | 18 | 37 |
+| 2,922 | 84.6 | 8 | 11 | 59 |
+
+Until batch 1,500 the field writers of the earlier runs led; from about batch 1,700 on warriors that read far cells before they write took the list over, the scanner of the hill, with `MOV` 53% of the list's instructions. `best.red` is one of them (600 cells read, 1,232 written). The first time a run from random code changed its design to one of the hill's. It also shows the limit: the new design took the list as the old one had. Hence `--niche N`, places that a kind of style keeps.
+
+## The style of a warrior
+
+The SD-score sees only rows of scores. What a warrior does to the core, [`tools/style.js`](../tools/style.js) measures with the watch of the engine: a few rounds against some opponents, a look every 500 instructions, the last look while it lives counts, up to 4,000 instructions:
+
+- copies: cells outside its code that hold a copy of one of its instructions (the bombs of a stone, the body of a paper, the trail of an imp);
+- moved: cells outside its code that it executed (papers and imps run their copies);
+- written, and how many of those stores were whole instructions or fields rather than increments;
+- read only: cells outside its code that it read and did not write (a scanner);
+- processes.
+
+From those a rough kind: a paper (copies, runs them, 250 processes or more), a moving warrior with few processes (imps, stones that boot), a scanner (reads more than half as many cells as it copies, 50 or more), a warrior that throws copies of its code (stones, clears), one that writes fields without copies, one that damages by increments. The card of every warrior in the dashboard has the line (against the first 3 panel warriors), `node tools/style.mjs <dir>` grades a folder (against our Dwarf, Origami and Seeker), and 42evolve grades every newcomer the same way ([`evolver/style.c`](../evolver/style.c), the same numbers: `test/evolver.test.js` compares them with `tools/style.js` in the WebAssembly engine) for `--niche`. On the 1,107 '94nop Koenigstuhl warriors, by the design their `;strategy` line names (the part after the last `->`), 15th November 2026:
+
+| Strategy line | paper | moves, few processes | scanner | throws copies | writes fields | other |
+|---|---|---|---|---|---|---|
+| paper (231) | 200 | 24 | 3 | 4 | 0 | 0 |
+| stone (159) | 22 | 64 | 12 | 58 | 2 | 1 |
+| scanner (269) | 7 | 10 | 121 | 127 | 0 | 4 |
+| clear (73) | 9 | 9 | 13 | 41 | 1 | 0 |
+| imp (34) | 9 | 13 | 6 | 5 | 1 | 0 |
+| all 1,107 | 321 | 178 | 219 | 360 | 17 | 12 |
+
+Papers are found (87%); stones are a stone that moves or one that throws copies (77%); of the scanners, half have found their target by 4,000 instructions and throw bombs like a stone. A warrior that writes fields without copying its code is 17 of 1,107 on the hill: that is the design the lists of the sixth and seventh comparisons were full of (83 of 90 there).
 
 ## First run
 

@@ -35,6 +35,7 @@
 #include "names.h"
 #include "pushoff.h"
 #include "rng.h"
+#include "style.h"
 
 #define ARCHIVE_MAX 256
 #define SEEN_MAX 16384 // hashes of the latest candidates, to skip repeats
@@ -67,6 +68,9 @@ typedef struct {
   uint32_t stage;           // --stage N: survivors play N rounds, those still in after the batch the rest; 0 all at once
   char panel_files[2048];   // --panel-files: the panel, file names in the folder, comma separated; "" drawn
   int fill;                 // --fill: random warriors until the list is full, not only in the first batch
+  uint32_t panel_rounds;    // --panel-rounds: rounds of a match against a panel warrior, 0 as --rounds
+  int distance_panel;       // --diversity panel: the push-off's SD-score over the panel's columns only
+  uint32_t niche;           // --niche N: each kind of style keeps at least N members (not the two kinds of junk)
 } params;
 
 enum { PARENTS_VALUE, PARENTS_DUEL };
@@ -114,6 +118,8 @@ typedef struct {
   uint32_t adjective, noun, earlier; // the name (evolver/names.h)
   double parent_difference; // members: row_difference() to the first parent when it entered, -1 if that was not in
   int new_family;           // members: it plays so unlike its first parent that it got a noun of its own
+  int style_kind;           // members: its style (style.h), -1 not measured (a state from before)
+  style st;                 // members: the numbers behind it, when it entered
   double holdout; // members: average against the holdout warriors, -1 not measured
   char ops[128]; // the names of the changes, space separated: 6 of at most 17 characters
 } warrior;
@@ -274,7 +280,52 @@ static void pool_stop(pool *p) {
 }
 
 // Plays all units on all threads, the calling one included.
+static void pool_run_blocks(pool *p, unit *units, uint32_t n);
+
+// A match of more rounds than BLOCK is played as blocks of at most BLOCK
+// rounds (the same results: no warrior here uses p-space), so that the
+// threads end a step together (--panel-rounds 500 made units 5 times longer).
+#define BLOCK 100
+
 static void pool_run(pool *p, unit *units, uint32_t n) {
+  uint32_t m = 0;
+  for (uint32_t i = 0; i < n; i++) m += units[i].rounds > BLOCK ? (units[i].rounds + BLOCK - 1) / BLOCK : 1;
+  if (m == n) {
+    pool_run_blocks(p, units, n);
+    return;
+  }
+  unit *b = malloc(m * sizeof *b);
+  if (!b) exit(1);
+  uint32_t k = 0;
+  for (uint32_t i = 0; i < n; i++) {
+    uint32_t done = 0;
+    do {
+      const uint32_t r = units[i].rounds - done < BLOCK ? units[i].rounds - done : BLOCK;
+      b[k] = units[i];
+      b[k].first = units[i].first + done;
+      b[k++].rounds = r;
+      done += r;
+    } while (done < units[i].rounds);
+  }
+  pool_run_blocks(p, b, m);
+  k = 0;
+  for (uint32_t i = 0; i < n; i++) {
+    unit *u = &units[i];
+    memset(u->s, 0, sizeof u->s);
+    u->instructions = 0;
+    uint32_t done = 0;
+    do {
+      for (int w = 0; w < 2; w++)
+        u->s[w] = (m42_score){u->s[w].wins + b[k].s[w].wins, u->s[w].losses + b[k].s[w].losses, u->s[w].ties + b[k].s[w].ties};
+      u->instructions += b[k].instructions;
+      done += b[k++].rounds;
+    } while (done < u->rounds);
+    u->status = M42_OK;
+  }
+  free(b);
+}
+
+static void pool_run_blocks(pool *p, unit *units, uint32_t n) {
   if (!n) return;
   pthread_mutex_lock(&p->mutex);
   p->units = units;
@@ -335,6 +386,11 @@ typedef struct {
   m42_score *wlt;
   double *pts;        // points per 100 rounds, from wlt
   double *se;         // their standard errors (pushoff_se()), for --noise
+  // the style of newcomers (style.h): its own engine with a watch
+  m42_ctx *sm;
+  void *swatch_mem;
+  const m42_watch *swatch;
+
   // --stage: the results of the first stage rounds of every pair, the same
   // way, so that a newcomer with only those is compared with the others at
   // the same noise
@@ -403,6 +459,10 @@ static void set_result1(run *r, uint32_t a, uint32_t b, m42_score sa) {
   r->se1[b * c + a] = pushoff_se(sb.wins, sb.ties, sb.wins + sb.losses + sb.ties);
 }
 
+// The rounds of a whole match against a panel warrior (--panel-rounds), and
+// against the warrior in slot o.
+static uint32_t panel_rounds(const params *p) { return p->panel_rounds ? p->panel_rounds : p->rounds; }
+
 // The rounds of the first stage of a match, p.rounds without --stage.
 static uint32_t stage_rounds(const params *p) { return p->stage && p->stage < p->rounds ? p->stage : p->rounds; }
 
@@ -420,13 +480,13 @@ static uint32_t members(const run *r) { return r->active_n - r->panel_n; }
 
 static void compute_values(run *r) {
   pushoff_values(r->pts, r->cap, r->active, r->active_n, r->p.sd, r->p.alpha, r->p.noise > 0 ? r->se : 0, r->p.noise,
-                 r->sigma, r->values);
+                 r->p.distance_panel ? r->keep : 0, r->sigma, r->values);
 }
 
 // The same on the results of the first stage (--stage).
 static void compute_values1(run *r) {
   pushoff_values(r->pts1, r->cap, r->active, r->active_n, r->p.sd, r->p.alpha, r->p.noise > 0 ? r->se1 : 0, r->p.noise,
-                 r->sigma, r->values);
+                 r->p.distance_panel ? r->keep : 0, r->sigma, r->values);
 }
 
 // A warrior's average against the panel, points per 100 rounds; a panel
@@ -622,7 +682,7 @@ static void event_start(run *r) {
           "\"rounds\":%u,\"screenRounds\":%u,\"benchEvery\":%u,\"benchRounds\":%u,\"initLength\":%u,"
           "\"screenFactor\":%.17g,\"alpha\":%.17g,\"reintroduce\":%.17g,\"sd\":\"%s\",\"seed\":%" PRIu64
           ",\"select\":\"%s\",\"rotate\":%u,\"fractions\":%.17g,\"race\":%u,\"raceKeep\":%u,\"prior\":\"%s\","
-          "\"parents\":\"%s\",\"screenMembers\":%u,\"noise\":%.17g,\"stage\":%u,\"fill\":%s},"
+          "\"parents\":\"%s\",\"screenMembers\":%u,\"noise\":%.17g,\"stage\":%u,\"fill\":%s,\"panelRounds\":%u,\"diversity\":\"%s\",\"niche\":%u},"
           "\"opponents\":",
           m42_version(), p->rules.core_size, p->rules.max_cycles, p->rules.max_processes, p->rules.max_length,
           p->rules.min_distance, r->panel_n, r->hold_n, p->list, p->batch, p->survivors, p->rounds, p->screen_rounds,
@@ -630,7 +690,7 @@ static void event_start(run *r) {
           p->sd == SD_SUM ? "sum" : "opponent", p->seed, p->select == SELECT_VALUE ? "value" : "screen", p->rotate,
           p->fractions, p->race, p->race_keep, p->prior == PRIOR_HILL ? "hill" : "uniform",
           p->parents == PARENTS_DUEL ? "duel" : "value", p->screen_members, p->noise, p->stage,
-          p->fill ? "true" : "false");
+          p->fill ? "true" : "false", panel_rounds(p), p->distance_panel ? "panel" : "all", p->niche);
   json_str(f, p->opponents, 0);
   fputs(",\"panelFiles\":", f);
   json_str(f, p->panel_files, 0);
@@ -720,7 +780,11 @@ static void event_enter(run *r, uint32_t slot, double screen, double estimate, d
   json_str(f, w->ops, 0);
   fprintf(f, ",\"length\":%u,\"screen\":%.4f,\"estimate\":%.6f,\"screenPoints\":[", w->g->len, screen, estimate);
   for (uint32_t k = 0; k < r->panel_n; k++) fprintf(f, "%s%.4f", k ? "," : "", points(row[k].s[0], r->p.screen_rounds));
-  fprintf(f, "],\"raceKey\":%.6f,\"rival\":%" PRId64 ",\"parentDifference\":%.6f,\"newFamily\":%s,\"code\":",
+  fprintf(f, "],\"style\":{\"kind\":\"%s\",\"copies\":%.6f,\"moved\":%.6f,\"written\":%.6f,\"whole\":%.6f,\"read\":%.6f,"
+          "\"tasks\":%.6f,\"alive\":%.6f,\"measured\":%.6f}",
+          style_kind_name(w->style_kind), w->st.copies, w->st.moved, w->st.written, w->st.whole, w->st.read, w->st.tasks,
+          w->st.alive, w->st.measured);
+  fprintf(f, ",\"raceKey\":%.6f,\"rival\":%" PRId64 ",\"parentDifference\":%.6f,\"newFamily\":%s,\"code\":",
           race_key, rival == NO_ID ? (int64_t)-1 : (int64_t)rival, w->parent_difference, w->new_family ? "true" : "false");
   write_code(f, w->g, r->p.rules.core_size);
   fputs(",\"scores\":[", f);
@@ -777,10 +841,11 @@ static void save_state(run *r) {
   fprintf(f, "42evolve-state 1\n");
   fprintf(f, "rules %u %u %u %u %u\n", p->rules.core_size, p->rules.max_cycles, p->rules.max_processes,
           p->rules.max_length, p->rules.min_distance);
-  fprintf(f, "params %u %u %u %u %u %u %u %u %u %u %.17g %.17g %.17g %d %" PRIu64 " %d %u %.17g %u %u %d %d %u %.17g %u %d\n",
+  fprintf(f, "params %u %u %u %u %u %u %u %u %u %u %.17g %.17g %.17g %d %" PRIu64 " %d %u %.17g %u %u %d %d %u %.17g %u %d %u %d %u\n",
           p->panel, p->holdout, p->list, p->batch, p->survivors, p->rounds, p->screen_rounds, p->bench_every,
           p->bench_rounds, p->init_length, p->screen_factor, p->alpha, p->reintroduce, p->sd, p->seed, p->select,
-          p->rotate, p->fractions, p->race, p->race_keep, p->prior, p->parents, p->screen_members, p->noise, p->stage, p->fill);
+          p->rotate, p->fractions, p->race, p->race_keep, p->prior, p->parents, p->screen_members, p->noise, p->stage, p->fill,
+          p->panel_rounds, p->distance_panel, p->niche);
   fprintf(f, "opponents %s\n", p->opponents);
   if (p->start[0]) fprintf(f, "start-dir %s\n", p->start);
   char mix[CH_COUNT * 32];
@@ -801,8 +866,8 @@ static void save_state(run *r) {
     const warrior *w = r->slot[r->active[i]];
     if (w->kind != MEMBER) continue;
     genome_save(w->g, text, sizeof text);
-    fprintf(f, "member %" PRIu64 " %u %" PRIu64 " %" PRIu64 " %.17g %u %u %u %s\nops %s\n", w->id, w->born,
-            w->parents[0], w->parents[1], w->holdout, w->adjective, w->noun, w->earlier, text, w->ops);
+    fprintf(f, "member %" PRIu64 " %u %" PRIu64 " %" PRIu64 " %.17g %u %u %u %s\nops %s\nkind %d\n", w->id, w->born,
+            w->parents[0], w->parents[1], w->holdout, w->adjective, w->noun, w->earlier, text, w->ops, w->style_kind);
   }
   for (uint32_t i = 0; i < r->archive_n; i++) {
     genome_save(&r->archive[i], text, sizeof text);
@@ -895,13 +960,14 @@ static int load_state(run *r, const char *path) {
       // --race-keep, --prior, --parents, --screen-members, --noise, --stage,
       // --fill; a state without them has none of them
       const int got = sscanf(line + 7,
-                             "%u %u %u %u %u %u %u %u %u %u %lg %lg %lg %d %" SCNu64 " %d %u %lg %u %u %d %d %u %lg %u %d",
+                             "%u %u %u %u %u %u %u %u %u %u %lg %lg %lg %d %" SCNu64 " %d %u %lg %u %u %d %d %u %lg %u %d %u %d %u",
                              &p->panel, &p->holdout, &p->list, &p->batch, &p->survivors, &p->rounds, &p->screen_rounds,
                              &p->bench_every, &p->bench_rounds, &p->init_length, &p->screen_factor, &p->alpha,
                              &p->reintroduce, &p->sd, &p->seed, &p->select, &p->rotate, &p->fractions, &p->race,
-                             &p->race_keep, &p->prior, &p->parents, &p->screen_members, &p->noise, &p->stage, &p->fill);
+                             &p->race_keep, &p->prior, &p->parents, &p->screen_members, &p->noise, &p->stage, &p->fill, &p->panel_rounds,
+                             &p->distance_panel, &p->niche);
       if (got != 15 && got != 17 && got != 18 && got != 20 && got != 21 && got != 22 && got != 23 && got != 24 &&
-          got != 25 && got != 26)
+          got != 25 && got != 26 && got != 28 && got != 29)
         goto bad;
     } else if (!strncmp(line, "opponents ", 10)) {
       snprintf(p->opponents, sizeof p->opponents, "%s", line + 10);
@@ -952,6 +1018,7 @@ static int load_state(run *r, const char *path) {
       warrior *w = xmalloc(sizeof *w);
       int used = 0;
       w->kind = MEMBER;
+      w->style_kind = -1;
       w->g = xmalloc(sizeof *w->g);
       if (sscanf(line + 7, "%" SCNu64 " %u %" SCNu64 " %" SCNu64 " %lg %u %u %u %n", &w->id, &w->born,
                  &w->parents[0], &w->parents[1], &w->holdout, &w->adjective, &w->noun, &w->earlier, &used) != 8 ||
@@ -966,6 +1033,8 @@ static int load_state(run *r, const char *path) {
       if (at != UINT32_MAX && r->slot[at]) goto bad;
       r->slot[at != UINT32_MAX ? at : free_slot(r)] = w;
       last = w;
+    } else if (!strncmp(line, "kind ", 5)) { // after its member line; states before have none
+      if (!last || sscanf(line + 5, "%d", &last->style_kind) != 1) goto bad;
     } else if (!strncmp(line, "ops ", 4) || !strcmp(line, "ops")) {
       if (last) snprintf(last->ops, sizeof last->ops, "%s", line[3] ? line + 4 : "");
     } else if (!strncmp(line, "archive ", 8)) {
@@ -1164,14 +1233,14 @@ static void rotate_panel(run *r) {
   w->id = r->next_id++;
   *old = *w;
   free(w);
-  const uint32_t s1 = stage_rounds(&r->p), parts = s1 < r->p.rounds ? 2 : 1;
+  const uint32_t whole = panel_rounds(&r->p), s1 = stage_rounds(&r->p), parts = s1 < whole ? 2 : 1;
   unit *u = xmalloc(r->active_n * parts * sizeof *u);
   uint32_t n = 0;
   for (uint32_t k = 0; k < r->active_n; k++) {
     const uint32_t o = r->active[k];
     if (o == i) continue;
     u[n++] = (unit){old->w, r->slot[o]->w, seed_for(r, r->slot[o]->id), 0, s1, {{0}}, 0, 0};
-    if (parts == 2) u[n++] = (unit){old->w, r->slot[o]->w, seed_for(r, r->slot[o]->id), s1, r->p.rounds - s1, {{0}}, 0, 0};
+    if (parts == 2) u[n++] = (unit){old->w, r->slot[o]->w, seed_for(r, r->slot[o]->id), s1, whole - s1, {{0}}, 0, 0};
   }
   pool_run(&r->pool, u, n);
   FILE *f = r->events;
@@ -1276,6 +1345,20 @@ static void count_ops(op_count *t, uint32_t *tn, const char *ops, int reached) {
   }
 }
 
+// The style of a newcomer (style.h, the same as tools/style.js): 2 rounds
+// against each of the first 3 panel warriors, seeds 7 and 8, a look every 500
+// of 4,000 instructions.
+static void measure_style(run *r, warrior *w) {
+  const m42_warrior *opp[3];
+  const uint32_t n = r->panel_n < 3 ? r->panel_n : 3;
+  for (uint32_t i = 0; i < n; i++) opp[i] = r->panel[i].w;
+  if (style_measure(r->sm, r->swatch, w->w, opp, n, 2, 4000, 7, 500, &w->st) != M42_OK) {
+    fprintf(stderr, "42evolve: the style of %" PRIu64 " could not be measured\n", w->id);
+    exit(1);
+  }
+  w->style_kind = style_kind(&w->st);
+}
+
 // --stage: a newcomer leaves without the rest of its rounds when it is among
 // the STAGE_CUT weakest members on the first stage's results (r->values from
 // compute_values1()), unless its nearest warrior is weaker still: then the
@@ -1293,11 +1376,41 @@ static uint32_t value_of(const run *r, uint32_t s) {
   return 0;
 }
 
-static int leaves_early(const run *r, uint32_t s) {
+// --niche N: who may leave in this push-off. mask[slot] is 1 for the panel
+// and for the members of a kind of style that has N members or fewer, so
+// that the push-off takes the weakest of the others: a design that is losing
+// the list keeps N places to improve in, the leading one can grow to the
+// rest. The two kinds of junk ("dies at once", "writes little") and warriors
+// without a kind (from a state before kinds) have no places. When that would
+// leave nobody who may leave, nobody is protected.
+static void leave_mask(const run *r, uint8_t *mask) {
+  memcpy(mask, r->keep, r->cap);
+  if (!r->p.niche) return;
+  uint32_t count[KIND_COUNT] = {0};
+  for (uint32_t i = 0; i < r->active_n; i++) {
+    const warrior *w = r->slot[r->active[i]];
+    if (w->kind == MEMBER && w->style_kind >= 0 && w->style_kind < KIND_COUNT) count[w->style_kind]++;
+  }
+  uint32_t free_n = 0;
+  for (uint32_t i = 0; i < r->active_n; i++) {
+    const uint32_t s = r->active[i];
+    const warrior *w = r->slot[s];
+    if (w->kind != MEMBER) continue;
+    const int k = w->style_kind;
+    if (k >= 0 && k < KIND_COUNT && k != KIND_DIES && k != KIND_LITTLE && count[k] <= r->p.niche) mask[s] = 1;
+    else free_n++;
+  }
+  if (!free_n) memcpy(mask, r->keep, r->cap);
+}
+
+// mask: those that may not leave (leave_mask()); a newcomer that may not
+// leave does not leave early either.
+static int leaves_early(const run *r, uint32_t s, const uint8_t *mask) {
+  if (mask[s]) return 0;
   const pushoff_value *me = &r->values[value_of(r, s)];
   uint32_t below = 0;
   for (uint32_t i = 0; i < r->active_n; i++)
-    if (!r->keep[r->values[i].index] && r->values[i].value < me->value) below++;
+    if (!mask[r->values[i].index] && r->values[i].value < me->value) below++;
   if (below >= STAGE_CUT) return 0;
   if (below == 0) return 1;
   return me->nearest == UINT32_MAX || r->values[value_of(r, me->nearest)].value >= me->value;
@@ -1316,8 +1429,9 @@ static void complete_one(run *r, uint32_t s) {
     if (o == s) continue;
     const m42_score sc = r->wlt[s * r->cap + o];
     const uint32_t played = sc.wins + sc.losses + sc.ties;
-    if (played >= p->rounds) continue;
-    u[n] = (unit){r->slot[s]->w, r->slot[o]->w, seed_for(r, r->slot[o]->id), played, p->rounds - played, {{0}}, 0, 0};
+    const uint32_t want = o < r->panel_n ? panel_rounds(p) : p->rounds;
+    if (played >= want) continue;
+    u[n] = (unit){r->slot[s]->w, r->slot[o]->w, seed_for(r, r->slot[o]->id), played, want - played, {{0}}, 0, 0};
     opp[n++] = o;
   }
   pool_run(&r->pool, u, n);
@@ -1513,7 +1627,7 @@ static void run_batch(run *r) {
   const int staged = upto < p->rounds;
   unit *f = xmalloc((size_t)sn * (P + M + sn) * sizeof *f);
   uint32_t fn = 0;
-  const uint32_t first = p->screen_rounds, more = (upto > first ? upto : first) - first;
+  const uint32_t first = p->screen_rounds, more = (staged ? (upto > first ? upto : first) : panel_rounds(p)) - first;
   for (uint32_t i = 0; i < sn; i++) {
     for (uint32_t j = 0; j < P; j++)
       f[fn++] = (unit){sv[i]->w, r->panel[j].w, seed_for(r, r->panel[j].id), first, more, {{0}}, 0, 0};
@@ -1529,6 +1643,7 @@ static void run_batch(run *r) {
 
   // enter in order, each followed by the push-off
   uint32_t *slot_of = xmalloc((sn ? sn : 1) * sizeof *slot_of);
+  uint8_t *mask = xmalloc(r->cap);
   uint32_t *member_slots = xmalloc((M ? M : 1) * sizeof *member_slots);
   for (uint32_t j = P; j < r->active_n; j++) member_slots[j - P] = r->active[j];
   uint32_t entered = 0;
@@ -1568,6 +1683,7 @@ static void run_batch(run *r) {
         if (staged) set_result1(r, s, slot_of[j], f[fn].s[0]);
       }
     rebuild_active(r);
+    measure_style(r, w);
     // the name: its own adjective, the noun of its family, which is its first
     // parent's unless it plays very differently from it (NEW_FAMILY); names
     // change nothing else
@@ -1598,7 +1714,8 @@ static void run_batch(run *r) {
     if (staged) {
       if (members(r) > p->list) {
         compute_values1(r);
-        early = leaves_early(r, s);
+        leave_mask(r, mask);
+        early = leaves_early(r, s, mask);
       }
       if (!early) complete_one(r, s);
     }
@@ -1606,7 +1723,8 @@ static void run_batch(run *r) {
       if (!early) compute_values(r);
       // an early leave is the newcomer, also when another one is weaker on
       // the first stage (it may be a member that is unlucky in those rounds)
-      const int k = early ? (int)value_of(r, s) : pushoff_weakest(r->values, r->active_n, r->keep);
+      if (!early) leave_mask(r, mask);
+      const int k = early ? (int)value_of(r, s) : pushoff_weakest(r->values, r->active_n, mask);
       const uint32_t out = r->values[k].index;
       warrior *gone = r->slot[out];
       event_leave(r, &r->values[k], early);
@@ -1671,6 +1789,7 @@ static void run_batch(run *r) {
   free(screen_at);
   free(so);
   free(screen_id);
+  free(mask);
   free(slot_of);
   free(member_slots);
   r->batch++;
@@ -1687,6 +1806,7 @@ static void usage(void) {
           "         [--fractions p] [--race N] [--race-keep N] [--prior uniform|hill]\n"
           "         [--parents value|duel] [--start <dir>] [--changes name=weight,...]\n"
           "         [--panel-files a.red,b.red,...] [--screen-members N] [--noise z] [--stage N (screen rounds; 0 none)] [--fill]\n"
+          "         [--panel-rounds N] [--diversity all|panel] [--niche N]\n"
           "         [--size 8000] [--cycles 80000] [--processes 8000] [--length 100] [--distance 100]\n"
           "         [--threads N] [--batches N] [--seconds S]\n"
           "       42evolve <run folder> [--threads N] [--batches N] [--seconds S]   (continue a run)\n");
@@ -1757,6 +1877,10 @@ int main(int argc, char **argv) {
     } else if (!strcmp(a, "--rotate")) {
       if (!number) usage();
       p->rotate = u;
+    } else if (!strcmp(a, "--diversity")) {
+      if (!strcmp(v, "all")) p->distance_panel = 0;
+      else if (!strcmp(v, "panel")) p->distance_panel = 1;
+      else usage();
     } else if (!strcmp(a, "--sd")) {
       if (!strcmp(v, "opponent")) p->sd = SD_OPPONENT;
       else if (!strcmp(v, "sum")) p->sd = SD_SUM;
@@ -1778,6 +1902,8 @@ int main(int argc, char **argv) {
     else if (!strcmp(a, "--race-keep")) p->race_keep = u;
     else if (!strcmp(a, "--screen-members")) p->screen_members = u;
     else if (!strcmp(a, "--stage")) p->stage = u, stage_given = 1;
+    else if (!strcmp(a, "--panel-rounds")) p->panel_rounds = u;
+    else if (!strcmp(a, "--niche")) p->niche = u;
 
     else if (!strcmp(a, "--noise")) {
       if (d < 0) usage();
@@ -1829,10 +1955,10 @@ int main(int argc, char **argv) {
     if (!stage_given) p->stage = p->screen_rounds;
     if (p->rules.max_length < 1 || p->rules.max_length > GENOME_MAX || !p->list || !p->rounds || !p->init_length ||
         p->screen_rounds > p->rounds || p->rules.core_size < 2 * p->rules.min_distance ||
-        (p->stage && p->stage < p->screen_rounds)) {
+        (p->stage && p->stage < p->screen_rounds) || (p->panel_rounds && p->panel_rounds < p->rounds)) {
       fprintf(stderr,
               "42evolve: a parameter is out of range (length 1..%d, list, rounds >= screen rounds, stage >= screen "
-              "rounds, ...)\n",
+              "rounds, panel rounds >= rounds, ...)\n",
               GENOME_MAX);
       return 2;
     }
@@ -1877,19 +2003,30 @@ int main(int argc, char **argv) {
   }
   m42_free(probe);
   pool_start(&r.pool, threads, &r.p.rules);
+  {
+    int st;
+    r.sm = m42_new(&r.p.rules, &st);
+    const size_t wsize = r.sm ? m42_watch_size(&r.p.rules) : 0;
+    r.swatch_mem = wsize ? xmalloc(wsize) : 0;
+    r.swatch = r.swatch_mem ? m42_watch_attach(r.sm, r.swatch_mem, wsize, &st) : 0;
+    if (!r.swatch) {
+      fprintf(stderr, "42evolve: no engine with a watch for the style: %s\n", m42_status_text(st));
+      return 1;
+    }
+  }
   signal(SIGINT, on_signal);
   signal(SIGTERM, on_signal);
 
   if (!resume) {
     event_start(&r);
     // with --stage each match in two parts, the first stage's rounds and the rest
-    const uint32_t s1 = stage_rounds(&r.p), parts = s1 < r.p.rounds ? 2 : 1;
+    const uint32_t whole = panel_rounds(&r.p), s1 = stage_rounds(&r.p), parts = s1 < whole ? 2 : 1;
     unit *u = xmalloc((size_t)r.panel_n * r.panel_n * parts * sizeof *u);
     uint32_t n = 0;
     for (uint32_t a = 0; a < r.panel_n; a++)
       for (uint32_t b = 0; b < a; b++) {
         u[n++] = (unit){r.panel[a].w, r.panel[b].w, seed_for(&r, r.panel[b].id), 0, s1, {{0}}, 0, 0};
-        if (parts == 2) u[n++] = (unit){r.panel[a].w, r.panel[b].w, seed_for(&r, r.panel[b].id), s1, r.p.rounds - s1, {{0}}, 0, 0};
+        if (parts == 2) u[n++] = (unit){r.panel[a].w, r.panel[b].w, seed_for(&r, r.panel[b].id), s1, whole - s1, {{0}}, 0, 0};
       }
     pool_run(&r.pool, u, n);
     n = 0;

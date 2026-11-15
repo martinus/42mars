@@ -68,6 +68,18 @@ test('--noise: a column counts only the difference beyond z standard errors', ()
   assert.equal(standardError(100, 0, 100), 0);
 });
 
+test('--diversity panel: only the columns given count', () => {
+  // 0 and 1 against column 2 only: |20 - 25| over the sigma of 20, 25, 3
+  // (rows 0, 1, 3), 9.4162... ; against column 3 only: |30 - 35| over the
+  // sigma of 30, 35, 40; together the whole SD-score of the first test
+  const all = [0, 1, 2, 3];
+  assert.ok(Math.abs(sdDistance(S, all, 0, 1, 'opponent', null, [false, false, true, false]) - 0.5309942440535915) < 1e-12);
+  assert.ok(Math.abs(sdDistance(S, all, 0, 1, 'opponent', null, [false, false, false, true]) - 1.224744871391589) < 1e-12);
+  // the average stays over all columns
+  const v = pushoffValues(S, all, { columns: [false, false, true, true] });
+  assert.deepEqual(v.map((x) => x.avg), pushoffValues(S, all).map((x) => x.avg));
+});
+
 test('a column where everyone scores the same adds nothing', () => {
   const T = [
     [null, 7, 1],

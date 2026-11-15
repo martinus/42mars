@@ -17,7 +17,8 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { assemble, createMarsSync } from '../wasm/42mars.js';
-import { pushoffValues, standardError } from '../tools/diversity.js';
+import { pushoffValues, standardError, weakest } from '../tools/diversity.js';
+import { kind as styleKind, measureStyle } from '../tools/style.js';
 import { prebuilt, program, skip as noCc } from './native.js';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
@@ -34,7 +35,7 @@ async function build() {
   await cc('cc', ['-O2', '-c', '-o', lib, join(root, 'lib/42mars.c')]);
   const src = (f) => join(root, 'evolver', f);
   await Promise.all([
-    cc('cc', ['-O2', '-pthread', '-I', join(root, 'lib'), '-o', evolve, src('evolve.c'), src('genome.c'), src('pushoff.c'), src('names.c'), lib, '-lm']),
+    cc('cc', ['-O2', '-pthread', '-I', join(root, 'lib'), '-o', evolve, src('evolve.c'), src('genome.c'), src('pushoff.c'), src('names.c'), src('style.c'), lib, '-lm']),
     cc('cc', ['-O2', '-I', join(root, 'lib'), '-I', join(root, 'evolver'), '-o', unit, join(root, 'test/c/evolver-test.c'), src('genome.c'), src('pushoff.c'), src('names.c'), lib, '-lm']),
     cc('cc', ['-O2', '-pthread', '-I', join(root, 'lib'), '-o', spectrum, src('spectrum.c'), src('genome.c'), lib, '-lm']),
   ]);
@@ -117,7 +118,8 @@ function checkValues(evs) {
   const played = new Map(); // "a,b" -> rounds of that result
   const slots = start.panel.map((w) => w.id);
   const panel = new Set(slots); // the panel now
-  let checked = 0, duels = 0, lastValues = new Map(), parentDistances = 0;
+  let checked = 0, duels = 0, lastValues = new Map(), parentDistances = 0, pushoffs = 0, niches = 0;
+  const styleOf = new Map(); // id -> kind of style (--niche)
   // the estimate of a newcomer: its screen points against the panel, the
   // SD-score on the panel columns to the nearest warrior in when its batch
   // started, with the standard deviations of then
@@ -170,6 +172,7 @@ function checkValues(evs) {
       }
     }
     if (e.type === 'enter') {
+      styleOf.set(e.id, e.style?.kind);
       assert.equal(e.screenPoints.length, P);
       // with --screen-members the screen has members too (replayed in their test)
       const screen = e.screenPoints.reduce((a, b) => a + b, 0) / P;
@@ -197,9 +200,32 @@ function checkValues(evs) {
     }
     if (e.type === 'complete') { // --stage: the rest of the rounds of a survivor that stayed
       for (const [o, w, l, t] of e.scores) {
-        assert.equal(w + l + t, rounds, `${e.id} against ${o}`);
+        assert.equal(w + l + t, panel.has(o) ? start.params.panelRounds ?? rounds : rounds, `${e.id} against ${o}`);
         put(e.id, o, w, l, t);
       }
+    }
+    if (e.type === 'leave' && !e.early) {
+      // the push-off: the weakest of those that may leave, by tools/diversity.js
+      // on the logged scores; with --niche N not the last N of a kind of style
+      // (not the two kinds of junk), unless that leaves nobody
+      const ids = slots.filter((x) => x !== null);
+      const score = ids.map((a) => ids.map((b) => (a === b ? null : pts.get(`${a},${b}`))));
+      const columns = start.params.diversity === 'panel' ? ids.map((id) => panel.has(id)) : null;
+      const noise = start.params.noise ? { se: ids.map((a) => ids.map((b) => (a === b ? 0 : se.get(`${a},${b}`)))), z: start.params.noise } : {};
+      const v = pushoffValues(score, ids.map((_, i) => i), { variant: start.params.sd, alpha: start.params.alpha, columns, ...noise });
+      let keep = new Set(ids.map((id, i) => (panel.has(id) ? i : -1)).filter((i) => i >= 0));
+      if (start.params.niche) {
+        const count = new Map();
+        for (const id of ids) if (!panel.has(id)) count.set(styleOf.get(id), (count.get(styleOf.get(id)) ?? 0) + 1);
+        const junk = new Set(['dies at once', 'writes little (scanner, or waits)']);
+        const safe = new Set(keep);
+        ids.forEach((id, i) => { if (!panel.has(id) && !junk.has(styleOf.get(id)) && count.get(styleOf.get(id)) <= start.params.niche) safe.add(i); });
+        const plain = weakest(v, keep);
+        if (safe.size < ids.length) keep = safe;
+        if (weakest(v, keep) !== plain) niches++; // the protection changed who left
+      }
+      assert.equal(ids[weakest(v, keep)], e.id, `batch ${e.batch}: ${e.id} left, the push-off says ${ids[weakest(v, keep)]}`);
+      pushoffs++;
     }
     if (e.type === 'leave') {
       assert.ok(!panel.has(e.id), `panel warrior ${e.id} left`);
@@ -208,12 +234,13 @@ function checkValues(evs) {
     if (e.type === 'values') {
       lastValues = new Map(e.values.map((v) => [v[0], v[4]]));
       // at the end of a batch every pair has all its rounds (--stage: after the complete events)
-      for (const a of slots) for (const b of slots) if (a !== null && b !== null && a !== b) assert.equal(played.get(`${a},${b}`), rounds, `${a} against ${b} after batch ${e.batch}`);
+      for (const a of slots) for (const b of slots) if (a !== null && b !== null && a !== b) assert.equal(played.get(`${a},${b}`), panel.has(a) || panel.has(b) ? start.params.panelRounds ?? rounds : rounds, `${a} against ${b} after batch ${e.batch}`);
       const ids = slots.filter((x) => x !== null);
       assert.ok(ids.length - P <= start.params.list);
       const score = ids.map((a) => ids.map((b) => (a === b ? null : pts.get(`${a},${b}`))));
       const noise = start.params.noise ? { se: ids.map((a) => ids.map((b) => (a === b ? 0 : se.get(`${a},${b}`)))), z: start.params.noise } : {};
-      const js = pushoffValues(score, ids.map((_, i) => i), { variant: start.params.sd, alpha: start.params.alpha, ...noise });
+      const columns = start.params.diversity === 'panel' ? ids.map((id) => panel.has(id)) : null; // --diversity panel
+      const js = pushoffValues(score, ids.map((_, i) => i), { variant: start.params.sd, alpha: start.params.alpha, columns, ...noise });
       assert.deepEqual(e.values.map((v) => v[0]), ids);
       // the sixth number: the average against the panel, without the own column
       e.values.forEach(([id, , , , , pAvg]) => {
@@ -231,6 +258,8 @@ function checkValues(evs) {
   }
   if (start.params.parents === 'duel') assert.ok(duels > 10, `only ${duels} duels`);
   assert.ok(parentDistances > 0, 'no difference to a parent checked');
+  checkValues.pushoffs = pushoffs;
+  checkValues.niches = niches; // push-offs where --niche changed who left
   return checked;
 }
 
@@ -622,6 +651,90 @@ test('--fill: random warriors until the list is full, then children; the same ru
   assert.ok(randomBatches >= 7 && bredBatches >= 1, `${randomBatches} random batches, ${bredBatches} bred`);
   run(join(tmp, 'fill3'), [...args, '--threads', '3', '--batches', '10']);
   assert.deepEqual(stable(events(join(tmp, 'fill3'))), stable(one));
+});
+
+test('--diversity panel --panel-rounds 250: the distance over the panel, longer matches against it in blocks; the same run on any thread count and after a resume', { skip }, () => {
+  assert.equal(base[0].params.diversity, 'all');
+  assert.equal(base[0].params.panelRounds, 40);
+  for (const stage of ['0', '10']) {
+    const args = [...TINY, '--diversity', 'panel', '--panel-rounds', '250', '--stage', stage, '--list', '8'];
+    run(join(tmp, `dp1-${stage}`), [...args, '--threads', '1', '--batches', '5']);
+    const one = events(join(tmp, `dp1-${stage}`));
+    assert.equal(one[0].params.diversity, 'panel');
+    assert.equal(one[0].params.panelRounds, 250);
+    assert.equal(checkValues(one), 5); // the values against tools/diversity.js with the panel's columns, every pair complete
+    // a match against a panel warrior has 250 rounds, played in blocks of 100: the same in the WebAssembly engine
+    const st = one[0], P = new Set(st.panel.map((w) => w.id));
+    const code = new Map(st.panel.map((w) => [w.id, w.source]));
+    const m = createMarsSync(RULES);
+    let replayed = 0;
+    for (const e of one.filter((x) => x.type === (stage === '0' ? 'enter' : 'complete')).slice(2, 5)) {
+      const me = stage === '0' ? `;name x\n${e.code}` : `;name x\n${one.find((x) => x.type === 'enter' && x.id === e.id).code}`;
+      const [o, w, l, t, seed] = e.scores.find(([x, a, b, c]) => P.has(x) && [a, b, c].filter((v) => v > 0).length > 1) ?? e.scores.find(([x]) => P.has(x));
+      const r = m.runMatch([assemble(me, RULES), assemble(code.get(o), RULES)], { seed, rounds: 250 });
+      assert.deepEqual([r.warriors[0].wins, r.warriors[0].losses, r.warriors[0].ties], [w, l, t], `${e.id} against panel ${o}`);
+      replayed++;
+    }
+    assert.equal(replayed, 3);
+    run(join(tmp, `dp3-${stage}`), [...args, '--threads', '3', '--batches', '5']);
+    assert.deepEqual(stable(events(join(tmp, `dp3-${stage}`))), stable(one));
+    run(join(tmp, `dp-resumed-${stage}`), [...args, '--threads', '2', '--batches', '2']);
+    run(join(tmp, `dp-resumed-${stage}`), ['--threads', '4', '--batches', '3']);
+    assert.deepEqual(stable(events(join(tmp, `dp-resumed-${stage}`))), stable(one));
+  }
+  const bad = spawnSync(evolve, [join(tmp, 'dp-bad'), ...TINY, '--panel-rounds', '20'], { encoding: 'utf8' });
+  assert.equal(bad.status, 2);
+});
+
+test('the style of a newcomer is that of tools/style.js in the WebAssembly engine', { skip }, () => {
+  const st = base[0];
+  const m = createMarsSync({ ...RULES, watch: true });
+  const opp = st.panel.slice(0, 3).map((w) => assemble(w.source, RULES));
+  const enters = base.filter((e) => e.type === 'enter');
+  let kinds = new Set();
+  for (const e of enters.filter((_, i) => i % 3 === 0)) {
+    const js = measureStyle(m, assemble(`;name x\n${e.code}`, RULES), opp);
+    const { kind, ...numbers } = e.style;
+    for (const [k, v] of Object.entries(js)) assert.ok(Math.abs(numbers[k] - v) < 1e-5, `${e.name}: ${k} ${numbers[k]}, in JS ${v}`);
+    assert.equal(kind, styleKind(js), e.name);
+    kinds.add(kind);
+  }
+  assert.ok(kinds.size >= 2, `only ${[...kinds]}`);
+});
+
+test('--niche 4: the last 4 members of a kind of style do not leave; the same run on any thread count and after a resume', { skip }, () => {
+  assert.equal(base[0].params.niche, 0);
+  const N = 4, LIST = 10, BATCHES = 10;
+  const args = [...TINY, '--niche', String(N), '--list', String(LIST)];
+  run(join(tmp, 'niche1'), [...args, '--threads', '1', '--batches', String(BATCHES)]);
+  const one = events(join(tmp, 'niche1'));
+  assert.equal(one[0].params.niche, N);
+  assert.equal(checkValues(one), BATCHES);
+  assert.ok(checkValues.niches >= 2, `--niche changed who left in ${checkValues.niches} push-offs`);
+  // replay: the kinds of the members; at each push-off a kind with 2 members
+  // or fewer (not the two kinds of junk) is protected, unless everybody is
+  const junk = new Set(['dies at once', 'writes little (scanner, or waits)']);
+  const kind = new Map(), alive = new Set();
+  let leaves = 0, protectedLeaves = 0;
+  for (const e of one) {
+    if (e.type === 'enter') kind.set(e.id, e.style.kind), alive.add(e.id);
+    if (e.type === 'leave') {
+      const count = new Map();
+      for (const id of alive) count.set(kind.get(id), (count.get(kind.get(id)) ?? 0) + 1);
+      const safe = (id) => !junk.has(kind.get(id)) && count.get(kind.get(id)) <= N;
+      const anyFree = [...alive].some((id) => !safe(id));
+      if (anyFree) assert.ok(!safe(e.id), `${e.id} left, the last ${count.get(kind.get(e.id))} of ${kind.get(e.id)}`);
+      if ([...alive].some(safe)) protectedLeaves++;
+      alive.delete(e.id);
+      leaves++;
+    }
+  }
+  assert.ok(leaves >= 8 && protectedLeaves >= 3, `${leaves} push-offs, ${protectedLeaves} with a protected kind in the list`);
+  run(join(tmp, 'niche3'), [...args, '--threads', '3', '--batches', String(BATCHES)]);
+  assert.deepEqual(stable(events(join(tmp, 'niche3'))), stable(one));
+  run(join(tmp, 'niche-resumed'), [...args, '--threads', '2', '--batches', String(BATCHES >> 1)]);
+  run(join(tmp, 'niche-resumed'), ['--threads', '4', '--batches', String(BATCHES - (BATCHES >> 1))]);
+  assert.deepEqual(stable(events(join(tmp, 'niche-resumed'))), stable(one));
 });
 
 test('--start: the first batch starts from the warriors of a folder', { skip }, () => {
