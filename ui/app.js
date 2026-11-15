@@ -45,6 +45,12 @@ const BATTLE = (() => {
   }
 })();
 
+// A battle link opened in a tab that shows the visualizer already changes only
+// the hash, and the page stays as it was: load the new battle.
+window.addEventListener('hashchange', () => {
+  if (location.hash.startsWith('#battle=')) location.reload();
+});
+
 // instructions per second; Infinity runs as much as fits into the frame budget
 const SPEEDS = [1, 2, 5, 10, 25, 60, 150, 400, 1000, 2500, 6000, 15000, 40000, 100000, 250000, 600000, Infinity];
 

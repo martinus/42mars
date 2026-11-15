@@ -245,24 +245,37 @@ static void test_pushoff(void) {
   const uint32_t all[4] = {0, 1, 2, 3};
   double sigma[4];
   pushoff_sigma(S, 4, all, 4, sigma);
-  CHECK(fabs(pushoff_distance(S, 4, all, 4, 0, 1, sigma, SD_OPPONENT) - 1.7557391154451805) < 1e-12, "SD-score 0 1");
-  CHECK(fabs(pushoff_distance(S, 4, all, 4, 2, 3, sigma, SD_OPPONENT) - 2.890943994708568) < 1e-12, "SD-score 2 3");
-  CHECK(fabs(pushoff_distance(S, 4, all, 4, 0, 1, sigma, SD_SUM) - 0.7408076421173693) < 1e-12, "Eq. 6, 0 1");
-  CHECK(fabs(pushoff_distance(S, 4, all, 4, 2, 3, sigma, SD_SUM) - 1.8630962205724457) < 1e-12, "Eq. 6, 2 3");
+  CHECK(fabs(pushoff_distance(S, 4, all, 4, 0, 1, sigma, 0, 0, SD_OPPONENT) - 1.7557391154451805) < 1e-12, "SD-score 0 1");
+  CHECK(fabs(pushoff_distance(S, 4, all, 4, 2, 3, sigma, 0, 0, SD_OPPONENT) - 2.890943994708568) < 1e-12, "SD-score 2 3");
+  CHECK(fabs(pushoff_distance(S, 4, all, 4, 0, 1, sigma, 0, 0, SD_SUM) - 0.7408076421173693) < 1e-12, "Eq. 6, 0 1");
+  CHECK(fabs(pushoff_distance(S, 4, all, 4, 2, 3, sigma, 0, 0, SD_SUM) - 1.8630962205724457) < 1e-12, "Eq. 6, 2 3");
   // a clone of the strongest goes first; kept indices never go
   const double C[25] = {0, 100, 250, 260, 240, 100, 0, 250, 260, 240, 10, 10, 0, 150, 90,
                         5, 5, 140, 0, 160, 20, 20, 80, 170, 0};
   const uint32_t five[5] = {0, 1, 2, 3, 4};
   double sg[5];
   pushoff_value v[5];
-  pushoff_values(C, 5, five, 5, SD_OPPONENT, 1, sg, v);
+  pushoff_values(C, 5, five, 5, SD_OPPONENT, 1, 0, 0, sg, v);
   CHECK(v[0].distance == 0 && v[1].distance == 0, "clones have distance 0");
   CHECK(pushoff_weakest(v, 5, 0) == 1, "the higher index of two equal clones goes");
   const uint8_t keep[5] = {0, 1, 0, 0, 0};
   CHECK(pushoff_weakest(v, 5, keep) == 0, "a kept warrior went");
   // alpha 0: the average alone (test/diversity.test.js: 3 goes first)
-  pushoff_values(S, 4, all, 4, SD_OPPONENT, 0, sigma, v);
+  pushoff_values(S, 4, all, 4, SD_OPPONENT, 0, 0, 0, sigma, v);
   CHECK(pushoff_weakest(v, 4, 0) == 3, "alpha 0 is not the average");
+  // --noise (test/diversity.test.js has the arithmetic): 0 and 1 against
+  // columns 2 and 3; column 2 differs by 30 with standard errors 6 and 8
+  // (together 10), column 3 not at all
+  const double N[16] = {0, 10, 100, 40, 20, 0, 130, 40, 50, 50, 0, 60, 70, 70, 80, 0};
+  const double E[16] = {0, 0, 6, 3, 0, 0, 8, 4, 0, 0, 0, 0, 0, 0, 0, 0};
+  pushoff_sigma(N, 4, all, 4, sigma);
+  CHECK(fabs(pushoff_distance(N, 4, all, 4, 0, 1, sigma, 0, 0, SD_OPPONENT) - 1.459992790176863) < 1e-12, "plain");
+  CHECK(fabs(pushoff_distance(N, 4, all, 4, 0, 1, sigma, E, 1, SD_OPPONENT) - 0.9733285267845754) < 1e-12, "noise 1");
+  CHECK(fabs(pushoff_distance(N, 4, all, 4, 0, 1, sigma, E, 2, SD_OPPONENT) - 0.4866642633922877) < 1e-12, "noise 2");
+  CHECK(fabs(pushoff_distance(N, 4, all, 4, 0, 1, sigma, E, 1, SD_SUM) - 0.6671973756445573) < 1e-12, "noise 1, Eq. 6");
+  CHECK(pushoff_distance(N, 4, all, 4, 0, 1, sigma, E, 3, SD_OPPONENT) == 0, "noise 3: no difference left");
+  CHECK(fabs(pushoff_se(50, 20, 100) - 13.453624047073712) < 1e-12, "standard error");
+  CHECK(pushoff_se(100, 0, 100) == 0 && pushoff_se(0, 0, 0) == 0, "standard error of a constant score");
 }
 
 static void test_names(void) {

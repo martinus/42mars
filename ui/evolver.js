@@ -59,7 +59,8 @@ const member = (id) => S.w.get(id);
 const alive = () => S.slots.filter((id) => id !== null && S.w.get(id).kind === 'member').map(member);
 const nameOf = (id) => S.w.get(id)?.name ?? `#${id}`;
 
-function setRes(a, b, w, l, t, seed, first, rounds = S.rounds) {
+// rounds: those the result has (42evolve --stage: fewer until a survivor that stays plays the rest)
+function setRes(a, b, w, l, t, seed, first, rounds = w + l + t) {
   S.res.set(`${a}:${b}`, { w, l, t, seed, first, rounds });
   S.res.set(`${b}:${a}`, { w: l, l: w, t, seed, first, rounds });
 }
@@ -75,10 +76,11 @@ function panelAvg(id) {
   return n ? s / n : 0;
 }
 
-// Families share a color: a child takes its first parent's hue, shifted a bit.
-function hueFor(id, parents) {
+// Families share a color: a child takes its first parent's hue, shifted a bit;
+// a new family (42evolve: it plays unlike its first parent) gets a hue of its own.
+function hueFor(id, parents, newFamily) {
   const p = parents.length ? S.w.get(parents[0]) : null;
-  if (p && p.kind === 'member') return (p.hue + ((id * 37) % 25) - 12 + 360) % 360;
+  if (p && p.kind === 'member' && !newFamily) return (p.hue + ((id * 37) % 25) - 12 + 360) % 360;
   return (id * 137.508) % 360;
 }
 
@@ -111,17 +113,18 @@ function handle(e) {
       for (const [a, b, w, l, t, seed] of e.scores) setRes(a, b, w, l, t, seed, a);
       break;
     case 'enter': {
-      const x = { id: e.id, kind: 'member', name: e.name ?? `e${e.id}`, code: e.code, parents: e.parents, ops: e.ops, length: e.length, screen: e.screen, estimate: e.estimate, born: e.batch, died: null, alive: true, enteredAt: now, value: null };
-      x.hue = hueFor(e.id, e.parents);
+      const x = { id: e.id, kind: 'member', name: e.name ?? `e${e.id}`, code: e.code, parents: e.parents, ops: e.ops, length: e.length, screen: e.screen, estimate: e.estimate, born: e.batch, died: null, alive: true, enteredAt: now, value: null, newFamily: !!e.newFamily, parentDifference: e.parentDifference };
+      x.hue = hueFor(e.id, e.parents, x.newFamily);
       S.w.set(e.id, x);
       let s = S.slots.indexOf(null, S.panel.length);
       if (s < 0) s = S.slots.push(null) - 1;
       S.slots[s] = e.id;
       for (const [o, w, l, t, seed] of e.scores) setRes(e.id, o, w, l, t, seed, e.id);
+      x.opponents = e.scores.map((s) => s[0]);
       x.panelAvg = panelAvg(e.id);
       x.row = null;
       S.mapDirty = true;
-      tick(`<span class="in">+</span> ${link(e.id)} <b>${f1(x.panelAvg)}</b> vs panel <span style="color:#6c7290">${esc(e.ops)}</span>`);
+      if (!quiet.has(e.id)) tick(`<span class="in">+</span> ${link(e.id)} <b>${f1(x.panelAvg)}</b> vs panel <span style="color:#6c7290">${esc(e.ops)}</span>${x.newFamily ? ` <span class="new-family">new family: ${f1(e.parentDifference)} points from ${link(e.parents[0])}</span>` : ''}`);
       break;
     }
     case 'rotate': { // a new hill warrior takes the place of the oldest in the panel
@@ -137,6 +140,13 @@ function handle(e) {
       tick(`<span class="best">⟳</span> panel: ${link(p.id)} replaces ${esc(old?.name ?? `#${e.out}`)}`);
       break;
     }
+    case 'complete': { // --stage: a survivor that stayed played the rest of its rounds
+      for (const [o, w, l, t, seed] of e.scores) setRes(e.id, o, w, l, t, seed, e.id);
+      const x = S.w.get(e.id);
+      if (x) x.panelAvg = panelAvg(e.id);
+      S.mapDirty = true;
+      break;
+    }
     case 'leave': {
       const x = member(e.id);
       if (!x) break;
@@ -149,8 +159,12 @@ function handle(e) {
       S.slots[S.slots.indexOf(e.id)] = null;
       if (x.row !== null && x.row !== undefined) S.ghosts.push(x);
       S.mapDirty = true;
-      if (x.born === e.batch) x.rejected = true; // did not last its own batch
-      tick(`<span class="out">−</span> ${link(e.id)} pushed off, value ${f1(e.value)}, nearest ${link(e.nearest)}`);
+      if (x.born === e.batch) { // did not last its own batch: its matches are not kept (most newcomers; a long run has millions)
+        x.rejected = true;
+        for (const o of x.opponents ?? []) S.res.delete(`${x.id}:${o}`), S.res.delete(`${o}:${x.id}`);
+      }
+      delete x.opponents;
+      if (!quiet.has(e.id)) tick(`<span class="out">−</span> ${link(e.id)} pushed off, value ${f1(e.value)}, nearest ${link(e.nearest)}`);
       break;
     }
     case 'values':
@@ -236,53 +250,61 @@ function drawMatrix(now) {
   });
   S.ghosts = S.ghosts.filter((g) => now - g.leftAt < 900);
   ctx.font = 'bold 11px ui-monospace, monospace';
-  const labelW = Math.min(230, Math.max(74, ...[...ms, ...S.ghosts].map((m) => ctx.measureText(`★ ${m.name}`).width + 28))), top = 26, gap = 10;
+  const top = 26, gap = 10;
+  // a list of 100 (--list) still fits: thin cells without gaps, names only while rows are high enough
+  const ch = Math.max(1, Math.min(36, (h - top - 10) / Math.max(8, ms.length)));
+  const names = ch >= 12;
+  const labelW = names ? Math.min(230, Math.max(74, ...[...ms, ...S.ghosts].map((m) => ctx.measureText(`★ ${m.name}`).width + 28))) : 22;
   const cols = ms.length + panel.length;
-  const cw = Math.max(3, (w - labelW - gap - 10) / Math.max(1, cols));
-  const ch = Math.max(6, Math.min(36, (h - top - 10) / Math.max(8, ms.length)));
+  const cw = Math.max(1, (w - labelW - gap - 10) / Math.max(1, cols));
+  const cg = cw >= 4 ? 1 : 0, rg = ch >= 4 ? 1 : 0;
   const colX = (i) => labelW + (i < ms.length ? i * cw : ms.length * cw + gap + (i - ms.length) * cw);
   ctx.font = '10px ui-monospace, monospace';
   ctx.fillStyle = '#7f86a0';
   ctx.textBaseline = 'middle';
   ctx.fillText('evolved', labelW, 10);
-  ctx.fillText(`panel (${panel.length} hill warriors)`, labelW + ms.length * cw + gap, 10);
+  const px = labelW + ms.length * cw + gap, ptext = `panel (${panel.length} hill warriors)`;
+  ctx.fillText(ctx.measureText(ptext).width < w - px ? ptext : 'panel', px, 10);
   // column marks in the warriors' colors
   ms.forEach((m, i) => {
     ctx.fillStyle = hsl(m.hue);
-    ctx.fillRect(colX(i) + 1, top - 7, cw - 2, 3);
+    ctx.fillRect(colX(i) + cg, top - 7, Math.max(1, cw - 2 * cg), 3);
   });
   matrix.cells = [];
   matrix.rows = [];
+  const others = [...ms, ...panel];
+  const columnsKey = `${S.version}:${others.length}:${others[0]?.id}`;
   const drawRow = (m, y, alpha) => {
     ctx.globalAlpha = alpha;
     const sel = selected === m.id;
     ctx.fillStyle = sel ? '#ffc53d' : hsl(m.hue);
-    ctx.beginPath();
-    ctx.arc(10, y + ch / 2, 4, 0, 7);
-    ctx.fill();
-    ctx.fillStyle = sel ? '#ffc53d' : '#dfe3f0';
-    ctx.font = `${sel ? 'bold ' : ''}11px ui-monospace, monospace`;
-    ctx.fillText(m.id === S.bestId ? `★ ${m.name}` : m.name, 20, y + ch / 2);
+    if (names || sel) {
+      ctx.beginPath();
+      ctx.arc(10, y + ch / 2, 4, 0, 7);
+      ctx.fill();
+      ctx.fillStyle = sel ? '#ffc53d' : '#dfe3f0';
+      ctx.font = `${sel ? 'bold ' : ''}11px ui-monospace, monospace`;
+      ctx.fillText(m.id === S.bestId ? `★ ${m.name}` : m.name, 20, y + ch / 2);
+    } else {
+      ctx.fillRect(4, y, 12, Math.max(1, ch - rg)); // the family's color, no room for the name
+    }
     matrix.rows.push({ id: m.id, y, h: ch });
-    const others = [...ms, ...panel];
+    // the cells' colors once per update (columnsKey), not per frame: with a
+    // list of 90 a frame has 10,000 cells
+    if (m.cellKey !== columnsKey) m.cellKey = columnsKey, m.cellColors = others.map((o) => (o.id === m.id ? '#05060a' : resOf(m.id, o.id) ? scoreColor(points(resOf(m.id, o.id))) : null));
     for (let j = 0; j < others.length; j++) {
       const o = others[j];
       const x = colX(j);
-      if (o.id === m.id) {
-        ctx.fillStyle = '#05060a';
-        ctx.fillRect(x, y, cw - 1, ch - 1);
-        continue;
-      }
-      const r = resOf(m.id, o.id);
-      if (!r) continue;
-      const p = points(r);
-      ctx.fillStyle = scoreColor(p);
-      ctx.fillRect(x, y, cw - 1, ch - 1);
+      const color = m.cellColors[j];
+      if (!color) continue;
+      ctx.fillStyle = color;
+      ctx.fillRect(x, y, cw - cg, ch - rg);
+      if (o.id === m.id) continue;
       // a fresh row and column glow
-      const age = Math.min(now - (m.enteredAt ?? 0), now - (o.enteredAt ?? 0));
+      const age = Math.max(0, Math.min(now - (m.enteredAt ?? 0), now - (o.enteredAt ?? 0)));
       if (age < 1500) {
         ctx.fillStyle = `rgba(255,255,255,${0.55 * Math.exp(-age / 350)})`;
-        ctx.fillRect(x, y, cw - 1, ch - 1);
+        ctx.fillRect(x, y, cw - cg, ch - rg);
       }
       matrix.cells.push({ x, y, w: cw, h: ch, a: m.id, b: o.id });
     }
@@ -482,7 +504,9 @@ function drawMap(now) {
     ctx.beginPath();
     ctx.arc(x, y, r, 0, 7);
     ctx.fill();
-    const age = now - p.enteredAt;
+    // a frame's time can be before the time its events were read (Firefox):
+    // without the 0 the radius below went negative and arc() threw
+    const age = Math.max(0, now - p.enteredAt);
     if (age < 1800) { // a newcomer flares up
       ctx.strokeStyle = hsl(p.hue, 100, 75, 1 - age / 1800);
       ctx.lineWidth = 2;
@@ -526,45 +550,117 @@ function ancestry(id) {
   return out;
 }
 
+// The lines of a selected warrior: edges [from parent, to child, crossover?]
+// of its ancestors and of its descendants.
+function lineOf(id, all) {
+  const up = [], down = [], inLine = new Set([id]);
+  const seen = new Set();
+  const walkUp = (x) => {
+    if (seen.has(x)) return;
+    seen.add(x);
+    const w = S.w.get(x);
+    if (!w || w.kind !== 'member') return;
+    w.parents.forEach((p, k) => {
+      const pw = S.w.get(p);
+      if (!pw || pw.kind !== 'member') return;
+      up.push([pw, w, k > 0]);
+      inLine.add(p);
+      walkUp(p);
+    });
+  };
+  walkUp(id);
+  const children = new Map();
+  for (const x of all) x.parents.forEach((p, k) => (children.get(p) ?? children.set(p, []).get(p)).push([x, k > 0]));
+  const queue = [id], done = new Set([id]);
+  while (queue.length) {
+    const p = queue.shift();
+    for (const [c, cross] of children.get(p) ?? []) {
+      down.push([S.w.get(p), c, cross]);
+      inLine.add(c.id);
+      if (!done.has(c.id)) done.add(c.id), queue.push(c.id);
+    }
+  }
+  return { up, down, inLine };
+}
+
 function drawLineage() {
   const canvas = $('lineage');
   const { ctx, w, h } = fit(canvas);
   if (!S.start) return;
-  const all = [...S.w.values()].filter((x) => x.kind === 'member');
+  // without the ones pushed off in their own batch: most newcomers, never a parent
+  const all = [...S.w.values()].filter((x) => x.kind === 'member' && !x.rejected);
   const left = 36, right = 10, top = 10, bottom = 22;
   const maxB = Math.max(1, S.batch + 1);
   const maxY = Math.max(100, Math.ceil(Math.max(0, ...all.map((x) => x.panelAvg ?? 0)) / 50) * 50);
   const X = (x) => left + ((x.born + ((x.id * 0.618) % 1) * 0.8) / maxB) * (w - left - right);
   const Y = (v) => h - bottom - (v / maxY) * (h - top - bottom);
   axes(ctx, w, h, left, right, top, bottom, maxY, maxB, 'batch');
-  const fam = selected !== null ? ancestry(selected) : new Set();
-  ctx.lineWidth = 1;
-  for (const x of all) {
-    for (const pid of x.parents) {
-      const p = S.w.get(pid);
-      if (!p || p.kind !== 'member') continue;
-      const inFam = fam.has(x.id) && fam.has(pid);
-      ctx.strokeStyle = inFam ? '#ffc53d' : hsl(x.hue, 70, 55, x.alive ? 0.35 : 0.1);
-      ctx.lineWidth = inFam ? 1.6 : 1;
-      ctx.beginPath();
-      ctx.moveTo(X(p), Y(p.panelAvg ?? 0));
-      ctx.lineTo(X(x), Y(x.panelAvg ?? 0));
-      ctx.stroke();
+  const sel = selected !== null && S.w.get(selected)?.kind === 'member' ? selected : null;
+  const line = sel !== null ? lineOf(sel, all) : null;
+  const edge = (p, c, color, width, dashed) => {
+    ctx.strokeStyle = color;
+    ctx.lineWidth = width;
+    ctx.setLineDash(dashed ? [4, 3] : []);
+    ctx.beginPath();
+    ctx.moveTo(X(p), Y(p.panelAvg ?? 0));
+    ctx.lineTo(X(c), Y(c.panelAvg ?? 0));
+    ctx.stroke();
+  };
+  if (!line) {
+    // nothing selected: only the warriors in the list, to their parents, faint
+    for (const x of all) {
+      if (!x.alive) continue;
+      x.parents.forEach((pid, k) => {
+        const p = S.w.get(pid);
+        if (p?.kind === 'member') edge(p, x, hsl(x.hue, 70, 55, k ? 0.18 : 0.3), 1, k > 0);
+      });
     }
   }
   const hv = mouseOf(canvas);
   let near = null, nearD = 10;
   for (const x of all) {
     const px = X(x), py = Y(x.panelAvg ?? 0);
-    ctx.fillStyle = fam.has(x.id) ? '#ffc53d' : x.alive ? hsl(x.hue, 95, 65) : hsl(x.hue, 60, 50, x.rejected ? 0.15 : 0.4);
+    const dim = line && !line.inLine.has(x.id);
+    ctx.fillStyle = dim ? hsl(x.hue, 30, 40, 0.15) : x.alive ? hsl(x.hue, 95, 65) : hsl(x.hue, 60, 50, x.rejected ? 0.15 : 0.45);
     ctx.beginPath();
     ctx.arc(px, py, x.alive ? 3.5 : 2, 0, 7);
     ctx.fill();
+    if (x.newFamily && !dim) { // a new family starts here
+      ctx.strokeStyle = hsl(x.hue, 95, 70, x.alive ? 0.95 : 0.6);
+      ctx.lineWidth = 1.3;
+      ctx.beginPath();
+      ctx.arc(px, py, 6.5, 0, 7);
+      ctx.stroke();
+    }
     if (hv) {
       const d = Math.hypot(hv.x - px, hv.y - py);
       if (d < nearD) nearD = d, near = x;
     }
   }
+  if (line) {
+    for (const [p, c, cross] of line.down) edge(p, c, cross ? 'rgba(255,255,255,0.55)' : 'rgba(255,255,255,0.85)', 1.3, cross);
+    for (const [p, c, cross] of line.up) edge(p, c, cross ? '#5fd7ff' : '#ffc53d', cross ? 1.4 : 1.9, cross);
+    ctx.setLineDash([]);
+    const x = S.w.get(sel), px = X(x), py = Y(x.panelAvg ?? 0);
+    ctx.fillStyle = '#ffc53d';
+    ctx.beginPath();
+    ctx.arc(px, py, 5.5, 0, 7);
+    ctx.fill();
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.arc(px, py, 8, 0, 7);
+    ctx.stroke();
+    ctx.font = 'bold 11px ui-monospace, monospace';
+    ctx.textBaseline = 'middle';
+    const label = x.name, tw = ctx.measureText(label).width;
+    const lx = px + 12 + tw < w - right ? px + 12 : px - 12 - tw;
+    ctx.fillStyle = 'rgba(5,6,10,0.75)';
+    ctx.fillRect(lx - 3, py - 8, tw + 6, 16);
+    ctx.fillStyle = '#ffc53d';
+    ctx.fillText(label, lx, py);
+  }
+  ctx.setLineDash([]);
   if (hv) {
     hv.target = near ? { select: near.id } : null;
     if (near) showTip(hv, warriorTip(near.id));
@@ -779,11 +875,12 @@ function renderAbout() {
   if (!st) return;
   const p = st.params, r = st.rules;
   const list = p.list, P = st.panel.length;
+  const opp = p.screenMembers ? `panel warrior and ${p.screenMembers} members of the list, drawn anew each batch` : 'panel warrior';
   $('about').innerHTML = `
     <h3>The rules</h3><p>'94 Redcode without p-space, core ${r.size}, ${r.cycles.toLocaleString('en-US')} cycles, at most ${r.processes} processes and ${r.length} instructions, distance ${r.distance}. A match is ${p.rounds} rounds; a win is 3 points, a tie 1. Scores are points per 100 rounds: 300 wins every round, 100 ties every round.</p>
-    <h3>Opponents</h3><p>From <code>${esc(st.opponents)}</code>: a <b>panel</b> of ${P} hill warriors that every evolved warrior plays${p.rotate ? `; every ${p.rotate} batches the panel warrior that is in longest makes room for another one of the folder` : ' and that never changes'}, and a <b>holdout</b> of ${st.holdout.length} that only the benchmark plays.</p>
+    <h3>Opponents</h3><p>From <code>${esc(st.opponents)}</code>: a <b>panel</b> of ${P} hill warriors${st.panelFiles ? ` (chosen: ${esc(st.panelFiles.split(',').join(', '))})` : ''} that every evolved warrior plays${p.rotate ? `; every ${p.rotate} batches the panel warrior that is in longest makes room for another one of the folder` : ' and that never changes'}, and a <b>holdout</b> of ${st.holdout.length} that only the benchmark plays.</p>
     <h3>The list (the hill)</h3><p>${list} evolved warriors. Each has a row of scores against <b>everyone in</b>: the ${P} panel warriors and the other evolved ones. Its <b>push-off value</b> is the average of that row × (the SD-score to the nearest other warrior, panel or evolved)<sup>${p.alpha}</sup>. The SD-score adds up, column by column, how far two rows differ, ${p.sd === 'sum' ? 'over the sum of the columns\' standard deviations (Eq. 6 of Ismael 2025)' : 'each column divided by its standard deviation (the pseudocode of Ismael 2025)'}. When a newcomer makes it ${list + 1}, the lowest value leaves. Strong <i>and</i> different stays; a clone of a strong warrior has distance 0 and goes first. The matrix shows the list by this value.</p>
-    <h3>A batch</h3><p>${p.batch} children are bred from the list. Each plays ${p.race && p.race < p.screenRounds ? `${p.race} rounds against each panel warrior, the best ${p.raceKeep} of them the rest of ` : ''}${p.screenRounds} rounds against each panel warrior: the <b>screen</b>. At most ${p.survivors} go on, picked by ${p.select === 'value' ? 'their estimated push-off value (screen score × distance to the nearest warrior in, on the panel columns)' : 'their screen score'}, and only if they reach ${p.screenFactor} × the weakest member's panel average once the list is full. They play the other ${p.rounds - p.screenRounds} rounds against the panel and ${p.rounds} rounds against every member, then enter one by one, each followed by the push-off. Children equal to one of the last 16,384 are skipped.</p>
+    <h3>A batch</h3><p>${p.batch} children are bred from the list. Each plays ${p.race && p.race < p.screenRounds ? `${p.race} rounds against each ${opp}, the best ${p.raceKeep} of them the rest of ` : ''}${p.screenRounds} rounds against each ${opp}: the <b>screen</b>. At most ${p.survivors} go on, picked by ${p.select === 'value' ? 'their estimated push-off value (screen score × distance to the nearest warrior in, on the panel columns)' : 'their screen score'}, and only if they reach ${p.screenFactor} × the weakest member's average against the same ${p.screenMembers ? 'opponents' : 'panel'} once the list is full. ${p.stage && p.stage < p.rounds ? `They play ${p.stage} rounds against everyone in and enter one by one with those results. The push-off on everyone's first ${p.stage} rounds (the same noise for all) sends a newcomer among the 8 weakest away at once; every other one first plays the rest of its ${p.rounds} rounds, and the push-off on the whole results decides.` : `They play the other ${p.rounds - p.screenRounds} rounds against the panel and ${p.rounds} rounds against every member, then enter one by one, each followed by the push-off.`} Children equal to one of the last 16,384 are skipped.</p>
     <h3>Parents</h3><p>A tournament of two random members: ${p.parents === 'duel' ? 'the one with more points in their match against each other wins (a draw by push-off value)' : 'the higher push-off value wins'}. A crossover takes a second parent the same way. ${p.reintroduce ? `With probability ${p.reintroduce} a child is instead a warrior pushed off earlier, as it was.` : ''}${st.startWarriors?.length ? ` The first batch started from ${st.startWarriors.map((w) => esc(w.name)).join(', ')} (<code>${esc(st.start)}</code>) and mutants of them.` : ' The first batch is random warriors of up to ' + p.initLength + ' instructions.'}</p>
     <h3>Mutation</h3><p>A child gets 1 change, and another one with probability 0.35 each time, up to 6 (1.5 on average). A change is:</p>
     <p>${mixText(st.changes)}. A change that does not fit (an insert at the longest length, ...) is drawn again. A block is 1 instruction, and one more with probability 0.6 each time.</p>
@@ -952,31 +1049,57 @@ function load(text) {
   for (const line of text.split('\n')) if (line.trim()) handle(JSON.parse(line));
   // a replayed log does not flare everywhere at once
   for (const x of S.w.values()) x.enteredAt = -1e9;
+  lastChange = performance.now(); // let the rows slide into place
+  S.version = (S.version ?? 0) + 1;
   renderCard();
+}
+
+// Events wait and are applied together every `every` seconds (?every=, 2 by
+// default, 0 at once): a fast run sends many per second, and a dashboard that
+// changes at that rate is noise, and costs CPU the run could use.
+const EVERY = 1000 * Math.max(0, Number(new URLSearchParams(location.search).get('every') ?? 2) || 0);
+let pending = [], lastApply = -1e9, lastChange = -1e9;
+let quiet = new Set(); // newcomers that enter and leave within one update: no ticker lines for them
+
+function applyPending(now) {
+  const evs = pending;
+  pending = [];
+  const entered = new Set(evs.filter((e) => e.type === 'enter').map((e) => e.id));
+  quiet = new Set(evs.filter((e) => e.type === 'leave' && entered.has(e.id)).map((e) => e.id));
+  for (const e of evs) handle(e);
+  if (quiet.size) tick(`<span style="color:#6c7290">${quiet.size} more tried and pushed off at once</span>`);
+  quiet = new Set();
+  lastApply = lastChange = now;
+  S.version = (S.version ?? 0) + 1;
+  if (selected !== null) renderCard();
 }
 
 function connect() {
   const run = new URLSearchParams(location.search).get('run');
   source = new EventSource(run === null ? '/run/events' : `/run/${Number(run)}/events`);
   source.addEventListener('run', (e) => { document.title = `42evolve · ${JSON.parse(e.data).name}`; });
-  source.addEventListener('reset', () => { S = fresh(); selected = null; renderCard(); });
+  source.addEventListener('reset', () => { S = fresh(); selected = null; pending = []; renderCard(); });
   source.onopen = () => $('live').classList.add('on');
   source.onerror = () => $('live').classList.remove('on');
-  let lastCard = 0;
-  source.onmessage = (e) => {
-    handle(JSON.parse(e.data));
-    const now = performance.now();
-    if (selected !== null && now - lastCard > 1000) lastCard = now, renderCard();
-  };
+  source.onmessage = (e) => { pending.push(JSON.parse(e.data)); };
 }
 
-let lastMap = 0, lastFrame = 0, lastOps = 0;
+let lastMap = 0, lastFrame = 0, lastOps = 0, lastDraw = 0;
 function frame(now) {
-  ease = 1 - Math.exp(-Math.min(500, now - (lastFrame || now)) / 110);
+  // eased by the time since the last drawing, so that 15 frames a second slide as far as 60
+  ease = 1 - Math.exp(-Math.min(500, now - (lastDraw || now)) / 110);
   lastFrame = now;
+  if (pending.length && now - lastApply >= EVERY) applyPending(performance.now());
   if (S.mapDirty && now - lastMap > 400) lastMap = now, computeMap();
-  drawMatrix(now);
-  drawMap(now);
+  // the matrix and the map move for a while after an update (rows slide,
+  // newcomers flare) and while the mouse is on them, at most 15 frames a
+  // second; else they stand still (10,000 cells a frame cost a core)
+  const moving = now - lastChange < 1200 || hover?.canvas === $('matrix') || hover?.canvas === $('map');
+  if ((moving && now - lastDraw >= 66) || chartsDirty) {
+    lastDraw = now;
+    drawMatrix(now);
+    drawMap(now);
+  }
   if (chartsDirty) { // the two charts that do not move on their own
     chartsDirty = false;
     drawLineage();

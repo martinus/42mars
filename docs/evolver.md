@@ -15,17 +15,22 @@ Ctrl-C ends the run after the current batch. `build/42evolve runs/a` continues i
 | Option | Default | |
 |---|---|---|
 | `--opponents <dir>` | | hill warriors; those that fit the rules are shuffled with the seed into the panel and the holdout |
-| `--panel N`, `--holdout N` | 40, 100 | warriors the evolved ones play all the time; warriors only the benchmark plays |
+| `--panel N`, `--holdout N` | 80, 100 | warriors the evolved ones play all the time; warriors only the benchmark plays |
+| `--panel-files a.red,b.red,...` | | the panel is these warriors of `--opponents` instead of N drawn ones; the holdout is drawn from the rest |
+| `--screen-members N` | 0 | the screen plays the panel and N members of the list, drawn anew each batch with its seed; the threshold is the weakest member's average against the same opponents. With a small panel and a long list the score is then mostly against the list, as in YACE |
 | `--list N` | 20 | evolved warriors kept |
 | `--batch N`, `--survivors N` | 4 per thread, batch / 8 | candidates per batch; most of them that get past the screen |
 | `--rounds N`, `--screen-rounds N` | 100, 20 | rounds per match; the first of them are the screen |
 | `--screen-factor x` | 0.8 | a candidate needs this share of the weakest member's panel average after the screen |
 | `--alpha x`, `--sd opponent\|sum` | 1, opponent | push-off value = average * distance^alpha; the reading of the SD-score |
+| `--noise z` | 0 | the SD-score counts a column only as far as the difference is larger than z standard errors of the two scores: max(0, \|a_k - b_k\| - z sqrt(se_ak² + se_bk²)), each standard error from the wins, losses and ties of its match (#148); 0 is the plain SD-score of the tournament |
 | `--reintroduce p` | 0.02 | chance that a candidate is a warrior that was pushed off earlier |
 | `--select screen\|value` | screen | what the survivors of the screen are picked by: the screen score, or the estimated push-off value (screen score times the SD-score to the nearest warrior in, on the panel columns, to the power alpha) |
 | `--start <dir>` | | the first batch starts from the warriors of the folder (as they are, then mutants of them) instead of random ones; each starts a family; an operand that points into the warrior's code becomes a reference |
 | `--parents value\|duel` | value | the tournament of two that picks a parent: the higher push-off value, or the one with more points in their match against each other (a draw by value) |
 | `--prior uniform\|hill` | uniform | how opcodes, modifiers and modes of new instructions and point changes are drawn: uniform, or as often as they occur in all warriors of `--opponents` (plus 1 each, so none is impossible) |
+| `--stage N` | the screen rounds | 0 for none; else at least the screen rounds: every match is played as its first N rounds and the rest, and 42evolve keeps both results. A survivor of the screen plays only the first N rounds against everyone in and enters with them; the push-off then runs on everyone's first-N results, the same noise for all. A newcomer among the 8 weakest members there leaves at once (`leave` with `early`), unless its nearest warrior is weaker still (mostly its first parent: then the whole results decide which of the two goes). Every other newcomer plays the rest of its rounds first (event `complete`), and the push-off decides on the whole results, so no newcomer pushes out a member on the noise of its few rounds |
+| `--fill` | | new random warriors until the list is full, not only in the first batch: with a list of 90 about 6 batches of them, and the push-off keeps the most different ones |
 | `--race N`, `--race-keep K` | 0, batch / 4 | the screen in two stages: every candidate plays the first N screen rounds, only the best K by the key the rest |
 | `--changes name=w,...` | see below | how often each kind of change is drawn, weights of any scale; a kind not named is never drawn. The names are those of the dashboard's Operators tab and of `42spectrum`: `opcode`, `modifier`, `a-mode`, `b-mode`, `a-operand`, `b-operand`, `org`, `replace`, `insert`, `delete`, `duplicate`, `move`, `crossover-insert`, `crossover-replace`, `related-opcode`, `related-mode`, `shared-constant`, `tune`. The default is `opcode=81,modifier=81,a-mode=54,b-mode=54,a-operand=108,b-operand=108,org=27,replace=27,insert=100,delete=100,duplicate=70,move=70,crossover-insert=60,crossover-replace=60`, the rates from before the option (since the option, 15th November 2026, a seed gives another run than before, also with these rates: a change that does not fit is drawn again instead of becoming the next kind) |
 | `--fractions p` | 0 | chance that a new far value (any value of the core otherwise) is 1/2, 1/3, 2/3, 1/4 or 3/4 of the core give or take 20 |
@@ -41,13 +46,13 @@ The run folder gets `events.jsonl` (everything that happened, one JSON object pe
 
 **The list.** Like YACE: a list of 20 evolved warriors, and each newcomer plays the whole list. The list is kept by the diversity push-off of [Tournament Weekend 2026](https://corewar.co.uk/tournamentweekend2026a.htm): each warrior's value is its average score times the lowest SD-score between its row of scores and the row of any other warrior; when the list has 21, the lowest value leaves. A close clone of a strong warrior has a distance near 0 and goes first, so the rule keeps the list diverse. The math is [`tools/diversity.js`](../tools/diversity.js) and [`evolver/pushoff.c`](../evolver/pushoff.c), the same operations in the same order; [`tools/pushoff.mjs`](../tools/pushoff.mjs) ranks a whole tournament that way. The SD-score is from [Ismael 2025](https://doi.org/10.1186/s40537-025-01091-z), whose Eq. 6 (`--sd sum`: sum of differences over sum of standard deviations, the order of plain Manhattan distance) and pseudocode (`--sd opponent`: each column divided by its own standard deviation) differ.
 
-**The matrix.** Rows and columns are the panel (40 hill warriors that never leave) and the members. So a warrior's row is its score against the panel and the other members, and the distance to the nearest panel warrior counts too: copying a hill warrior does not pay either.
+**The matrix.** Rows and columns are the panel (80 hill warriors that never leave) and the members. So a warrior's row is its score against the panel and the other members, and the distance to the nearest panel warrior counts too: copying a hill warrior does not pay either.
 
-**A batch.** 4 candidates per thread are bred from the list (tournament of two on the push-off value). The screen plays each against the panel for 20 rounds. Those with at least 0.8 of the weakest member's panel average, at most batch / 8 of them, play the remaining 80 rounds against the panel and 100 rounds against every member and every survivor before them. Then they enter one by one, each followed by the push-off. Candidates whose warrior is one of the last 16,384 that were tried are skipped. Every match uses the seed of its opponent, so all candidates meet an opponent at the same positions and differ by their code, not by their luck.
+**A batch.** 4 candidates per thread are bred from the list (tournament of two on the push-off value). The screen plays each against the panel for 20 rounds. Those with at least 0.8 of the weakest member's panel average, at most batch / 8 of them, play 20 rounds against every member and every survivor before them, and enter one by one with those results (`--stage`, by default at the screen rounds). The push-off on everyone's first 20 rounds sends a newcomer among the 8 weakest away at once, about 80% of them in a long run; every other one plays the rest of its 100 rounds against everyone, and the push-off on the whole results decides. Without `--stage` (`--stage 0`) every survivor plays all 100 rounds before it enters. Candidates whose warrior is one of the last 16,384 that were tried are skipped. Every match uses the seed of its opponent, so all candidates meet an opponent at the same positions and differ by their code, not by their luck.
 
 **The genome.** [`evolver/genome.c`](../evolver/genome.c): a list of instructions whose operands are typed, a reference to an instruction of the genome or a value. A reference becomes a relative offset only when the genome becomes a warrior, so inserting, deleting or moving instructions keeps what it points at; with raw offsets every insertion breaks the references that cross it. Changes: a field of one instruction (opcode, modifier, mode, operand, start, the whole instruction), insert new instructions, delete, duplicate or move a block, and crossover, a block of another member inserted or put over a block; and four small steps, off by default: an opcode or mode of the same family, a far value set to another one of the warrior, a far value moved a little (see the mutation spectrum below). A child gets 1 change, and one more with probability 0.35 each time, up to 6; each is drawn by the weights of `--changes`, and drawn again when it does not fit (an insert at the longest length, a crossover without a second parent). A copied block keeps its references inside the block; references out of it go to the original (duplicate) or become plain offsets (crossover). No strategy is built in: no qscan, paper or stone templates.
 
-**Names.** Each warrior that enters gets a name of its own adjective and its family's noun, which it takes from its first parent: a child of "Crimson Mantis" may be "Sneaky Mantis", a warrior bred from nothing starts a new family. A name given before gets a Roman numeral ("Sneaky Mantis II"), so names are unique in a run. 128 adjectives and 128 nouns ([`evolver/names.c`](../evolver/names.c)); the dashboard colors a family alike too. The number of a warrior (`id`) stays the key in the events.
+**Names.** Each warrior that enters gets a name of its own adjective and its family's noun. The family is its first parent's: a child of "Crimson Mantis" may be "Sneaky Mantis". It starts a family of its own, with a new noun, when it plays clearly unlike its first parent: its scores against everyone else in differ from the parent's by more than 30 points per 100 rounds on average (`parentDifference` and `newFamily` in its `enter` event; in the runs of 15th November 2026 the median was 1 to 9, and 0.1 to 2.3% of the children were above 30). Without that rule every run ended with one noun, the descendants of one early warrior, whatever they played. A warrior bred from nothing starts a new family too. A name given before gets a Roman numeral ("Sneaky Mantis II"), so names are unique in a run. 128 adjectives and 128 nouns ([`evolver/names.c`](../evolver/names.c)); the dashboard colors a family alike, a new family in a new color. Names change nothing else; the number of a warrior (`id`) stays the key in the events.
 
 **All cores.** One thread per hardware thread, each with its own `m42_ctx`, takes matches from one shared queue; the main thread plays too. A match is one pair and one block of rounds, at most 100 rounds, so the queue has no long tail at the end of a phase. On the run below, 16 threads were 97.7% busy over 600 s, measured as time inside `m42_match()` over threads times wall time. The plan in #142 had batches bred one batch behind so that no thread waits at the end of a batch; with matches this small that was not needed.
 
@@ -57,11 +62,11 @@ The run folder gets `events.jsonl` (everything that happened, one JSON object pe
 
 ## The dashboard
 
-[`ui/evolver.html`](../ui/evolver.html), on the events of a run: live through `node tools/serve.mjs --run <folder>`, or `?log=<url of an events.jsonl>`, or an `events.jsonl` dropped on the page.
+[`ui/evolver.html`](../ui/evolver.html), on the events of a run: live through `node tools/serve.mjs --run <folder>`, or `?log=<url of an events.jsonl>`, or an `events.jsonl` dropped on the page. Live events are applied every 2 seconds (`?every=<seconds>`, 0 at once); in between the matrix and the map stand still, and the newcomers that came and went in one update are one line in the ticker. A run with `--stage` on 32 threads writes about 4 batches a second, and drawn as they come the matrix took a core of its own.
 
 - **Score matrix**: the members by push-off value, against each other and the panel, points per 100 rounds. A newcomer slides in from below and glows, a member that leaves fades out. A click on a cell opens that match in the visualizer.
 - **Novelty map**: classical multidimensional scaling of the rows against the panel, with the SD-score as distance. Grey points are the hill warriors, colored ones the members (a family shares a color), faint ones members that left. A newcomer flares up.
-- **Lineage**: every warrior that entered, by its batch and its score against the panel, with lines to its parents; the selected warrior's ancestors in yellow.
+- **Lineage**: every warrior that entered, by its batch and its score against the panel; the warriors in the list with faint lines to their parents, a ring where a new family starts. A click on a warrior shows its line: its first parents in yellow, crossover parents dashed in cyan, its descendants in white, everything else dimmed.
 - **Progress**: the best and mean member against the panel, and the best against the holdout, over the batches.
 - **★ best** in the header is the best warrior against the holdout warriors so far, also after the push-off removed it from the list (the same warrior as `best.red`); **strongest now** is the member with the highest average against the panel. A click opens the card. The best one has a ★ in the matrix and on the map.
 - A click on a warrior opens its card: code, scores, parents, nearest warrior, its result against each panel warrior, and every match with a **watch** button.
@@ -166,6 +171,63 @@ About 100 against the folder, where the median hill warrior scores 145, comes ou
 - One seed per setting. The third comparison's `--start warriors` run (16 threads, 240 batches) reached 142.8, the same as the spectrum mix here in half the batches.
 
 So no mix is best for both: a search for a design wants the big changes, a design that is there wants the small ones. Neither gets a run from random code off the swarm.
+
+## E5, fifth comparison: a list that plays itself
+
+15th November 2026, all four at once, 8 threads each (nice 19 for the last 30 minutes, all four alike), an hour, the same yardstick. YACE scored a newcomer against its list of evolved warriors only, and the list moved with itself; 42evolve scored it mostly against the fixed panel (80 of 99 columns), where the `SPL`/`DJN` swarm is a local optimum. Here the panel is 5 warriors (`--panel-files pst_v4.red,recon2.red,stingray.red,monowire.red,digitalis2003.red`, picked by measurement: a round robin of every third of the 1,107, the strongest quarter, then greedily the one farthest by SD-score from those picked; paper/stone, scanner, oneshot and clear, oneshot, qscan and clear and imps), and `--screen-members 15`: the screen plays the 5 and 15 members, so the score is mostly against the list. The references are the first and third runs of the fourth comparison (the default mix, `--panel 80`, list 20). "By row": the 3 members with the highest average over everyone in, a choice that does not depend on 5 panel warriors.
+
+| Run | Batches | `best.red` | 3 best by panel average | 3 best by row average | Opcodes of the list | Ties in the list |
+|---|---|---|---|---|---|---|
+| reference, random code | 158 | 101.6 | 98.1 | | SPL 32%, DJN 22%, ADD 10% | 44 to 48% |
+| `--list 20` | 547 | 99.1 | 98.2 | 98.6 | MOV 33%, SPL 17%, ADD 11%, JMP 10% | 17% |
+| `--list 100` | 396 | 86.5 | 83.2 | 80.8 | MOV 27%, MOD 15%, SPL 12%, SEQ 11% | 7% |
+| `--list 100 --alpha 2` | 284 | 71.5 | 71.1 | 70.3 | MOV 15%, SPL 12%, JMP 10%, MUL 10% | 16% |
+| reference, `--start warriors` | 114 | 134.9 | 133.7 | | SPL 39%, MOV 25%, JMP 8% | |
+| `--list 100 --start warriors` | 69 | 131.1 | 132.5 | 137.8 | SPL 29%, MOV 21%, JMP 9% | 49% |
+
+- Against itself the list leaves the swarm: from random code `MOV` is 15 to 33% of the instructions and the members tie in 7 to 17% of their rounds against each other, instead of `SPL` and `DJN` and 44 to 48% ties. The first time a run from random code ended with another design.
+- Against the hill that design is not better yet: the list of 20 ends where the reference ends (98 to 99), the lists of 100 below it, `--alpha 2` lowest again. A list of 100 costs a survivor 105 matches instead of 25 and evaluates fewer candidates; started from our warriors it ran 69 batches and ends near its reference.
+- The family names (one noun per list) are from the binary before the names follow behavior.
+
+## E5, sixth comparison: 90 evolved, 10 panel warriors, and the noise of the distance
+
+15th November 2026, all four at once, 8 threads each at nice 19, an hour, the same yardstick. `--list 90 --screen-members 10` and 10 panel warriors, picked as the 5 before (the same 5 plus `borg.red`, `macromagic.red`, `toxicspirit2.red`, `twinstorms.red`, `goonie.red`: a qscan with a replicator, three scanners, a stone). `--noise z` (#148) subtracts z standard errors from each column's difference.
+
+| Run | Batches | `best.red` | 3 best by panel average | 3 best by row average | Families in the list | Ties in the list | Seconds per batch |
+|---|---|---|---|---|---|---|---|
+| `--noise 0` | 415 | 87.3 | 83.7, 72.5, 80.9 | 88.5, 86.1, 87.4 | 30 | 7% | 8 |
+| `--noise 1` | 81 | 94.7 | 79.6, 79.8, 79.6 | 75.1, 76.9, 69.0 | 6 | 81% | 47 |
+| `--noise 2` | 207 | 89.9 | 88.9, 89.9, 69.9 | 61.7, 52.6, 69.0 | 36 | 24% | 15 |
+| `--noise 1 --start warriors` | 77 | 134.8 | 134.3, 134.2, 139.7 | 128.4, 129.1, 131.4 | 2 | 64% | 53 |
+
+- None is better than the list of 20 of the fifth comparison (99.1) or its reference (101.6); started from our warriors, none better than 134.9.
+- `--noise 1` brings the tie swarm back. A match whose rounds all end alike has a standard error of 0, one of wins and losses a large one: the correction shrinks the differences of warriors that win and lose most, they look like clones and leave first, and the ties stay. A tied round runs all 80,000 cycles, so its batches took 6 times as long. The standard error of a score is the wrong measure of what two warriors share; the second variant of #148 (the round-by-round differences of a and b on the same positions) does not have this bias.
+- With the names that follow behavior a list of 90 holds 30 families instead of 1.
+- Where the time goes, the same in all four: the screen is 22% of the rounds, the full matches of the survivors 78%, and 48 to 75% of the survivors are pushed off in their own batch. Hence `--stage`.
+
+The ground truth of #148: the final list of the `--noise 0` run (90 members and the 10 panel warriors) played again with 1,000 rounds per match (`tools/tournament.mjs`, its own positions), the SD-score between the members from that against the one from the run's 100-round matrix:
+
+| Distance from the 100-round matrix | Nearest neighbor as with 1,000 rounds | Rank correlation over the 4,005 pairs | The 30 closest pairs: estimate / truth | Their error after scaling to the truth's mean |
+|---|---|---|---|---|
+| plain | 50 of 90 (56%) | 0.931 | 1.40 | 10.9 |
+| `--noise 1` | 50 of 90 (56%) | 0.932 | 0.57 | 8.4 |
+| `--noise 2` | 47 of 90 (52%) | 0.928 | 0.20 | 17.1 |
+
+The plain distance overstates the closest pairs by 40%, as #148 measured; `--noise 1` shrinks them more than that, and neither finds the true nearest neighbor of more than 56% of the members. With the tie swarm it brings back, `--noise` stays at 0. The variant that #148 names second (the round-by-round differences of two warriors on the same positions) is not built.
+
+## E5, seventh comparison: in stages, on all threads
+
+15th November 2026, one run alone on 32 threads at nice 10, an hour, the same settings as the `--noise 0` run of the sixth comparison plus `--stage 20 --fill`. Two runs before it were stopped and changed: in the first, a newcomer entered with its 20-round results against everyone else's 100-round results, and noisier rows look more different, so 48% of the newcomers stayed on that noise for one batch and pushed out a member each (against 3% without stages); in the second, a newcomer left early only when it was the weakest of all on the first 20 rounds, 24% of them. The rule of `--stage` now (the 8 weakest, unless its nearest is weaker) came from the second run's log: 37% early, and 5% of the newcomers that stayed would have been sent away.
+
+| Run | Threads | Batches | Seconds per batch at the end | Rounds per batch | Newcomers away early | `best.red` | 3 best by panel average | 3 best by row average |
+|---|---|---|---|---|---|---|---|---|
+| sixth comparison, `--noise 0` | 8 | 415 | 7.8 | 216k | | 87.3 | 79.0 | 87.3 |
+| `--stage 20 --fill` | 32 | 2,884 | 1.0 | 106k | 80% | 93.4 | 85.3 | 82.1 |
+
+- 7 times the batches in the hour: 3.3 times from the threads, the rest from the stages (half the rounds per batch) and from a list with fewer ties.
+- `--fill` started from 700 random warriors, and the list began as a tie swarm (73% ties at batch 88, 6.5 s per batch); by batch 339 it was gone (8% ties), and the list held 58 to 61 families, none with more than 7 members.
+- Against the hill 93.4 at best: more than the slower run, less than the lists of 20 (99 to 102). The list is diverse by its scores, not by its design: 83 of its 90 members run hundreds of processes that overwrite the fields of the core (`MOV.BA $5, }1` walking through it) and hardly copy their own instructions (median 3 cells after 2,000 instructions), where 84 of 93 hill warriors do (median 340: bombs, papers). The SD-score sees only the rows of scores, and among warriors of one design those differ by small details. A diversity of behavior, as MAP-Elites (#147) keeps it, is the next step.
+- The defaults since then: `--panel 80` (better than 40 in the first comparison) and `--stage` at the screen rounds.
 
 ## What one change does: the mutation spectrum
 

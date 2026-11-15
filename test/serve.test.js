@@ -93,6 +93,17 @@ test('several runs: /runs lists them, /run/<n>/events streams each', { timeout: 
   }
   assert.equal((await fetch(`${url}/run/2/events`)).status, 404);
   assert.equal((await fetch(`${url}/ui/runs.html`)).status, 200);
+  // all runs in one connection, each line with its run's number
+  const res = await fetch(`${url}/runs/events`);
+  assert.equal(res.headers.get('content-type'), 'text/event-stream');
+  const reader = res.body.getReader();
+  const got = await read(reader, [], (g) => g.length >= 4);
+  await reader.cancel();
+  const seen = got.map(({ ev, data }) => {
+    const [, n, rest] = /^(\d+) (.*)$/.exec(data);
+    return `${n} ${ev} ${ev === 'run' ? JSON.parse(rest).name : JSON.parse(rest).run}`;
+  }).sort();
+  assert.deepEqual(seen, ['0 message first', '0 run multi-first', '1 message second', '1 run multi-second']);
 });
 
 test('a wrong option or port is refused with the usage', () => {

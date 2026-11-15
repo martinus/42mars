@@ -95,6 +95,7 @@ main {
 #ticker li { padding: 2px 0; border-bottom: 1px solid #151827; color: #aab0c8; animation: slide 0.5s ease-out; }
 #ticker li b { color: var(--text); font-weight: 600; }
 #ticker li .in { color: #5dff9a; }
+#ticker li .new-family { color: #ffc53d; }
 #ticker li .out { color: var(--hot); }
 #ticker li .best { color: var(--accent); }
 #ticker li a { cursor: pointer; text-decoration: none; border-bottom: 1px dotted #555b78; }

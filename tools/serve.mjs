@@ -9,6 +9,10 @@
 // every line as it is written, and an event `reset` when the file got
 // shorter (the run was continued from its state), after which the lines
 // come again from the start. /run/events is run 0, /runs lists the runs.
+// /runs/events streams all runs in one connection, each data line starting
+// with the run's number and a space: a browser opens at most 6 connections
+// to a host, and a stream per run kept them all busy, so that pages from the
+// same server waited for a free one (Firefox, 15th November 2026).
 // ui/evolver.html?run=<n> shows one run, ui/runs.html all of them.
 // --run takes every folder up to the next option, so `--run ~/42evolve.*`
 // works.
@@ -54,11 +58,12 @@ const types = {
   '.wasm': 'application/wasm',
 };
 
-// Sends the new complete lines of the run's events.jsonl every 300 ms.
-function streamEvents(req, res, runDir) {
+// Calls send(event, data) with the new complete lines of the run's
+// events.jsonl every 300 ms (event 'message'), first 'run' with its name, and
+// 'reset' when the file got shorter. Stops when the request closes.
+function follow(req, runDir, send) {
   const file = join(runDir, 'events.jsonl');
-  res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', connection: 'keep-alive' });
-  res.write(`event: run\ndata: ${JSON.stringify({ name: basename(runDir) })}\n\n`);
+  send('run', JSON.stringify({ name: basename(runDir) }));
   let offset = 0, partial = '', busy = false;
   const poll = async () => {
     if (busy) return;
@@ -68,7 +73,7 @@ function streamEvents(req, res, runDir) {
       if (size < offset) {
         offset = 0;
         partial = '';
-        res.write('event: reset\ndata: {}\n\n');
+        send('reset', '{}');
       }
       if (size > offset) {
         const fh = await open(file, 'r');
@@ -78,7 +83,7 @@ function streamEvents(req, res, runDir) {
         offset = size;
         const lines = (partial + buf.toString('utf8')).split('\n');
         partial = lines.pop();
-        for (const line of lines) if (line) res.write(`data: ${line}\n\n`);
+        for (const line of lines) if (line) send('message', line);
       }
     } catch {
       // no events.jsonl yet
@@ -90,14 +95,26 @@ function streamEvents(req, res, runDir) {
   req.on('close', () => clearInterval(timer));
 }
 
+const eventStream = (res) => res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', connection: 'keep-alive' });
+const sse = (event, data) => `${event === 'message' ? '' : `event: ${event}\n`}data: ${data}\n\n`;
+
 createServer(async (req, res) => {
   const url = new URL(req.url, 'http://x');
   const path = decodeURIComponent(url.pathname);
   const run = /^\/run(?:\/(\d+))?\/events$/.exec(path);
   if (run) {
     const dir = runDirs[Number(run[1] ?? 0)];
-    if (dir) streamEvents(req, res, dir);
-    else res.writeHead(404).end('no such run: node tools/serve.mjs --run <folder> ...');
+    if (!dir) {
+      res.writeHead(404).end('no such run: node tools/serve.mjs --run <folder> ...');
+      return;
+    }
+    eventStream(res);
+    follow(req, dir, (event, data) => res.write(sse(event, data)));
+    return;
+  }
+  if (path === '/runs/events') {
+    eventStream(res);
+    runDirs.forEach((dir, i) => follow(req, dir, (event, data) => res.write(sse(event, `${i} ${data}`))));
     return;
   }
   if (path === '/runs') {
