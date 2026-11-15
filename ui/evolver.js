@@ -684,12 +684,17 @@ function drawTicker() {
 
 // ------------------------------------------------------------------ operators and how it works
 
-// What each change does; the probabilities are in renderAbout() (genome.c).
+// What each change does; how often: the start event's changes (42evolve
+// --changes), described in renderAbout().
 const OP_DOCS = {
   opcode: 'a new opcode for one instruction',
   modifier: 'a new modifier for one instruction',
-  mode: 'a new addressing mode for an A or B operand',
-  operand: 'a new A or B value or reference of one instruction',
+  'a-mode': 'a new addressing mode for the A operand of one instruction',
+  'b-mode': 'a new addressing mode for the B operand of one instruction',
+  'a-operand': 'a new A value or reference of one instruction',
+  'b-operand': 'a new B value or reference of one instruction',
+  mode: 'a new addressing mode for an A or B operand (logs before --changes)',
+  operand: 'a new A or B value or reference of one instruction (logs before --changes)',
   org: 'moves the start (ORG) to another instruction',
   replace: 'replaces one instruction with a new random one',
   insert: 'inserts one or more new random instructions',
@@ -698,6 +703,10 @@ const OP_DOCS = {
   move: 'moves a block to another place',
   'crossover-insert': 'inserts a block of a second parent',
   'crossover-replace': 'replaces a block with a block of a second parent',
+  'related-opcode': 'another opcode of the same family: ADD/SUB, JMZ/JMN/DJN, SEQ/SNE/CMP/SLT, SPL/JMP, MUL/DIV/MOD, DAT/NOP',
+  'related-mode': 'another mode of the same family: $ @ *, or < > { }; # becomes $',
+  'shared-constant': 'a far value (more than 16 from 0) set to another far value of the warrior, or its negative',
+  tune: 'a far value moved by up to 2% of its size (at least 4)',
   reintroduce: 'a warrior pushed off earlier, back as it was',
   random: 'a random warrior (first batch)',
   start: 'a start warrior as it is (--start)',
@@ -755,6 +764,16 @@ function renderOps() {
     <p class="ops-note">A child with several changes counts for each of them. <b>Screen</b>: it scored well enough in the first ${S.start?.params.screenRounds ?? ''} rounds against the panel to play the full matches and enter the list. <b>Kept</b>: it was still in the list after its own batch, so the push-off kept it. <b>5+</b>: of the children that entered 5 or more batches ago, how many stayed 5 batches. <b>Δ</b>: its average against the panel minus the first parent's, for the children that entered. Hover a row for what the change does.</p>`;
 }
 
+// The weights of genome_mix_default(), for logs from before --changes.
+const DEFAULT_CHANGES = { opcode: 81, modifier: 81, 'a-mode': 54, 'b-mode': 54, 'a-operand': 108, 'b-operand': 108, org: 27, replace: 27,
+  insert: 100, delete: 100, duplicate: 70, move: 70, 'crossover-insert': 60, 'crossover-replace': 60 };
+
+function mixText(changes = DEFAULT_CHANGES) {
+  const all = Object.entries(changes).filter(([, w]) => w > 0).sort((a, b) => b[1] - a[1]);
+  const total = all.reduce((s, [, w]) => s + w, 0);
+  return all.map(([k, w]) => `<b title="${esc(OP_DOCS[k] ?? k)}">${esc(k)}</b> ${((100 * w) / total).toFixed(1)}%`).join(' · ');
+}
+
 function renderAbout() {
   const st = S.start;
   if (!st) return;
@@ -767,8 +786,7 @@ function renderAbout() {
     <h3>A batch</h3><p>${p.batch} children are bred from the list. Each plays ${p.race && p.race < p.screenRounds ? `${p.race} rounds against each panel warrior, the best ${p.raceKeep} of them the rest of ` : ''}${p.screenRounds} rounds against each panel warrior: the <b>screen</b>. At most ${p.survivors} go on, picked by ${p.select === 'value' ? 'their estimated push-off value (screen score × distance to the nearest warrior in, on the panel columns)' : 'their screen score'}, and only if they reach ${p.screenFactor} × the weakest member's panel average once the list is full. They play the other ${p.rounds - p.screenRounds} rounds against the panel and ${p.rounds} rounds against every member, then enter one by one, each followed by the push-off. Children equal to one of the last 16,384 are skipped.</p>
     <h3>Parents</h3><p>A tournament of two random members: ${p.parents === 'duel' ? 'the one with more points in their match against each other wins (a draw by push-off value)' : 'the higher push-off value wins'}. A crossover takes a second parent the same way. ${p.reintroduce ? `With probability ${p.reintroduce} a child is instead a warrior pushed off earlier, as it was.` : ''}${st.startWarriors?.length ? ` The first batch started from ${st.startWarriors.map((w) => esc(w.name)).join(', ')} (<code>${esc(st.start)}</code>) and mutants of them.` : ' The first batch is random warriors of up to ' + p.initLength + ' instructions.'}</p>
     <h3>Mutation</h3><p>A child gets 1 change, and another one with probability 0.35 each time, up to 6 (1.5 on average). A change is:</p>
-    <p>54% a <b>point change</b> of one instruction: opcode 15%, modifier 15%, A mode 10%, B mode 10%, A operand 20%, B operand 20%, ORG 5%, the whole instruction new 5%;<br>
-    10% <b>insert</b> new instructions · 10% <b>delete</b> a block · 7% <b>duplicate</b> a block · 7% <b>move</b> a block · 12% <b>crossover</b>: a block of the second parent inserted, or put over a block (50:50). A block is 1 instruction, and one more with probability 0.6 each time.</p>
+    <p>${mixText(st.changes)}. A change that does not fit (an insert at the longest length, ...) is drawn again. A block is 1 instruction, and one more with probability 0.6 each time.</p>
     <p>Operands are <b>references</b> to an instruction of the warrior, kept across inserts and moves, or <b>values</b>. A changed reference points somewhere else (50%), at a neighbour (25%) or becomes a value (25%); a changed value moves by 1 to 4 (35%), becomes a new small value up to ±16 (20%), a far value (20%), its negative (10%), double or half (7%), or a reference (8%). New instructions: operands 40% references, 40% small values, 20% far values${p.fractions ? `; far values are near 1/2, 1/3, 2/3, 1/4 or 3/4 of the core with probability ${p.fractions}` : ''}. Opcodes, modifiers and modes are drawn ${p.prior === 'hill' ? 'as often as in the hill warriors of the folder' : 'uniformly'}.</p>
     <h3>Benchmark</h3><p>Every ${p.benchEvery} batches the member with the best panel average plays the ${st.holdout.length} holdout warriors, ${p.benchRounds} rounds each. The best of those so far is <b>★ best</b> (and <code>best.red</code>).</p>`;
 }

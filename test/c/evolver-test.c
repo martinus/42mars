@@ -162,7 +162,7 @@ static void test_breed(void) {
     genome_random(&p1, &r, CORE, 1 + rng_below(&r, max), 0);
     genome_random(&p2, &r, CORE, 1 + rng_below(&r, max), 0);
     for (int round = 0; round < 4000; round++) {
-      genome_breed(&c, &p1, rng_below(&r, 2) ? &p2 : 0, &r, CORE, max, k == 2 ? &half : 0, ops, sizeof ops);
+      genome_breed(&c, &p1, rng_below(&r, 2) ? &p2 : 0, &r, CORE, max, k == 2 ? &half : 0, 0, ops, sizeof ops);
       CHECK(valid(&c, max), "a child of length %u is invalid (max %u, %s)", c.len, max, ops);
       CHECK(ops[0], "a child without the name of a change");
       genome_code(&c, CORE, code);
@@ -185,7 +185,7 @@ static void test_text(void) {
   genome_random(&g, &r, CORE, 8, 0);
   genome_random(&p2, &r, CORE, 8, 0);
   for (int round = 0; round < 1500; round++) {
-    genome_breed(&g, &g, &p2, &r, CORE, GENOME_MAX, 0, ops, sizeof ops);
+    genome_breed(&g, &g, &p2, &r, CORE, GENOME_MAX, 0, 0, ops, sizeof ops);
     const size_t len = genome_text(&g, CORE, text, sizeof text);
     CHECK(len < sizeof text, "text cut");
     const int n = snprintf(src, sizeof src, ";redcode-94nop\n;name t\n%s", text);
@@ -333,8 +333,11 @@ static void test_weights(void) {
   genome_random(&p1, &r, CORE, 12, &st);
   char names[96];
   for (int round = 0; round < 3000; round++) {
-    genome_breed(&c, &p1, &p1, &r, CORE, 40, &st, names, sizeof names);
+    genome_breed(&c, &p1, &p1, &r, CORE, 40, &st, 0, names, sizeof names);
     p1 = c.len > 30 ? p1 : c;
+    // a new lineage now and then: one that runs 3000 changes drifts away from
+    // 3:1 by chance (duplicates copy what is there), 2:1 with some seeds
+    if (round % 50 == 49) genome_random(&p1, &r, CORE, 12, &st);
     for (uint32_t i = 0; i < c.len; i++) {
       ops[c.g[i].op]++;
       other += c.g[i].mod != 6 || (c.g[i].am != 1 && c.g[i].am != 2) || (c.g[i].bm != 1 && c.g[i].bm != 2);
@@ -435,6 +438,52 @@ static void test_changes(void) {
   for (int k = 0; k < CH_COUNT; k++) CHECK(applied[k] > 50, "%s applied only %u times", genome_change_name(k), applied[k]);
 }
 
+// --changes: the text form reads back, bad texts are refused, and
+// genome_breed() draws the kinds by their weights, never one of weight 0.
+static void test_mix(void) {
+  genome_mix m, back;
+  char text[CH_COUNT * 32];
+  const genome_mix def = genome_mix_default();
+  uint32_t sum = 0;
+  for (int k = 0; k < CH_COUNT; k++) sum += def.w[k];
+  CHECK(sum == 1000 && def.w[CH_AOPERAND] == 108 && def.w[CH_XREPLACE] == 60 && def.w[CH_SHARED] == 0,
+        "the default mix changed");
+  genome_mix_text(&def, text, sizeof text);
+  CHECK(genome_mix_parse(&back, text) == 0 && !memcmp(&back, &def, sizeof def), "the default mix does not read back: %s", text);
+  CHECK(genome_mix_parse(&m, "tune=2,shared-constant=7") == 0 && m.w[CH_TUNE] == 2 && m.w[CH_SHARED] == 7 &&
+            m.w[CH_OPCODE] == 0,
+        "a mix of two");
+  genome_mix_text(&m, text, sizeof text);
+  CHECK(!strcmp(text, "shared-constant=7,tune=2"), "text %s", text);
+  const char *bad[] = {"", "opcode", "opcode=", "opcode=x", "opcode=1,", "opcode=1,opcode=2", "opcodes=1",
+                       "opcode=0", "opcode=1000001", "opcode=1;org=1", "opcode=-1", "=1"};
+  for (size_t i = 0; i < sizeof bad / sizeof *bad; i++) {
+    m = def;
+    CHECK(genome_mix_parse(&m, bad[i]) == -1 && !memcmp(&m, &def, sizeof def), "\"%s\" was taken", bad[i]);
+  }
+  // opcode 1 : org 3, both always apply
+  rng r = rng_seed(25, 26, 27);
+  CHECK(genome_mix_parse(&m, "opcode=1,org=3") == 0, "opcode=1,org=3");
+  genome p, c;
+  char ops[96];
+  uint32_t n_op = 0, n_org = 0, other = 0;
+  for (int round = 0; round < 4000; round++) {
+    genome_random(&p, &r, CORE, 2 + rng_below(&r, 20), 0);
+    genome_breed(&c, &p, &p, &r, CORE, 40, 0, &m, ops, sizeof ops);
+    for (char *t = strtok(ops, " "); t; t = strtok(0, " "))
+      if (!strcmp(t, "opcode")) n_op++;
+      else if (!strcmp(t, "org")) n_org++;
+      else other++;
+  }
+  CHECK(other == 0 && n_op > 0 && n_org > 2.6 * n_op && n_org < 3.4 * n_op, "opcode %u, org %u, other %u", n_op, n_org,
+        other);
+  // a kind that never applies: crossover without a second parent leaves the child as it was
+  CHECK(genome_mix_parse(&m, "crossover-insert=1") == 0, "crossover-insert=1");
+  genome_random(&p, &r, CORE, 10, 0);
+  genome_breed(&c, &p, 0, &r, CORE, 40, 0, &m, ops, sizeof ops);
+  CHECK(!ops[0] && !memcmp(&c, &p, sizeof c), "crossover without a second parent changed something: %s", ops);
+}
+
 int main(void) {
   test_rebuild();
   test_duplicate_and_crossover();
@@ -447,6 +496,7 @@ int main(void) {
   test_weights();
   test_from_code();
   test_changes();
+  test_mix();
   if (failures) {
     fprintf(stderr, "%d failures\n", failures);
     return 1;

@@ -81,15 +81,8 @@ typedef struct {
 void genome_rebuild(genome *child, const genome *a, const genome *b, const slot *s, uint32_t n, uint32_t core_size,
                     rng *r, const genome_style *style);
 
-// A child of p1 (p2: a second parent for crossover, may be 0) with 1 or more
-// random changes, at most max_length instructions. Writes the names of the
-// changes into ops (space separated, cut at ops_n).
-void genome_breed(genome *child, const genome *p1, const genome *p2, rng *r, uint32_t core_size, uint32_t max_length,
-                  const genome_style *style, char *ops, size_t ops_n);
-
-// One change of a given kind, for measuring what each does (42spectrum):
-// the changes of genome_breed() one by one, and four that make small steps.
-// Returns 0 when the kind does not apply (e.g. insert at the longest length).
+// The kinds of change. genome_breed() draws them by the weights of a
+// genome_mix; 42spectrum makes children with exactly one of them.
 enum {
   CH_OPCODE, CH_MODIFIER, CH_AMODE, CH_BMODE, CH_AOPERAND, CH_BOPERAND, CH_ORG, CH_REPLACE,
   CH_INSERT, CH_DELETE, CH_DUPLICATE, CH_MOVE, CH_XINSERT, CH_XREPLACE,
@@ -100,8 +93,39 @@ enum {
   CH_COUNT
 };
 const char *genome_change_name(int kind);
+
+// One change of the given kind. Returns 0 and leaves x as it was when the
+// kind does not apply (insert at the longest length, crossover without p2,
+// shared-constant with fewer than two far values, ...).
 int genome_change(genome *x, const genome *p2, rng *r, uint32_t core_size, uint32_t max_length,
                   const genome_style *style, int kind);
+
+// How often genome_breed() picks each kind of change: weights, any scale.
+typedef struct {
+  uint32_t w[CH_COUNT];
+} genome_mix;
+
+// The rates before there was a mix (14th November 2026): 54% a point change
+// (opcode 15%, modifier 15%, A mode 10%, B mode 10%, A operand 20%, B operand
+// 20%, org 5%, replace 5% of those), insert 10%, delete 10%, duplicate 7%,
+// move 7%, crossover-insert 6%, crossover-replace 6%; the four small steps 0.
+genome_mix genome_mix_default(void);
+
+// "name=weight,name=weight,..." with the names of genome_change_name(); a
+// kind not named gets 0. Returns 0, or -1 for an unknown name, a weight that
+// is no whole number up to 1,000,000, a name given twice or all weights 0.
+int genome_mix_parse(genome_mix *m, const char *text);
+
+// "name=weight,..." of the kinds whose weight is not 0, in CH_* order.
+size_t genome_mix_text(const genome_mix *m, char *buf, size_t n);
+
+// A child of p1 (p2: a second parent for crossover, may be 0) with 1 or more
+// changes drawn by mix (0: genome_mix_default()), at most max_length
+// instructions. A drawn change that does not apply is drawn again, up to 16
+// times. Writes the names of the changes into ops (space separated, cut at
+// ops_n).
+void genome_breed(genome *child, const genome *p1, const genome *p2, rng *r, uint32_t core_size, uint32_t max_length,
+                  const genome_style *style, const genome_mix *mix, char *ops, size_t ops_n);
 
 // Text form for the state file: "len start" then 8 numbers per instruction.
 size_t genome_save(const genome *x, char *buf, size_t n);

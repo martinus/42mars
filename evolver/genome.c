@@ -199,7 +199,7 @@ void genome_rebuild(genome *child, const genome *a, const genome *b, const slot 
   *child = out;
 }
 
-// ---------------------------------------------------------------- breeding
+// ---------------------------------------------------------------- the parts of a change
 
 static void add_op(char *ops, size_t ops_n, const char *name) {
   const size_t len = strlen(ops);
@@ -208,6 +208,8 @@ static void add_op(char *ops, size_t ops_n, const char *name) {
   strcat(ops, name);
 }
 
+// The probabilities here, in random_operand() and in genome_mix_default() are
+// described in renderAbout() of ui/evolver.js: change both together.
 static void mutate_operand(rng *r, uint32_t core, uint32_t n, uint32_t i, const genome_style *st, uint8_t *ref,
                            uint32_t *v) {
   const uint32_t x = rng_below(r, 100);
@@ -225,100 +227,11 @@ static void mutate_operand(rng *r, uint32_t core, uint32_t n, uint32_t i, const 
   else *ref = 1, *v = rng_below(r, n);
 }
 
-static void point(genome *x, rng *r, uint32_t core, const genome_style *st, char *ops, size_t ops_n) {
-  const uint32_t i = rng_below(r, x->len);
-  gene *g = &x->g[i];
-  const uint32_t k = rng_below(r, 100);
-  if (k < 15) g->op = pick(r, st ? st->op : 0, GENOME_OPCODES), add_op(ops, ops_n, "opcode");
-  else if (k < 30) g->mod = pick(r, st ? st->mod : 0, 7), add_op(ops, ops_n, "modifier");
-  else if (k < 40) g->am = pick(r, st ? st->mode : 0, 8), add_op(ops, ops_n, "mode");
-  else if (k < 50) g->bm = pick(r, st ? st->mode : 0, 8), add_op(ops, ops_n, "mode");
-  else if (k < 70) mutate_operand(r, core, x->len, i, st, &g->aref, &g->a), add_op(ops, ops_n, "operand");
-  else if (k < 90) mutate_operand(r, core, x->len, i, st, &g->bref, &g->b), add_op(ops, ops_n, "operand");
-  else if (k < 95) x->start = rng_below(r, x->len), add_op(ops, ops_n, "org");
-  else *g = random_gene(r, core, x->len, st), add_op(ops, ops_n, "replace");
-}
-
 // A block length for a genome of len instructions: short ones are likely.
 static uint32_t block(rng *r, uint32_t len) {
   uint32_t k = 1;
   while (k < len && rng_chance(r, 0.6)) k++;
   return k;
-}
-
-// The probabilities of the changes here and in point(), mutate_operand() and
-// random_operand() are described in renderAbout() of ui/evolver.js: change
-// both together.
-void genome_breed(genome *child, const genome *p1, const genome *p2, rng *r, uint32_t core, uint32_t max_length,
-                  const genome_style *st, char *ops, size_t ops_n) {
-  if (ops_n) ops[0] = 0;
-  if (max_length > GENOME_MAX) max_length = GENOME_MAX;
-  genome x = *p1;
-  slot s[GENOME_MAX];
-  uint32_t changes = 1;
-  while (changes < 6 && rng_chance(r, 0.35)) changes++;
-  for (uint32_t c = 0; c < changes; c++) {
-    const uint32_t kind = rng_below(r, 100), len = x.len;
-    uint32_t n = 0;
-    if (kind < 50) {
-      point(&x, r, core, st, ops, ops_n);
-      continue;
-    } else if (kind < 60 && len < max_length) { // insert new instructions
-      const uint32_t k = block(r, max_length - len), q = rng_below(r, len + 1);
-      for (uint32_t i = 0; i < q; i++) s[n++] = (slot){SLOT_A, i};
-      for (uint32_t i = 0; i < k; i++) s[n++] = (slot){SLOT_NEW, 0};
-      for (uint32_t i = q; i < len; i++) s[n++] = (slot){SLOT_A, i};
-      genome_rebuild(&x, &x, &x, s, n, core, r, st);
-      add_op(ops, ops_n, "insert");
-    } else if (kind < 70 && len > 1) { // delete a block
-      const uint32_t k = block(r, len - 1), p = rng_below(r, len - k + 1);
-      for (uint32_t i = 0; i < len; i++)
-        if (i < p || i >= p + k) s[n++] = (slot){SLOT_A, i};
-      genome_rebuild(&x, &x, &x, s, n, core, r, st);
-      add_op(ops, ops_n, "delete");
-    } else if (kind < 77 && len < max_length) { // duplicate a block
-      const uint32_t k = block(r, len < max_length - len ? len : max_length - len);
-      const uint32_t from = rng_below(r, len - k + 1), q = rng_below(r, len + 1);
-      for (uint32_t i = 0; i < q; i++) s[n++] = (slot){SLOT_A, i};
-      for (uint32_t i = 0; i < k; i++) s[n++] = (slot){SLOT_B, from + i};
-      for (uint32_t i = q; i < len; i++) s[n++] = (slot){SLOT_A, i};
-      genome_rebuild(&x, &x, &x, s, n, core, r, st);
-      add_op(ops, ops_n, "duplicate");
-    } else if (kind < 84 && len > 1) { // move a block
-      const uint32_t k = block(r, len - 1), from = rng_below(r, len - k + 1);
-      const uint32_t q = rng_below(r, len - k + 1); // its place among the len - k others
-      uint32_t others = 0;
-      int placed = 0;
-      for (uint32_t i = 0; i < len; i++) {
-        if (i >= from && i < from + k) continue;
-        if (others == q && !placed) {
-          for (uint32_t j = 0; j < k; j++) s[n++] = (slot){SLOT_A, from + j};
-          placed = 1;
-        }
-        s[n++] = (slot){SLOT_A, i};
-        others++;
-      }
-      if (!placed)
-        for (uint32_t j = 0; j < k; j++) s[n++] = (slot){SLOT_A, from + j};
-      genome_rebuild(&x, &x, &x, s, n, core, r, st);
-      add_op(ops, ops_n, "move");
-    } else if (kind < 96 && p2) { // crossover: a block of p2 into or over a block of x
-      const uint32_t k = block(r, p2->len < max_length ? p2->len : max_length);
-      const uint32_t from = rng_below(r, p2->len - k + 1);
-      uint32_t cut = rng_chance(r, 0.5) ? block(r, len) : 0; // instructions of x it replaces
-      if (cut >= len) cut = len - 1;
-      if (len - cut + k > max_length) cut = len + k - max_length;
-      const uint32_t q = rng_below(r, len - cut + 1);
-      for (uint32_t i = 0; i < q; i++) s[n++] = (slot){SLOT_A, i};
-      for (uint32_t i = 0; i < k; i++) s[n++] = (slot){SLOT_B, from + i};
-      for (uint32_t i = q + cut; i < len; i++) s[n++] = (slot){SLOT_A, i};
-      genome_rebuild(&x, &x, p2, s, n, core, r, st);
-      add_op(ops, ops_n, cut ? "crossover-replace" : "crossover-insert");
-    } else {
-      point(&x, r, core, st, ops, ops_n);
-    }
-  }
-  *child = x;
 }
 
 // ---------------------------------------------------------------- one change
@@ -486,6 +399,83 @@ int genome_change(genome *x, const genome *p2, rng *r, uint32_t core, uint32_t m
     }
     default: return 0;
   }
+}
+
+// ---------------------------------------------------------------- breeding
+
+genome_mix genome_mix_default(void) {
+  // per mille; the point changes are 540 of them
+  static const uint32_t w[CH_COUNT] = {81, 81, 54, 54, 108, 108, 27, 27, 100, 100, 70, 70, 60, 60, 0, 0, 0, 0};
+  genome_mix m;
+  memcpy(m.w, w, sizeof w);
+  return m;
+}
+
+int genome_mix_parse(genome_mix *m, const char *text) {
+  genome_mix out = {{0}};
+  uint8_t named[CH_COUNT] = {0};
+  uint64_t total = 0;
+  const char *p = text;
+  for (;;) {
+    const char *eq = strchr(p, '=');
+    if (!eq) return -1;
+    int kind = -1;
+    for (int k = 0; k < CH_COUNT; k++) {
+      const char *name = genome_change_name(k);
+      if (strlen(name) == (size_t)(eq - p) && !strncmp(p, name, (size_t)(eq - p))) kind = k;
+    }
+    if (kind < 0 || named[kind]) return -1;
+    named[kind] = 1;
+    p = eq + 1;
+    if (*p < '0' || *p > '9') return -1;
+    uint64_t v = 0;
+    while (*p >= '0' && *p <= '9' && v <= 1000000) v = v * 10 + (uint64_t)(*p++ - '0');
+    if (v > 1000000) return -1;
+    out.w[kind] = (uint32_t)v;
+    total += v;
+    if (!*p) break;
+    if (*p++ != ',') return -1;
+  }
+  if (!total) return -1;
+  *m = out;
+  return 0;
+}
+
+size_t genome_mix_text(const genome_mix *m, char *buf, size_t n) {
+  size_t len = 0;
+  if (n) buf[0] = 0;
+  for (int k = 0; k < CH_COUNT; k++) {
+    if (!m->w[k]) continue;
+    const int c = snprintf(len < n ? buf + len : 0, len < n ? n - len : 0, "%s%s=%u", len ? "," : "",
+                           genome_change_name(k), m->w[k]);
+    if (c > 0) len += (size_t)c;
+  }
+  return len;
+}
+
+void genome_breed(genome *child, const genome *p1, const genome *p2, rng *r, uint32_t core, uint32_t max_length,
+                  const genome_style *st, const genome_mix *mix, char *ops, size_t ops_n) {
+  if (ops_n) ops[0] = 0;
+  if (max_length > GENOME_MAX) max_length = GENOME_MAX;
+  const genome_mix def = genome_mix_default();
+  if (!mix) mix = &def;
+  uint64_t total = 0;
+  for (int k = 0; k < CH_COUNT; k++) total += mix->w[k];
+  genome x = *p1;
+  uint32_t changes = 1;
+  while (changes < 6 && rng_chance(r, 0.35)) changes++;
+  for (uint32_t c = 0; c < changes && total; c++) {
+    for (int tries = 0; tries < 16; tries++) {
+      uint64_t d = rng_below(r, total);
+      int kind = 0;
+      while (d >= mix->w[kind]) d -= mix->w[kind++];
+      if (genome_change(&x, p2, r, core, max_length, st, kind)) {
+        add_op(ops, ops_n, genome_change_name(kind));
+        break;
+      }
+    }
+  }
+  *child = x;
 }
 
 // ---------------------------------------------------------------- state file
