@@ -38,6 +38,7 @@
 #include "style.h"
 
 #define ARCHIVE_MAX 256
+#define ME_MAX 256 // places of a --map-elites archive: 48 cells, or --list with crowding
 #define SEEN_MAX 16384 // hashes of the latest candidates, to skip repeats
 #define NO_ID UINT64_MAX
 
@@ -71,12 +72,18 @@ typedef struct {
   uint32_t panel_rounds;    // --panel-rounds: rounds of a match against a panel warrior, 0 as --rounds
   int distance_panel;       // --diversity panel: the push-off's SD-score over the panel's columns only
   uint32_t niche;           // --niche N: each kind of style keeps at least N members (not the two kinds of junk)
-  int map_elites;           // --map-elites: an archive of cells by style instead of the list (#147)
-  int panel_random;         // --panel-choice random: the panel drawn with the seed; else picked (pick_panel())
+  int map_elites;           // --map-elites: an archive instead of the list (#147), ME_CELLS or ME_CROWDING
+  int panel_random;         // --panel-choice: PANEL_PICKED (pick_panel()), PANEL_RANDOM drawn with the seed, PANEL_KINDS
+  int specialists;          // --specialists: the member clearly best against a panel warrior does not leave
+  double sharing;           // --sharing c: the push-off's average weights each panel warrior by 1 / (members' mean + c), 0 off
   uint32_t pick_sample;     // --pick-sample: warriors of the round robin of pick_panel(), 0 PICK_SAMPLE
 } params;
 
 enum { PARENTS_VALUE, PARENTS_DUEL };
+
+enum { ME_OFF, ME_BY_STYLE, ME_CROWDING }; // --map-elites [cells|crowding]
+
+enum { PANEL_PICKED, PANEL_RANDOM, PANEL_KINDS }; // --panel-choice
 
 enum { PRIOR_UNIFORM, PRIOR_HILL };
 
@@ -393,6 +400,7 @@ typedef struct {
   uint32_t pick_sample, pick_n;
   double pick_cut, pick_avg[256], pick_dist[256];
   uint32_t pick_rank[256];
+  int pick_kind[256]; // --panel-choice kinds: the kind of style of each pick, -1 not measured
   char *pick_file[256];
   int pool_up;
 
@@ -407,6 +415,8 @@ typedef struct {
   m42_score *wlt1;
   double *pts1, *se1;
   uint8_t *keep;      // panel slots never leave
+  uint32_t *spec, spec_n; // --specialists: the protected members at the start of the batch, for the parents
+  double *share_w, share_mw; // --sharing: the weight of each panel slot, and of a member's column (share_weights())
   double *sigma;
   pushoff_value *values;
   uint32_t *active, active_n;
@@ -424,10 +434,12 @@ typedef struct {
   uint64_t seen[SEEN_MAX];
   uint32_t seen_n, seen_next;
 
-  // --map-elites: per cell its best warrior (0 empty), its average against
-  // the panel over all its rounds and over the first screen rounds
-  warrior *me[48];
-  double me_avg[48], me_screen[48];
+  // --map-elites: per cell (--map-elites crowding: per place of the archive)
+  // its warrior (0 empty), its average against the panel over all its rounds
+  // and over the first screen rounds
+  warrior *me[ME_MAX];
+  double me_avg[ME_MAX], me_screen[ME_MAX];
+  m42_score *me_row[ME_MAX]; // its results against each panel warrior, all panel rounds
 } run;
 
 static volatile sig_atomic_t stop_now = 0;
@@ -479,6 +491,9 @@ static void set_result1(run *r, uint32_t a, uint32_t b, m42_score sa) {
 static uint32_t panel_rounds(const params *p) { return p->panel_rounds ? p->panel_rounds : p->rounds; }
 
 // The rounds of the first stage of a match, p.rounds without --stage.
+// The places of the --map-elites archive: 48 cells, or --list for crowding.
+static int me_slots(const run *r) { return r->p.map_elites == ME_CROWDING ? (int)r->p.list : 48; }
+
 static uint32_t stage_rounds(const params *p) { return p->stage && p->stage < p->rounds ? p->stage : p->rounds; }
 
 static m42_score add_scores(m42_score a, m42_score b) {
@@ -493,15 +508,66 @@ static void rebuild_active(run *r) {
 
 static uint32_t members(const run *r) { return r->active_n - r->panel_n; }
 
+// --sharing c (competitive fitness sharing): a win against a panel warrior
+// that most members lose to counts more than one against a panel warrior
+// that most members beat. The average of the push-off value becomes a
+// weighted one: panel warrior j weighs 1 / (m_j + c), m_j the members' mean
+// score against it (points per 100 rounds); a member's column weighs the
+// mean of the panel's weights. c bounds the weights: with c 50 the hardest
+// panel warrior weighs at most about 4 times the easiest. The weights come
+// from the list at the end of a batch and hold for the next one, so that a
+// newcomer does not change everyone's value (share_weights()); the distance
+// is unchanged. In an hour of the defaults with a panel of every kind
+// (kd1, 15th November 2026) 58 to 73 of 80 members lost to each of the
+// panel's papers and imps.
+static void share_weights(run *r) {
+  const uint32_t c = r->cap;
+  double sum = 0;
+  uint32_t np = 0;
+  for (uint32_t i = 0; i < r->active_n; i++) {
+    const uint32_t o = r->active[i];
+    if (!r->keep[o]) continue;
+    double m = 0;
+    uint32_t n = 0;
+    for (uint32_t j = 0; j < r->active_n; j++) {
+      const uint32_t a = r->active[j];
+      if (!r->keep[a]) m += r->pts[a * c + o], n++;
+    }
+    r->share_w[o] = 1 / ((n ? m / n : 0) + r->p.sharing);
+    sum += r->share_w[o], np++;
+  }
+  r->share_mw = np ? sum / np : 1;
+}
+
+// The values with the weighted average (--sharing), on the scores pts.
+static void share_values(run *r, const double *pts) {
+  if (!(r->p.sharing > 0)) return;
+  for (uint32_t i = 0; i < r->active_n; i++) {
+    pushoff_value *v = &r->values[i];
+    const uint32_t a = v->index;
+    double num = 0, den = 0;
+    for (uint32_t j = 0; j < r->active_n; j++) {
+      const uint32_t b = r->active[j];
+      if (b == a) continue;
+      const double w = r->keep[b] ? r->share_w[b] : r->share_mw;
+      num += w * pts[a * r->cap + b], den += w;
+    }
+    v->avg = den > 0 ? num / den : 0;
+    v->value = v->avg * (r->p.alpha == 1 ? v->distance : pow(v->distance, r->p.alpha));
+  }
+}
+
 static void compute_values(run *r) {
   pushoff_values(r->pts, r->cap, r->active, r->active_n, r->p.sd, r->p.alpha, r->p.noise > 0 ? r->se : 0, r->p.noise,
                  r->p.distance_panel ? r->keep : 0, r->sigma, r->values);
+  share_values(r, r->pts);
 }
 
 // The same on the results of the first stage (--stage).
 static void compute_values1(run *r) {
   pushoff_values(r->pts1, r->cap, r->active, r->active_n, r->p.sd, r->p.alpha, r->p.noise > 0 ? r->se1 : 0, r->p.noise,
                  r->p.distance_panel ? r->keep : 0, r->sigma, r->values);
+  share_values(r, r->pts1);
 }
 
 // A warrior's average against the panel, points per 100 rounds; a panel
@@ -697,7 +763,7 @@ static void event_start(run *r) {
           "\"rounds\":%u,\"screenRounds\":%u,\"benchEvery\":%u,\"benchRounds\":%u,\"initLength\":%u,"
           "\"screenFactor\":%.17g,\"alpha\":%.17g,\"reintroduce\":%.17g,\"sd\":\"%s\",\"seed\":%" PRIu64
           ",\"select\":\"%s\",\"rotate\":%u,\"fractions\":%.17g,\"race\":%u,\"raceKeep\":%u,\"prior\":\"%s\","
-          "\"parents\":\"%s\",\"screenMembers\":%u,\"noise\":%.17g,\"stage\":%u,\"fill\":%s,\"panelRounds\":%u,\"diversity\":\"%s\",\"niche\":%u,\"panelChoice\":\"%s\",\"mapElites\":%s},"
+          "\"parents\":\"%s\",\"screenMembers\":%u,\"noise\":%.17g,\"stage\":%u,\"fill\":%s,\"panelRounds\":%u,\"diversity\":\"%s\",\"niche\":%u,\"panelChoice\":\"%s\",\"mapElites\":%s,\"crowding\":%s,\"specialists\":%s,\"sharing\":%.17g},"
           "\"opponents\":",
           m42_version(), p->rules.core_size, p->rules.max_cycles, p->rules.max_processes, p->rules.max_length,
           p->rules.min_distance, r->panel_n, r->hold_n, p->list, p->batch, p->survivors, p->rounds, p->screen_rounds,
@@ -706,7 +772,12 @@ static void event_start(run *r) {
           p->fractions, p->race, p->race_keep, p->prior == PRIOR_HILL ? "hill" : "uniform",
           p->parents == PARENTS_DUEL ? "duel" : "value", p->screen_members, p->noise, p->stage,
           p->fill ? "true" : "false", panel_rounds(p), p->distance_panel ? "panel" : "all", p->niche,
-          p->panel_files[0] ? "files" : p->panel_random ? "random" : "picked", p->map_elites ? "true" : "false");
+          p->panel_files[0]                 ? "files"
+          : p->panel_random == PANEL_RANDOM ? "random"
+          : p->panel_random == PANEL_KINDS  ? "kinds"
+                                            : "picked",
+          p->map_elites ? "true" : "false", p->map_elites == ME_CROWDING ? "true" : "false",
+          p->specialists ? "true" : "false", p->sharing);
   json_str(f, p->opponents, 0);
   fputs(",\"panelFiles\":", f);
   json_str(f, p->panel_files, 0);
@@ -840,6 +911,43 @@ static void event_values(run *r) {
   fputs("]}\n", f);
 }
 
+// --sharing, after a batch: the weights of the next batch, [panel id,
+// weight, members' mean], and the weight of a member's column.
+static void event_sharing(run *r) {
+  FILE *f = r->events;
+  fprintf(f, "{\"type\":\"sharing\",\"batch\":%u,\"weights\":[", r->batch);
+  for (uint32_t i = 0, n = 0; i < r->active_n; i++) {
+    const uint32_t o = r->active[i];
+    if (!r->keep[o]) continue;
+    fprintf(f, "%s[%" PRIu64 ",%.17g,%.6f]", n++ ? "," : "", r->slot[o]->id, r->share_w[o], 1 / r->share_w[o] - r->p.sharing);
+  }
+  fprintf(f, "],\"member\":%.17g}\n", r->share_mw);
+}
+
+// --specialists, after a batch: for each panel warrior with a protected
+// member [panel id, member id, its score there, its standard error, the
+// members' median].
+static uint32_t specialists(const run *r, uint32_t *out, double *med);
+static void event_specialists(run *r) {
+  uint32_t *sp = xmalloc((r->active_n + 1) * sizeof *sp);
+  double *med = xmalloc((r->active_n + 1) * sizeof *med);
+  const uint32_t np = specialists(r, sp, med);
+  FILE *f = r->events;
+  fprintf(f, "{\"type\":\"specialists\",\"batch\":%u,\"protected\":[", r->batch);
+  for (uint32_t k = 0, i = 0, n = 0; i < r->active_n; i++) {
+    const uint32_t o = r->active[i];
+    if (r->slot[o]->kind != PANEL) continue;
+    const uint32_t m = sp[k];
+    if (m != UINT32_MAX)
+      fprintf(f, "%s[%" PRIu64 ",%" PRIu64 ",%.6f,%.6f,%.6f]", n++ ? "," : "", r->slot[o]->id, r->slot[m]->id,
+              r->pts[m * r->cap + o], r->se[m * r->cap + o], med[k]);
+    k++;
+  }
+  fputs("]}\n", f);
+  free(sp), free(med);
+  (void)np;
+}
+
 // ---------------------------------------------------------------- state
 
 static void save_state(run *r) {
@@ -857,11 +965,11 @@ static void save_state(run *r) {
   fprintf(f, "42evolve-state 1\n");
   fprintf(f, "rules %u %u %u %u %u\n", p->rules.core_size, p->rules.max_cycles, p->rules.max_processes,
           p->rules.max_length, p->rules.min_distance);
-  fprintf(f, "params %u %u %u %u %u %u %u %u %u %u %.17g %.17g %.17g %d %" PRIu64 " %d %u %.17g %u %u %d %d %u %.17g %u %d %u %d %u %d\n",
+  fprintf(f, "params %u %u %u %u %u %u %u %u %u %u %.17g %.17g %.17g %d %" PRIu64 " %d %u %.17g %u %u %d %d %u %.17g %u %d %u %d %u %d %d %.17g\n",
           p->panel, p->holdout, p->list, p->batch, p->survivors, p->rounds, p->screen_rounds, p->bench_every,
           p->bench_rounds, p->init_length, p->screen_factor, p->alpha, p->reintroduce, p->sd, p->seed, p->select,
           p->rotate, p->fractions, p->race, p->race_keep, p->prior, p->parents, p->screen_members, p->noise, p->stage, p->fill,
-          p->panel_rounds, p->distance_panel, p->niche, p->map_elites);
+          p->panel_rounds, p->distance_panel, p->niche, p->map_elites, p->specialists, p->sharing);
   fprintf(f, "opponents %s\n", p->opponents);
   if (p->start[0]) fprintf(f, "start-dir %s\n", p->start);
   char mix[CH_COUNT * 32];
@@ -890,13 +998,17 @@ static void save_state(run *r) {
     fprintf(f, "archive %" PRIu64 " %u %s\n", r->archive_id[i], r->archive_noun[i], text);
   }
   fprintf(f, "archive-next %u\n", r->archive_next);
-  for (int c = 0; c < 48; c++) { // --map-elites
+  for (int c = 0; c < me_slots(r); c++) { // --map-elites
     const warrior *w = r->me[c];
     if (!w) continue;
     genome_save(w->g, text, sizeof text);
     fprintf(f, "elite %d %" PRIu64 " %u %" PRIu64 " %" PRIu64 " %.17g %u %u %u %.17g %.17g %d %d %s\nops %s\n", c, w->id,
             w->born, w->parents[0], w->parents[1], w->holdout, w->adjective, w->noun, w->earlier, r->me_avg[c],
             r->me_screen[c], w->style_kind, w->new_family, text, w->ops);
+    fprintf(f, "elite-row %d", c);
+    for (uint32_t j = 0; j < r->panel_n; j++)
+      fprintf(f, " %u %u %u", r->me_row[c][j].wins, r->me_row[c][j].losses, r->me_row[c][j].ties);
+    fputc('\n', f);
   }
   for (uint32_t i = 0; i < NAME_ADJECTIVES * NAME_NOUNS; i++)
     if (r->names[i]) fprintf(f, "names %u %u\n", i, r->names[i]);
@@ -937,6 +1049,11 @@ static void setup_matrix(run *r) {
   r->pts1 = xmalloc(c * c * sizeof *r->pts1);
   r->se1 = xmalloc(c * c * sizeof *r->se1);
   r->keep = xmalloc(c);
+  r->spec = xmalloc(c * sizeof *r->spec);
+  r->spec_n = 0;
+  r->share_w = xmalloc(c * sizeof *r->share_w);
+  for (size_t i = 0; i < c; i++) r->share_w[i] = 1;
+  r->share_mw = 1;
   r->sigma = xmalloc(c * sizeof *r->sigma);
   r->values = xmalloc(c * sizeof *r->values);
   r->active = xmalloc(c * sizeof *r->active);
@@ -984,14 +1101,14 @@ static int load_state(run *r, const char *path) {
       // --race-keep, --prior, --parents, --screen-members, --noise, --stage,
       // --fill; a state without them has none of them
       const int got = sscanf(line + 7,
-                             "%u %u %u %u %u %u %u %u %u %u %lg %lg %lg %d %" SCNu64 " %d %u %lg %u %u %d %d %u %lg %u %d %u %d %u %d",
+                             "%u %u %u %u %u %u %u %u %u %u %lg %lg %lg %d %" SCNu64 " %d %u %lg %u %u %d %d %u %lg %u %d %u %d %u %d %d %lg",
                              &p->panel, &p->holdout, &p->list, &p->batch, &p->survivors, &p->rounds, &p->screen_rounds,
                              &p->bench_every, &p->bench_rounds, &p->init_length, &p->screen_factor, &p->alpha,
                              &p->reintroduce, &p->sd, &p->seed, &p->select, &p->rotate, &p->fractions, &p->race,
                              &p->race_keep, &p->prior, &p->parents, &p->screen_members, &p->noise, &p->stage, &p->fill, &p->panel_rounds,
-                             &p->distance_panel, &p->niche, &p->map_elites);
+                             &p->distance_panel, &p->niche, &p->map_elites, &p->specialists, &p->sharing);
       if (got != 15 && got != 17 && got != 18 && got != 20 && got != 21 && got != 22 && got != 23 && got != 24 &&
-          got != 25 && got != 26 && got != 28 && got != 29 && got != 30)
+          got != 25 && got != 26 && got != 28 && got != 29 && got != 30 && got != 31 && got != 32)
         goto bad;
     } else if (!strncmp(line, "opponents ", 10)) {
       snprintf(p->opponents, sizeof p->opponents, "%s", line + 10);
@@ -1067,13 +1184,23 @@ static int load_state(run *r, const char *path) {
       if (sscanf(line + 6, "%d %" SCNu64 " %u %" SCNu64 " %" SCNu64 " %lg %u %u %u %lg %lg %d %d %n", &c, &w->id, &w->born,
                  &w->parents[0], &w->parents[1], &w->holdout, &w->adjective, &w->noun, &w->earlier, &avg, &screen,
                  &w->style_kind, &w->new_family, &used) != 13 ||
-          c < 0 || c >= 48 || r->me[c] || w->adjective >= NAME_ADJECTIVES || w->noun >= NAME_NOUNS ||
+          c < 0 || c >= me_slots(r) || r->me[c] || w->adjective >= NAME_ADJECTIVES || w->noun >= NAME_NOUNS ||
           genome_load(w->g, line + 6 + used, p->rules.core_size, 0) != 0)
         goto bad;
       w->w = make_warrior(w->g, &p->rules);
       name_text(w->name, sizeof w->name, w->adjective, w->noun, w->earlier);
       r->me[c] = w, r->me_avg[c] = avg, r->me_screen[c] = screen;
       last = w;
+    } else if (!strncmp(line, "elite-row ", 10)) { // after its elite line
+      int c, used = 0;
+      if (sscanf(line + 10, "%d%n", &c, &used) != 1 || c < 0 || c >= me_slots(r) || !r->me[c]) goto bad;
+      r->me_row[c] = xmalloc((r->panel_n ? r->panel_n : 1) * sizeof *r->me_row[c]);
+      const char *q = line + 10 + used;
+      for (uint32_t j = 0; j < r->panel_n; j++) {
+        int k = 0;
+        if (sscanf(q, " %u %u %u%n", &r->me_row[c][j].wins, &r->me_row[c][j].losses, &r->me_row[c][j].ties, &k) != 3) goto bad;
+        q += k;
+      }
     } else if (!strncmp(line, "kind ", 5)) { // after its member line; states before have none
       if (!last || sscanf(line + 5, "%d", &last->style_kind) != 1) goto bad;
     } else if (!strncmp(line, "ops ", 4) || !strcmp(line, "ops")) {
@@ -1115,6 +1242,7 @@ static int load_state(run *r, const char *path) {
   free(slot_id);
   free(slot_at);
   rebuild_active(r);
+  if (r->p.sharing > 0 && r->batch) share_weights(r); // the weights of the batch that ended, as without a break
   compute_values(r);
   ok = 1;
 bad:
@@ -1162,6 +1290,10 @@ typedef struct {
 // each other wins (as in YACE, where winners of fights reproduce), a draw
 // goes by value. *rival: the other one.
 static const warrior *select_parent(run *r, rng *g, uint64_t *rival) {
+  if (r->p.specialists && r->spec_n && rng_below(g, 4) == 0) { // --specialists: a protected member, no tournament
+    if (rival) *rival = NO_ID;
+    return r->slot[r->spec[rng_below(g, r->spec_n)]];
+  }
   const uint32_t m = members(r);
   const uint32_t i = r->panel_n + rng_below(g, m), j = r->panel_n + rng_below(g, m);
   const pushoff_value *a = &r->values[i], *b = &r->values[j];
@@ -1426,22 +1558,75 @@ static uint32_t value_of(const run *r, uint32_t s) {
 // leave nobody who may leave, nobody is protected.
 static void leave_mask(const run *r, uint8_t *mask) {
   memcpy(mask, r->keep, r->cap);
-  if (!r->p.niche) return;
-  uint32_t count[KIND_COUNT] = {0};
-  for (uint32_t i = 0; i < r->active_n; i++) {
-    const warrior *w = r->slot[r->active[i]];
-    if (w->kind == MEMBER && w->style_kind >= 0 && w->style_kind < KIND_COUNT) count[w->style_kind]++;
+  if (!r->p.niche && !r->p.specialists) return;
+  if (r->p.niche) {
+    uint32_t count[KIND_COUNT] = {0};
+    for (uint32_t i = 0; i < r->active_n; i++) {
+      const warrior *w = r->slot[r->active[i]];
+      if (w->kind == MEMBER && w->style_kind >= 0 && w->style_kind < KIND_COUNT) count[w->style_kind]++;
+    }
+    for (uint32_t i = 0; i < r->active_n; i++) {
+      const uint32_t s = r->active[i];
+      const warrior *w = r->slot[s];
+      const int k = w->style_kind;
+      if (w->kind == MEMBER && k >= 0 && k < KIND_COUNT && k != KIND_DIES && k != KIND_LITTLE && count[k] <= r->p.niche)
+        mask[s] = 1;
+    }
+  }
+  if (r->p.specialists) { // --specialists
+    uint32_t *sp = xmalloc((r->active_n + 1) * sizeof *sp);
+    const uint32_t np = specialists(r, sp, 0);
+    for (uint32_t k = 0; k < np; k++)
+      if (sp[k] != UINT32_MAX) mask[sp[k]] = 1;
+    free(sp);
   }
   uint32_t free_n = 0;
-  for (uint32_t i = 0; i < r->active_n; i++) {
-    const uint32_t s = r->active[i];
-    const warrior *w = r->slot[s];
-    if (w->kind != MEMBER) continue;
-    const int k = w->style_kind;
-    if (k >= 0 && k < KIND_COUNT && k != KIND_DIES && k != KIND_LITTLE && count[k] <= r->p.niche) mask[s] = 1;
-    else free_n++;
-  }
+  for (uint32_t i = 0; i < r->active_n; i++) free_n += !mask[r->active[i]];
   if (!free_n) memcpy(mask, r->keep, r->cap);
+}
+
+// --specialists: for each panel warrior, the member that does best against
+// it (the first in the list on a tie) does not leave when its score there is
+// ahead of the members' median by more than SPEC_Z standard errors of that
+// score: a design that alone beats a panel warrior keeps a place while it is
+// weak elsewhere. Against a panel warrior that all members lose to, the best
+// is luck, and nobody is protected for it. A quarter of the parents are drawn
+// from the protected members (select_parent()).
+#define SPEC_Z 2.0
+
+static int by_double(const void *a, const void *b) {
+  const double x = *(const double *)a, y = *(const double *)b;
+  return x < y ? -1 : x > y;
+}
+
+// For the k-th panel warrior in the list (active order): out[k] its
+// protected member's slot or UINT32_MAX, med[k] the members' median there.
+// Returns the number of panel warriors.
+static uint32_t specialists(const run *r, uint32_t *out, double *med) {
+  const uint32_t c = r->cap;
+  double *x = xmalloc((r->active_n + 1) * sizeof *x);
+  uint32_t np = 0;
+  for (uint32_t i = 0; i < r->active_n; i++) {
+    const uint32_t o = r->active[i];
+    if (r->slot[o]->kind != PANEL) continue;
+    uint32_t n = 0, best = UINT32_MAX;
+    for (uint32_t j = 0; j < r->active_n; j++) {
+      const uint32_t m = r->active[j];
+      if (r->slot[m]->kind != MEMBER) continue;
+      x[n++] = r->pts[m * c + o];
+      if (best == UINT32_MAX || r->pts[m * c + o] > r->pts[best * c + o]) best = m;
+    }
+    double median = 0;
+    if (n) {
+      qsort(x, n, sizeof *x, by_double);
+      median = n % 2 ? x[n / 2] : (x[n / 2 - 1] + x[n / 2]) / 2;
+    }
+    out[np] = best != UINT32_MAX && r->pts[best * c + o] - median > SPEC_Z * r->se[best * c + o] ? best : UINT32_MAX;
+    if (med) med[np] = median;
+    np++;
+  }
+  free(x);
+  return np;
 }
 
 // mask: those that may not leave (leave_mask()); a newcomer that may not
@@ -1517,6 +1702,17 @@ static void run_batch(run *r) {
   candidate *c = xmalloc(B * sizeof *c);
   const uint32_t core = p->rules.core_size;
   uint32_t evaluated = 0;
+  if (p->specialists) { // the protected members, each once, in the order of the panel
+    uint32_t *sp = xmalloc((r->active_n + 1) * sizeof *sp);
+    const uint32_t np = specialists(r, sp, 0);
+    r->spec_n = 0;
+    for (uint32_t k = 0; k < np; k++) {
+      uint32_t j = 0;
+      while (j < r->spec_n && r->spec[j] != sp[k]) j++;
+      if (sp[k] != UINT32_MAX && j == r->spec_n) r->spec[r->spec_n++] = sp[k];
+    }
+    free(sp);
+  }
 
   // breed
   for (uint32_t i = 0; i < B; i++) {
@@ -1788,8 +1984,13 @@ static void run_batch(run *r) {
   }
   for (uint32_t i = 0; i < sn; i++)
     if (slot_of[i] != UINT32_MAX) sv[i]->reached = 3;
+  if (p->sharing > 0) { // the weights for the next batch, and the values with them
+    share_weights(r);
+    event_sharing(r);
+  }
   compute_values(r);
   event_values(r);
+  if (p->specialists) event_specialists(r);
 
   if (p->bench_every && r->hold_n && (r->batch + 1) % p->bench_every == 0 && members(r)) {
     uint32_t best = r->active[P];
@@ -1849,6 +2050,83 @@ static void run_batch(run *r) {
 // average is higher. Designs do not compete with each other, and a new kind
 // of behavior keeps its cell while it is weak.
 #define ME_CELLS 48
+// A child takes a filled cell only when the mean of its differences to the
+// cell's warrior, per panel warrior (the same seeds), is more than ME_Z
+// standard errors above 0: an average over 20 panel warriors moved by 0.66
+// per replacement in a run without it, about its standard error, so the
+// cells kept the luckiest of their children.
+#define ME_Z 2.0
+
+// --map-elites crowding: the archive has --list places and no cells. "Alike"
+// is the SD-score of the results against the panel: of the rows a and b,
+// the sum over panel warriors j of |a_j - b_j| / sigma_j (points per 100
+// rounds), sigma_j the standard deviation of the archive's results against
+// j, taken once a batch. A child that is nearer to its nearest member than
+// the archive's closest pair are to each other competes with that member
+// and takes its place by the margin of ME_Z. A child farther than that is
+// something the archive lacks: it takes the place of the weaker of the
+// closest pair when its average is higher. So a warrior competes only with
+// warriors that play like it, and the places spread over what the panel
+// can tell apart, not over bins of style.
+static void me_sigma(const run *r, double *sigma) {
+  const uint32_t P = r->panel_n;
+  const int N = me_slots(r);
+  for (uint32_t j = 0; j < P; j++) {
+    double mean = 0, v = 0;
+    uint32_t m = 0;
+    for (int c = 0; c < N; c++)
+      if (r->me[c]) mean += points_of(r->me_row[c][j]), m++;
+    mean = m ? mean / m : 0;
+    for (int c = 0; c < N; c++)
+      if (r->me[c]) {
+        const double d = points_of(r->me_row[c][j]) - mean;
+        v += d * d;
+      }
+    sigma[j] = m ? sqrt(v / m) : 0;
+  }
+}
+
+static double me_distance(const m42_score *a, const m42_score *b, const double *sigma, uint32_t P) {
+  double sum = 0;
+  for (uint32_t j = 0; j < P; j++)
+    if (sigma[j] > 0) sum += fabs(points_of(a[j]) - points_of(b[j])) / sigma[j];
+  return sum;
+}
+
+// The member nearest to a row (lowest place on a tie), -1 none.
+static int me_nearest(const run *r, const m42_score *row, const double *sigma, double *dist) {
+  int n = -1;
+  *dist = INFINITY;
+  for (int c = 0; c < me_slots(r); c++) {
+    if (!r->me[c]) continue;
+    const double d = me_distance(row, r->me_row[c], sigma, r->panel_n);
+    if (d < *dist) *dist = d, n = c;
+  }
+  return n;
+}
+
+// The two members nearest to each other (the lowest places on a tie); their
+// distance, INFINITY with fewer than 2 members.
+static double me_closest_pair(const run *r, const double *sigma, int *pa, int *pb) {
+  double best = INFINITY;
+  *pa = *pb = -1;
+  for (int a = 0; a < me_slots(r); a++)
+    for (int b = a + 1; b < me_slots(r) && r->me[a]; b++) {
+      if (!r->me[b]) continue;
+      const double d = me_distance(r->me_row[a], r->me_row[b], sigma, r->panel_n);
+      if (d < best) best = d, *pa = a, *pb = b;
+    }
+  return best;
+}
+
+// The weaker of the closest pair: the lower average, the later place on a tie.
+static int me_weaker(const run *r, int a, int b) { return r->me_avg[a] < r->me_avg[b] ? a : b; }
+
+static int me_empty(const run *r) {
+  for (int c = 0; c < me_slots(r); c++)
+    if (!r->me[c]) return c;
+  return -1;
+}
 
 static int me_bin(double x, const double *edges, int n) {
   int b = 0;
@@ -1865,13 +2143,13 @@ static int me_cell(const style *st) {
 
 static uint32_t me_filled(const run *r) {
   uint32_t n = 0;
-  for (int c = 0; c < ME_CELLS; c++) n += r->me[c] != 0;
+  for (int c = 0; c < me_slots(r); c++) n += r->me[c] != 0;
   return n;
 }
 
 static int me_best(const run *r) {
   int b = -1;
-  for (int c = 0; c < ME_CELLS; c++)
+  for (int c = 0; c < me_slots(r); c++)
     if (r->me[c] && (b < 0 || r->me_avg[c] > r->me_avg[b])) b = c;
   return b;
 }
@@ -1881,15 +2159,40 @@ static int me_random_cell(const run *r, rng *g) {
   const uint32_t n = me_filled(r);
   if (!n) return -1;
   uint32_t k = rng_below(g, n);
-  for (int c = 0; c < ME_CELLS; c++)
+  for (int c = 0; c < me_slots(r); c++)
     if (r->me[c] && k-- == 0) return c;
   return -1;
 }
 
-static void me_event(run *r, int cell, const warrior *w, const unit *row, double screen, const warrior *gone, double gone_avg) {
+// A parent: with the cells a random one; with crowding the better average
+// of two random places (the lower place on a tie), since half of an archive
+// spread by the SD-score is weak warriors that play like no other (an hour
+// of crowding with random parents: median 68, top 100 against the panel).
+static int me_parent(const run *r, rng *g) {
+  const int a = me_random_cell(r, g);
+  if (r->p.map_elites != ME_CROWDING || a < 0) return a;
+  const int b = me_random_cell(r, g);
+  if (b < 0) return a;
+  return r->me_avg[b] > r->me_avg[a] || (r->me_avg[b] == r->me_avg[a] && b < a) ? b : a;
+}
+
+// Crowding: a child unlike every member must beat at least half of the
+// archive on average, not only the weaker of the closest pair. screen: the
+// same over the screen rounds.
+static int me_above_half(const run *r, double avg, int screen) {
+  uint32_t below = 0, n = 0;
+  for (int c = 0; c < me_slots(r); c++)
+    if (r->me[c]) below += (screen ? r->me_screen[c] : r->me_avg[c]) < avg, n++;
+  return 2 * below >= n;
+}
+
+// rule (crowding): "empty", "near" or "far"; 0 for the cells.
+static void me_event(run *r, int cell, const warrior *w, const unit *row, double screen, const warrior *gone, double gone_avg,
+                     double gain, double se, const char *rule, double dist, double pair) {
   FILE *f = r->events;
+  const int sc = me_cell(&w->st); // its cell by style; the same as cell without crowding
   fprintf(f, "{\"type\":\"elite\",\"batch\":%u,\"cell\":[%d,%d,%d],\"index\":%d,\"id\":%" PRIu64 ",\"name\":", r->batch,
-          cell / 12, cell / 3 % 4, cell % 3, cell, w->id);
+          sc / 12, sc / 3 % 4, sc % 3, cell, w->id);
   json_str(f, w->name, 0);
   fputs(",\"parents\":[", f);
   for (int k = 0, n = 0; k < 2; k++)
@@ -1902,7 +2205,11 @@ static void me_event(run *r, int cell, const warrior *w, const unit *row, double
           "\"tasks\":%.6f,\"alive\":%.6f,\"measured\":%.6f}",
           style_kind_name(w->style_kind), w->st.copies, w->st.moved, w->st.written, w->st.whole, w->st.read, w->st.tasks,
           w->st.alive, w->st.measured);
-  if (gone) fprintf(f, ",\"replaced\":{\"id\":%" PRIu64 ",\"avg\":%.6f}", gone->id, gone_avg);
+  if (rule) {
+    fprintf(f, ",\"rule\":\"%s\"", rule);
+    if (strcmp(rule, "empty")) fprintf(f, ",\"distance\":%.6f,\"pair\":%.6f", dist, pair);
+  }
+  if (gone) fprintf(f, ",\"replaced\":{\"id\":%" PRIu64 ",\"avg\":%.6f,\"gain\":%.6f,\"se\":%.6f}", gone->id, gone_avg, gain, se);
   fputs(",\"code\":", f);
   write_code(f, w->g, r->p.rules.core_size);
   fputs(",\"scores\":[", f);
@@ -1961,14 +2268,16 @@ static void me_batch(run *r) {
   warrior *tmp = xmalloc(B * sizeof *tmp); // the style needs a warrior
   int *cell = xmalloc(B * sizeof *cell), *pcell = xmalloc(B * sizeof *pcell);
   uint32_t evaluated = 0;
+  const int crowd = p->map_elites == ME_CROWDING;
+  const uint32_t filled0 = me_filled(r);
   for (uint32_t i = 0; i < B; i++) {
     rng g = rng_seed(p->seed, 0x6272656564u + r->batch, i); // "breed"
     candidate *x = &c[i];
     memset(x, 0, sizeof *x);
     x->parents[0] = x->parents[1] = x->rival = NO_ID;
-    const int a = me_random_cell(r, &g);
+    const int a = me_parent(r, &g);
     pcell[i] = a;
-    if (a < 0 || (p->fill && me_filled(r) < 4)) { // random warriors until a few cells are filled
+    if (a < 0 || (p->fill && filled0 < (crowd ? (uint32_t)me_slots(r) : 4))) { // random warriors until a few cells (crowding: all places) are filled
       genome_random(&x->g, &g, core,
                     1 + rng_below(&g, p->init_length < p->rules.max_length ? p->init_length : p->rules.max_length),
                     &r->style);
@@ -1976,7 +2285,7 @@ static void me_batch(run *r) {
       x->noun = rng_below(&g, NAME_NOUNS);
       pcell[i] = -1;
     } else {
-      const int b = me_random_cell(r, &g);
+      const int b = me_parent(r, &g);
       genome_breed(&x->g, r->me[a]->g, r->me[b]->g, &g, core, p->rules.max_length, &r->style, &p->changes, x->ops,
                    sizeof x->ops);
       x->parents[0] = r->me[a]->id;
@@ -2006,6 +2315,15 @@ static void me_batch(run *r) {
       u[n++] = (unit){c[i].w, r->panel[j].w, seed_for(r, r->panel[j].id), 0, F, {{0}}, 0, 0};
   pool_run(&r->pool, u, n);
   uint32_t *at = xmalloc(B * sizeof *at), passed = 0;
+  // crowding: sigma for the batch, and the weaker of the closest pair, once the archive is full
+  double *sigma = xmalloc((P ? P : 1) * sizeof *sigma);
+  int sigma_ready = 0, weak = -1;
+  if (crowd && me_empty(r) < 0) {
+    me_sigma(r, sigma);
+    sigma_ready = 1;
+    int pa, pb;
+    if (me_closest_pair(r, sigma, &pa, &pb) < INFINITY) weak = me_weaker(r, pa, pb);
+  }
   n = 0;
   for (uint32_t i = 0; i < B; i++) {
     at[i] = n;
@@ -2014,7 +2332,21 @@ static void me_batch(run *r) {
     for (uint32_t j = 0; j < P; j++) s += points(u[n + j].s[0], F);
     c[i].screen = s / P;
     n += P;
-    if (!r->me[cell[i]] || c[i].screen >= r->me_screen[cell[i]]) c[i].reached = 2, passed++;
+    int pass;
+    if (crowd) { // a place free, or ahead of its nearest member (by the screen), or of the weaker of the closest pair and half of all
+      pass = !sigma_ready;
+      if (!pass) {
+        m42_score *srow = xmalloc(P * sizeof *srow);
+        for (uint32_t j = 0; j < P; j++) srow[j] = u[at[i] + j].s[0];
+        double d;
+        const int near = me_nearest(r, srow, sigma, &d);
+        free(srow);
+        pass = (near >= 0 && c[i].screen >= r->me_screen[near]) ||
+               (weak >= 0 && c[i].screen >= r->me_screen[weak] && me_above_half(r, c[i].screen, 1));
+      }
+    } else
+      pass = !r->me[cell[i]] || c[i].screen >= r->me_screen[cell[i]];
+    if (pass) c[i].reached = 2, passed++;
   }
   // the rest of the rounds for those that beat their cell's warrior in the screen
   unit *f = xmalloc((size_t)passed * P * sizeof *f + sizeof *f);
@@ -2034,8 +2366,43 @@ static void me_batch(run *r) {
       s += points_of(row[j].s[0]);
     }
     const double avg = s / P;
-    const int k = cell[i];
-    if (r->me[k] && avg <= r->me_avg[k]) continue;
+    int k = cell[i];
+    double gain = 0, se = 0, dist = 0, pair = 0;
+    const char *rule = 0;
+    if (crowd) {
+      m42_score *crow = xmalloc(P * sizeof *crow);
+      for (uint32_t j = 0; j < P; j++) crow[j] = row[j].s[0];
+      k = me_empty(r);
+      rule = "empty";
+      if (k < 0) {
+        if (!sigma_ready) me_sigma(r, sigma), sigma_ready = 1;
+        int pa, pb;
+        const int near = me_nearest(r, crow, sigma, &dist);
+        pair = me_closest_pair(r, sigma, &pa, &pb);
+        if (dist > pair) { // something the archive lacks: the place of the weaker of the closest pair
+          k = me_weaker(r, pa, pb);
+          rule = "far";
+          gain = avg - r->me_avg[k];
+          if (!(gain > 0) || !me_above_half(r, avg, 0)) k = -1;
+        } else {
+          k = near;
+          rule = "near";
+        }
+      }
+      free(crow);
+      if (k < 0) continue;
+    }
+    if (r->me[k] && (!rule || !strcmp(rule, "near"))) {
+      double sd = 0, ss = 0;
+      for (uint32_t j = 0; j < P; j++) {
+        const double d = points_of(row[j].s[0]) - points_of(r->me_row[k][j]);
+        sd += d, ss += d * d;
+      }
+      gain = sd / P;
+      const double var = P > 1 ? (ss - sd * sd / P) / (P - 1) : 0;
+      se = var > 0 ? sqrt(var / P) : 0;
+      if (!(gain > ME_Z * se && gain > 0)) continue;
+    }
     // it takes the cell
     warrior *w = xmalloc(sizeof *w);
     memset(w, 0, sizeof *w);
@@ -2056,7 +2423,8 @@ static void me_batch(run *r) {
     rng name = rng_seed(p->seed, 0x6e616d65u, w->id); // "name"
     w->adjective = rng_below(&name, NAME_ADJECTIVES);
     w->noun = c[i].noun;
-    w->new_family = pcell[i] >= 0 && pcell[i] != k; // a child in another cell than its parent's starts a family
+    // a child in another cell than its parent's starts a family; crowding: one that plays unlike every member
+    w->new_family = pcell[i] >= 0 && (crowd ? !strcmp(rule, "far") : pcell[i] != k);
     if (w->new_family) {
       w->noun = rng_below(&name, NAME_NOUNS - 1);
       if (w->noun >= c[i].noun) w->noun++;
@@ -2068,9 +2436,11 @@ static void me_batch(run *r) {
     r->me[k] = w;
     r->me_avg[k] = avg;
     r->me_screen[k] = c[i].screen;
+    if (!r->me_row[k]) r->me_row[k] = xmalloc(P * sizeof *r->me_row[k]);
+    for (uint32_t j = 0; j < P; j++) r->me_row[k][j] = row[j].s[0];
     c[i].reached = 3;
     entered++;
-    me_event(r, k, w, row, c[i].screen, gone, gone_avg);
+    me_event(r, k, w, row, c[i].screen, gone, gone_avg, gain, se, rule, dist, pair);
     free_warrior(gone);
   }
   if (p->bench_every && r->hold_n && (r->batch + 1) % p->bench_every == 0) me_bench(r);
@@ -2095,7 +2465,7 @@ static void me_batch(run *r) {
           r->batch, wall, r->pool.threads, (s1.busy - s0.busy) / (wall * r->pool.threads), s1.rounds - s0.rounds,
           s1.instructions - s0.instructions, evaluated / wall, (s1.rounds - s0.rounds) / wall);
   for (uint32_t i = 0; i < B; i++) free(c[i].w);
-  free(c), free(tmp), free(cell), free(pcell), free(u), free(at), free(f);
+  free(c), free(tmp), free(cell), free(pcell), free(u), free(at), free(f), free(sigma);
   r->batch++;
 }
 
@@ -2111,6 +2481,29 @@ static void me_batch(run *r) {
 // the picked first, in the order picked, the rest as it was.
 #define PICK_SAMPLE 300
 #define PICK_ROUNDS 100
+//
+// --panel-choice kinds: a panel of every kind of design. The style of each
+// warrior of the sample (style.h, against the first 3 of the sample) gives
+// its kind; of the strongest half (at least the panel's size), the kinds take
+// turns, the kind with the fewest picks first (on a tie the one with the
+// strongest warrior left): its strongest warrior first, then the one with the
+// largest SD-score to the nearest picked one. Warriors that die at once are
+// not picked. A panel of only the strongest quarter had 6 of 20 warriors that
+// every evolved member of an hour lost to (pd81, 15th November 2026).
+
+// The kind of style of a warrior of the sample.
+static int pick_style(run *r, m42_ctx *m, const m42_watch *wa, warrior **w, uint32_t n, uint32_t i) {
+  const m42_warrior *opp[3];
+  const uint32_t k = n < 3 ? n : 3;
+  for (uint32_t j = 0; j < k; j++) opp[j] = w[j]->w;
+  style st;
+  if (style_measure(m, wa, w[i]->w, opp, k, 2, 4000, 7, 500, &st) != M42_OK) {
+    fprintf(stderr, "42evolve: the style of %s could not be measured\n", w[i]->name);
+    exit(1);
+  }
+  (void)r;
+  return style_kind(&st);
+}
 
 static void pick_panel(run *r, char **names, uint32_t count) {
   const uint32_t sample = r->p.pick_sample ? r->p.pick_sample : PICK_SAMPLE;
@@ -2155,21 +2548,54 @@ static void pick_panel(run *r, char **names, uint32_t count) {
       const uint32_t t = order[j];
       order[j] = order[j - 1], order[j - 1] = t;
     }
-  uint32_t nc = (n + 3) / 4;
+  const int kinds = r->p.panel_random == PANEL_KINDS;
+  uint32_t nc = kinds ? (n + 1) / 2 : (n + 3) / 4;
   if (nc < want) nc = want;
+  int *kind = xmalloc(n * sizeof *kind);
+  uint32_t kcount[KIND_COUNT] = {0};
+  for (uint32_t i = 0; i < n; i++) kind[i] = -1;
+  if (kinds) {
+    int st;
+    m42_ctx *m = m42_new(&r->p.rules, &st);
+    const size_t wsize = m ? m42_watch_size(&r->p.rules) : 0;
+    void *mem = wsize ? xmalloc(wsize) : 0;
+    const m42_watch *wa = mem ? m42_watch_attach(m, mem, wsize, &st) : 0;
+    if (!wa) {
+      fprintf(stderr, "42evolve: no engine with a watch for the style: %s\n", m42_status_text(st));
+      exit(1);
+    }
+    for (uint32_t i = 0; i < nc; i++) kind[order[i]] = pick_style(r, m, wa, w, n, order[i]);
+    m42_free(m);
+    free(mem);
+  }
   uint32_t *picked = xmalloc((want ? want : 1) * sizeof *picked);
   uint8_t *taken = calloc(n, 1);
   double *near = xmalloc(n * sizeof *near);
   for (uint32_t i = 0; i < n; i++) near[i] = INFINITY;
   uint32_t np = 0;
   while (np < want) {
+    int target = -1; // kinds: the kind whose turn it is
+    if (kinds) {
+      for (uint32_t i = 0; i < nc; i++) {
+        const uint32_t c = order[i];
+        if (taken[c] || kind[c] == KIND_DIES) continue;
+        if (target < 0 || kcount[kind[c]] < kcount[target]) target = kind[c];
+      }
+      if (target < 0) break;
+    }
     uint32_t best = order[0];
     double bd = -1;
     for (uint32_t i = 0; i < nc; i++) {
       const uint32_t c = order[i];
-      if (taken[c]) continue;
+      if (taken[c] || (kinds && kind[c] != target)) continue;
+      if (kinds && !kcount[target]) { // the strongest of a kind not picked yet
+        best = c, bd = near[c];
+        break;
+      }
       if (near[c] > bd) bd = near[c], best = c; // the first: all are infinitely far, the strongest
     }
+    if (kinds) kcount[target]++;
+    r->pick_kind[np] = kind[best];
     picked[np] = best;
     r->pick_avg[np] = avg[best];
     r->pick_file[np] = xstrdup(names[best]);
@@ -2198,7 +2624,7 @@ static void pick_panel(run *r, char **names, uint32_t count) {
   memcpy(names, re, count * sizeof *names);
   free(re);
   for (uint32_t i = 0; i < n; i++) free_warrior(w[i]);
-  free(w), free(u), free(pts), free(sigma), free(avg), free(order), free(picked), free(taken), free(near);
+  free(w), free(u), free(pts), free(sigma), free(avg), free(order), free(picked), free(taken), free(near), free(kind);
 }
 
 static void event_pick(run *r) {
@@ -2208,7 +2634,9 @@ static void event_pick(run *r) {
   for (uint32_t i = 0; i < r->pick_n; i++) {
     fprintf(f, "%s{\"file\":", i ? "," : "");
     json_str(f, r->pick_file[i], 1);
-    fprintf(f, ",\"rank\":%u,\"avg\":%.6f,\"distance\":%.6f}", r->pick_rank[i], r->pick_avg[i], r->pick_dist[i]);
+    fprintf(f, ",\"rank\":%u,\"avg\":%.6f,\"distance\":%.6f", r->pick_rank[i], r->pick_avg[i], r->pick_dist[i]);
+    if (r->pick_kind[i] >= 0) fprintf(f, ",\"kind\":\"%s\"", style_kind_name(r->pick_kind[i]));
+    fputc('}', f);
   }
   fputs("]}\n", f);
 }
@@ -2485,7 +2913,8 @@ static void usage(void) {
           "         [--parents value|duel] [--start <dir>] [--changes name=weight,...]\n"
           "         [--panel-files a.red,b.red,...] [--screen-members N] [--noise z] [--stage N (screen rounds; 0 none)] [--fill]\n"
           "         [--panel-rounds N] [--diversity all|panel] [--niche N]\n"
-          "         [--panel-choice picked|random] [--pick-sample 300] [--no-fill] [--map-elites]\n"
+          "         [--panel-choice picked|random|kinds] [--pick-sample 300] [--no-fill] [--map-elites [cells|crowding]]\n"
+          "         [--specialists] [--sharing c]\n"
           "         [--size 8000] [--cycles 80000] [--processes 8000] [--length 100] [--distance 100]\n"
           "         [--threads N] [--batches N] [--seconds S]\n"
           "       42evolve <run folder> [--threads N] [--batches N] [--seconds S]   (continue a run)\n"
@@ -2506,6 +2935,7 @@ int main(int argc, char **argv) {
   uint32_t threads = 0, batches = 0;
   double seconds = 0;
   int new_options = 0, stage_given = 0, screen_members_given = 0, diversity_given = 0, panel_rounds_given = 0, fill_given = 0;
+  int panel_given = 0, panel_choice_given = 0;
   const char *optimize_file = 0; // --optimize: no run, the constants of this warrior
   for (int i = 1; i < argc; i++) {
     const char *a = argv[i];
@@ -2514,8 +2944,15 @@ int main(int argc, char **argv) {
       dir = a;
       continue;
     }
-    if (!strcmp(a, "--map-elites")) { // an option without a value
-      r.p.map_elites = 1;
+    if (!strcmp(a, "--map-elites")) { // its value is optional: cells (the default) or crowding
+      r.p.map_elites = ME_BY_STYLE;
+      if (i + 1 < argc && (!strcmp(argv[i + 1], "cells") || !strcmp(argv[i + 1], "crowding")))
+        r.p.map_elites = !strcmp(argv[++i], "crowding") ? ME_CROWDING : ME_BY_STYLE;
+      new_options = 1;
+      continue;
+    }
+    if (!strcmp(a, "--specialists")) { // an option without a value
+      r.p.specialists = 1;
       new_options = 1;
       continue;
     }
@@ -2567,8 +3004,10 @@ int main(int argc, char **argv) {
       if (!number) usage();
       p->rotate = u;
     } else if (!strcmp(a, "--panel-choice")) {
-      if (!strcmp(v, "picked")) p->panel_random = 0;
-      else if (!strcmp(v, "random")) p->panel_random = 1;
+      panel_choice_given = 1;
+      if (!strcmp(v, "picked")) p->panel_random = PANEL_PICKED;
+      else if (!strcmp(v, "random")) p->panel_random = PANEL_RANDOM;
+      else if (!strcmp(v, "kinds")) p->panel_random = PANEL_KINDS;
       else usage();
     } else if (!strcmp(a, "--diversity")) {
       diversity_given = 1;
@@ -2580,7 +3019,7 @@ int main(int argc, char **argv) {
       else if (!strcmp(v, "sum")) p->sd = SD_SUM;
       else usage();
     } else if (!number) usage();
-    else if (!strcmp(a, "--panel")) p->panel = u;
+    else if (!strcmp(a, "--panel")) p->panel = u, panel_given = 1;
     else if (!strcmp(a, "--holdout")) p->holdout = u;
     else if (!strcmp(a, "--list")) p->list = u;
     else if (!strcmp(a, "--batch")) p->batch = u;
@@ -2604,6 +3043,10 @@ int main(int argc, char **argv) {
     else if (!strcmp(a, "--noise")) {
       if (d < 0) usage();
       p->noise = d;
+    }
+    else if (!strcmp(a, "--sharing")) {
+      if (!number || !(d > 0)) usage();
+      p->sharing = d;
     }
     else if (!strcmp(a, "--fractions")) {
       if (d > 1) usage();
@@ -2654,13 +3097,20 @@ int main(int argc, char **argv) {
     if (!screen_members_given) p->screen_members = 10;
     if (!diversity_given) p->distance_panel = 1;
     if (!panel_rounds_given) p->panel_rounds = p->rounds > 500 ? p->rounds : 500;
+    if (p->map_elites) { // the cells give the diversity: many random opponents rather than a few picked ones
+      if (!panel_given) p->panel = 80;
+      if (!panel_choice_given) p->panel_random = PANEL_RANDOM;
+      if (!panel_rounds_given) p->panel_rounds = p->rounds > 125 ? p->rounds : 125;
+    }
     if (!fill_given) p->fill = 1;
     if (p->rules.max_length < 1 || p->rules.max_length > GENOME_MAX || !p->list || !p->rounds || !p->init_length ||
         p->screen_rounds > p->rounds || p->rules.core_size < 2 * p->rules.min_distance ||
-        (p->stage && p->stage < p->screen_rounds) || (p->panel_rounds && p->panel_rounds < p->rounds)) {
+        (p->stage && p->stage < p->screen_rounds) || (p->panel_rounds && p->panel_rounds < p->rounds) ||
+        (p->map_elites == ME_CROWDING && (p->list < 2 || p->list > ME_MAX)) ||
+        (p->sharing > 0 && (p->rotate || p->map_elites))) {
       fprintf(stderr,
               "42evolve: a parameter is out of range (length 1..%d, list, rounds >= screen rounds, stage >= screen "
-              "rounds, panel rounds >= rounds, ...)\n",
+              "rounds, panel rounds >= rounds, list 2..256 with crowding, --sharing not with --rotate or --map-elites, ...)\n",
               GENOME_MAX);
       return 2;
     }
@@ -2672,7 +3122,7 @@ int main(int argc, char **argv) {
     }
     uint32_t count;
     char **names = opponent_files(&r, &count);
-    if (!p->panel_files[0] && !p->panel_random && !optimize_file) {
+    if (!p->panel_files[0] && p->panel_random != PANEL_RANDOM && !optimize_file) {
       pool_start(&r.pool, threads, &r.p.rules);
       r.pool_up = 1;
       pick_panel(&r, names, count);
@@ -2767,8 +3217,8 @@ int main(int argc, char **argv) {
       save_state(&r);
       const int b = me_best(&r);
       if (b >= 0)
-        fprintf(stderr, "batch %u: %u of 48 cells, best %.1f against the panel (%s), best holdout %.1f\n", r.batch - 1,
-                me_filled(&r), r.me_avg[b], r.me[b]->name, r.best_holdout);
+        fprintf(stderr, "batch %u: %u of %d places, best %.1f against the panel (%s), best holdout %.1f\n", r.batch - 1,
+                me_filled(&r), me_slots(&r), r.me_avg[b], r.me[b]->name, r.best_holdout);
       continue;
     }
     run_batch(&r);
