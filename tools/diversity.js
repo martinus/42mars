@@ -17,10 +17,23 @@
 //
 // Plain functions on arrays, for tools/pushoff.mjs, the evolver's tests
 // and the evolver dashboard (ui/); evolver/pushoff.c computes the same.
+//
+// noise { se, z } (42evolve --noise z, #148): se[a][b] is the standard error
+// of score[a][b]; a column then counts only the part of |a_k - b_k| above
+// z sqrt(se_ak^2 + se_bk^2), what the noise of the two matches cannot
+// explain. Without it, the plain SD-score (what the tournament scores).
+
+// The standard error of a score in points per 100 rounds (3 a win, 1 a tie)
+// from one match: mu = (3W + T)/n, v = (9W + T)/n - mu^2, 100 sqrt(v / n).
+export function standardError(wins, ties, rounds) {
+  if (!rounds) return 0;
+  const n = rounds, mu = (3 * wins + ties) / n, v = (9 * wins + ties) / n - mu * mu;
+  return v > 0 ? 100 * Math.sqrt(v / n) : 0;
+}
 
 // score[a][b]: a's score against b (any scale, null or undefined on the
 // diagonal). active: the indices still in.
-export function sdDistance(score, active, a, b, variant = 'opponent') {
+export function sdDistance(score, active, a, b, variant = 'opponent', noise = null) {
   let num = 0, den = 0, sum = 0;
   for (const k of active) {
     if (k === a || k === b) continue;
@@ -30,7 +43,12 @@ export function sdDistance(score, active, a, b, variant = 'opponent') {
     let v = 0;
     for (const r of active) if (r !== k) v += (score[r][k] - mean) ** 2;
     const sigma = Math.sqrt(v / n);
-    const d = Math.abs(score[a][k] - score[b][k]);
+    let d = Math.abs(score[a][k] - score[b][k]);
+    if (noise) {
+      const sa = noise.se[a][k], sb = noise.se[b][k];
+      d -= noise.z * Math.sqrt(sa * sa + sb * sb);
+      if (d < 0) d = 0;
+    }
     if (variant === 'sum') {
       num += d;
       den += sigma;
@@ -44,7 +62,8 @@ export function sdDistance(score, active, a, b, variant = 'opponent') {
 
 // For each index of `active`: { avg, nearest, distance, value }.
 // value = avg * distance ** alpha, distance the lowest SD-score to any other.
-export function pushoffValues(score, active, { variant = 'opponent', alpha = 1 } = {}) {
+export function pushoffValues(score, active, { variant = 'opponent', alpha = 1, se = null, z = 0 } = {}) {
+  const noise = se ? { se, z } : null;
   return active.map((a) => {
     let avg = 0;
     for (const b of active) if (b !== a) avg += score[a][b];
@@ -52,7 +71,7 @@ export function pushoffValues(score, active, { variant = 'opponent', alpha = 1 }
     let distance = Infinity, nearest = -1;
     for (const b of active) {
       if (b === a) continue;
-      const d = sdDistance(score, active, a, b, variant);
+      const d = sdDistance(score, active, a, b, variant, noise);
       if (d < distance) { distance = d; nearest = b; }
     }
     if (nearest < 0) distance = 0;

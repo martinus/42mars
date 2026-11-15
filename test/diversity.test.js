@@ -11,7 +11,7 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { pushoff, pushoffValues, sdDistance, weakest } from '../tools/diversity.js';
+import { pushoff, pushoffValues, sdDistance, standardError, weakest } from '../tools/diversity.js';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
 const dir = mkdtempSync(join(tmpdir(), 'diversity-test-'));
@@ -34,6 +34,38 @@ test('SD-score, each column by its own standard deviation (pseudocode)', () => {
 test('SD-score, sum of differences over sum of standard deviations (Eq. 6)', () => {
   assert.ok(Math.abs(sdDistance(S, [0, 1, 2, 3], 0, 1, 'sum') - 0.7408076421173693) < 1e-12);
   assert.ok(Math.abs(sdDistance(S, [0, 1, 2, 3], 2, 3, 'sum') - 1.8630962205724457) < 1e-12);
+});
+
+test('--noise: a column counts only the difference beyond z standard errors', () => {
+  // 0 and 1 against columns 2 and 3. Column 2: |100 - 130| = 30, standard
+  // errors 6 and 8, sqrt(36 + 64) = 10; sigma of 100, 130, 80 (rows 0, 1, 3)
+  // is 20.548046676563253. Column 3: 40 and 40, standard errors 3 and 4,
+  // nothing left; sigma of 40, 40, 60 is 9.428090415820632.
+  const N = [
+    [null, 10, 100, 40],
+    [20, null, 130, 40],
+    [50, 50, null, 60],
+    [70, 70, 80, null],
+  ];
+  const se = [
+    [0, 0, 6, 3],
+    [0, 0, 8, 4],
+    [0, 0, 0, 0],
+    [0, 0, 0, 0],
+  ];
+  const all = [0, 1, 2, 3];
+  const near = (x, y) => Math.abs(x - y) < 1e-12;
+  assert.ok(near(sdDistance(N, all, 0, 1), 30 / 20.548046676563253)); // plain
+  assert.ok(near(sdDistance(N, all, 0, 1, 'opponent', { se, z: 1 }), 20 / 20.548046676563253));
+  assert.ok(near(sdDistance(N, all, 0, 1, 'opponent', { se, z: 2 }), 10 / 20.548046676563253));
+  assert.ok(near(sdDistance(N, all, 0, 1, 'sum', { se, z: 1 }), 20 / (20.548046676563253 + 9.428090415820632)));
+  assert.equal(sdDistance(N, all, 0, 1, 'opponent', { se, z: 3 }), 0);
+  // pushoffValues takes se and z
+  const v = pushoffValues(N, all, { se, z: 1 });
+  assert.ok(v[0].distance <= 20 / 20.548046676563253 + 1e-12);
+  // 50 wins and 20 ties in 100 rounds: mu = 1.7, v = 4.7 - 1.7^2 = 1.81, 100 sqrt(0.0181)
+  assert.ok(near(standardError(50, 20, 100), 100 * Math.sqrt(0.0181)));
+  assert.equal(standardError(100, 0, 100), 0);
 });
 
 test('a column where everyone scores the same adds nothing', () => {

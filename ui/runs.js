@@ -2,7 +2,8 @@
 // Copyright (c) 2026 Martin Leitner-Ankerl
 //
 // Several 42evolve runs side by side: `node tools/serve.mjs --run a b c ...`
-// streams each run's events (/run/<n>/events, the list at /runs). A chart of
+// streams the events of all runs in one connection (/runs/events, the list at
+// /runs; a browser has only 6 connections to a host). A chart of
 // the best against the holdout and against the panel over the minutes of
 // each run (the fair axis when runs share a machine), and a table with what
 // differs and where each run stands. ui/evolver.html?run=<n> is one run.
@@ -201,11 +202,22 @@ async function main() {
     const r = { index, name, color: COLORS[index % COLORS.length] };
     fresh(r);
     runs.push(r);
-    const source = new EventSource(`/run/${index}/events`);
-    source.addEventListener('reset', () => { fresh(r); dirty = true; });
-    source.onopen = () => $('live').classList.add('on');
-    source.onmessage = (e) => handle(r, JSON.parse(e.data));
   }
+  // every data line starts with the run's number and a space
+  const split = (data) => {
+    const k = data.indexOf(' ');
+    return [runs[Number(data.slice(0, k))], data.slice(k + 1)];
+  };
+  const source = new EventSource('/runs/events');
+  source.addEventListener('reset', (e) => {
+    const [r] = split(e.data);
+    if (r) fresh(r), (dirty = true);
+  });
+  source.onopen = () => $('live').classList.add('on');
+  source.onmessage = (e) => {
+    const [r, line] = split(e.data);
+    if (r) handle(r, JSON.parse(line));
+  };
   new ResizeObserver(() => { dirty = true; }).observe(document.body);
   requestAnimationFrame(frame);
 }
