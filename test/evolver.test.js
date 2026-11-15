@@ -144,7 +144,7 @@ function checkValues(evs) {
   // --sharing c: the average of the push-off value weighted, panel warrior j
   // by 1 / (members' mean against it + c), a member's column by the mean of
   // those; the weights of the last 'sharing' event (uniform before the first)
-  let shareW = null, sharings = 0, sharedLeaves = 0;
+  let shareW = null, sharings = 0, sharedLeaves = 0, roundings = 0;
   const share = (v, ids, score) => {
     if (!shareW) return v;
     return v.map((x, i) => {
@@ -270,7 +270,14 @@ function checkValues(evs) {
         if (safe.size < ids.length) keep = safe;
         if (weakest(v, keep) !== plain) niches++, specials++; // the protection changed who left
       }
-      assert.equal(ids[weakest(v, keep)], e.id, `batch ${e.batch}: ${e.id} left, the push-off says ${ids[weakest(v, keep)]}`);
+      // the weakest, or one whose value equals it up to rounding: a compiler
+      // may fuse `num += w * x` into one rounding (arm64, gcc for
+      // x86-64-v3), and the weighted average of --sharing then differs in the
+      // last bits from this replay; near twins have such values (CI of #154)
+      const k = weakest(v, keep), j = ids.indexOf(e.id);
+      assert.ok(k === j || (!keep.has(j) && Math.abs(v[j].value - v[k].value) <= 1e-9 * Math.max(1, Math.abs(v[k].value))),
+        `batch ${e.batch}: ${e.id} left, the push-off says ${ids[k]}`);
+      if (k !== j) roundings++;
       if (shareW) { // the plain average would have pushed out another one
         const plain = pushoffValues(score, ids.map((_, i) => i), { variant: start.params.sd, alpha: start.params.alpha, columns, ...noise });
         if (ids[weakest(plain, keep)] !== e.id) sharedLeaves++;
@@ -334,6 +341,7 @@ function checkValues(evs) {
   checkValues.specialParents = specialParents; // children of a protected parent
   checkValues.sharings = sharings;
   checkValues.sharedLeaves = sharedLeaves; // push-offs where the weights changed who left
+  checkValues.roundings = roundings; // push-offs decided between values equal up to rounding
   return checked;
 }
 
