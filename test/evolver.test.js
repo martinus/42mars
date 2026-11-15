@@ -797,6 +797,55 @@ test('the defaults: the best run of E5, with a panel picked from a round robin; 
   assert.deepEqual(stable(events(join(tmp, 'def1'))), stable(one));
 });
 
+test('--map-elites: cells by style, each with its best warrior; the same run on any thread count and after a resume', { skip }, () => {
+  const rules = TINY.slice(0, TINY.indexOf('--panel'));
+  const args = ['--map-elites', ...rules, '--seed', '9', '--pick-sample', '40', '--holdout', '8', '--rounds', '40', '--screen-rounds', '10',
+    '--panel-rounds', '100', '--batch', '48', '--bench-every', '3'];
+  run(join(tmp, 'me1'), [...args, '--threads', '1', '--batches', '8']);
+  const one = events(join(tmp, 'me1'));
+  assert.equal(one[0].params.mapElites, true);
+  const st = one[0], P = st.panel.length;
+  const opp = st.panel.slice(0, 3).map((w) => assemble(w.source, RULES));
+  const m = createMarsSync({ ...RULES, watch: true });
+  const bin = (x, edges) => edges.filter((e) => x >= e).length;
+  const cells = new Map(); // index -> [id, avg]
+  let elites = 0, replaced = 0;
+  for (const e of one.filter((x) => x.type === 'elite')) {
+    // the cell follows from the style, and the style is that of tools/style.js
+    const s = e.style;
+    assert.equal(e.index, bin(s.copies, [20, 200, 600]) * 12 + bin(s.tasks, [2, 50, 250]) * 3 + bin(s.read, [50, 300]), e.name);
+    assert.deepEqual(e.cell, [Math.floor(e.index / 12), Math.floor(e.index / 3) % 4, e.index % 3]);
+    if (elites % 4 === 0) {
+      const js = measureStyle(m, assemble(`;name x\n${e.code}`, RULES), opp);
+      for (const [k, v] of Object.entries(js)) assert.ok(Math.abs(s[k] - v) < 1e-5, `${e.name}: ${k}`);
+    }
+    // its average: the logged matches against the panel, all panel rounds each
+    assert.equal(e.scores.length, P);
+    for (const [, w, l, t] of e.scores) assert.equal(w + l + t, 100);
+    const avg = e.scores.reduce((sum, [, w, , t]) => sum + 3 * w + t, 0) / P;
+    assert.ok(Math.abs(avg - e.avg) < 1e-6, `${e.name}: ${avg} against ${e.avg}`);
+    // better than the one it replaced, which was the cell's warrior
+    const before = cells.get(e.index);
+    if (before) {
+      assert.deepEqual([e.replaced.id, e.replaced.avg.toFixed(4)], [before[0], before[1].toFixed(4)]);
+      assert.ok(e.avg > e.replaced.avg, `${e.name} took a cell with less`);
+      replaced++;
+    } else assert.equal(e.replaced, undefined);
+    cells.set(e.index, [e.id, e.avg]);
+    elites++;
+  }
+  assert.ok(elites > 10 && replaced > 3 && cells.size > 3, `${elites} warriors took cells, ${replaced} replaced one, ${cells.size} cells`);
+  const last = one.filter((x) => x.type === 'batch').at(-1);
+  assert.equal(last.cells, cells.size);
+  assert.ok(Math.abs(last.best - Math.max(...[...cells.values()].map((c) => c[1]))) < 1e-6);
+  assert.ok(one.some((x) => x.type === 'bench'));
+  run(join(tmp, 'me4'), [...args, '--threads', '4', '--batches', '8']);
+  assert.deepEqual(stable(events(join(tmp, 'me4'))), stable(one));
+  run(join(tmp, 'me-resumed'), [...args, '--threads', '2', '--batches', '3']);
+  run(join(tmp, 'me-resumed'), ['--threads', '3', '--batches', '5']);
+  assert.deepEqual(stable(events(join(tmp, 'me-resumed'))), stable(one));
+});
+
 test('--start: the first batch starts from the warriors of a folder', { skip }, () => {
   const dir = join(tmp, 'start');
   mkdirSync(dir);
