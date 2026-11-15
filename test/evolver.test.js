@@ -44,7 +44,10 @@ async function build() {
 const RULES = { coreSize: 800, maxCycles: 8000, maxProcesses: 800, maxLength: 20, minDistance: 20 };
 const TINY = ['--opponents', join(root, 'warriors/koenigstuhl/tiny'), '--size', '800', '--cycles', '8000', '--processes', '800',
   '--length', '20', '--distance', '20', '--panel', '10', '--holdout', '8', '--batch', '24', '--rounds', '40', '--screen-rounds', '10',
-  '--bench-every', '2', '--seed', '7', '--stage', '0']; // the tests of --stage set it
+  '--bench-every', '2', '--seed', '7',
+  // the defaults before the best run of E5 became them; test 'the defaults' has those
+  '--list', '20', '--screen-members', '0', '--diversity', 'all', '--panel-rounds', '40', '--no-fill', '--panel-choice', 'random',
+  '--stage', '0']; // the tests of --stage set it
 
 function run(dir, args) {
   const r = spawnSync(evolve, [dir, ...args], { encoding: 'utf8', timeout: 120000 });
@@ -735,6 +738,63 @@ test('--niche 4: the last 4 members of a kind of style do not leave; the same ru
   run(join(tmp, 'niche-resumed'), [...args, '--threads', '2', '--batches', String(BATCHES >> 1)]);
   run(join(tmp, 'niche-resumed'), ['--threads', '4', '--batches', String(BATCHES - (BATCHES >> 1))]);
   assert.deepEqual(stable(events(join(tmp, 'niche-resumed'))), stable(one));
+});
+
+test('--optimize: the constants of a warrior, steps confirmed with other seeds, the same on any thread count', { skip }, () => {
+  // a stone whose step of 100 bombs 8 cells of a core of 800
+  const file = join(tmp, 'badstep.red');
+  writeFileSync(file, ';redcode\n;name bad step\nstep equ 100\nloop add.ab #step, bomb\nmov.i bomb, @bomb\njmp loop\nbomb dat #0, #step\n');
+  const args = ['--optimize', file, ...TINY.slice(0, TINY.indexOf('--panel')), '--panel', '12', '--holdout', '8', '--rounds', '60', '--seed', '3'];
+  run(join(tmp, 'opt1'), [...args, '--threads', '1']);
+  const one = events(join(tmp, 'opt1'));
+  const start = one[0], end = one.at(-1), steps = one.filter((e) => e.type === 'optimize-step');
+  assert.equal(start.type, 'optimize');
+  assert.equal(end.type, 'optimize-end');
+  assert.ok(steps.length >= 1 && end.avg > start.avg + 20, `${steps.length} steps, ${start.avg} to ${end.avg}`);
+  for (const s of steps) assert.ok(s.gain > 2 * s.se && s.confirm > 2 * s.confirmSe, JSON.stringify(s));
+  // the optimized warrior against the panel, replayed in the WebAssembly engine with the logged seeds
+  const opt = assemble(readFileSync(join(tmp, 'opt1', 'optimized.red'), 'latin1'), RULES);
+  assert.ok(opt.ok);
+  const m = createMarsSync(RULES);
+  let sum = 0;
+  for (const p of start.panel) {
+    const r = m.runMatch([opt, assemble(readFileSync(join(root, 'warriors/koenigstuhl/tiny', p.file), 'latin1'), RULES)], { seed: p.seed, rounds: start.rounds });
+    sum += ((3 * r.warriors[0].wins + r.warriors[0].ties) * 100) / start.rounds;
+  }
+  assert.ok(Math.abs(sum / start.panel.length - end.avg) < 1e-6, `replayed ${sum / start.panel.length}, logged ${end.avg}`);
+  assert.match(readFileSync(join(tmp, 'opt1', 'optimized.red'), 'latin1'), /;strategy bad step with its constants optimized by 42evolve: \d+ steps/);
+  run(join(tmp, 'opt3'), [...args, '--threads', '3']);
+  assert.deepEqual(events(join(tmp, 'opt3')), one);
+  // a hill warrior whose constants are good already: what it might accept is
+  // near the noise, and every step taken must be clear of it twice
+  const hill = ['--optimize', join(root, 'warriors/koenigstuhl/tiny/afterstorm.red'), ...args.slice(2)];
+  run(join(tmp, 'opt-hill'), [...hill, '--threads', '4']);
+  const h = events(join(tmp, 'opt-hill'));
+  for (const s of h.filter((e) => e.type === 'optimize-step')) assert.ok(s.gain > 2 * s.se && s.confirm > 2 * s.confirmSe, JSON.stringify(s));
+  assert.ok(h.at(-1).avg >= h[0].avg, `${h[0].avg} to ${h.at(-1).avg}`);
+});
+
+test('the defaults: the best run of E5, with a panel picked from a round robin; the same on any thread count', { skip }, () => {
+  const rules = TINY.slice(0, TINY.indexOf('--panel'));
+  const args = [...rules, '--seed', '5', '--pick-sample', '40', '--batch', '16', '--batches', '1'];
+  run(join(tmp, 'def4'), [...args, '--threads', '4']);
+  const one = events(join(tmp, 'def4'));
+  const p = one[0].params;
+  assert.deepEqual([p.list, p.panel, p.screenMembers, p.diversity, p.panelRounds, p.fill, p.stage, p.panelChoice], [80, 20, 10, 'panel', 500, true, p.screenRounds, 'picked']);
+  const pick = one[1];
+  assert.equal(pick.type, 'pick');
+  assert.equal(pick.sample, 40);
+  assert.equal(pick.picked.length, 20);
+  assert.deepEqual(one[0].panel.map((w) => w.file), pick.picked.map((x) => x.file), 'the panel is the picked, in the order picked');
+  assert.equal(new Set(pick.picked.map((x) => x.file)).size, 20);
+  // the strongest first; all from the strongest quarter, at least as many as the panel (20 of the 40); each the farthest from the ones before it
+  assert.equal(pick.picked[0].rank, 0);
+  assert.ok(pick.picked.every((x) => x.rank < Math.max(Math.ceil(40 / 4), 20) && x.avg <= pick.picked[0].avg + 1e-9), JSON.stringify(pick.picked.map((x) => x.rank)));
+  assert.equal(pick.picked[0].distance, 0);
+  for (let i = 2; i < 20; i++) assert.ok(pick.picked[i].distance <= pick.picked[i - 1].distance + 1e-9, `pick ${i} is farther than the one before`);
+  assert.ok(!one[0].holdout.some((h) => pick.picked.some((x) => x.file === h.file)), 'a picked warrior in the holdout');
+  run(join(tmp, 'def1'), [...args, '--threads', '1']);
+  assert.deepEqual(stable(events(join(tmp, 'def1'))), stable(one));
 });
 
 test('--start: the first batch starts from the warriors of a folder', { skip }, () => {
