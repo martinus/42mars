@@ -100,7 +100,11 @@ function differences() {
   const keys = new Set(started.flatMap((r) => Object.keys(r.start.params)));
   const differ = [...keys].filter((k) => new Set(started.map((r) => JSON.stringify(r.start.params[k]))).size > 1);
   if (new Set(started.map((r) => r.start.start ?? '')).size > 1) differ.push('start');
-  return (r) => (r.start ? differ.map((k) => `${k} ${k === 'start' ? r.start.start || '–' : r.start.params[k]}`).join(' · ') || 'the same settings' : '');
+  // the weights of the changes (42evolve --changes); logs before them have the default
+  const mix = (r) => Object.entries(r.start.changes ?? {}).filter(([, w]) => w).map(([k, w]) => `${k}=${w}`).join(',') || 'default';
+  if (new Set(started.map(mix)).size > 1) differ.push('changes');
+  const value = (r, k) => (k === 'start' ? r.start.start || '–' : k === 'changes' ? mix(r) : r.start.params[k]);
+  return (r) => (r.start ? differ.map((k) => `${k} ${value(r, k)}`).join(' · ') || 'the same settings' : '');
 }
 
 // ------------------------------------------------------------------ drawing

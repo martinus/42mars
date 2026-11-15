@@ -61,6 +61,7 @@ typedef struct {
   int prior;                // PRIOR_UNIFORM, or PRIOR_HILL: opcodes, modifiers, modes as often as in the opponents
   int parents;              // PARENTS_VALUE: tournament of two by push-off value; PARENTS_DUEL: by their match
   char start[1024];         // --start: a folder of warriors the first batch starts from, "" random ones
+  genome_mix changes;       // --changes: how often each kind of change is drawn
 } params;
 
 enum { PARENTS_VALUE, PARENTS_DUEL };
@@ -88,6 +89,7 @@ static params default_params(void) {
   p.reintroduce = 0.02;
   p.sd = SD_OPPONENT;
   p.seed = 1;
+  p.changes = genome_mix_default();
   return p;
 }
 
@@ -106,7 +108,7 @@ typedef struct {
   uint32_t born;
   uint32_t adjective, noun, earlier; // the name (evolver/names.h)
   double holdout; // members: average against the holdout warriors, -1 not measured
-  char ops[96];
+  char ops[128]; // the names of the changes, space separated: 6 of at most 17 characters
 } warrior;
 
 static void *xmalloc(size_t n) {
@@ -582,6 +584,8 @@ static void event_start(run *r) {
     for (uint32_t i = 0; i < tables[t].n; i++) fprintf(f, "%s%u", i ? "," : "", tables[t].w[i]);
     fputc(']', f);
   }
+  fputs("},\"changes\":{", f);
+  for (int k = 0; k < CH_COUNT; k++) fprintf(f, "%s\"%s\":%u", k ? "," : "", genome_change_name(k), p->changes.w[k]);
   fputc('}', f);
   for (int k = 0; k < 2; k++) {
     fputs(k ? ",\"holdout\":[" : ",\"panel\":[", f);
@@ -695,6 +699,9 @@ static void save_state(run *r) {
           p->fractions, p->race, p->race_keep, p->prior, p->parents);
   fprintf(f, "opponents %s\n", p->opponents);
   if (p->start[0]) fprintf(f, "start-dir %s\n", p->start);
+  char mix[CH_COUNT * 32];
+  genome_mix_text(&p->changes, mix, sizeof mix);
+  fprintf(f, "changes %s\n", mix);
   for (uint32_t i = 0; i < r->panel_n; i++) fprintf(f, "panel-id %" PRIu64 " %s\n", r->panel[i].id, r->panel[i].file);
   for (uint32_t i = 0; i < r->hold_n; i++) fprintf(f, "holdout %s\n", r->hold[i].file);
   for (uint32_t i = 0; i < r->reserve_n; i++) fprintf(f, "reserve %s\n", r->reserve[i]);
@@ -803,6 +810,8 @@ static int load_state(run *r, const char *path) {
       snprintf(p->opponents, sizeof p->opponents, "%s", line + 10);
     } else if (!strncmp(line, "start-dir ", 10)) {
       snprintf(p->start, sizeof p->start, "%s", line + 10);
+    } else if (!strncmp(line, "changes ", 8)) { // a state without it has the rates of genome_mix_default()
+      if (genome_mix_parse(&p->changes, line + 8) != 0) goto bad;
     } else if (!strncmp(line, "panel ", 6)) { // before --rotate: the ids are 0, 1, ...
       panel_id[pn] = pn;
       panel[pn++] = line + 6;
@@ -921,7 +930,7 @@ typedef struct {
   uint64_t parents[2];
   uint32_t noun; // the family's noun, from the first parent
   uint64_t rival; // the member the first parent won its tournament against, NO_ID none
-  char ops[96];
+  char ops[128];
   int skip;
   double screen;   // average against the panel in the screen rounds
   double estimate; // screen * (SD-score to the nearest warrior in, on the panel columns)^alpha
@@ -1181,7 +1190,7 @@ static void run_batch(run *r) {
         reintro = 1; // always evaluated
       } else {
         genome_breed(&x->g, &r->starts[k], &r->starts[(k + 1) % r->start_n], &g, core, p->rules.max_length, &r->style,
-                     x->ops, sizeof x->ops);
+                     &p->changes, x->ops, sizeof x->ops);
       }
       x->noun = r->start_noun[k];
     } else if (members(r) == 0) {
@@ -1199,7 +1208,8 @@ static void run_batch(run *r) {
       reintro = 1;
     } else {
       const warrior *a = select_parent(r, &g, &x->rival), *b = select_parent(r, &g, 0);
-      genome_breed(&x->g, a->g, b->g, &g, core, p->rules.max_length, &r->style, x->ops, sizeof x->ops);
+      genome_breed(&x->g, a->g, b->g, &g, core, p->rules.max_length, &r->style, &p->changes, x->ops,
+                   sizeof x->ops);
       x->parents[0] = a->id;
       x->noun = a->noun;
       if (strstr(x->ops, "crossover") && b->id != a->id) x->parents[1] = b->id;
@@ -1416,7 +1426,7 @@ static void usage(void) {
           "         [--bench-every 10] [--bench-rounds 100] [--alpha 1] [--sd opponent|sum]\n"
           "         [--reintroduce 0.02] [--init-length 10] [--seed 1] [--select screen|value] [--rotate N]\n"
           "         [--fractions p] [--race N] [--race-keep N] [--prior uniform|hill]\n"
-          "         [--parents value|duel] [--start <dir>]\n"
+          "         [--parents value|duel] [--start <dir>] [--changes name=weight,...]\n"
           "         [--size 8000] [--cycles 80000] [--processes 8000] [--length 100] [--distance 100]\n"
           "         [--threads N] [--batches N] [--seconds S]\n"
           "       42evolve <run folder> [--threads N] [--batches N] [--seconds S]   (continue a run)\n");
@@ -1455,6 +1465,14 @@ int main(int argc, char **argv) {
     else if (!strcmp(a, "--seconds")) seconds = d, run_option = 1;
     else if (!strcmp(a, "--opponents")) snprintf(p->opponents, sizeof p->opponents, "%s", v);
     else if (!strcmp(a, "--start")) snprintf(p->start, sizeof p->start, "%s", v);
+    else if (!strcmp(a, "--changes")) {
+      if (genome_mix_parse(&p->changes, v) != 0) {
+        fprintf(stderr, "42evolve: --changes takes name=weight,... with these names:");
+        for (int k = 0; k < CH_COUNT; k++) fprintf(stderr, " %s", genome_change_name(k));
+        fprintf(stderr, "\n");
+        return 2;
+      }
+    }
     else if (!strcmp(a, "--select")) {
       if (!strcmp(v, "screen")) p->select = SELECT_SCREEN;
       else if (!strcmp(v, "value")) p->select = SELECT_VALUE;

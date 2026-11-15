@@ -77,7 +77,7 @@ test('the same seed gives the same run on 1 and 4 threads, and after a resume', 
   const file = join(tmp, 'resumed', 'state.txt');
   const state = readFileSync(file, 'latin1');
   const old = state.replace(/^(params( \S+){15})( \S+)+$/m, '$1').replace(/^panel-id \d+ /gm, 'panel ')
-    .replace(/^(reserve|reserve-next|rotate-next|slot) .*\n/gm, '');
+    .replace(/^(reserve|reserve-next|rotate-next|slot|changes) .*\n/gm, '');
   assert.notEqual(old, state);
   assert.doesNotMatch(old, /^(reserve|panel-id)/m);
   writeFileSync(file, old);
@@ -352,6 +352,31 @@ test('--parents duel: a parent beat its rival in their match, the same run on an
   assert.equal(checkValues(one), 6);
   run(join(tmp, 'duel3'), [...args, '--threads', '3', '--batches', '6']);
   assert.deepEqual(stable(events(join(tmp, 'duel3'))), stable(one));
+});
+
+test('--changes: only the changes named, as often as their weights, the same run on any thread count and after a resume', { skip }, () => {
+  const def = { opcode: 81, modifier: 81, 'a-mode': 54, 'b-mode': 54, 'a-operand': 108, 'b-operand': 108, org: 27, replace: 27, insert: 100, delete: 100,
+    duplicate: 70, move: 70, 'crossover-insert': 60, 'crossover-replace': 60, 'related-opcode': 0, 'related-mode': 0, 'shared-constant': 0, tune: 0 };
+  assert.deepEqual(base[0].changes, def);
+  const args = [...TINY, '--changes', 'shared-constant=6,duplicate=1,b-operand=3'];
+  run(join(tmp, 'mix1'), [...args, '--threads', '1', '--batches', '5']);
+  const one = events(join(tmp, 'mix1'));
+  assert.deepEqual(one[0].changes, { ...Object.fromEntries(Object.keys(def).map((k) => [k, 0])), 'shared-constant': 6, duplicate: 1, 'b-operand': 3 });
+  const n = {};
+  for (const b of one.filter((e) => e.type === 'batch')) for (const [op, [bred]] of Object.entries(b.ops)) n[op] = (n[op] ?? 0) + bred;
+  assert.deepEqual(Object.keys(n).filter((k) => !['random', 'reintroduce'].includes(k)).sort(), ['b-operand', 'duplicate', 'shared-constant']);
+  assert.ok(n['shared-constant'] > n['b-operand'] && n['b-operand'] > n.duplicate, JSON.stringify(n));
+  assert.equal(checkOps(one), 5);
+  assert.equal(checkValues(one), 5);
+  run(join(tmp, 'mix3'), [...args, '--threads', '3', '--batches', '5']);
+  assert.deepEqual(stable(events(join(tmp, 'mix3'))), stable(one));
+  run(join(tmp, 'mix-resumed'), [...args, '--threads', '2', '--batches', '2']);
+  assert.match(readFileSync(join(tmp, 'mix-resumed', 'state.txt'), 'latin1'), /^changes b-operand=3,duplicate=1,shared-constant=6$/m);
+  run(join(tmp, 'mix-resumed'), ['--threads', '4', '--batches', '3']);
+  assert.deepEqual(stable(events(join(tmp, 'mix-resumed'))), stable(one));
+  const bad = spawnSync(evolve, [join(tmp, 'mix-bad'), ...TINY, '--changes', 'opcode=1,tunes=2'], { encoding: 'utf8' });
+  assert.equal(bad.status, 2);
+  assert.match(bad.stderr, /--changes takes name=weight.* shared-constant tune$/m);
 });
 
 test('--start: the first batch starts from the warriors of a folder', { skip }, () => {
