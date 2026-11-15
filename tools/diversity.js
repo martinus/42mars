@@ -18,6 +18,9 @@
 // Plain functions on arrays, for tools/pushoff.mjs, the evolver's tests
 // and the evolver dashboard (ui/); evolver/pushoff.c computes the same.
 //
+// columns (42evolve --diversity panel): an array of booleans by index, only
+// those columns count for the distance; the average is over all.
+//
 // noise { se, z } (42evolve --noise z, #148): se[a][b] is the standard error
 // of score[a][b]; a column then counts only the part of |a_k - b_k| above
 // z sqrt(se_ak^2 + se_bk^2), what the noise of the two matches cannot
@@ -33,10 +36,10 @@ export function standardError(wins, ties, rounds) {
 
 // score[a][b]: a's score against b (any scale, null or undefined on the
 // diagonal). active: the indices still in.
-export function sdDistance(score, active, a, b, variant = 'opponent', noise = null) {
+export function sdDistance(score, active, a, b, variant = 'opponent', noise = null, columns = null) {
   let num = 0, den = 0, sum = 0;
   for (const k of active) {
-    if (k === a || k === b) continue;
+    if (k === a || k === b || (columns && !columns[k])) continue;
     let mean = 0, n = 0;
     for (const r of active) if (r !== k) { mean += score[r][k]; n++; }
     mean /= n;
@@ -62,7 +65,7 @@ export function sdDistance(score, active, a, b, variant = 'opponent', noise = nu
 
 // For each index of `active`: { avg, nearest, distance, value }.
 // value = avg * distance ** alpha, distance the lowest SD-score to any other.
-export function pushoffValues(score, active, { variant = 'opponent', alpha = 1, se = null, z = 0 } = {}) {
+export function pushoffValues(score, active, { variant = 'opponent', alpha = 1, se = null, z = 0, columns = null } = {}) {
   const noise = se ? { se, z } : null;
   return active.map((a) => {
     let avg = 0;
@@ -71,7 +74,7 @@ export function pushoffValues(score, active, { variant = 'opponent', alpha = 1, 
     let distance = Infinity, nearest = -1;
     for (const b of active) {
       if (b === a) continue;
-      const d = sdDistance(score, active, a, b, variant, noise);
+      const d = sdDistance(score, active, a, b, variant, noise, columns);
       if (d < distance) { distance = d; nearest = b; }
     }
     if (nearest < 0) distance = 0;

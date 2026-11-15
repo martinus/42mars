@@ -30,17 +30,18 @@ double pushoff_se(uint32_t wins, uint32_t ties, uint32_t rounds);
 // error of each score, laid out as score) a column counts only the part of
 // |a_k - b_k| above z sqrt(se_ak^2 + se_bk^2): what the noise of the two
 // matches can explain is no difference (42evolve --noise z, #148). se 0:
-// the plain SD-score.
+// the plain SD-score. cols (0: all): only the columns k with cols[k] count
+// (42evolve --diversity panel).
 double pushoff_distance(const double *score, size_t stride, const uint32_t *active, uint32_t n, uint32_t a, uint32_t b,
-                        const double *sigma, const double *se, double z, int variant);
+                        const double *sigma, const double *se, double z, const uint8_t *cols, int variant);
 
 // sigma[k] for every active k; sigma has an entry per index.
 void pushoff_sigma(const double *score, size_t stride, const uint32_t *active, uint32_t n, double *sigma);
 
-// out[i] for active[i]; sigma: scratch with an entry per index; se and z as
-// for pushoff_distance().
+// out[i] for active[i]; sigma: scratch with an entry per index; se, z and
+// cols as for pushoff_distance() (the average is over all columns).
 void pushoff_values(const double *score, size_t stride, const uint32_t *active, uint32_t n, int variant, double alpha,
-                    const double *se, double z, double *sigma, pushoff_value *out);
+                    const double *se, double z, const uint8_t *cols, double *sigma, pushoff_value *out);
 
 // The position in out[] of the lowest value among the ones with keep[index]
 // 0: on a tie the lower average, then the higher index. -1 if none.

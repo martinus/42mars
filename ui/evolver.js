@@ -9,6 +9,9 @@
 // same warriors, rules and seed, so the rounds on screen are the ones behind
 // the number.
 
+import { assemble, compileMars, createMarsSync } from '../wasm/42mars.js';
+import { describe, measureStyle } from '../tools/style.js';
+
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
 const fmtInt = (n) => Math.round(n).toLocaleString('en-US');
@@ -746,7 +749,8 @@ function drawChips() {
   const best = S.bestId !== null ? member(S.bestId) : null;
   $('c-best-name').textContent = best ? best.name : '–';
   $('c-best-name').style.color = best ? hsl(best.hue) : '';
-  $('c-best-sub').textContent = best ? `${f1(best.holdout)} holdout · ${f1(best.panelAvg)} panel${best.alive ? '' : ' · left'}` : 'after the first benchmark';
+  // both chips in the same order, panel then holdout
+  $('c-best-sub').textContent = best ? `${f1(best.panelAvg)} panel · ${f1(best.holdout)} holdout${best.alive ? '' : ' · left'}` : 'after the first benchmark';
   const top = strongest();
   $('c-top-name').textContent = top ? top.name : '–';
   $('c-top-name').style.color = top ? hsl(top.hue) : '';
@@ -927,14 +931,42 @@ function renderCard() {
       <div class="stats">${stat('vs panel', f1(x.panelAvg))}${stat('vs holdout', f1(x.holdout))}${stat('push-off value', f1(x.value))}
       ${stat('distance', x.distance?.toFixed(2) ?? '–')}${stat('nearest', x.nearest !== undefined && x.nearest !== null && S.w.has(x.nearest) ? link(x.nearest) : '–')}${stat('screen', `${f1(x.screen)}${x.estimate !== undefined ? ` <small style="color:#7f86a0">est. ${x.estimate.toFixed(0)}</small>` : ''}`)}</div>
       <div class="links">parents: ${parents}</div>
+      <div class="sub style" id="card-style">style: measuring…</div>
       <h4>Code</h4><pre>${listing(x.code, Number(/ORG\s+(\d+)/.exec(x.code)?.[1] ?? 0))}</pre>`;
   } else {
     head = `<h3 style="color:${color}">${esc(x.name)}</h3><div class="sub">${esc(x.author)} · ${esc(x.file)} · ${{ panel: 'panel', holdout: 'holdout', retired: 'former panel' }[x.kind]} warrior from the hill</div>
       <div class="stats">${stat('vs panel', f1(x.panelAvg))}${stat('push-off value', f1(x.value))}${stat('nearest', x.nearest !== undefined && S.w.has(x.nearest) ? link(x.nearest) : '–')}</div>
+      <div class="sub style" id="card-style">style: measuring…</div>
       <h4>Source</h4><pre>${esc(x.source)}</pre>`;
   }
   $('card-body').innerHTML = `${head}<h4>Against the panel, warrior by warrior</h4><div class="fp">${fpBars}</div>
     <h4>Matches <small>(wins/losses/ties, points per 100 rounds)</small></h4><table>${rows}</table>`;
+  showStyle(x);
+}
+
+// The style of a warrior (tools/style.js): a few rounds against the first 3
+// panel warriors with the watch, in this page; once per warrior.
+let styleEngine = null;
+const styles = new Map();
+async function showStyle(x) {
+  const id = x.id;
+  try {
+    if (!styles.has(id)) {
+      if (!styleEngine) {
+        const r = S.start.rules;
+        styleEngine = { rules: { coreSize: r.size, maxCycles: r.cycles, maxProcesses: r.processes, maxLength: r.length, minDistance: r.distance }, module: await compileMars() };
+        styleEngine.m = createMarsSync({ ...styleEngine.rules, watch: true }, styleEngine.module);
+        styleEngine.opponents = S.panel.slice(0, 3).map((p) => assemble(S.w.get(p).source, styleEngine.rules));
+      }
+      const w = assemble(x.kind === 'member' ? `;name x\n${x.code}` : x.source, styleEngine.rules);
+      styles.set(id, describe(measureStyle(styleEngine.m, w, styleEngine.opponents)));
+    }
+    const el = $('card-style');
+    if (el && selected === id) el.textContent = `style against 3 panel warriors: ${styles.get(id)}`;
+  } catch (e) {
+    const el = $('card-style');
+    if (el && selected === id) el.textContent = `style: ${e.message}`;
+  }
 }
 
 // ------------------------------------------------------------------ battles
