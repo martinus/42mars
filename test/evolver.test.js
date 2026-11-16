@@ -97,7 +97,7 @@ test('the same seed gives the same run on 1 and 4 threads, and after a resume', 
 test('a run folder takes no new evolution options', { skip }, () => {
   const r = spawnSync(evolve, [join(tmp, 'one'), '--rounds', '50'], { encoding: 'utf8' });
   assert.equal(r.status, 2);
-  assert.match(r.stderr, /only --threads, --batches and --seconds/);
+  assert.match(r.stderr, /only --threads, --batches, --seconds, --changes, --reintroduce, --screen-stop and --screen-check/);
   assert.equal(spawnSync(evolve, [join(tmp, 'none')], { encoding: 'utf8' }).status, 2); // no --opponents
 });
 
@@ -515,6 +515,21 @@ test('--changes: only the changes named, as often as their weights, the same run
   assert.match(readFileSync(join(tmp, 'mix-resumed', 'state.txt'), 'latin1'), /^changes b-operand=3,duplicate=1,shared-constant=6$/m);
   run(join(tmp, 'mix-resumed'), ['--threads', '4', '--batches', '3']);
   assert.deepEqual(stable(events(join(tmp, 'mix-resumed'))), stable(one));
+  // a run that continues takes new weights: from then on only those changes,
+  // in the state too; the batches before are those of the run without them
+  run(join(tmp, 'mix-switch'), [...args, '--threads', '2', '--batches', '2']);
+  run(join(tmp, 'mix-switch'), ['--threads', '2', '--batches', '3', '--changes', 'insert=1']);
+  run(join(tmp, 'mix-switch'), ['--threads', '3', '--batches', '1']);
+  const sw = events(join(tmp, 'mix-switch'));
+  const at = sw.findIndex((e) => e.type === 'changes');
+  assert.ok(at > 0 && sw[at].changes === 'insert=1' && sw[at].batch === 2, JSON.stringify(sw[at]));
+  const after = {};
+  for (const b of sw.slice(at).filter((e) => e.type === 'batch')) for (const [op, [bred]] of Object.entries(b.ops)) after[op] = (after[op] ?? 0) + bred;
+  assert.deepEqual(Object.keys(after).filter((k) => !['random', 'reintroduce'].includes(k)), ['insert']);
+  assert.equal(sw.filter((e) => e.type === 'batch').length, 6);
+  assert.match(readFileSync(join(tmp, 'mix-switch', 'state.txt'), 'latin1'), /^changes insert=1$/m);
+  const before = stable(sw.slice(0, at));
+  assert.deepEqual(before, stable(one).slice(0, before.length));
   const bad = spawnSync(evolve, [join(tmp, 'mix-bad'), ...TINY, '--changes', 'opcode=1,tunes=2'], { encoding: 'utf8' });
   assert.equal(bad.status, 2);
   assert.match(bad.stderr, /--changes takes name=weight.* shared-constant tune$/m);
@@ -717,6 +732,34 @@ test('--stage 10: survivors play 10 rounds, those that stay the rest; the same r
   assert.equal(events(join(tmp, 'stage-default'))[0].params.stage, 10);
 });
 
+test('--reintroduce: no copy of a warrior in the list comes back; a run that continues takes a new rate', { skip }, () => {
+  const args = [...TINY, '--list', '8', '--survivors', '6', '--reintroduce', '0.3'];
+  run(join(tmp, 're1'), [...args, '--threads', '2', '--batches', '12']);
+  run(join(tmp, 're1'), ['--threads', '2', '--batches', '8', '--reintroduce', '0']);
+  const evs = events(join(tmp, 're1'));
+  // every warrior that came back: its code was in no member's at that moment
+  const code = new Map(); // the members' code
+  let back = 0;
+  for (const e of evs) {
+    if (e.type === 'enter') {
+      if (e.ops === 'reintroduce') {
+        assert.ok(![...code.values()].includes(e.code), `${e.name} is a copy of a member`);
+        back++;
+      }
+      code.set(e.id, e.code);
+    }
+    if (e.type === 'leave') code.delete(e.id);
+  }
+  assert.ok(back >= 3, `${back} came back`);
+  const at = evs.findIndex((e) => e.type === 'reintroduce');
+  assert.ok(at > 0 && evs[at].reintroduce === 0 && evs[at].batch === 12, JSON.stringify(evs[at]));
+  const later = evs.slice(at).filter((e) => e.type === 'batch');
+  assert.equal(later.length, 8);
+  assert.ok(later.every((b) => !b.ops.reintroduce), 'none came back at rate 0');
+  assert.match(readFileSync(join(tmp, 're1', 'state.txt'), 'latin1'), /^params( \S+){12} 0 /m); // the 13th number: the rate
+  assert.ok(checkValues(evs) > 0);
+});
+
 test('--fill: random warriors until the list is full, then children; the same run on any thread count', { skip }, () => {
   assert.equal(base[0].params.fill, false);
   const args = [...TINY, '--fill', '--list', '30', '--survivors', '4'];
@@ -897,6 +940,75 @@ test('--sharing 20: the average weighted by how hard each panel warrior is for t
   // refused together with --rotate
   const r = spawnSync(evolve, [join(tmp, 'share-rot'), ...args, '--rotate', '2', '--batches', '1'], { encoding: 'utf8' });
   assert.notEqual(r.status, 0);
+});
+
+test('--screen-check 3 is the run without it and logs every bound; --screen-stop 3 stops those children; the same run on any thread count and after a resume', { skip }, () => {
+  const BATCHES = 8;
+  const args = [...TINY, '--screen-rounds', '20', '--rounds', '40', '--panel-rounds', '40', '--batch', '48', '--list', '20'];
+  run(join(tmp, 'sc0'), [...args, '--threads', '2', '--batches', String(BATCHES)]);
+  run(join(tmp, 'sc1'), [...args, '--screen-check', '3', '--threads', '2', '--batches', String(BATCHES)]);
+  const plain = events(join(tmp, 'sc0')), check = events(join(tmp, 'sc1'));
+  const same = (evs) => stable(evs).filter((e) => e.type !== 'screen' && e.type !== 'start');
+  assert.deepEqual(same(check), same(plain)); // the check plays everything
+  assert.equal(check[0].params.screenCheck, 3);
+  const P = check[0].panel.length, F = 20;
+  // every child it would stop: its bound from its results so far, below the threshold or the cut
+  let stops = 0, cuts = 0;
+  for (const s of check.filter((e) => e.type === 'screen')) {
+    assert.equal(s.check, true);
+    assert.equal(s.stopped, s.steps.reduce((a, st) => a + st.stopped.length, 0));
+    for (const st of s.steps) {
+      // the cut: the 16th largest lower bound of the children still in
+      const sorted = [...st.lo].sort((a, b) => b - a);
+      assert.equal(st.cut, sorted.length > check[0].params.survivors ? sorted[check[0].params.survivors - 1] : -1e300);
+      for (const row of st.stopped) {
+        const q = row.length / 3, n = st.rounds;
+        assert.equal(q, P); // TINY: no members in the screen
+        let x = 0, s2 = 0;
+        for (let k = 0; k < q; k++) {
+          const [w, , t] = row.slice(3 * k, 3 * k + 3);
+          assert.equal(row[3 * k] + row[3 * k + 1] + row[3 * k + 2], n);
+          x += ((3 * w + t) * 100) / n;
+          const pw = (w + 1) / (n + 3), pt = (t + 1) / (n + 3), mu = 300 * pw + 100 * pt;
+          s2 += 90000 * pw + 10000 * pt - mu * mu;
+        }
+        x /= q;
+        s2 /= q * q;
+        const hi = x + 3 * Math.sqrt((s2 * (F - n)) / (F * n));
+        assert.ok(hi < Math.max(st.threshold, st.cut) + 1e-9, `batch ${s.batch}, after ${n}: ${hi} against ${st.threshold}, ${st.cut}`);
+        if (hi >= st.threshold) cuts++;
+        stops++;
+      }
+    }
+    assert.ok(s.rounds <= s.full);
+    // the check played on: the whole screen of each child it would have stopped
+    assert.equal(s.finals.length, s.stopped);
+    for (const [screen, ...row] of s.finals) {
+      let x = 0;
+      for (let k = 0; k < P; k++) {
+        const [w, l, t] = row.slice(3 * k, 3 * k + 3);
+        assert.equal(w + l + t, F);
+        x += ((3 * w + t) * 100) / F;
+      }
+      assert.ok(Math.abs(x / P - screen) < 1e-9);
+    }
+  }
+  assert.ok(stops >= 20 && cuts >= 5, `${stops} would stop, ${cuts} by the cut`);
+  // --screen-stop: the same decisions, so with no survivor missed the same run
+  run(join(tmp, 'sc2'), [...args, '--screen-stop', '3', '--threads', '1', '--batches', String(BATCHES)]);
+  const stop = events(join(tmp, 'sc2'));
+  const sc = (evs) => evs.filter((e) => e.type === 'screen').map(({ stopped, rounds, full }) => [stopped, rounds, full]);
+  assert.ok(check.filter((e) => e.type === 'screen').every((s) => s.missed === 0)); // in this fixture
+  assert.deepEqual(same(stop), same(plain));
+  assert.deepEqual(sc(stop), sc(check));
+  assert.equal(checkValues(stop), BATCHES);
+  run(join(tmp, 'sc3'), [...args, '--screen-stop', '3', '--threads', '3', '--batches', String(BATCHES)]);
+  assert.deepEqual(stable(events(join(tmp, 'sc3'))), stable(stop));
+  run(join(tmp, 'sc-resumed'), [...args, '--screen-stop', '3', '--threads', '2', '--batches', String(BATCHES >> 1)]);
+  run(join(tmp, 'sc-resumed'), ['--threads', '4', '--batches', String(BATCHES - (BATCHES >> 1))]);
+  assert.deepEqual(stable(events(join(tmp, 'sc-resumed'))), stable(stop));
+  // not with --race
+  assert.notEqual(spawnSync(evolve, [join(tmp, 'sc-race'), ...args, '--screen-stop', '3', '--race', '5', '--batches', '1'], { encoding: 'utf8' }).status, 0);
 });
 
 test('--optimize: the constants of a warrior, steps confirmed with other seeds, the same on any thread count', { skip }, () => {

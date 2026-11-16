@@ -6,6 +6,7 @@
 //
 //   42evolve <run folder> --opponents <dir> [options]   a new run
 //   42evolve <run folder> [--threads N] [--batches N] [--seconds S]
+//            [--changes name=weight,...] [--reintroduce p] [--screen-stop z | --screen-check z]
 //                                                       continue a run
 //
 // The run folder gets events.jsonl (what happened, for the dashboard),
@@ -76,6 +77,8 @@ typedef struct {
   int panel_random;         // --panel-choice: PANEL_PICKED (pick_panel()), PANEL_RANDOM drawn with the seed, PANEL_KINDS
   int specialists;          // --specialists: the member clearly best against a panel warrior does not leave
   double sharing;           // --sharing c: the push-off's average weights each panel warrior by 1 / (members' mean + c), 0 off
+  double screen_stop;       // --screen-stop z: a child stops its screen when z standard errors cannot get it past (0 off)
+  double screen_check;      // --screen-check z: plays the whole screen, logs what --screen-stop z would have done
   uint32_t pick_sample;     // --pick-sample: warriors of the round robin of pick_panel(), 0 PICK_SAMPLE
 } params;
 
@@ -763,7 +766,7 @@ static void event_start(run *r) {
           "\"rounds\":%u,\"screenRounds\":%u,\"benchEvery\":%u,\"benchRounds\":%u,\"initLength\":%u,"
           "\"screenFactor\":%.17g,\"alpha\":%.17g,\"reintroduce\":%.17g,\"sd\":\"%s\",\"seed\":%" PRIu64
           ",\"select\":\"%s\",\"rotate\":%u,\"fractions\":%.17g,\"race\":%u,\"raceKeep\":%u,\"prior\":\"%s\","
-          "\"parents\":\"%s\",\"screenMembers\":%u,\"noise\":%.17g,\"stage\":%u,\"fill\":%s,\"panelRounds\":%u,\"diversity\":\"%s\",\"niche\":%u,\"panelChoice\":\"%s\",\"mapElites\":%s,\"crowding\":%s,\"specialists\":%s,\"sharing\":%.17g},"
+          "\"parents\":\"%s\",\"screenMembers\":%u,\"noise\":%.17g,\"stage\":%u,\"fill\":%s,\"panelRounds\":%u,\"diversity\":\"%s\",\"niche\":%u,\"panelChoice\":\"%s\",\"mapElites\":%s,\"crowding\":%s,\"specialists\":%s,\"sharing\":%.17g,\"screenStop\":%.17g,\"screenCheck\":%.17g},"
           "\"opponents\":",
           m42_version(), p->rules.core_size, p->rules.max_cycles, p->rules.max_processes, p->rules.max_length,
           p->rules.min_distance, r->panel_n, r->hold_n, p->list, p->batch, p->survivors, p->rounds, p->screen_rounds,
@@ -777,7 +780,7 @@ static void event_start(run *r) {
           : p->panel_random == PANEL_KINDS  ? "kinds"
                                             : "picked",
           p->map_elites ? "true" : "false", p->map_elites == ME_CROWDING ? "true" : "false",
-          p->specialists ? "true" : "false", p->sharing);
+          p->specialists ? "true" : "false", p->sharing, p->screen_stop, p->screen_check);
   json_str(f, p->opponents, 0);
   fputs(",\"panelFiles\":", f);
   json_str(f, p->panel_files, 0);
@@ -965,11 +968,11 @@ static void save_state(run *r) {
   fprintf(f, "42evolve-state 1\n");
   fprintf(f, "rules %u %u %u %u %u\n", p->rules.core_size, p->rules.max_cycles, p->rules.max_processes,
           p->rules.max_length, p->rules.min_distance);
-  fprintf(f, "params %u %u %u %u %u %u %u %u %u %u %.17g %.17g %.17g %d %" PRIu64 " %d %u %.17g %u %u %d %d %u %.17g %u %d %u %d %u %d %d %.17g\n",
+  fprintf(f, "params %u %u %u %u %u %u %u %u %u %u %.17g %.17g %.17g %d %" PRIu64 " %d %u %.17g %u %u %d %d %u %.17g %u %d %u %d %u %d %d %.17g %.17g %.17g\n",
           p->panel, p->holdout, p->list, p->batch, p->survivors, p->rounds, p->screen_rounds, p->bench_every,
           p->bench_rounds, p->init_length, p->screen_factor, p->alpha, p->reintroduce, p->sd, p->seed, p->select,
           p->rotate, p->fractions, p->race, p->race_keep, p->prior, p->parents, p->screen_members, p->noise, p->stage, p->fill,
-          p->panel_rounds, p->distance_panel, p->niche, p->map_elites, p->specialists, p->sharing);
+          p->panel_rounds, p->distance_panel, p->niche, p->map_elites, p->specialists, p->sharing, p->screen_stop, p->screen_check);
   fprintf(f, "opponents %s\n", p->opponents);
   if (p->start[0]) fprintf(f, "start-dir %s\n", p->start);
   char mix[CH_COUNT * 32];
@@ -1101,14 +1104,14 @@ static int load_state(run *r, const char *path) {
       // --race-keep, --prior, --parents, --screen-members, --noise, --stage,
       // --fill; a state without them has none of them
       const int got = sscanf(line + 7,
-                             "%u %u %u %u %u %u %u %u %u %u %lg %lg %lg %d %" SCNu64 " %d %u %lg %u %u %d %d %u %lg %u %d %u %d %u %d %d %lg",
+                             "%u %u %u %u %u %u %u %u %u %u %lg %lg %lg %d %" SCNu64 " %d %u %lg %u %u %d %d %u %lg %u %d %u %d %u %d %d %lg %lg %lg",
                              &p->panel, &p->holdout, &p->list, &p->batch, &p->survivors, &p->rounds, &p->screen_rounds,
                              &p->bench_every, &p->bench_rounds, &p->init_length, &p->screen_factor, &p->alpha,
                              &p->reintroduce, &p->sd, &p->seed, &p->select, &p->rotate, &p->fractions, &p->race,
                              &p->race_keep, &p->prior, &p->parents, &p->screen_members, &p->noise, &p->stage, &p->fill, &p->panel_rounds,
-                             &p->distance_panel, &p->niche, &p->map_elites, &p->specialists, &p->sharing);
+                             &p->distance_panel, &p->niche, &p->map_elites, &p->specialists, &p->sharing, &p->screen_stop, &p->screen_check);
       if (got != 15 && got != 17 && got != 18 && got != 20 && got != 21 && got != 22 && got != 23 && got != 24 &&
-          got != 25 && got != 26 && got != 28 && got != 29 && got != 30 && got != 31 && got != 32)
+          got != 25 && got != 26 && got != 28 && got != 29 && got != 30 && got != 31 && got != 32 && got != 34)
         goto bad;
     } else if (!strncmp(line, "opponents ", 10)) {
       snprintf(p->opponents, sizeof p->opponents, "%s", line + 10);
@@ -1278,7 +1281,10 @@ typedef struct {
   double screen;   // average against the panel in the screen rounds
   double estimate; // screen * (SD-score to the nearest warrior in, on the panel columns)^alpha
   double key;      // what the survivors are picked by: screen or estimate
-  int out;         // --race: dropped after the first screen rounds
+  int out;         // --race: dropped after the first screen rounds; --screen-stop: stopped
+  int would_stop;  // --screen-check: --screen-stop would have stopped it
+  uint32_t played; // rounds of its screen against each opponent
+  uint32_t stop_at; // --screen-stop, --screen-check: the rounds after which it stopped (would have), 0 not
   int reached;     // 0 bred, 1 evaluated (not a repeat), 2 past the screen, 3 still in the list after its batch
   double race_key; // --race: the key after the first screen rounds
   uint64_t id;
@@ -1481,6 +1487,90 @@ static void score_screen(const run *r, candidate *x, const unit *row, uint32_t q
   x->screen = q ? s / q : 0;
   x->estimate = x->screen * estimated_distance(r, row, rounds);
   x->key = r->p.select == SELECT_VALUE ? x->estimate : x->screen;
+}
+
+// --screen-stop z: the screen in steps of SCREEN_STEP rounds against each
+// opponent; after each step a child stops when it cannot get past. After n
+// of F rounds against each of the q opponents, x is its mean over the
+// opponents of its points per 100 rounds; a round against opponent k gives
+// 300, 100 or 0 points, with the rates of its wins, ties and losses there
+// counted with one more of each (5 losses are not a certain loss), so a
+// variance v_k; one round's mean over the opponents has variance
+// s2 = sum v_k / q^2. Its score after all F rounds lies around x with the
+// standard deviation sqrt(s2 (F - n) / (F n)): the rounds still to come and
+// the error of x itself. hi and lo are x plus and minus z of those. A child
+// stops when hi is below the threshold of the survivors (known before the
+// screen), or, when the survivors are the best by screen score, below the
+// p.survivors-th largest lo of the children still in: that many others end
+// above it but with a chance of a z-error each. z 3: a bound fails in 0.13%
+// of cases. The children of a batch are about half fatal or identical to
+// their parent (the mutation spectrum), and a fatal one is far below.
+#define SCREEN_STEP 5
+
+static void screen_bounds(const unit *row, uint32_t q, uint32_t n, uint32_t F, double z, double *lo, double *hi) {
+  double x = 0, s2 = 0;
+  for (uint32_t k = 0; k < q; k++) {
+    const m42_score sc = row[k].s[0];
+    x += points(sc, n);
+    const double t = n + 3.0, pw = (sc.wins + 1) / t, pt = (sc.ties + 1) / t, mu = 300 * pw + 100 * pt;
+    s2 += 90000 * pw + 10000 * pt - mu * mu;
+  }
+  x /= q;
+  s2 /= (double)q * q;
+  const double sd = sqrt(s2 * (F - n) / ((double)F * n));
+  *lo = x - z * sd, *hi = x + z * sd;
+}
+
+static int by_double_down(const void *a, const void *b) {
+  const double x = *(const double *)a, y = *(const double *)b;
+  return x > y ? -1 : x < y;
+}
+
+// Marks the children that stop after `done` rounds: out (--screen-stop) or
+// would_stop (check: they play on, the rule as if they did not). Returns
+// how many.
+static uint32_t screen_decide(const run *r, candidate *c, uint32_t B, const unit *u, const uint32_t *at, uint32_t q,
+                              uint32_t done, double z, double threshold, int check, FILE *log) {
+  const params *p = &r->p;
+  double *lo = xmalloc(B * sizeof *lo), *hi = xmalloc(B * sizeof *hi), *sorted = xmalloc(B * sizeof *sorted);
+  uint32_t on = 0, n = 0;
+  for (uint32_t i = 0; i < B; i++) {
+    if (c[i].skip || c[i].out || c[i].would_stop) continue;
+    screen_bounds(u + at[i], q, done, p->screen_rounds, z, &lo[i], &hi[i]);
+    sorted[on++] = lo[i];
+  }
+  double cut = -INFINITY; // the p.survivors-th largest lo
+  if (p->select == SELECT_SCREEN && on > p->survivors && p->survivors > 0) {
+    qsort(sorted, on, sizeof *sorted, by_double_down);
+    cut = sorted[p->survivors - 1];
+  }
+  if (log) {
+    fprintf(log, "%s{\"rounds\":%u,\"threshold\":%.17g,\"cut\":%.17g,\"lo\":[", done == SCREEN_STEP ? "" : ",", done, threshold,
+            cut == -INFINITY ? -1e300 : cut);
+    for (uint32_t i = 0, k = 0; i < B; i++)
+      if (!(c[i].skip || c[i].out || c[i].would_stop)) fprintf(log, "%s%.17g", k++ ? "," : "", lo[i]);
+    fputs("],\"stopped\":[", log);
+  }
+  for (uint32_t i = 0; i < B; i++) {
+    if (c[i].skip || c[i].out || c[i].would_stop) continue;
+    if (hi[i] < threshold || hi[i] < cut) {
+      if (log) { // its results so far against each opponent, [w,l,t,...]
+        fprintf(log, "%s[", n ? "," : "");
+        for (uint32_t k = 0; k < q; k++) {
+          const m42_score sc = u[at[i] + k].s[0];
+          fprintf(log, "%s%u,%u,%u", k ? "," : "", sc.wins, sc.losses, sc.ties);
+        }
+        fputc(']', log);
+      }
+      if (check) c[i].would_stop = 1;
+      else c[i].out = 1;
+      c[i].stop_at = done;
+      n++;
+    }
+  }
+  if (log) fputs("]}", log);
+  free(lo), free(hi), free(sorted);
+  return n;
 }
 
 // How far the children of each change got in a batch: [bred, evaluated,
@@ -1715,11 +1805,18 @@ static void run_batch(run *r) {
   }
 
   // breed
+  // --reintroduce: a warrior of the archive whose code is in the list, or
+  // came back already in this batch, does not come back: in a list that had
+  // settled (kd1, 16th November 2026) 204 of 1,141 that came back were
+  // copies of a member, and had to leave again at once
+  uint64_t *in_list = xmalloc((r->active_n + B + 1) * sizeof *in_list);
+  uint32_t in_n = 0;
+  for (uint32_t k = r->panel_n; k < r->active_n; k++) in_list[in_n++] = genome_hash(r->slot[r->active[k]]->g, core);
   for (uint32_t i = 0; i < B; i++) {
     rng g = rng_seed(p->seed, 0x6272656564u + r->batch, i); // "breed"
     candidate *x = &c[i];
     x->parents[0] = x->parents[1] = x->rival = NO_ID;
-    int reintro = 0;
+    int reintro = 0, copy = 0;
     if (members(r) == 0 && r->start_n) {
       // the start warriors as they are, then mutants of them
       const uint32_t k = i % r->start_n;
@@ -1745,6 +1842,9 @@ static void run_batch(run *r) {
       x->noun = r->archive_noun[k];
       strcpy(x->ops, "reintroduce");
       reintro = 1;
+      const uint64_t h = genome_hash(&x->g, core);
+      for (uint32_t j = 0; j < in_n && !copy; j++) copy = in_list[j] == h;
+      if (!copy) in_list[in_n++] = h;
     } else {
       const warrior *a = select_parent(r, &g, &x->rival), *b = select_parent(r, &g, 0);
       genome_breed(&x->g, a->g, b->g, &g, core, p->rules.max_length, &r->style, &p->changes, x->ops,
@@ -1754,7 +1854,7 @@ static void run_batch(run *r) {
       if (strstr(x->ops, "crossover") && b->id != a->id) x->parents[1] = b->id;
     }
     const uint64_t h = genome_hash(&x->g, core);
-    x->skip = !reintro && seen_has(r, h);
+    x->skip = copy || (!reintro && seen_has(r, h));
     if (!x->skip) {
       seen_add(r, h);
       x->w = make_warrior(&x->g, &p->rules);
@@ -1785,7 +1885,29 @@ static void run_batch(run *r) {
     screen_at[i] = k;
     if (!c[i].skip) k += Q;
   }
-  const uint32_t stage = p->race && p->race < p->screen_rounds ? p->race : p->screen_rounds;
+  // survivors: at least screen_factor of the weakest member's average
+  // against the screen's opponents (itself left out); known before the
+  // screen, --screen-stop stops a child that cannot reach it
+  double threshold = -1;
+  if (members(r) >= p->list) {
+    threshold = INFINITY;
+    for (uint32_t i = P; i < r->active_n; i++) {
+      const uint32_t m = r->active[i];
+      double s = 0;
+      uint32_t k = 0;
+      for (uint32_t j = 0; j < Q; j++)
+        if (so[j] != m) s += r->pts[m * r->cap + so[j]], k++;
+      const double a = k ? s / k : 0;
+      if (a < threshold) threshold = a;
+    }
+    threshold *= p->screen_factor;
+  }
+
+  // --screen-stop, --screen-check: the screen in steps of SCREEN_STEP rounds
+  const int racing = p->race && p->race < p->screen_rounds;
+  const int stepping = !racing && (p->screen_stop > 0 || p->screen_check > 0);
+  const uint32_t F = p->screen_rounds;
+  const uint32_t stage = racing ? p->race : stepping && SCREEN_STEP < F ? SCREEN_STEP : F;
   unit *u = xmalloc((size_t)B * Q * sizeof *u);
   uint32_t n = 0;
   for (uint32_t i = 0; i < B; i++)
@@ -1796,9 +1918,44 @@ static void run_batch(run *r) {
   pool_run(&r->pool, u, n);
   for (uint32_t i = 0; i < B; i++)
     if (!c[i].skip) score_screen(r, &c[i], u + screen_at[i], Q, stage);
+  for (uint32_t i = 0; i < B; i++) c[i].played = stage, c[i].stop_at = 0, c[i].would_stop = 0;
+  uint32_t stopped = 0;
+  FILE *steps_log = 0; // --screen-check: each step's decisions, for the event
+  char *steps_text = 0;
+  size_t steps_len = 0;
+  if (stepping) {
+    const int check = !(p->screen_stop > 0);
+    const double z = check ? p->screen_check : p->screen_stop;
+    steps_log = check ? open_memstream(&steps_text, &steps_len) : 0;
+    for (uint32_t done = stage; done < F;) {
+      stopped += screen_decide(r, c, B, u, screen_at, Q, done, z, threshold, check, steps_log);
+      const uint32_t step = F - done < SCREEN_STEP ? F - done : SCREEN_STEP;
+      unit *g = xmalloc((size_t)B * Q * sizeof *g + sizeof *g);
+      n = 0;
+      for (uint32_t i = 0; i < B; i++)
+        for (uint32_t j = 0; j < Q && !c[i].skip && !c[i].out; j++) {
+          const warrior *o = r->slot[so[j]];
+          g[n++] = (unit){c[i].w, o->w, seed_for(r, o->id), done, step, {{0}}, 0, 0};
+        }
+      pool_run(&r->pool, g, n);
+      n = 0;
+      for (uint32_t i = 0; i < B; i++) {
+        if (c[i].skip || c[i].out) continue;
+        for (uint32_t j = 0; j < Q; j++, n++) {
+          m42_score *a = &u[screen_at[i] + j].s[0];
+          const m42_score b = g[n].s[0];
+          *a = (m42_score){a->wins + b.wins, a->losses + b.losses, a->ties + b.ties};
+        }
+        c[i].played = done + step;
+        score_screen(r, &c[i], u + screen_at[i], Q, done + step);
+      }
+      free(g);
+      done += step;
+    }
+  }
   uint32_t raced = 0;
   double race_dropped = -1; // the best key that did not go on
-  if (stage < p->screen_rounds) {
+  if (racing) {
     candidate **order = xmalloc(B * sizeof *order);
     uint32_t on = 0;
     for (uint32_t i = 0; i < B; i++)
@@ -1830,28 +1987,55 @@ static void run_batch(run *r) {
     free(order);
   }
 
-  // survivors: at least screen_factor of the weakest member's average
-  // against the screen's opponents (itself left out)
-  double threshold = -1;
-  if (members(r) >= p->list) {
-    threshold = INFINITY;
-    for (uint32_t i = P; i < r->active_n; i++) {
-      const uint32_t m = r->active[i];
-      double s = 0;
-      uint32_t k = 0;
-      for (uint32_t j = 0; j < Q; j++)
-        if (so[j] != m) s += r->pts[m * r->cap + so[j]], k++;
-      const double a = k ? s / k : 0;
-      if (a < threshold) threshold = a;
-    }
-    threshold *= p->screen_factor;
-  }
   candidate **sv = xmalloc(B * sizeof *sv);
   uint32_t sn = 0;
   for (uint32_t i = 0; i < B; i++)
     if (!c[i].skip && !c[i].out && c[i].screen >= threshold) sv[sn++] = &c[i];
   qsort(sv, sn, sizeof *sv, by_key);
   if (sn > p->survivors) sn = p->survivors;
+  if (stepping) { // event `screen`: what the steps saved, and with --screen-check what stopping would have changed
+    uint64_t played = 0, full = 0;
+    uint32_t missed = 0;
+    for (uint32_t i = 0; i < B; i++) {
+      if (c[i].skip) continue;
+      full += (uint64_t)F * Q;
+      played += (uint64_t)(c[i].stop_at ? c[i].stop_at : F) * Q;
+    }
+    if (!(p->screen_stop > 0)) { // the survivors without the children it would have stopped
+      candidate **alt = xmalloc(B * sizeof *alt);
+      uint32_t an = 0;
+      for (uint32_t i = 0; i < B; i++)
+        if (!c[i].skip && !c[i].out && !c[i].would_stop && c[i].screen >= threshold) alt[an++] = &c[i];
+      qsort(alt, an, sizeof *alt, by_key);
+      if (an > p->survivors) an = p->survivors;
+      for (uint32_t k = 0; k < sn; k++) {
+        uint32_t m = 0;
+        while (m < an && alt[m] != sv[k]) m++;
+        missed += m == an;
+      }
+      free(alt);
+    }
+    fprintf(r->events, "{\"type\":\"screen\",\"batch\":%u,\"z\":%.17g,\"check\":%s,\"stopped\":%u,\"rounds\":%" PRIu64
+            ",\"full\":%" PRIu64 ",\"missed\":%u",
+            r->batch, p->screen_stop > 0 ? p->screen_stop : p->screen_check, p->screen_stop > 0 ? "false" : "true", stopped,
+            played, full, missed);
+    if (steps_log) {
+      fclose(steps_log);
+      fprintf(r->events, ",\"steps\":[%s],\"finals\":[", steps_text ? steps_text : "");
+      free(steps_text);
+      for (uint32_t i = 0, k = 0; i < B; i++) { // the whole screen of each child it would have stopped
+        if (!c[i].would_stop) continue;
+        fprintf(r->events, "%s[%.17g", k++ ? "," : "", c[i].screen);
+        for (uint32_t j = 0; j < Q; j++) {
+          const m42_score sc = u[screen_at[i] + j].s[0];
+          fprintf(r->events, ",%u,%u,%u", sc.wins, sc.losses, sc.ties);
+        }
+        fputc(']', r->events);
+      }
+      fputc(']', r->events);
+    }
+    fputs("}\n", r->events);
+  }
   for (uint32_t i = 0; i < sn; i++) sv[i]->id = r->next_id++, sv[i]->reached = 2;
 
   // the rest of the rounds against the panel, all rounds against the members
@@ -2005,7 +2189,7 @@ static void run_batch(run *r) {
   fprintf(r->events,
           "{\"type\":\"batch\",\"batch\":%u,\"candidates\":%u,\"evaluated\":%u,\"raced\":%u,\"raceDropped\":%.6f,"
           "\"survivors\":%u,\"entered\":%u,\"members\":%u,\"threshold\":%.6f,\"screenMembers\":[",
-          r->batch, B, evaluated, stage < p->screen_rounds ? raced : evaluated, race_dropped, sn, entered, members(r),
+          r->batch, B, evaluated, racing ? raced : evaluated, race_dropped, sn, entered, members(r),
           threshold);
   for (uint32_t k = 0; k < ns; k++) fprintf(r->events, "%s%" PRIu64, k ? "," : "", screen_id[k]);
   fputs("],\"ops\":{", r->events);
@@ -2034,6 +2218,7 @@ static void run_batch(run *r) {
   free(mask);
   free(slot_of);
   free(member_slots);
+  free(in_list);
   r->batch++;
 }
 
@@ -2914,10 +3099,11 @@ static void usage(void) {
           "         [--panel-files a.red,b.red,...] [--screen-members N] [--noise z] [--stage N (screen rounds; 0 none)] [--fill]\n"
           "         [--panel-rounds N] [--diversity all|panel] [--niche N]\n"
           "         [--panel-choice picked|random|kinds] [--pick-sample 300] [--no-fill] [--map-elites [cells|crowding]]\n"
-          "         [--specialists] [--sharing c]\n"
+          "         [--specialists] [--sharing c] [--screen-stop z | --screen-check z]\n"
           "         [--size 8000] [--cycles 80000] [--processes 8000] [--length 100] [--distance 100]\n"
           "         [--threads N] [--batches N] [--seconds S]\n"
-          "       42evolve <run folder> [--threads N] [--batches N] [--seconds S]   (continue a run)\n"
+          "       42evolve <run folder> [--threads N] [--batches N] [--seconds S] [--changes ...] [--reintroduce p] [--screen-stop z | --screen-check z]\n"
+          "                                                                      (continue a run)\n"
           "       42evolve <folder> --optimize <warrior.red> --opponents <dir> [--panel N | --panel-files ...]\n"
           "         [--rounds 100] [--holdout 100] [--bench-rounds 100] [--seed 1] [--threads N]   (its constants)\n");
   exit(2);
@@ -2934,6 +3120,10 @@ int main(int argc, char **argv) {
   const char *dir = 0;
   uint32_t threads = 0, batches = 0;
   double seconds = 0;
+  genome_mix new_changes; // --changes, also for a run that continues
+  int changes_given = 0;
+  double new_stop = -1, new_check = -1; // --screen-stop, --screen-check, also for a run that continues
+  double new_reintroduce = -1;          // --reintroduce, also for a run that continues
   int new_options = 0, stage_given = 0, screen_members_given = 0, diversity_given = 0, panel_rounds_given = 0, fill_given = 0;
   int panel_given = 0, panel_choice_given = 0;
   const char *optimize_file = 0; // --optimize: no run, the constants of this warrior
@@ -2987,6 +3177,7 @@ int main(int argc, char **argv) {
         fprintf(stderr, "\n");
         return 2;
       }
+      new_changes = p->changes, changes_given = 1;
     }
     else if (!strcmp(a, "--select")) {
       if (!strcmp(v, "screen")) p->select = SELECT_SCREEN;
@@ -3030,7 +3221,10 @@ int main(int argc, char **argv) {
     else if (!strcmp(a, "--bench-every")) p->bench_every = u;
     else if (!strcmp(a, "--bench-rounds")) p->bench_rounds = u;
     else if (!strcmp(a, "--alpha")) p->alpha = d;
-    else if (!strcmp(a, "--reintroduce")) p->reintroduce = d;
+    else if (!strcmp(a, "--reintroduce")) {
+      if (!number || d < 0 || d > 1) usage();
+      p->reintroduce = new_reintroduce = d;
+    }
     else if (!strcmp(a, "--race")) p->race = u;
     else if (!strcmp(a, "--race-keep")) p->race_keep = u;
     else if (!strcmp(a, "--screen-members")) p->screen_members = u, screen_members_given = 1;
@@ -3043,6 +3237,11 @@ int main(int argc, char **argv) {
     else if (!strcmp(a, "--noise")) {
       if (d < 0) usage();
       p->noise = d;
+    }
+    else if (!strcmp(a, "--screen-stop") || !strcmp(a, "--screen-check")) {
+      if (!number || !(d > 0)) usage();
+      if (!strcmp(a, "--screen-stop")) p->screen_stop = new_stop = d;
+      else p->screen_check = new_check = d;
     }
     else if (!strcmp(a, "--sharing")) {
       if (!number || !(d > 0)) usage();
@@ -3060,7 +3259,9 @@ int main(int argc, char **argv) {
     else if (!strcmp(a, "--length")) p->rules.max_length = u;
     else if (!strcmp(a, "--distance")) p->rules.min_distance = u;
     else usage();
-    if (!run_option) new_options = 1;
+    if (!run_option && strcmp(a, "--changes") && strcmp(a, "--screen-stop") && strcmp(a, "--screen-check") &&
+        strcmp(a, "--reintroduce"))
+      new_options = 1; // these go with a run that continues
   }
   if (!dir) usage();
   if (!threads) threads = hardware_threads();
@@ -3072,7 +3273,10 @@ int main(int argc, char **argv) {
   const int resume = !optimize_file && access(state, F_OK) == 0;
   if (resume) {
     if (new_options) {
-      fprintf(stderr, "42evolve: %s has a run; only --threads, --batches and --seconds go with it\n", dir);
+      fprintf(stderr,
+              "42evolve: %s has a run; only --threads, --batches, --seconds, --changes, --reintroduce, --screen-stop and "
+              "--screen-check go with it\n",
+              dir);
       return 2;
     }
     if (load_state(&r, state) != 0) return 1;
@@ -3107,7 +3311,8 @@ int main(int argc, char **argv) {
         p->screen_rounds > p->rounds || p->rules.core_size < 2 * p->rules.min_distance ||
         (p->stage && p->stage < p->screen_rounds) || (p->panel_rounds && p->panel_rounds < p->rounds) ||
         (p->map_elites == ME_CROWDING && (p->list < 2 || p->list > ME_MAX)) ||
-        (p->sharing > 0 && (p->rotate || p->map_elites))) {
+        (p->sharing > 0 && (p->rotate || p->map_elites)) || (p->screen_stop > 0 && p->screen_check > 0) ||
+        ((p->screen_stop > 0 || p->screen_check > 0) && (p->race || p->map_elites))) {
       fprintf(stderr,
               "42evolve: a parameter is out of range (length 1..%d, list, rounds >= screen rounds, stage >= screen "
               "rounds, panel rounds >= rounds, list 2..256 with crowding, --sharing not with --rotate or --map-elites, ...)\n",
@@ -3206,6 +3411,22 @@ int main(int argc, char **argv) {
     save_state(&r);
   } else {
     fprintf(r.events, "{\"type\":\"resume\",\"batch\":%u}\n", r.batch);
+    if (changes_given) { // the weights of the changes from now on; the run is no longer the one without a break
+      r.p.changes = new_changes;
+      char mix[CH_COUNT * 32];
+      genome_mix_text(&r.p.changes, mix, sizeof mix);
+      fprintf(r.events, "{\"type\":\"changes\",\"batch\":%u,\"changes\":\"%s\"}\n", r.batch, mix);
+    }
+    if (new_reintroduce >= 0) { // how often a warrior of the archive comes back, from now on
+      r.p.reintroduce = new_reintroduce;
+      fprintf(r.events, "{\"type\":\"reintroduce\",\"batch\":%u,\"reintroduce\":%.17g}\n", r.batch, r.p.reintroduce);
+    }
+    if (new_stop > 0 || new_check > 0) { // the screen from now on
+      if (new_stop > 0) r.p.screen_stop = new_stop, r.p.screen_check = 0;
+      if (new_check > 0) r.p.screen_check = new_check, r.p.screen_stop = 0;
+      fprintf(r.events, "{\"type\":\"screen-options\",\"batch\":%u,\"screenStop\":%.17g,\"screenCheck\":%.17g}\n", r.batch,
+              r.p.screen_stop, r.p.screen_check);
+    }
   }
   fprintf(stderr, "42evolve: %s, %u panel and %u holdout warriors, %u threads, batch %u\n", dir, r.panel_n, r.hold_n,
           threads, r.batch);

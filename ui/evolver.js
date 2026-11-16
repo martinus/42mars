@@ -261,6 +261,9 @@ function handle(e) {
     case 'resume':
       tick(`run continued at batch ${e.batch}`);
       break;
+    case 'compacted': // tools/serve.mjs sent a long history without the warriors that left
+      tick(`history compacted: ${fmtInt(e.dropped)} of ${fmtInt(e.lines)} events not sent, ${fmtInt(e.gone)} warriors that left are not shown (tools/serve.mjs --full sends all)`);
+      break;
     default:
   }
 }

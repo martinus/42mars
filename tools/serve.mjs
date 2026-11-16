@@ -16,23 +16,36 @@
 // ui/evolver.html?run=<n> shows one run, ui/runs.html all of them.
 // --run takes every folder up to the next option, so `--run ~/42evolve.*`
 // works.
-import { existsSync } from 'node:fs';
+//
+// A run's history longer than COMPACT_FROM bytes goes out compacted (not
+// with --full): without the warriors that left (their enter, complete,
+// leave and elite events), with only the last of the values, speed,
+// specialists and sharing events and the last 20 screen events; then the
+// new lines as they come. A continued run of 7,453 batches had 463 MB of
+// events, and the dashboard showed nothing while it read them all (16th
+// November 2026). The first line after the history is an event `compacted`.
+import { createReadStream, existsSync } from 'node:fs';
+import { createInterface } from 'node:readline';
 import { createServer } from 'node:http';
 import { open, readFile, stat } from 'node:fs/promises';
 import { basename, extname, join, normalize, resolve } from 'node:path';
 
 const root = resolve(new URL('..', import.meta.url).pathname);
 const usage = (why) => {
-  console.error(`${why}\nusage: node tools/serve.mjs [port] [--run <folder of a 42evolve run> ...]`);
+  console.error(`${why}\nusage: node tools/serve.mjs [port] [--full] [--run <folder of a 42evolve run> ...]`);
   process.exit(2);
 };
 const runDirs = [];
-let portArg = null;
+let portArg = null, full = false;
+const COMPACT_FROM = Number(process.env.SERVE_COMPACT_FROM ?? 16 << 20); // the tests set it lower
+const histories = new Map(); // file -> { end, lines }: the last compacted history, for the next page
 for (const args = process.argv.slice(2); args.length;) {
   const a = args.shift();
   if (a === '--run') {
     if (!args.length || args[0].startsWith('-')) usage('--run needs the folder of a run');
     while (args.length && !args[0].startsWith('-')) runDirs.push(resolve(args.shift()));
+  } else if (a === '--full') {
+    full = true;
   } else if (a.startsWith('-')) {
     usage(`unknown option ${a}${a.startsWith('--run') ? ' (--run?)' : ''}`);
   } else if (portArg === null) {
@@ -58,6 +71,55 @@ const types = {
   '.wasm': 'application/wasm',
 };
 
+// The lines of file up to byte end, one by one.
+async function* linesOf(file, end) {
+  if (end <= 0) return;
+  const rl = createInterface({ input: createReadStream(file, { start: 0, end: end - 1 }), crlfDelay: Infinity });
+  for await (const line of rl) if (line) yield line;
+}
+
+const typeOf = (line) => /^\{"type":"([^"]+)"/.exec(line)?.[1];
+const idOf = (line) => /"id":(\d+)/.exec(line)?.[1];
+const KEEP_LAST = new Set(['values', 'speed', 'specialists', 'sharing']);
+
+// The history of a large run up to byte end, compacted (see the top); the
+// lines are kept for the next request (it took 21 s for 463 MB on a busy
+// machine), which gets them and the lines from there on as they are.
+async function compacted(file, end, send) {
+  const known = histories.get(file);
+  if (known && known.end <= end) {
+    for (const line of known.lines) send('message', line);
+    return known.end;
+  }
+  const lines = [];
+  const gone = new Set(), last = new Map(), screens = []; // ids that left; the last line of a type; the screen lines
+  let n = 0, sent = 0;
+  for await (const line of linesOf(file, end)) {
+    const t = typeOf(line);
+    if (t === 'leave') gone.add(idOf(line));
+    if (t === 'elite') {
+      const r = /"replaced":\{"id":(\d+)/.exec(line);
+      if (r) gone.add(r[1]);
+    }
+    if (t === 'screen') screens.push(n);
+    last.set(t, n++);
+  }
+  const keptScreens = new Set(screens.slice(-20));
+  let at = 0;
+  for await (const line of linesOf(file, end)) {
+    const t = typeOf(line), i = at++;
+    if ((t === 'enter' || t === 'complete' || t === 'leave' || t === 'elite') && gone.has(idOf(line))) continue;
+    if (KEEP_LAST.has(t) && last.get(t) !== i) continue;
+    if (t === 'screen' && !keptScreens.has(i)) continue;
+    lines.push(line);
+    sent++;
+  }
+  lines.push(JSON.stringify({ type: 'compacted', lines: n, dropped: n - sent, gone: gone.size }));
+  histories.set(file, { end, lines });
+  for (const line of lines) send('message', line);
+  return end;
+}
+
 // Calls send(event, data) with the new complete lines of the run's
 // events.jsonl every 300 ms (event 'message'), first 'run' with its name, and
 // 'reset' when the file got shorter. Stops when the request closes.
@@ -75,7 +137,15 @@ function follow(req, runDir, send) {
         partial = '';
         send('reset', '{}');
       }
-      if (size > offset) {
+      if (size > offset && offset === 0 && size > COMPACT_FROM && !full) {
+        // up to the last complete line; the rest comes with the next poll
+        const fh = await open(file, 'r');
+        const tail = Buffer.alloc(Math.min(size, 1 << 20));
+        await fh.read(tail, 0, tail.length, size - tail.length);
+        await fh.close();
+        const end = size - (tail.length - 1 - tail.lastIndexOf(10));
+        offset = await compacted(file, end, send);
+      } else if (size > offset) {
         const fh = await open(file, 'r');
         const buf = Buffer.alloc(size - offset);
         await fh.read(buf, 0, buf.length, offset);
