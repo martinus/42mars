@@ -76,7 +76,20 @@ const finish = async (code) => {
     try { await fetch(`http://127.0.0.1:${port}/json/version`); } catch { break; }
     await sleep(100);
   }
-  rmSync(profile, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  // the browser's processes write into the profile for a moment after the
+  // port is gone: on a busy machine the removal failed with ENOTEMPTY
+  for (let k = 0; ; k++) {
+    try {
+      rmSync(profile, { recursive: true, force: true });
+      break;
+    } catch (e) {
+      if (k >= 50) {
+        console.error(`left behind: ${profile} (${e.code})`);
+        break;
+      }
+      await sleep(200);
+    }
+  }
   process.exit(code);
 };
 process.on('uncaughtException', (e) => { console.error(e); finish(1); });
