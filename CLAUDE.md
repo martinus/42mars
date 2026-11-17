@@ -25,7 +25,7 @@ Everything here is MIT and must not derive from GPL Core War code.
 ## Commands
 
 ```sh
-npm test                                   # all tests, about 9 s
+npm test                                   # all tests; minutes on a busy machine, test/evolver.test.js is most of it
 node --test test/wasm.test.js              # one file; --test-name-pattern=<re> for one test
 PMARS_VALIDATE=$O/validate.red npm test    # + 2 tests that need validate.red (skipped otherwise)
 npm run serve                              # http://127.0.0.1:8000/, no build step
@@ -85,15 +85,15 @@ The layout (also in `README.md` and `docs/development.md`; change all three toge
 - New source files start with `// SPDX-License-Identifier: MIT` and `// Copyright (c) 2026 Martin Leitner-Ankerl`.
 - No dependencies: no npm packages, no bundler, tests on `node:test`. Node 20 or newer. Browser code is plain ES modules.
 - C is C11. Compiler specifics (attributes, builtins, `__forceinline`, aligned allocation, DLL exports) go into `lib/src/platform.h` only: MSVC has no statement expressions, VLAs, `__builtin_*` or `aligned_alloc`.
-- CI (`.github/workflows/test.yml`, about 2 minutes, the `pmars` job is the longest): `npm test` on Node 20, 22, 24 and 26; `wasm/build.sh` with Ubuntu's clang-22 must give the committed `42mars.wasm` and `dispatch.h`; the C library on Linux x64 and arm64, macOS and Windows (MSVC through `build-msvc.bat`, so push the branch to try a Windows change), and under ASan and UBSan; the comparison with pMARS. No fuzzing: `make fuzz` is by hand.
+- CI (`.github/workflows/test.yml`, about 15 minutes, `native (ubuntu-latest)` is the longest, the `test` jobs take 5 to 8): `npm test` on Node 20, 22, 24 and 26; `wasm/build.sh` with Ubuntu's clang-22 must give the committed `42mars.wasm` and `dispatch.h`; the C library on Linux x64 and arm64, macOS and Windows (MSVC through `build-msvc.bat`, so push the branch to try a Windows change), and under ASan and UBSan; the comparison with pMARS. No fuzzing: `make fuzz` is by hand.
 - One version, in `lib/42mars.h` (`M42_VERSION_*`) and `package.json`, also in the README's CDN links (`test/package.test.js`); a tag `v<version>` makes the GitHub release, nothing goes to npm. Every change of the interface (header, `42mars`, also the JS demo) gets a line in `CHANGELOG.md`.
 - Read warrior files as latin1. `warriors/*.red` are only warriors written for this repo plus Dewdney's Imp and Dwarf (MIT). Hill warriors have no license: they go into `warriors/koenigstuhl/` (its `README.md` says from where and when, `.gitattributes` keeps their bytes), never next to ours.
-- Tests: a temporary folder is deleted in `after()`. Compare big typed arrays as bytes (`Buffer.equals`) and build failure messages only on failure: a per-cell JS loop with a message string per cell made one test file 16 s instead of 5 s. Random cases come from a generator seeded per test, never from one shared by the file.
+- Tests: a temporary folder is deleted in `after()`. Compare big typed arrays as bytes (`Buffer.equals`) and build failure messages only on failure: a per-cell JS loop with a message string per cell made one test file 16 s instead of 5 s. Random cases come from a generator seeded per test, never from one shared by the file. Prove a test with `node .claude/skills/engine-check/mutate.mjs <mutants.json> -- <test command>`: any file, it restores it, with a timeout and a memory limit.
 - A tool option that is removed is refused with a message; an option value that commands in `docs/performance-log.md` still carry stays accepted (`--wasm` of pmars-diff and bench, `--engine wasm` of tournament).
 
 ## Running long checks
 
-- Several checks (engine-check, A/B timing): write them into a file in the scratchpad, one command per line, and start `nohup node .claude/skills/engine-check/in-order.mjs <file> > <out> 2>&1 &`. It prints each command with its last lines and exit code and ends with `ALL DONE`; wait for that line in the background (`~/gra/CLAUDE.md`, "Shell", also for PIDs and `pgrep -f`). Read `<out>`, not the background task's `tasks/*.output` file, which the clean-room hook blocks.
+- Several checks (engine-check, A/B timing): write them into a file in the scratchpad, one command per line, and start `nohup node .claude/skills/engine-check/in-order.mjs <file> > <out> 2>&1 &`. It prints each command with its last lines and exit code and ends with `ALL DONE`; wait for that line in the background (`~/gra/CLAUDE.md`, "Shell", also for PIDs and `pgrep -f`). Read `<out>`, not the background task's `tasks/*.output` file, which the clean-room hook blocks. One command that can take over 10 minutes (`make test` on a busy machine) writes into a file in the scratchpad too: past that limit the harness moves it into the background.
 - Timings only on an idle machine: check `uptime` and `node`/`clang` processes, other agents included. Never run pMARS checks or tests next to an A/B timing; `ab-wasm` swaps `42mars.wasm` while it runs.
 
 ## Gotchas
