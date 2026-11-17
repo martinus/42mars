@@ -102,7 +102,7 @@ test('the same seed gives the same run on 1 and 4 threads, and after a resume', 
 test('a run folder takes no new evolution options', { skip }, () => {
   const r = spawnSync(evolve, [join(tmp, 'one'), '--rounds', '50'], { encoding: 'utf8' });
   assert.equal(r.status, 2);
-  assert.match(r.stderr, /only --threads, --batches, --seconds, --changes, --reintroduce, --list \(larger\), --tune-novel, --screen-stop and --screen-check/);
+  assert.match(r.stderr, /only --threads, --batches, --seconds, --changes, --reintroduce, --list \(larger\), --tune-novel, --screen-stop, --screen-check and --difference/);
   assert.equal(spawnSync(evolve, [join(tmp, 'none')], { encoding: 'utf8' }).status, 2); // no --opponents
 });
 
@@ -148,6 +148,8 @@ function checkValues(evs) {
   };
   let protectedNow = new Set(); // at the start of the batch, for the parents
   let listNow = start.params.list; // --list on a run that continues: event `list`
+  // --difference ahead: the SD-score counts only where a warrior scores more; also from a resume on (event `difference`)
+  let ahead = start.params.difference === 'ahead', aheadLeaves = 0;
   // --sharing c: the average of the push-off value weighted, panel warrior j
   // by 1 / (members' mean against it + c), a member's column by the mean of
   // those; the weights of the last 'sharing' event (uniform before the first)
@@ -198,7 +200,7 @@ function checkValues(evs) {
       let num = 0, den = 0, sum = 0;
       snap.cols.forEach((k, i) => {
         if (k === o) return;
-        const d = Math.abs(e.screenPoints[i] - pts.get(`${o},${k}`)), sg = snap.sigma.get(k);
+        const x = e.screenPoints[i] - pts.get(`${o},${k}`), d = ahead ? Math.max(0, x) : Math.abs(x), sg = snap.sigma.get(k);
         if (start.params.sd === 'sum') num += d, den += sg;
         else if (sg > 0) sum += d / sg;
       });
@@ -275,7 +277,7 @@ function checkValues(evs) {
       const score = ids.map((a) => ids.map((b) => (a === b ? null : pts.get(`${a},${b}`) ?? (noGames ? 0 : undefined))));
       const columns = start.params.diversity === 'panel' ? ids.map((id) => panel.has(id)) : null;
       const noise = start.params.noise ? { se: ids.map((a) => ids.map((b) => (a === b ? 0 : se.get(`${a},${b}`)))), z: start.params.noise } : {};
-      const v = averaged(share(pushoffValues(score, ids.map((_, i) => i), { variant: start.params.sd, alpha: start.params.alpha, columns, ...noise }), ids, score), ids, score);
+      const v = averaged(share(pushoffValues(score, ids.map((_, i) => i), { variant: start.params.sd, alpha: start.params.alpha, columns, ahead, ...noise }), ids, score), ids, score);
       let keep = new Set(ids.map((id, i) => (panel.has(id) ? i : -1)).filter((i) => i >= 0));
       if (start.params.niche || start.params.specialists) {
         const safe = new Set(keep);
@@ -299,8 +301,12 @@ function checkValues(evs) {
         `batch ${e.batch}: ${e.id} left, the push-off says ${ids[k]}`);
       if (k !== j) roundings++;
       if (shareW || start.params.average === 'panel') { // the plain average would have pushed out another one
-        const plain = pushoffValues(score, ids.map((_, i) => i), { variant: start.params.sd, alpha: start.params.alpha, columns, ...noise });
+        const plain = pushoffValues(score, ids.map((_, i) => i), { variant: start.params.sd, alpha: start.params.alpha, columns, ahead, ...noise });
         if (ids[weakest(plain, keep)] !== e.id) shareW ? sharedLeaves++ : panelLeaves++;
+      }
+      if (ahead) { // the SD-score both ways would have pushed out another one
+        const both = averaged(share(pushoffValues(score, ids.map((_, i) => i), { variant: start.params.sd, alpha: start.params.alpha, columns, ...noise }), ids, score), ids, score);
+        if (ids[weakest(both, keep)] !== e.id) aheadLeaves++;
       }
       pushoffs++;
     }
@@ -309,6 +315,7 @@ function checkValues(evs) {
       slots[slots.indexOf(e.id)] = null;
     }
     if (e.type === 'list') listNow = e.list;
+    if (e.type === 'difference') ahead = e.difference === 'ahead';
     if (e.type === 'sharing') { // the weights from the members' means at the end of the batch
       const ids = slots.filter((x) => x !== null), ms = ids.filter((m) => !panel.has(m));
       const c = start.params.sharing, w = new Map();
@@ -338,7 +345,7 @@ function checkValues(evs) {
       const score = ids.map((a) => ids.map((b) => (a === b ? null : pts.get(`${a},${b}`) ?? (noGames ? 0 : undefined))));
       const noise = start.params.noise ? { se: ids.map((a) => ids.map((b) => (a === b ? 0 : se.get(`${a},${b}`)))), z: start.params.noise } : {};
       const columns = start.params.diversity === 'panel' ? ids.map((id) => panel.has(id)) : null; // --diversity panel
-      const js = averaged(share(pushoffValues(score, ids.map((_, i) => i), { variant: start.params.sd, alpha: start.params.alpha, columns, ...noise }), ids, score), ids, score);
+      const js = averaged(share(pushoffValues(score, ids.map((_, i) => i), { variant: start.params.sd, alpha: start.params.alpha, columns, ahead, ...noise }), ids, score), ids, score);
       assert.deepEqual(e.values.map((v) => v[0]), ids);
       // the sixth number: the average against the panel, without the own column
       e.values.forEach(([id, , , , , pAvg]) => {
@@ -364,6 +371,7 @@ function checkValues(evs) {
   checkValues.sharedLeaves = sharedLeaves; // push-offs where the weights changed who left
   checkValues.roundings = roundings; // push-offs decided between values equal up to rounding
   checkValues.panelLeaves = panelLeaves; // push-offs where --average panel changed who left
+  checkValues.aheadLeaves = aheadLeaves; // push-offs where --difference ahead changed who left
   return checked;
 }
 
@@ -1370,6 +1378,39 @@ test('--average panel: the push-off average over the panel only; the same run on
   // refused together with --sharing
   const r = spawnSync(evolve, [join(tmp, 'avgp-share'), ...args, '--sharing', '20', '--batches', '1'], { encoding: 'utf8' });
   assert.notEqual(r.status, 0);
+});
+
+test('--difference ahead: the SD-score only where a warrior scores more; from the start, and from a resume on', { skip }, () => {
+  assert.equal(base[0].params.difference, 'abs');
+  const BATCHES = 12;
+  const args = [...TINY, '--difference', 'ahead', '--list', '16', '--survivors', '8'];
+  run(join(tmp, 'ahead1'), [...args, '--threads', '1', '--batches', String(BATCHES)]);
+  const one = events(join(tmp, 'ahead1'));
+  assert.equal(one[0].params.difference, 'ahead');
+  // every value, estimate and push-off with the one-sided SD-score
+  assert.equal(checkValues(one), BATCHES);
+  assert.ok(checkValues.aheadLeaves >= 2, `ahead changed who left in ${checkValues.aheadLeaves} push-offs`);
+  run(join(tmp, 'ahead3'), [...args, '--threads', '3', '--batches', String(BATCHES)]);
+  assert.deepEqual(stable(events(join(tmp, 'ahead3'))), stable(one));
+  // a run that continues with it: the run so far is the one without, then
+  // an event and the values of the list with it, and the state keeps it
+  const sw = join(tmp, 'ahead-switch');
+  run(sw, [...TINY, '--threads', '2', '--batches', '6']);
+  run(sw, ['--threads', '2', '--batches', '6', '--difference', 'ahead']);
+  run(sw, ['--threads', '2', '--batches', '2']);
+  const evs = events(sw);
+  assert.deepEqual(stable(evs).slice(0, stable(base).length), stable(base));
+  const k = evs.findIndex((e) => e.type === 'difference');
+  assert.deepEqual([evs[k].difference, evs[k].batch, evs[k + 1].type], ['ahead', 6, 'values']);
+  assert.equal(evs.filter((e) => e.type === 'difference').length, 1);
+  assert.equal(checkValues(evs), 6 + 1 + 6 + 2);
+  assert.ok(checkValues.aheadLeaves >= 1, `ahead changed who left in ${checkValues.aheadLeaves} push-offs`);
+  // refused with --simple (--diversity panel, which --simple needs), and a value other than abs and ahead
+  for (const [bad, why] of [[['--simple', '--diversity', 'panel'], /--difference ahead not with --simple/], [['--difference', 'sideways'], /usage/]]) {
+    const r = spawnSync(evolve, [join(tmp, 'ahead-bad'), ...args, ...bad, '--batches', '1'], { encoding: 'utf8' });
+    assert.equal(r.status, 2, bad.join(' '));
+    assert.match(r.stderr, why);
+  }
 });
 
 test('--screen-check 3 is the run without it and logs every bound; --screen-stop 3 stops those children; the same run on any thread count and after a resume', { skip }, () => {

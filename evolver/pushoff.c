@@ -29,17 +29,18 @@ double pushoff_se(uint32_t wins, uint32_t ties, uint32_t rounds) {
 }
 
 double pushoff_distance(const double *score, size_t stride, const uint32_t *active, uint32_t n, uint32_t a, uint32_t b,
-                        const double *sigma, const double *se, double z, const uint8_t *cols, int variant) {
+                        const double *sigma, const double *se, double z, const uint8_t *cols, int variant, int ahead) {
   double num = 0, den = 0, sum = 0;
   for (uint32_t i = 0; i < n; i++) {
     const uint32_t k = active[i];
     if (k == a || k == b || (cols && !cols[k])) continue;
-    double d = fabs(score[a * stride + k] - score[b * stride + k]);
+    double d = score[a * stride + k] - score[b * stride + k];
+    if (!ahead) d = fabs(d);
     if (se) {
       const double sa = se[a * stride + k], sb = se[b * stride + k];
       d -= z * sqrt(sa * sa + sb * sb);
-      if (d < 0) d = 0;
     }
+    if (d < 0) d = 0; // ahead: only where a scores more than b
     if (variant == SD_SUM) {
       num += d;
       den += sigma[k];
@@ -52,7 +53,7 @@ double pushoff_distance(const double *score, size_t stride, const uint32_t *acti
 }
 
 void pushoff_values(const double *score, size_t stride, const uint32_t *active, uint32_t n, int variant, double alpha,
-                    const double *se, double z, const uint8_t *cols, double *sigma, pushoff_value *out) {
+                    const double *se, double z, const uint8_t *cols, int ahead, double *sigma, pushoff_value *out) {
   pushoff_sigma(score, stride, active, n, sigma);
   for (uint32_t i = 0; i < n; i++) {
     const uint32_t a = active[i];
@@ -65,7 +66,7 @@ void pushoff_values(const double *score, size_t stride, const uint32_t *active, 
     for (uint32_t j = 0; j < n; j++) {
       const uint32_t b = active[j];
       if (b == a) continue;
-      const double d = pushoff_distance(score, stride, active, n, a, b, sigma, se, z, cols, variant);
+      const double d = pushoff_distance(score, stride, active, n, a, b, sigma, se, z, cols, variant, ahead);
       if (d < distance) distance = d, nearest = b;
     }
     if (nearest == UINT32_MAX) distance = 0;
