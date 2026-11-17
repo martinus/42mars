@@ -8,27 +8,32 @@
 // in the order given) as Server-Sent Events for the evolver dashboards:
 // every line as it is written, and an event `reset` when the file got
 // shorter (the run was continued from its state), after which the lines
-// come again from the start. /run/events is run 0, /runs lists the runs.
+// come again from the start. /run/events is run 0, /runs lists the runs: name, last batch, members, the
+// score of best.red against the holdout, and whether it wrote in the last minute.
 // /runs/events streams all runs in one connection, each data line starting
 // with the run's number and a space: a browser opens at most 6 connections
 // to a host, and a stream per run kept them all busy, so that pages from the
 // same server waited for a free one (Firefox, 15th November 2026).
 // ui/evolver.html?run=<n> shows one run, ui/runs.html all of them.
+// A folder of islands (42evolve --islands) given to --run stands for all its
+// islands, each named <folder>/island-NN.
 // --run takes every folder up to the next option, so `--run ~/42evolve.*`
 // works.
 //
 // A run's history longer than COMPACT_FROM bytes goes out compacted (not
 // with --full): without the warriors that left (their enter, complete,
-// leave and elite events), with only the last of the values, speed,
+// leave and elite events; a warrior that set a new best against the holdout
+// stays), with only the last of the values, speed,
 // specialists and sharing events and the last 20 screen events; then the
 // new lines as they come. A continued run of 7,453 batches had 463 MB of
 // events, and the dashboard showed nothing while it read them all (16th
 // November 2026). The first line after the history is an event `compacted`.
-import { createReadStream, existsSync } from 'node:fs';
+import { createReadStream, existsSync, readdirSync } from 'node:fs';
 import { createInterface } from 'node:readline';
 import { createServer } from 'node:http';
 import { open, readFile, stat } from 'node:fs/promises';
 import { basename, extname, join, normalize, resolve } from 'node:path';
+import { bestRedInfo, progressPoint } from './progress.js';
 
 const root = resolve(new URL('..', import.meta.url).pathname);
 const usage = (why) => {
@@ -56,6 +61,15 @@ for (const args = process.argv.slice(2); args.length;) {
 }
 const port = Number(portArg ?? process.env.PORT ?? 8000);
 if (!Number.isInteger(port) || port < 0 || port > 65535) usage(`not a port: '${portArg ?? process.env.PORT}'`);
+// a folder of islands (42evolve --islands: islands.txt, island-01, ...) stands for its islands
+for (let i = 0; i < runDirs.length; i++) {
+  if (!existsSync(join(runDirs[i], 'islands.txt'))) continue;
+  const islands = readdirSync(runDirs[i]).filter((n) => /^island-\d+$/.test(n)).sort().map((n) => join(runDirs[i], n));
+  runDirs.splice(i, 1, ...islands);
+  i += islands.length - 1;
+}
+// the name of a run: its folder, an island with the folder of its islands before it
+const runName = (dir) => (/^island-\d+$/.test(basename(dir)) ? `${basename(resolve(dir, '..'))}/${basename(dir)}` : basename(dir));
 for (const dir of runDirs) if (!existsSync(join(dir, 'events.jsonl'))) console.error(`${dir} has no events.jsonl yet; the dashboard shows the run once 42evolve writes it`);
 const runDir = runDirs[0] ?? null;
 const types = {
@@ -84,18 +98,48 @@ const KEEP_LAST = new Set(['values', 'speed', 'specialists', 'sharing']);
 
 // The history of a large run up to byte end, compacted (see the top); the
 // lines are kept for the next request (it took 21 s for 463 MB on a busy
-// machine), which gets them and the lines from there on as they are.
+// machine), which gets them and the lines from there on as they are, until
+// those are more than COMPACT_FROM too: a page that switches between runs
+// asks for a history with every click.
 async function compacted(file, end, send) {
   const known = histories.get(file);
-  if (known && known.end <= end) {
+  if (known && known.end <= end && end - known.end <= COMPACT_FROM) {
     for (const line of known.lines) send('message', line);
     return known.end;
   }
   const lines = [];
   const gone = new Set(), last = new Map(), screens = []; // ids that left; the last line of a type; the screen lines
-  let n = 0, sent = 0;
+  // a warrior that was the best against the holdout when it was benched stays,
+  // also when it left: the dashboard names the best of the run (best.red)
+  // only from the warriors it knows
+  const records = new Set();
+  // the progress chart of every batch, as the dashboard draws it from the
+  // whole history: [batch, best and mean of the members against the panel
+  // (the values event before it), best against the holdout so far (-1 none)];
+  // the dashboard cannot draw it from a history without the warriors that left
+  const panel = new Set(), history = [];
+  let values = null;
+  let n = 0, sent = 0, record = -Infinity;
   for await (const line of linesOf(file, end)) {
     const t = typeOf(line);
+    if (t === 'bench') {
+      const avg = Number(/"avg":(-?[\d.]+(?:e[-+]?\d+)?)/.exec(line)?.[1]);
+      if (avg > record) record = avg, records.add(idOf(line));
+    }
+    if (t === 'start') for (const p of JSON.parse(line).panel ?? []) panel.add(p.id);
+    if (t === 'rotate') {
+      const e = JSON.parse(line);
+      panel.delete(e.out);
+      panel.add(e.panel.id);
+    }
+    if (t === 'values') values = line;
+    if (t === 'batch' && values) {
+      const members = JSON.parse(values).values?.filter((v) => !panel.has(v[0]));
+      if (members) {
+        const p = progressPoint(members.map((v) => v[5] ?? 0), record > -Infinity ? record : -1);
+        history.push([Number(/"batch":(\d+)/.exec(line)[1]), p.best, p.mean, p.holdout]);
+      }
+    }
     if (t === 'leave') gone.add(idOf(line));
     if (t === 'elite') {
       const r = /"replaced":\{"id":(\d+)/.exec(line);
@@ -104,6 +148,7 @@ async function compacted(file, end, send) {
     if (t === 'screen') screens.push(n);
     last.set(t, n++);
   }
+  for (const id of records) gone.delete(id);
   const keptScreens = new Set(screens.slice(-20));
   let at = 0;
   for await (const line of linesOf(file, end)) {
@@ -114,10 +159,19 @@ async function compacted(file, end, send) {
     lines.push(line);
     sent++;
   }
-  lines.push(JSON.stringify({ type: 'compacted', lines: n, dropped: n - sent, gone: gone.size }));
+  lines.push(JSON.stringify({ type: 'compacted', lines: n, dropped: n - sent, gone: gone.size, history: history.length ? history : undefined }));
   histories.set(file, { end, lines });
   for (const line of lines) send('message', line);
   return end;
+}
+
+// The last `bytes` of a file of `size` bytes (all of a shorter one).
+async function readTail(file, size, bytes) {
+  const fh = await open(file, 'r');
+  const tail = Buffer.alloc(Math.min(size, bytes));
+  await fh.read(tail, 0, tail.length, size - tail.length);
+  await fh.close();
+  return tail;
 }
 
 // Calls send(event, data) with the new complete lines of the run's
@@ -125,7 +179,7 @@ async function compacted(file, end, send) {
 // 'reset' when the file got shorter. Stops when the request closes.
 function follow(req, runDir, send) {
   const file = join(runDir, 'events.jsonl');
-  send('run', JSON.stringify({ name: basename(runDir) }));
+  send('run', JSON.stringify({ name: runName(runDir) }));
   let offset = 0, partial = '', busy = false;
   const poll = async () => {
     if (busy) return;
@@ -139,10 +193,7 @@ function follow(req, runDir, send) {
       }
       if (size > offset && offset === 0 && size > COMPACT_FROM && !full) {
         // up to the last complete line; the rest comes with the next poll
-        const fh = await open(file, 'r');
-        const tail = Buffer.alloc(Math.min(size, 1 << 20));
-        await fh.read(tail, 0, tail.length, size - tail.length);
-        await fh.close();
+        const tail = await readTail(file, size, 1 << 20);
         const end = size - (tail.length - 1 - tail.lastIndexOf(10));
         offset = await compacted(file, end, send);
       } else if (size > offset) {
@@ -163,6 +214,43 @@ function follow(req, runDir, send) {
   poll();
   const timer = setInterval(poll, 300);
   req.on('close', () => clearInterval(timer));
+}
+
+// What the dashboard's list of runs shows of one run, read cheaply: the last
+// batch event in the last 256 KB of its events, the holdout score in the
+// head of best.red and the batch it is from, the age of the last write: a run counts as running while
+// that is below 3 times its last batch (the speed event), at least 2 minutes
+// (a batch on one thread took over a minute, 17th November 2026).
+const summaries = new Map(); // folder -> { key, out, mtimeMs, seconds }: unchanged files are not read again
+async function summary(dir, index) {
+  const file = join(dir, 'events.jsonl'), red = join(dir, 'best.red');
+  const [ev, best] = await Promise.all([stat(file).catch(() => null), stat(red).catch(() => null)]);
+  const key = `${ev?.size} ${ev?.mtimeMs} ${best?.mtimeMs}`;
+  let c = summaries.get(dir);
+  if (c?.key !== key) {
+    c = { key, mtimeMs: ev?.mtimeMs ?? 0, seconds: 0, out: { name: runName(dir), batch: -1, members: 0, holdout: null, bestBatch: null } };
+    if (ev) {
+      const lines = (await readTail(file, ev.size, 256 << 10)).toString('utf8').split('\n');
+      let batch = null;
+      for (let i = lines.length - 1; i >= 0 && !(batch && c.seconds); i--) {
+        const t = typeOf(lines[i]);
+        if (t === 'speed' && !c.seconds) c.seconds = Number(/"seconds":([\d.]+)/.exec(lines[i])?.[1] ?? 0);
+        if (t === 'batch' && !batch) {
+          try {
+            batch = JSON.parse(lines[i]);
+          } catch {} // a line cut at the start of the tail
+        }
+      }
+      if (batch) c.out.batch = batch.batch, c.out.members = batch.members ?? batch.cells ?? 0;
+    }
+    if (best) {
+      const info = bestRedInfo(await readFile(red, 'latin1').catch(() => ''));
+      c.out.holdout = info.holdout;
+      c.out.bestBatch = info.batch; // the batch it was found in: the list shows its age
+    }
+    summaries.set(dir, c);
+  }
+  return { index, ...c.out, running: Date.now() - c.mtimeMs < Math.max(120000, 3000 * c.seconds) };
 }
 
 const eventStream = (res) => res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', connection: 'keep-alive' });
@@ -188,8 +276,9 @@ createServer(async (req, res) => {
     return;
   }
   if (path === '/runs') {
+    const list = await Promise.all(runDirs.map((dir, index) => summary(dir, index)));
     res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-cache' });
-    res.end(JSON.stringify(runDirs.map((dir, index) => ({ index, name: basename(dir) }))));
+    res.end(JSON.stringify(list));
     return;
   }
   if (path === '/') { // the visualizer lives in ui/
@@ -214,6 +303,9 @@ createServer(async (req, res) => {
   process.exit(1);
 }).listen(port, '127.0.0.1', () => {
   console.log(`Core War Theater: http://127.0.0.1:${port}/`);
-  runDirs.forEach((dir, i) => console.log(`evolver dashboard of ${dir}: http://127.0.0.1:${port}/ui/evolver.html${i ? `?run=${i}` : ''}`));
-  if (runDirs.length > 1) console.log(`all ${runDirs.length} runs side by side: http://127.0.0.1:${port}/ui/runs.html`);
+  if (runDirs.length === 1) console.log(`evolver dashboard of ${runDirs[0]}: http://127.0.0.1:${port}/ui/evolver.html`);
+  if (runDirs.length > 1) {
+    console.log(`evolver dashboard of ${runDirs.length} runs, a list on the left to switch: http://127.0.0.1:${port}/ui/evolver.html`);
+    console.log(`all ${runDirs.length} runs side by side: http://127.0.0.1:${port}/ui/runs.html`);
+  }
 });

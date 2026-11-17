@@ -11,6 +11,7 @@
 
 import { assemble, compileMars, createMarsSync } from '../wasm/42mars.js';
 import { describe, measureStyle } from '../tools/style.js';
+import { progressPoint } from '../tools/progress.js';
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
@@ -57,6 +58,7 @@ function fresh() {
   };
 }
 let S = fresh();
+let matrixHeading = null; // the matrix heading of the page, before a run changed it
 let selected = null;
 let ease = 0.1; // the share of the way to a target that this frame moves (time-based, see frame())
 let hover = null; // { kind, ... } of the canvas under the mouse
@@ -107,6 +109,10 @@ function handle(e) {
       S = fresh();
       S.start = e;
       S.rounds = e.params.rounds;
+      // the heading as the page has it, then what this run changes in it: one page shows several runs
+      matrixHeading ??= document.querySelector('.matrix-panel h2').innerHTML;
+      document.querySelector('.matrix-panel h2').innerHTML = matrixHeading;
+      if (e.params.average === 'panel') $('matrix-average').textContent = 'average score against the panel (--average panel)';
       if (e.params.crowding) { // the matrix panel shows the archive, no cells
         document.querySelector('.matrix-panel h2').innerHTML = 'Crowding archive <small>a warrior competes with its nearest by SD-score against the panel; one unlike all takes the place of the weaker of the closest pair · rows the archive, best first, columns the panel warriors · click a cell to watch the match</small>';
       } else if (e.params.specialists) {
@@ -250,7 +256,7 @@ function handle(e) {
       }
       const ms = alive();
       const pa = ms.map((m) => m.panelAvg ?? 0);
-      S.history.push({ batch: e.batch, best: pa.length ? Math.max(...pa) : 0, mean: pa.length ? pa.reduce((a, b) => a + b, 0) / pa.length : 0, holdout: S.bestHoldout });
+      S.history.push({ batch: e.batch, ...progressPoint(pa, S.bestHoldout) });
       chipsDirty = true;
       break;
     }
@@ -263,6 +269,9 @@ function handle(e) {
       break;
     case 'compacted': // tools/serve.mjs sent a long history without the warriors that left
       tick(`history compacted: ${fmtInt(e.dropped)} of ${fmtInt(e.lines)} events not sent, ${fmtInt(e.gone)} warriors that left are not shown (tools/serve.mjs --full sends all)`);
+      // the progress of every batch, computed by the server from the whole
+      // history: the points drawn from the compacted one miss the warriors that left
+      if (e.history) S.history = e.history.map(([batch, best, mean, holdout]) => ({ batch, best, mean, holdout }));
       break;
     default:
   }
@@ -1262,6 +1271,7 @@ function wire() {
     $('drop').hidden = true;
     const f = e.dataTransfer.files[0];
     if (!f) return;
+    clearTimeout(connecting);
     source?.close();
     $('live').classList.remove('on');
     load(await f.text());
@@ -1303,11 +1313,118 @@ function applyPending(now) {
   if (selected !== null) renderCard();
 }
 
+// The runs of the server (tools/serve.mjs --run a b ...): with more than one,
+// a list on the left; a click (or [ and ]) points this one page at another
+// run, ?run=<n> remembers which. The list comes again every 5 s: its batch,
+// the score of its best.red against the holdout, whether it still writes.
+let current = Math.max(0, Number(new URLSearchParams(location.search).get('run')) || 0);
+let runs = [];
+// The order of the list: a click on a column's heading sorts by it, a second
+// one turns it around. First: names a to z, the most batches, the youngest
+// best warrior, the highest score.
+const SORTS = { name: 1, batch: -1, age: 1, score: -1 };
+let sortBy = 'name', sortDir = 1;
+try {
+  const [k, d] = (localStorage.getItem('evolver-side-sort') ?? '').split(':');
+  if (k in SORTS) sortBy = k, sortDir = d === '-1' ? -1 : d === '1' ? 1 : SORTS[k];
+} catch {}
+const ageOf = (x) => (x.bestBatch === null || x.batch < 0 ? null : Math.max(0, x.batch - x.bestBatch));
+
+function orderedRuns() {
+  const byName = (a, b) => a.name.localeCompare(b.name, 'en', { numeric: true });
+  if (sortBy === 'name') return [...runs].sort((a, b) => sortDir * byName(a, b));
+  const key = { batch: (x) => x.batch, age: ageOf, score: (x) => x.holdout }[sortBy];
+  return [...runs].sort((a, b) => {
+    const x = key(a), y = key(b);
+    if (x === null || y === null) return (x === null) - (y === null) || byName(a, b); // those without a value last
+    return sortDir * (x - y) || byName(a, b);
+  });
+}
+
+// The color of a run's score among the runs: red for the lowest, yellow in
+// the middle, green for the highest (by value, not by rank: two runs that
+// are close look alike).
+function runColor(score, lo, hi) {
+  if (score === null) return '';
+  const t = hi > lo ? (score - lo) / (hi - lo) : 1;
+  return `hsl(${Math.round(135 * t)} 85% ${Math.round(58 + 8 * t)}%)`;
+}
+
+function renderRuns() {
+  const scores = runs.map((x) => x.holdout).filter((x) => x !== null);
+  const lo = Math.min(...scores), hi = Math.max(...scores);
+  // a run's name without the 42evolve. of a run folder; an island of the only folder of islands without that folder
+  const roots = new Set(runs.map((x) => (x.name.includes('/') ? x.name.split('/')[0] : null)));
+  const oneRoot = roots.size === 1 && !roots.has(null);
+  const shortName = (name) => (oneRoot ? name.split('/')[1] : name).replace(/^42evolve\./, '');
+  $('side-count').textContent = `${runs.length} runs`;
+  for (const h of document.querySelectorAll('.side-cols [data-sort]')) {
+    const on = h.dataset.sort === sortBy;
+    h.classList.toggle('on', on);
+    h.textContent = `${h.dataset.label}${on ? (sortDir > 0 ? ' ↑' : ' ↓') : ''}`;
+  }
+  $('side-list').innerHTML = orderedRuns().map((x) => {
+    const age = ageOf(x), batch = x.batch < 0 ? '' : fmtInt(x.batch), score = x.holdout === null ? '–' : x.holdout.toFixed(1);
+    const title = [
+      esc(x.name),
+      `batch ${batch || '–'}, ${x.members} members`,
+      `best.red ${x.holdout === null ? 'not yet' : `${score} against the holdout${age === null ? '' : `, found ${fmtInt(age)} batches ago (batch ${fmtInt(x.bestBatch)})`}`}`,
+      ...(x.running ? [] : ['stopped: no events for 3 batch times']),
+    ].join(' · ');
+    return `<li class="${x.running ? '' : 'stopped'}"><button data-run="${x.index}" class="${x.index === current ? 'on' : ''}" title="${title}">`
+      + `<i class="dot${x.running ? ' on' : ''}"></i><span class="nm">${esc(shortName(x.name))}</span><span class="sb">${batch}</span>`
+      + `<span class="ag">${age === null ? '' : fmtInt(age)}</span><span class="sc" style="color:${runColor(x.holdout, lo, hi)}">${score}</span></button></li>`;
+  }).join('');
+}
+
+async function refreshRuns() {
+  if (document.hidden) return; // a tab nobody looks at asks for nothing
+  try {
+    runs = await (await fetch('/runs')).json();
+  } catch {
+    return; // the server is away; the stream says so with its dot
+  }
+  const several = runs.length > 1;
+  $('side').hidden = !several;
+  document.body.classList.toggle('with-side', several);
+  if (several) renderRuns();
+}
+
+// An empty dashboard: before the first events of a run, and when its events
+// come again from the start.
+function clearRun() {
+  S = fresh();
+  selected = null;
+  pending = [];
+  renderCard();
+}
+
+let connecting = 0; // the timer of a switch: stepping over runs with [ and ] asks only for the one it stops at
+function switchRun(i) {
+  if (i === current && source) return;
+  current = i;
+  source?.close();
+  clearRun();
+  busyHistory.length = 0;
+  chartsDirty = chipsDirty = tickerDirty = opsDirty = true;
+  const q = new URLSearchParams(location.search);
+  q.set('run', String(i));
+  history.replaceState(null, '', `?${q}`);
+  clearTimeout(connecting);
+  connecting = setTimeout(connect, 200);
+  if (runs.length) renderRuns();
+}
+
+function stepRun(d) {
+  const r = orderedRuns();
+  const k = r.findIndex((x) => x.index === current);
+  if (r.length > 1) switchRun(r[(k + d + r.length) % r.length].index);
+}
+
 function connect() {
-  const run = new URLSearchParams(location.search).get('run');
-  source = new EventSource(run === null ? '/run/events' : `/run/${Number(run)}/events`);
+  source = new EventSource(`/run/${current}/events`);
   source.addEventListener('run', (e) => { document.title = `42evolve · ${JSON.parse(e.data).name}`; });
-  source.addEventListener('reset', () => { S = fresh(); selected = null; pending = []; renderCard(); });
+  source.addEventListener('reset', clearRun);
   source.onopen = () => $('live').classList.add('on');
   source.onerror = () => $('live').classList.remove('on');
   source.onmessage = (e) => { pending.push(JSON.parse(e.data)); };
@@ -1345,7 +1462,28 @@ async function main() {
   new ResizeObserver(() => { chartsDirty = true; }).observe(document.body);
   const log = new URLSearchParams(location.search).get('log');
   if (log) load(await (await fetch(log)).text());
-  else connect();
+  else {
+    connect();
+    $('side-list').addEventListener('click', (e) => {
+      const b = e.target.closest('button[data-run]');
+      if (b) switchRun(Number(b.dataset.run));
+    });
+    document.querySelector('.side-cols').addEventListener('click', (e) => {
+      const h = e.target.closest('[data-sort]');
+      if (!h) return;
+      if (h.dataset.sort === sortBy) sortDir = -sortDir;
+      else sortBy = h.dataset.sort, sortDir = SORTS[sortBy];
+      try { localStorage.setItem('evolver-side-sort', `${sortBy}:${sortDir}`); } catch {}
+      renderRuns();
+    });
+    window.addEventListener('keydown', (e) => {
+      if (e.ctrlKey || e.metaKey || e.altKey || $('side').hidden) return;
+      if (e.key === '[') stepRun(-1);
+      if (e.key === ']') stepRun(1);
+    });
+    refreshRuns();
+    setInterval(refreshRuns, 5000);
+  }
   requestAnimationFrame(frame);
 }
 

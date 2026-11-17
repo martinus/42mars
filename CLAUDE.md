@@ -30,7 +30,7 @@ node --test test/wasm.test.js              # one file; --test-name-pattern=<re> 
 PMARS_VALIDATE=$O/validate.red npm test    # + 2 tests that need validate.red (skipped otherwise)
 npm run serve                              # http://127.0.0.1:8000/, no build step
 build/42evolve <run> --opponents warriors/koenigstuhl/94nop --seconds 600   # after make; then:
-node tools/serve.mjs --run <run> [<run> ...]   # dashboards: ui/evolver.html?run=<n>, all runs: ui/runs.html
+node tools/serve.mjs --run <run> [<run> ...]   # dashboard: ui/evolver.html (a list on the left switches runs), side by side: ui/runs.html
 wasm/build.sh                              # after every change under lib/src/; md5 must repeat
 node tools/asm.mjs warriors/dwarf.red      # pMARS-style listing
 node tools/tournament.mjs $O/sets/t20 --rounds 100 --pmars $O/bin/pmars --compare
@@ -64,7 +64,7 @@ The layout (also in `README.md` and `docs/development.md`; change all three toge
 - `cli/42mars.c` the pMARS-compatible program; `examples/example.c` the library's example (`-Ilib`), `examples/parallel.c` a match on threads (`-pthread`; C11 threads on Windows).
 - `evolver/` the evolver `42evolve` (POSIX threads, not in the MSVC build): `evolve.c` the program (thread pool, batches, events, state), `genome.c` typed operands and the changes, `pushoff.c` the diversity push-off, the same operations as `tools/diversity.js`, `names.c` the names (adjective plus the family's noun, Roman numerals for repeats), `style.c` the style of a warrior, the same as `tools/style.js`, `spectrum.c` the program `42spectrum` (what one change of each kind does to a warrior). `test/c/evolver-test.c` and `test/evolver.test.js` test it; the same seed must give the same `events.jsonl` (without `speed` lines) for any thread count and after a resume.
 - `wasm/`: `build.sh`, `42mars.wasm` (committed; the tests load it, so rebuild after C changes), `42mars.js` (JS interface), `42mars.d.ts`. These three work on their own, copied or packed: no imports from elsewhere in the repo; types change with the code (`test/package.test.js` packs and runs it).
-- `tools/`: Node programs for users of the engine (`asm`, `corpus`, `tournament`, `pushoff` with `diversity.js`, `serve`, which streams a run's events with `--run`, `style` with `style.js`, what a warrior does to the core) and the pMARS comparisons (`pmars-diff`, `expr-fuzz`, `example-check`); `tools/opcodes.js` the opcode tables and listing format, which `ui/` and the tests import too.
+- `tools/`: Node programs for users of the engine (`asm`, `corpus`, `tournament`, `pushoff` with `diversity.js`, `serve`, which streams a run's events with `--run` (`progress.js`: what it and the dashboard both compute of a run), `style` with `style.js`, what a warrior does to the core) and the pMARS comparisons (`pmars-diff`, `expr-fuzz`, `example-check`); `tools/opcodes.js` the opcode tables and listing format, which `ui/` and the tests import too.
 - `bench/`: everything that measures speed: `bench`, `bench-pairs`, `bench-native` (with `bench-native.c`, `input.h`, `native-input.mjs`), `tie-ceiling` (with `tie-ceiling.c`), `wasm-functions`, `native-loops`, and `ab-wasm.mjs`, `ab-native.mjs`, `ab-tool.mjs` for alternating A/B timing; never time by hand.
 - `ui/` the visualizer, on the library's watch; `ui/evolver.html` the evolver's dashboard.
 - `docs/redcode-semantics.md`: the spec. Exact assembler and simulator behavior, the watch (3.4, 3.6), pMARS quirks, deviations (section 4). Change it together with the code.
