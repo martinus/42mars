@@ -11,7 +11,7 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { pushoff, pushoffValues, sdDistance, standardError, weakest } from '../tools/diversity.js';
+import { paretoFronts, pushoff, pushoffValues, sdDistance, standardError, weakest } from '../tools/diversity.js';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
 const dir = mkdtempSync(join(tmpdir(), 'diversity-test-'));
@@ -102,6 +102,19 @@ test('--difference ahead: a column counts only where the first scores more', () 
   const both = pushoffValues(W, all), ahead = pushoffValues(W, all, { ahead: true });
   assert.ok(both[3].distance > 0 && weakest(both) === 2);
   assert.ok(ahead[3].distance === 0 && weakest(ahead) === 3);
+});
+
+test('--pushoff pareto: fronts and crowding of NSGA-II, a copy the most crowded (evolver-test.c has the same)', () => {
+  // 0, 1 and 2 are not dominated, 3 is (by 0), 4 is a copy of 0. Crowding
+  // of 0: by the first objective 2, 0, 4, 1 gives (1 - 0) / 2, by the second
+  // 1, 0, 4, 2 gives (1 - 0) / 2; the copy 0
+  const r = paretoFronts([[1, 1], [2, 0], [0, 2], [0.5, 0.5], [1, 1]]);
+  assert.deepEqual(r.front, [0, 0, 0, 1, 0]);
+  assert.deepEqual(r.crowd, [1, Infinity, Infinity, Infinity, 0]);
+  // three objectives, one front of five on a line: the inner ones by their two gaps over the range 4, three times
+  const l = paretoFronts([[0, 4, 0], [1, 3, 1], [2, 2, 2], [3, 1, 3], [4, 0, 4]]);
+  assert.deepEqual(l.front, [0, 0, 0, 0, 0]);
+  assert.deepEqual(l.crowd, [Infinity, 1.5, 1.5, 1.5, Infinity]);
 });
 
 test('a column where everyone scores the same adds nothing', () => {

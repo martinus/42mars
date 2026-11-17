@@ -17,7 +17,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { assemble, createMarsSync } from '../wasm/42mars.js';
-import { pushoffValues, standardError, weakest } from '../tools/diversity.js';
+import { paretoFronts, pushoffValues, standardError, weakest } from '../tools/diversity.js';
 import { kind as styleKind, measureStyle } from '../tools/style.js';
 import { bestRedInfo } from '../tools/progress.js';
 import { prebuilt, program, skip as noCc } from './native.js';
@@ -106,6 +106,24 @@ test('a run folder takes no new evolution options', { skip }, () => {
   assert.equal(spawnSync(evolve, [join(tmp, 'none')], { encoding: 'utf8' }).status, 2); // no --opponents
 });
 
+// --pushoff pareto: the members' values of v as 42evolve computes them, their
+// place in NSGA-II's order on the panel average (without the own column),
+// the average against the other members and the origin of their line (later
+// is younger): 10 (fronts - front) + min(crowding, 5). Panel warriors keep theirs.
+function paretoValues(v, ids, score, panel, origins) {
+  const ms = ids.map((id, i) => i).filter((i) => !panel.has(ids[i]));
+  const obj = ms.map((i) => {
+    const pc = ids.map((b, j) => j).filter((j) => panel.has(ids[j]) && j !== i);
+    const mc = ms.filter((j) => j !== i);
+    return [pc.reduce((t, j) => t + score[i][j], 0) / pc.length, mc.length ? mc.reduce((t, j) => t + score[i][j], 0) / mc.length : 0, origins.get(ids[i])];
+  });
+  const { front, crowd } = paretoFronts(obj);
+  const F = Math.max(...front) + 1;
+  const out = v.map((x) => ({ ...x }));
+  ms.forEach((i, k) => { out[i].value = 10 * (F - front[k]) + Math.min(crowd[k], 5); });
+  return out;
+}
+
 // The matrix after every event, with slots given out as 42evolve does
 // (the lowest free one), and the push-off values of tools/diversity.js.
 // Returns the number of values events checked.
@@ -150,6 +168,11 @@ function checkValues(evs) {
   let listNow = start.params.list; // --list on a run that continues: event `list`
   // --difference ahead: the SD-score counts only where a warrior scores more; also from a resume on (event `difference`)
   let ahead = start.params.difference === 'ahead', aheadLeaves = 0;
+  // --pushoff pareto: the members' value is their place in NSGA-II's order on the panel average, the average
+  // against the other members and the origin of their line (later is younger); 10 (fronts - front) + min(crowding, 5)
+  const origins = new Map(); // id -> the batch its line started, from the enter events
+  let paretoLeaves = 0, newLines = 0, olderSecond = 0;
+  const paretoed = (v, ids, score) => (start.params.pushoff === 'pareto' ? paretoValues(v, ids, score, panel, origins) : v);
   // --sharing c: the average of the push-off value weighted, panel warrior j
   // by 1 / (members' mean against it + c), a member's column by the mean of
   // those; the weights of the last 'sharing' event (uniform before the first)
@@ -236,6 +259,14 @@ function checkValues(evs) {
       }
     }
     if (e.type === 'enter') {
+      // the origin of its line: a new family, or no parents in the list when it was bred (random, back from the
+      // archive, tuned, a start warrior), start a new one; else the older line of its parents
+      const bred = e.parents.length && e.ops !== 'reintroduce' && e.ops !== 'tuned' && e.parents.every((p) => origins.has(p));
+      const expect = e.newFamily || !bred ? e.batch : Math.min(...e.parents.map((p) => origins.get(p)));
+      if (e.newFamily || !e.parents.length || bred) assert.equal(e.origin, expect, `origin of ${e.id}`);
+      if (e.newFamily && e.parents.length) newLines++;
+      if (bred && !e.newFamily && e.parents.length === 2 && origins.get(e.parents[1]) < origins.get(e.parents[0])) olderSecond++;
+      origins.set(e.id, e.origin);
       styleOf.set(e.id, e.style?.kind);
       assert.equal(e.screenPoints.length, P);
       // with --screen-members the screen has members too (replayed in their test)
@@ -277,7 +308,7 @@ function checkValues(evs) {
       const score = ids.map((a) => ids.map((b) => (a === b ? null : pts.get(`${a},${b}`) ?? (noGames ? 0 : undefined))));
       const columns = start.params.diversity === 'panel' ? ids.map((id) => panel.has(id)) : null;
       const noise = start.params.noise ? { se: ids.map((a) => ids.map((b) => (a === b ? 0 : se.get(`${a},${b}`)))), z: start.params.noise } : {};
-      const v = averaged(share(pushoffValues(score, ids.map((_, i) => i), { variant: start.params.sd, alpha: start.params.alpha, columns, ahead, ...noise }), ids, score), ids, score);
+      const v = paretoed(averaged(share(pushoffValues(score, ids.map((_, i) => i), { variant: start.params.sd, alpha: start.params.alpha, columns, ahead, ...noise }), ids, score), ids, score), ids, score);
       let keep = new Set(ids.map((id, i) => (panel.has(id) ? i : -1)).filter((i) => i >= 0));
       if (start.params.niche || start.params.specialists) {
         const safe = new Set(keep);
@@ -303,6 +334,10 @@ function checkValues(evs) {
       if (shareW || start.params.average === 'panel') { // the plain average would have pushed out another one
         const plain = pushoffValues(score, ids.map((_, i) => i), { variant: start.params.sd, alpha: start.params.alpha, columns, ahead, ...noise });
         if (ids[weakest(plain, keep)] !== e.id) shareW ? sharedLeaves++ : panelLeaves++;
+      }
+      if (start.params.pushoff === 'pareto') { // the push-off value would have pushed out another one
+        const plain = pushoffValues(score, ids.map((_, i) => i), { variant: start.params.sd, alpha: start.params.alpha, columns, ...noise });
+        if (ids[weakest(plain, keep)] !== e.id) paretoLeaves++;
       }
       if (ahead) { // the SD-score both ways would have pushed out another one
         const both = averaged(share(pushoffValues(score, ids.map((_, i) => i), { variant: start.params.sd, alpha: start.params.alpha, columns, ...noise }), ids, score), ids, score);
@@ -345,7 +380,7 @@ function checkValues(evs) {
       const score = ids.map((a) => ids.map((b) => (a === b ? null : pts.get(`${a},${b}`) ?? (noGames ? 0 : undefined))));
       const noise = start.params.noise ? { se: ids.map((a) => ids.map((b) => (a === b ? 0 : se.get(`${a},${b}`)))), z: start.params.noise } : {};
       const columns = start.params.diversity === 'panel' ? ids.map((id) => panel.has(id)) : null; // --diversity panel
-      const js = averaged(share(pushoffValues(score, ids.map((_, i) => i), { variant: start.params.sd, alpha: start.params.alpha, columns, ahead, ...noise }), ids, score), ids, score);
+      const js = paretoed(averaged(share(pushoffValues(score, ids.map((_, i) => i), { variant: start.params.sd, alpha: start.params.alpha, columns, ahead, ...noise }), ids, score), ids, score), ids, score);
       assert.deepEqual(e.values.map((v) => v[0]), ids);
       // the sixth number: the average against the panel, without the own column
       e.values.forEach(([id, , , , , pAvg]) => {
@@ -372,6 +407,9 @@ function checkValues(evs) {
   checkValues.roundings = roundings; // push-offs decided between values equal up to rounding
   checkValues.panelLeaves = panelLeaves; // push-offs where --average panel changed who left
   checkValues.aheadLeaves = aheadLeaves; // push-offs where --difference ahead changed who left
+  checkValues.paretoLeaves = paretoLeaves; // push-offs where --pushoff pareto changed who left
+  checkValues.newLines = newLines; // children that started a line of their own (a new family)
+  checkValues.olderSecond = olderSecond; // crossovers that took the older line of the second parent
   return checked;
 }
 
@@ -667,6 +705,7 @@ function checkEarly(evs) {
   const one = evs, par = evs[0].params, P = new Set(evs[0].panel.map((w) => w.id));
   const p1 = new Map(), put1 = (a, b, w, l, t) => { p1.set(`${a},${b}`, ((3 * w + t) * 100) / (w + l + t)); p1.set(`${b},${a}`, ((3 * l + t) * 100) / (w + l + t)); };
   const slots = one[0].panel.map((w) => w.id);
+  const origins = new Map(); // --pushoff pareto
   let decisions = 0, kept = 0;
   // the early rule (evolve.c, STAGE_CUT 8): fewer than 8 members weaker on the
   // first stage, and none, or its nearest no weaker
@@ -675,6 +714,7 @@ function checkEarly(evs) {
     const score = ids.map((a) => ids.map((b) => (a === b ? null : p1.get(`${a},${b}`))));
     const columns = par.diversity === 'panel' ? ids.map((id) => P.has(id)) : null;
     const v = pushoffValues(score, ids.map((_, i) => i), { variant: par.sd, alpha: par.alpha, columns });
+    if (par.pushoff === 'pareto') return { ids, v: paretoValues(v, ids, score, P, origins) };
     if (par.average !== 'panel') return { ids, v };
     return { ids, v: v.map((x, i) => { // --average panel: the average over the panel's columns
       const row = score[i].filter((_, j) => j !== i && P.has(ids[j])), avg = row.reduce((p, q) => p + q, 0) / row.length;
@@ -692,6 +732,7 @@ function checkEarly(evs) {
       let s = slots.indexOf(null, P.size);
       if (s < 0) s = slots.push(null) - 1;
       slots[s] = e.id;
+      origins.set(e.id, e.origin);
       for (const [o, w, l, t] of e.scores) put1(e.id, o, w, l, t);
       // one that played all its rounds with the list full did not meet the rule
       if (one[at + 1].type === 'complete' && slots.filter((x) => x !== null).length - P.size > one[0].params.list) {
@@ -1408,6 +1449,44 @@ test('--difference ahead: the SD-score only where a warrior scores more; from th
   // refused with --simple (--diversity panel, which --simple needs), and a value other than abs and ahead
   for (const [bad, why] of [[['--simple', '--diversity', 'panel'], /--difference ahead not with --simple/], [['--difference', 'sideways'], /usage/]]) {
     const r = spawnSync(evolve, [join(tmp, 'ahead-bad'), ...args, ...bad, '--batches', '1'], { encoding: 'utf8' });
+    assert.equal(r.status, 2, bad.join(' '));
+    assert.match(r.stderr, why);
+  }
+});
+
+test('--pushoff pareto: NSGA-II on panel, members and age; the same run on any thread count and after a resume', { skip }, () => {
+  assert.equal(base[0].params.pushoff, 'value');
+  const BATCHES = 12;
+  const args = [...TINY, '--pushoff', 'pareto', '--list', '16', '--survivors', '8'];
+  run(join(tmp, 'pareto1'), [...args, '--threads', '1', '--batches', String(BATCHES)]);
+  const one = events(join(tmp, 'pareto1'));
+  assert.equal(one[0].params.pushoff, 'pareto');
+  // every origin, value and push-off as tools/diversity.js computes them
+  assert.equal(checkValues(one), BATCHES);
+  assert.ok(checkValues.paretoLeaves >= 2, `pareto changed who left in ${checkValues.paretoLeaves} push-offs`);
+  assert.ok(checkValues.newLines >= 1, `${checkValues.newLines} children started a line of their own`);
+  // a value is 10 (fronts - front) + min(crowding, 5): the first front has the highest values
+  const last = one.filter((e) => e.type === 'values').at(-1), P = new Set(one[0].panel.map((x) => x.id));
+  const vs = last.values.filter((x) => !P.has(x[0])).map((x) => x[4]);
+  assert.ok(vs.every((x) => x > 0) && Math.max(...vs) - Math.min(...vs) >= 10, `values ${vs}`);
+  run(join(tmp, 'pareto3'), [...args, '--threads', '3', '--batches', String(BATCHES)]);
+  assert.deepEqual(stable(events(join(tmp, 'pareto3'))), stable(one));
+  // the state keeps the origins and the option
+  run(join(tmp, 'pareto-resumed'), [...args, '--threads', '2', '--batches', String(BATCHES >> 1)]);
+  run(join(tmp, 'pareto-resumed'), ['--threads', '4', '--batches', String(BATCHES - (BATCHES >> 1))]);
+  assert.deepEqual(stable(events(join(tmp, 'pareto-resumed'))), stable(one));
+  // with --stage: the early decisions on the first-stage results by the fronts too; many crossovers, some of
+  // which continue the older line of their second parent
+  const cross = 'opcode=81,a-operand=108,b-operand=108,insert=100,crossover-insert=400,crossover-replace=400';
+  run(join(tmp, 'pareto-stage'), [...args, '--panel-rounds', '100', '--stage', '20', '--changes', cross, '--threads', '2', '--batches', '16']);
+  const st = events(join(tmp, 'pareto-stage'));
+  assert.equal(checkValues(st), 16);
+  assert.ok(checkValues.olderSecond >= 1, `${checkValues.olderSecond} crossovers took the older line of the second parent`);
+  const rule = checkEarly(st);
+  assert.ok(rule.decisions >= 2, `${rule.decisions} early decisions`);
+  // refused with the options that change the value otherwise, and a value other than value and pareto
+  for (const [bad, why] of [[['--sharing', '20'], /--pushoff pareto not with/], [['--select', 'value'], /--pushoff pareto not with/], [['--pushoff', 'front'], /usage/]]) {
+    const r = spawnSync(evolve, [join(tmp, 'pareto-bad'), ...args, ...bad, '--batches', '1'], { encoding: 'utf8' });
     assert.equal(r.status, 2, bad.join(' '));
     assert.match(r.stderr, why);
   }
