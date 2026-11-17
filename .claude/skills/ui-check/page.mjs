@@ -11,7 +11,7 @@
 //     [--click <css selector>] [--key <key>] [--pause <seconds>]
 //     [--eval <expression>] [--shot <file.png>] [--clip x,y,w,h]
 //
-// --wait: seconds after the page was opened (8), before the first action.
+// --wait: seconds after the page has loaded (8), before the first action.
 // --click: a click() on the first element of the selector; it must exist.
 // --key: a key press, e.g. ']' or 'Escape'. --pause: wait.
 // --eval: prints the JSON of the expression's value on a line.
@@ -54,6 +54,10 @@ while (argv.length) {
   else usage(`unknown option ${a}`);
 }
 
+if (typeof WebSocket === 'undefined') { // Node 20 has none built in
+  console.error('page.mjs needs the WebSocket of Node 22 or newer');
+  process.exit(2);
+}
 const port = 9300 + Math.floor(Math.random() * 600);
 const profile = mkdtempSync(join(tmpdir(), 'ui-page-'));
 const chrome = spawn('google-chrome', ['--headless=new', '--no-sandbox', '--disable-gpu', `--user-data-dir=${profile}`,
@@ -77,7 +81,7 @@ const finish = async (code) => {
 };
 process.on('uncaughtException', (e) => { console.error(e); finish(1); });
 for (let k = 0; ; k++) {
-  try { await fetch(`http://127.0.0.1:${port}/json/version`); break; } catch { if (k > 100) { console.error('chrome did not start'); await finish(2); } await sleep(100); }
+  try { await fetch(`http://127.0.0.1:${port}/json/version`); break; } catch { if (k > 300) { console.error('chrome did not start in 30 s'); await finish(2); } await sleep(100); }
 }
 
 const tab = await (await fetch(`http://127.0.0.1:${port}/json/new?about:blank`, { method: 'PUT' })).json();
@@ -85,8 +89,11 @@ const ws = new WebSocket(tab.webSocketDebuggerUrl);
 await new Promise((r) => ws.addEventListener('open', r, { once: true }));
 let id = 0;
 const pending = new Map(), errors = [];
+let loaded;
+const load = new Promise((r) => { loaded = r; });
 ws.addEventListener('message', (ev) => {
   const msg = JSON.parse(ev.data);
+  if (msg.method === 'Page.loadEventFired') loaded();
   if (msg.id && pending.has(msg.id)) { pending.get(msg.id)(msg); pending.delete(msg.id); }
   if (msg.method === 'Runtime.exceptionThrown') errors.push(msg.params.exceptionDetails?.exception?.description ?? msg.params.exceptionDetails?.text);
   if (msg.method === 'Runtime.consoleAPICalled' && msg.params.type === 'error') errors.push(msg.params.args.map((a) => a.value ?? a.description).join(' '));
@@ -101,6 +108,8 @@ await send('Runtime.enable');
 await send('Page.enable');
 await send('Emulation.setDeviceMetricsOverride', { width: size[0], height: size[1], deviceScaleFactor: 1, mobile: false });
 await send('Page.navigate', { url });
+// a busy machine takes seconds to load a page: the wait counts from the load event
+if (await Promise.race([load.then(() => false), sleep(30000).then(() => true)])) errors.push(`${url} did not load in 30 s`);
 await sleep(1000 * wait);
 
 let clip = null;
