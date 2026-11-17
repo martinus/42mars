@@ -48,6 +48,7 @@ const TINY = ['--opponents', join(root, 'warriors/koenigstuhl/tiny'), '--size', 
   '--bench-every', '2', '--seed', '7',
   // the defaults before the best run of E5 became them; test 'the defaults' has those
   '--list', '20', '--screen-members', '0', '--diversity', 'all', '--panel-rounds', '40', '--no-fill', '--panel-choice', 'random',
+  '--positions', 'pmars', // the matches replayed with the seed alone; the mirror has its own test
   '--stage', '0']; // the tests of --stage set it
 
 function run(dir, args) {
@@ -107,15 +108,17 @@ test('a run folder takes no new evolution options', { skip }, () => {
 });
 
 // --pushoff pareto: the members' values of v as 42evolve computes them, their
-// place in NSGA-II's order on the panel average (without the own column),
-// the average against the other members and the origin of their line (later
-// is younger): 10 (fronts - front) + min(crowding, 5). Panel warriors keep theirs.
-function paretoValues(v, ids, score, panel, origins) {
+// place in NSGA-II's order on the panel average (without the own column) and
+// the average against the other members, with age (pareto-age) also the
+// origin of their line (later is younger): 10 (fronts - front) + min(crowding,
+// 5). Panel warriors keep theirs.
+function paretoValues(v, ids, score, panel, origins, age) {
   const ms = ids.map((id, i) => i).filter((i) => !panel.has(ids[i]));
   const obj = ms.map((i) => {
     const pc = ids.map((b, j) => j).filter((j) => panel.has(ids[j]) && j !== i);
     const mc = ms.filter((j) => j !== i);
-    return [pc.reduce((t, j) => t + score[i][j], 0) / pc.length, mc.length ? mc.reduce((t, j) => t + score[i][j], 0) / mc.length : 0, origins.get(ids[i])];
+    const o = [pc.reduce((t, j) => t + score[i][j], 0) / pc.length, mc.length ? mc.reduce((t, j) => t + score[i][j], 0) / mc.length : 0];
+    return age ? [...o, origins.get(ids[i])] : o;
   });
   const { front, crowd } = paretoFronts(obj);
   const F = Math.max(...front) + 1;
@@ -172,7 +175,7 @@ function checkValues(evs) {
   // against the other members and the origin of their line (later is younger); 10 (fronts - front) + min(crowding, 5)
   const origins = new Map(); // id -> the batch its line started, from the enter events
   let paretoLeaves = 0, newLines = 0, olderSecond = 0;
-  const paretoed = (v, ids, score) => (start.params.pushoff === 'pareto' ? paretoValues(v, ids, score, panel, origins) : v);
+  const paretoed = (v, ids, score) => (start.params.pushoff?.startsWith('pareto') ? paretoValues(v, ids, score, panel, origins, start.params.pushoff === 'pareto-age') : v);
   // --sharing c: the average of the push-off value weighted, panel warrior j
   // by 1 / (members' mean against it + c), a member's column by the mean of
   // those; the weights of the last 'sharing' event (uniform before the first)
@@ -335,7 +338,7 @@ function checkValues(evs) {
         const plain = pushoffValues(score, ids.map((_, i) => i), { variant: start.params.sd, alpha: start.params.alpha, columns, ahead, ...noise });
         if (ids[weakest(plain, keep)] !== e.id) shareW ? sharedLeaves++ : panelLeaves++;
       }
-      if (start.params.pushoff === 'pareto') { // the push-off value would have pushed out another one
+      if (start.params.pushoff?.startsWith('pareto')) { // the push-off value would have pushed out another one
         const plain = pushoffValues(score, ids.map((_, i) => i), { variant: start.params.sd, alpha: start.params.alpha, columns, ...noise });
         if (ids[weakest(plain, keep)] !== e.id) paretoLeaves++;
       }
@@ -718,7 +721,7 @@ function checkEarly(evs) {
     const score = ids.map((a) => ids.map((b) => (a === b ? null : p1.get(`${a},${b}`))));
     const columns = par.diversity === 'panel' ? ids.map((id) => P.has(id)) : null;
     const v = pushoffValues(score, ids.map((_, i) => i), { variant: par.sd, alpha: par.alpha, columns });
-    if (par.pushoff === 'pareto') return { ids, v: paretoValues(v, ids, score, P, origins) };
+    if (par.pushoff?.startsWith('pareto')) return { ids, v: paretoValues(v, ids, score, P, origins, par.pushoff === 'pareto-age') };
     if (par.average !== 'panel') return { ids, v };
     return { ids, v: v.map((x, i) => { // --average panel: the average over the panel's columns
       const row = score[i].filter((_, j) => j !== i && P.has(ids[j])), avg = row.reduce((p, q) => p + q, 0) / row.length;
@@ -881,7 +884,7 @@ test('--tune-novel 1: the most novel survivor that left is tuned, and comes back
   writeFileSync(join(seeds, 'badstep.red'), ';redcode\n;name bad step\nstep equ 100\nloop add.ab #step, bomb\nmov.i bomb, @bomb\njmp loop\nbomb dat #0, #step\n');
   const args = [...TINY.slice(0, TINY.indexOf('--panel')), '--panel', '12', '--holdout', '8', '--batch', '24', '--rounds', '60', '--screen-rounds', '10',
     '--panel-rounds', '60', '--list', '6', '--survivors', '6', '--seed', '3', '--start', seeds, '--tune-novel', '1', '--changes', 'insert=1,delete=1,a-operand=1',
-    '--screen-members', '0', '--diversity', 'all', '--no-fill', '--panel-choice', 'random', '--stage', '0'];
+    '--screen-members', '0', '--diversity', 'all', '--no-fill', '--panel-choice', 'random', '--stage', '0', '--positions', 'pmars'];
   run(join(tmp, 'tn1'), [...args, '--threads', '1', '--batches', '8']);
   const evs = events(join(tmp, 'tn1'));
   assert.equal(evs[0].params.tuneNovel, 1);
@@ -1458,6 +1461,80 @@ test('--difference ahead: the SD-score only where a warrior scores more; from th
   }
 });
 
+// --positions mirror as 42evolve plays a match (play() in evolve.c): game g is
+// round g / 2 + 1 of the seed's sequence, with a as the first warrior when g
+// is even and b when it is odd; [wins, losses, ties] of a. One game at a time,
+// not in the blocks 42evolve plays them in.
+function mirrored(m, a, b, seed, first, rounds) {
+  const out = [0, 0, 0];
+  for (let g = first; g < first + rounds; g++) {
+    const r = m.runMatch(g % 2 ? [b, a] : [a, b], { seed, rounds: 1, firstRound: g >> 1 });
+    const x = r.warriors[g % 2];
+    out[0] += x.wins, out[1] += x.losses, out[2] += x.ties;
+  }
+  return out;
+}
+
+test('--positions mirror: every position from both sides, a warrior and its copy win as often; the same run on any thread count and after a resume', { skip }, () => {
+  const dir = join(tmp, 'twins');
+  mkdirSync(dir);
+  const dwarf = readFileSync(join(root, 'warriors/dwarf.red'), 'latin1');
+  writeFileSync(join(dir, 'a.red'), dwarf);
+  writeFileSync(join(dir, 'b.red'), dwarf);
+  const args = [...without(TINY, '--positions'), '--positions', 'mirror', '--start', dir];
+  run(join(tmp, 'mirror1'), [...args, '--threads', '1', '--batches', '4']);
+  const one = events(join(tmp, 'mirror1'));
+  assert.equal(one[0].params.positions, 'mirror');
+  assert.equal(checkValues(one), 4);
+  // the two start warriors are one: against each other each wins exactly as many games
+  const starts = one.filter((e) => e.type === 'enter' && e.ops === 'start');
+  assert.equal(starts.length, 2);
+  const [, w, l] = starts[1].scores.find(([o]) => o === starts[0].id);
+  assert.equal(w, l, `the copy won ${w} and lost ${l}`);
+  assert.ok(w > 0, 'the two never beat each other');
+  // every match as the WebAssembly engine plays it, game by game
+  const code = new Map(one[0].panel.map((x) => [x.id, x.source]));
+  const m = createMarsSync(RULES);
+  let replayed = 0;
+  for (const e of one) {
+    if (e.type !== 'enter') continue;
+    code.set(e.id, `;name x\n${e.code}`);
+    for (const [o, ww, ll, tt, seed] of e.scores.slice(0, 4)) {
+      const rounds = ww + ll + tt;
+      assert.deepEqual(mirrored(m, assemble(code.get(e.id), RULES), assemble(code.get(o), RULES), seed, 0, rounds), [ww, ll, tt], `${e.id} against ${o}`);
+      replayed++;
+    }
+  }
+  assert.ok(replayed >= 20, `${replayed} matches replayed`);
+  // odd numbers of games: --stage 11 of 41 ends the first block in the middle of a position and starts the
+  // rest there; the entering results are games 0 to 10, a complete event has all 41, so games 11 to 40 are the
+  // difference
+  const odd = [...without(args, '--rounds', '--panel-rounds', '--screen-rounds', '--stage'), '--rounds', '41', '--panel-rounds', '41', '--screen-rounds', '11', '--stage', '11'];
+  run(join(tmp, 'mirror-odd'), [...odd, '--threads', '2', '--batches', '3']);
+  const od = events(join(tmp, 'mirror-odd'));
+  const oc = new Map(od[0].panel.map((x) => [x.id, x.source]));
+  let halves = 0;
+  const entered = new Map(); // "id,o" -> its first 11 games
+  for (const e of od) {
+    if (e.type === 'enter') oc.set(e.id, `;name x\n${e.code}`);
+    if (e.type !== 'enter' && e.type !== 'complete') continue;
+    if (e.type === 'enter') for (const [o, w0, l0, t0] of e.scores) entered.set(`${e.id},${o}`, [w0, l0, t0]);
+    for (const [o, w0, l0, t0, seed] of e.scores.slice(0, 3)) {
+      const before = e.type === 'enter' ? [0, 0, 0] : entered.get(`${e.id},${o}`);
+      const [ww, ll, tt] = [w0 - before[0], l0 - before[1], t0 - before[2]];
+      assert.equal(ww + ll + tt, e.type === 'enter' ? 11 : 30);
+      assert.deepEqual(mirrored(m, assemble(oc.get(e.id), RULES), assemble(oc.get(o), RULES), seed, e.type === 'enter' ? 0 : 11, ww + ll + tt), [ww, ll, tt], `${e.type} ${e.id} against ${o}`);
+      if (e.type === 'complete') halves++;
+    }
+  }
+  assert.ok(halves >= 6, `${halves} completed matches replayed`);
+  run(join(tmp, 'mirror3'), [...args, '--threads', '3', '--batches', '4']);
+  assert.deepEqual(stable(events(join(tmp, 'mirror3'))), stable(one));
+  run(join(tmp, 'mirror-resumed'), [...args, '--threads', '2', '--batches', '2']);
+  run(join(tmp, 'mirror-resumed'), ['--threads', '4', '--batches', '2']);
+  assert.deepEqual(stable(events(join(tmp, 'mirror-resumed'))), stable(one));
+});
+
 test('no match has seed 0: pMARS\'s generator stays there, and every round would have the same position', { skip }, () => {
   // with --seed 36 and these rules the seed of every match against member 18 was 0 (the hash of its id modulo
   // 761); Bitter Robot II of pareto30 learned such a fixed position and won 1,125,180 of 1,127,080 rounds
@@ -1476,7 +1553,7 @@ test('no match has seed 0: pMARS\'s generator stays there, and every round would
   assert.equal(seeds.filter((s) => s === 0).length, 0);
 });
 
-test('--pushoff pareto: NSGA-II on panel, members and age; the same run on any thread count and after a resume', { skip }, () => {
+test('--pushoff pareto: NSGA-II on panel and members, pareto-age also on the age of the line; the same run on any thread count and after a resume', { skip }, () => {
   assert.equal(base[0].params.pushoff, 'value');
   const BATCHES = 12;
   const args = [...TINY, '--pushoff', 'pareto', '--list', '16', '--survivors', '8'];
@@ -1500,8 +1577,9 @@ test('--pushoff pareto: NSGA-II on panel, members and age; the same run on any t
   // with --stage: the early decisions on the first-stage results by the fronts too; many crossovers, some of
   // which continue the older line of their second parent
   const cross = 'opcode=81,a-operand=108,b-operand=108,insert=100,crossover-insert=400,crossover-replace=400';
-  run(join(tmp, 'pareto-stage'), [...args, '--panel-rounds', '100', '--stage', '20', '--changes', cross, '--threads', '2', '--batches', '16']);
+  run(join(tmp, 'pareto-stage'), [...without(args, '--pushoff'), '--pushoff', 'pareto-age', '--panel-rounds', '100', '--stage', '20', '--changes', cross, '--threads', '2', '--batches', '16']);
   const st = events(join(tmp, 'pareto-stage'));
+  assert.equal(st[0].params.pushoff, 'pareto-age');
   assert.equal(checkValues(st), 16);
   assert.ok(checkValues.olderSecond >= 1, `${checkValues.olderSecond} crossovers took the older line of the second parent`);
   const rule = checkEarly(st);
@@ -1587,7 +1665,7 @@ test('--optimize: the constants of a warrior, steps confirmed with other seeds, 
   // a stone whose step of 100 bombs 8 cells of a core of 800
   const file = join(tmp, 'badstep.red');
   writeFileSync(file, ';redcode\n;name bad step\nstep equ 100\nloop add.ab #step, bomb\nmov.i bomb, @bomb\njmp loop\nbomb dat #0, #step\n');
-  const args = ['--optimize', file, ...TINY.slice(0, TINY.indexOf('--panel')), '--panel', '12', '--holdout', '8', '--rounds', '60', '--seed', '3'];
+  const args = ['--optimize', file, ...TINY.slice(0, TINY.indexOf('--panel')), '--panel', '12', '--holdout', '8', '--rounds', '60', '--seed', '3', '--positions', 'pmars'];
   run(join(tmp, 'opt1'), [...args, '--threads', '1']);
   const one = events(join(tmp, 'opt1'));
   const start = one[0], end = one.at(-1), steps = one.filter((e) => e.type === 'optimize-step');
@@ -1623,7 +1701,7 @@ test('the defaults: the best run of E5, with a panel picked from a round robin; 
   run(join(tmp, 'def4'), [...args, '--threads', '4']);
   const one = events(join(tmp, 'def4'));
   const p = one[0].params;
-  assert.deepEqual([p.list, p.panel, p.screenMembers, p.diversity, p.panelRounds, p.fill, p.stage, p.panelChoice], [80, 20, 10, 'panel', 500, true, p.screenRounds, 'picked']);
+  assert.deepEqual([p.list, p.panel, p.screenMembers, p.diversity, p.panelRounds, p.fill, p.stage, p.panelChoice, p.positions], [80, 20, 10, 'panel', 500, true, p.screenRounds, 'picked', 'mirror']);
   const pick = one[1];
   assert.equal(pick.type, 'pick');
   assert.equal(pick.sample, 40);
