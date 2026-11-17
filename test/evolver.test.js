@@ -17,7 +17,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { assemble, createMarsSync } from '../wasm/42mars.js';
-import { paretoFronts, pushoffValues, standardError, weakest } from '../tools/diversity.js';
+import { paretoFronts, pushoffValues, sdDistance, standardError, weakest } from '../tools/diversity.js';
 import { kind as styleKind, measureStyle } from '../tools/style.js';
 import { bestRedInfo } from '../tools/progress.js';
 import { prebuilt, program, skip as noCc } from './native.js';
@@ -391,7 +391,11 @@ function checkValues(evs) {
       e.values.forEach(([id, avg, distance, nearest, value], i) => {
         const near = (x, y) => Math.abs(x - y) <= 1e-5 * Math.max(1, Math.abs(y));
         assert.ok(near(avg, js[i].avg) && near(distance, js[i].distance) && near(value, js[i].value), `values of ${id}`);
-        assert.equal(nearest, ids[js[i].nearest]);
+        // the nearest: the replay's, or one as near up to rounding (copies tie, and the last bits of their sums
+        // depend on the compiler: CI's gcc named another one of two in the run of --pushoff pareto with --stage)
+        const k = ids.indexOf(nearest);
+        assert.ok(nearest === ids[js[i].nearest] || (k >= 0 && near(sdDistance(score, ids.map((_, j) => j), i, k, start.params.sd, noise.se ? noise : null, columns, ahead), js[i].distance)),
+          `nearest of ${id}: ${nearest}, the replay says ${ids[js[i].nearest]}`);
       });
       checked++;
     }
