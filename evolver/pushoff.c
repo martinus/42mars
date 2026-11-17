@@ -4,6 +4,7 @@
 #include "pushoff.h"
 
 #include <math.h>
+#include <stdlib.h>
 
 void pushoff_sigma(const double *score, size_t stride, const uint32_t *active, uint32_t n, double *sigma) {
   for (uint32_t i = 0; i < n; i++) {
@@ -83,4 +84,70 @@ int pushoff_weakest(const pushoff_value *v, uint32_t n, const uint8_t *keep) {
       w = (int)i;
   }
   return w;
+}
+
+void pareto_fronts(const double *obj, uint32_t n, uint32_t m, uint32_t *front, double *crowd) {
+  uint32_t *order = malloc((n ? n : 1) * sizeof *order);
+  uint8_t *now = malloc(n ? n : 1);
+  if (!order || !now) abort();
+  for (uint32_t i = 0; i < n; i++) front[i] = UINT32_MAX, crowd[i] = 0;
+  uint32_t done = 0;
+  for (uint32_t f = 0; done < n; f++) {
+    for (uint32_t i = 0; i < n; i++) {
+      now[i] = 0;
+      if (front[i] != UINT32_MAX) continue;
+      int dominated = 0;
+      for (uint32_t j = 0; j < n && !dominated; j++) {
+        if (j == i || front[j] != UINT32_MAX) continue;
+        int all = 1, better = 0;
+        for (uint32_t k = 0; k < m; k++) {
+          if (obj[j * m + k] < obj[i * m + k]) all = 0;
+          if (obj[j * m + k] > obj[i * m + k]) better = 1;
+        }
+        dominated = all && better;
+      }
+      now[i] = !dominated;
+    }
+    uint32_t c = 0;
+    for (uint32_t i = 0; i < n; i++)
+      if (now[i]) front[i] = f, order[c++] = i;
+    done += c;
+    // the crowding distance of this front: per objective, sorted by it (ties
+    // by index), the ends infinite, the others the gap between their two
+    // neighbours over the objective's range among all n
+    for (uint32_t k = 0; k < m; k++) {
+      c = 0;
+      for (uint32_t i = 0; i < n; i++)
+        if (now[i]) order[c++] = i;
+      double lo = INFINITY, hi = -INFINITY;
+      for (uint32_t i = 0; i < n; i++) {
+        if (obj[i * m + k] < lo) lo = obj[i * m + k];
+        if (obj[i * m + k] > hi) hi = obj[i * m + k];
+      }
+      for (uint32_t a = 1; a < c; a++) { // insertion sort, stable
+        const uint32_t x = order[a];
+        uint32_t b = a;
+        while (b > 0 && obj[order[b - 1] * m + k] > obj[x * m + k]) order[b] = order[b - 1], b--;
+        order[b] = x;
+      }
+      if (c) crowd[order[0]] = crowd[order[c - 1]] = INFINITY;
+      for (uint32_t a = 1; a + 1 < c; a++)
+        if (hi > lo) crowd[order[a]] += (obj[order[a + 1] * m + k] - obj[order[a - 1] * m + k]) / (hi - lo);
+    }
+    // a copy (the same objectives as an earlier one of the front) is the most crowded
+    for (uint32_t i = 0; i < n; i++) {
+      if (!now[i]) continue;
+      for (uint32_t j = 0; j < i; j++) {
+        if (!now[j]) continue;
+        uint32_t k = 0;
+        while (k < m && obj[j * m + k] == obj[i * m + k]) k++;
+        if (k == m) {
+          crowd[i] = 0;
+          break;
+        }
+      }
+    }
+  }
+  free(order);
+  free(now);
 }

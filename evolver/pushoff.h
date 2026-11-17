@@ -48,6 +48,16 @@ void pushoff_sigma(const double *score, size_t stride, const uint32_t *active, u
 void pushoff_values(const double *score, size_t stride, const uint32_t *active, uint32_t n, int variant, double alpha,
                     const double *se, double z, const uint8_t *cols, int ahead, double *sigma, pushoff_value *out);
 
+// Non-dominated sorting and crowding distance of NSGA-II (Deb et al. 2002)
+// for n warriors on m objectives, larger better: obj[i * m + k]. front[i]:
+// 0 for the warriors nobody dominates, 1 for those only warriors of front 0
+// dominate, ... crowd[i]: within its front, per objective sorted by it (ties
+// by index), the gap between its two neighbours over the objective's range
+// among all n, summed over the objectives; INFINITY at either end; 0 for a
+// copy, a warrior with the same objectives as one of lower index in its
+// front (42evolve --pushoff pareto, tools/diversity.js paretoFronts()).
+void pareto_fronts(const double *obj, uint32_t n, uint32_t m, uint32_t *front, double *crowd);
+
 // The position in out[] of the lowest value among the ones with keep[index]
 // 0: on a tie the lower average, then the higher index. -1 if none.
 int pushoff_weakest(const pushoff_value *v, uint32_t n, const uint8_t *keep);

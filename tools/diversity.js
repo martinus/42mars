@@ -116,3 +116,35 @@ export function pushoff(score, options = {}) {
   if (active.length) out.push({ index: active[0], avg: 0, nearest: -1, distance: 0, value: 0 });
   return out;
 }
+
+// Non-dominated sorting and crowding distance of NSGA-II (Deb et al. 2002),
+// as evolver/pushoff.c pareto_fronts() (42evolve --pushoff pareto): obj[i]
+// the objectives of warrior i, larger better. front[i]: 0 for those nobody
+// dominates, 1 for those only front 0 dominates, ... crowd[i]: within its
+// front, per objective sorted by it (ties by index), the gap between its two
+// neighbours over the objective's range among all, summed; Infinity at
+// either end; 0 for a copy, the same objectives as one of lower index in
+// its front.
+export function paretoFronts(obj) {
+  const n = obj.length, m = n ? obj[0].length : 0;
+  const front = new Array(n).fill(-1), crowd = new Array(n).fill(0);
+  let done = 0;
+  for (let f = 0; done < n; f++) {
+    const now = obj.map((a, i) => front[i] < 0 && !obj.some((b, j) => j !== i && front[j] < 0 && b.every((x, k) => x >= a[k]) && b.some((x, k) => x > a[k])));
+    now.forEach((x, i) => { if (x) front[i] = f; });
+    done += now.filter(Boolean).length;
+    for (let k = 0; k < m; k++) {
+      const order = [];
+      now.forEach((x, i) => { if (x) order.push(i); });
+      let lo = Infinity, hi = -Infinity;
+      for (const a of obj) lo = Math.min(lo, a[k]), hi = Math.max(hi, a[k]);
+      order.sort((a, b) => obj[a][k] - obj[b][k] || a - b);
+      const c = order.length;
+      if (c) crowd[order[0]] = crowd[order[c - 1]] = Infinity;
+      for (let a = 1; a + 1 < c; a++) if (hi > lo) crowd[order[a]] += (obj[order[a + 1]][k] - obj[order[a - 1]][k]) / (hi - lo);
+    }
+    // a copy (the same objectives as an earlier one of the front) is the most crowded
+    now.forEach((x, i) => { if (x && now.some((y, j) => y && j < i && obj[j].every((v, k) => v === obj[i][k]))) crowd[i] = 0; });
+  }
+  return { front, crowd };
+}

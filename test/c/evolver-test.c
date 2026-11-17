@@ -299,6 +299,19 @@ static void test_pushoff(void) {
   CHECK(v[3].distance > 0 && pushoff_weakest(v, 4, 0) == 2, "both ways: the weak one stays");
   pushoff_values(W, 4, all, 4, SD_OPPONENT, 1, 0, 0, 0, 1, sw, v);
   CHECK(v[3].distance == 0 && pushoff_weakest(v, 4, 0) == 3, "ahead: the weak one goes");
+  // --pushoff pareto: 0, 1 and 2 are not dominated, 3 is (by 0), 4 is a
+  // copy of 0. Crowding of 0: by the first objective 2, 0, 4, 1 gives
+  // (1 - 0) / 2, by the second 1, 0, 4, 2 gives (1 - 0) / 2; the copy 0
+  const double O[10] = {1, 1, 2, 0, 0, 2, 0.5, 0.5, 1, 1};
+  uint32_t fr[5];
+  double cr[5];
+  pareto_fronts(O, 5, 2, fr, cr);
+  CHECK(fr[0] == 0 && fr[1] == 0 && fr[2] == 0 && fr[3] == 1 && fr[4] == 0, "fronts %u %u %u %u %u", fr[0], fr[1], fr[2], fr[3], fr[4]);
+  CHECK(cr[0] == 1 && isinf(cr[1]) && isinf(cr[2]) && isinf(cr[3]) && cr[4] == 0, "crowding %g %g %g %g %g", cr[0], cr[1], cr[2], cr[3], cr[4]);
+  // three objectives, one front of five on a line: the inner ones by their two gaps over the range 4, three times
+  const double L[15] = {0, 4, 0, 1, 3, 1, 2, 2, 2, 3, 1, 3, 4, 0, 4};
+  pareto_fronts(L, 5, 3, fr, cr);
+  CHECK(fr[0] == 0 && fr[2] == 0 && fr[4] == 0 && fabs(cr[1] - 1.5) < 1e-12 && fabs(cr[2] - 1.5) < 1e-12 && isinf(cr[0]), "a line: %g %g", cr[1], cr[2]);
   CHECK(fabs(pushoff_se(50, 20, 100) - 13.453624047073712) < 1e-12, "standard error");
   CHECK(pushoff_se(100, 0, 100) == 0 && pushoff_se(0, 0, 0) == 0, "standard error of a constant score");
 }
