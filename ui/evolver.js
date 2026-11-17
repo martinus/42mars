@@ -114,6 +114,9 @@ function handle(e) {
       matrixHeading ??= document.querySelector('.matrix-panel h2').innerHTML;
       document.querySelector('.matrix-panel h2').innerHTML = matrixHeading;
       if (e.params.average === 'panel') $('matrix-average').textContent = 'average score against the panel (--average panel)';
+      // the push-off's average: over the panel only with --average panel, which the button then says
+      document.querySelector('#matrix-sorts [data-sort="average"]').dataset.label = e.params.average === 'panel' ? 'panel' : 'score';
+      renderMatrixSorts();
       if (e.params.crowding) { // the matrix panel shows the archive, no cells
         document.querySelector('.matrix-panel h2').innerHTML = 'Crowding archive <small>a warrior competes with its nearest by SD-score against the panel; one unlike all takes the place of the weaker of the closest pair · rows the archive, best first, columns the panel warriors · click a cell to watch the match</small>';
       } else if (e.params.specialists) {
@@ -404,7 +407,7 @@ function drawGrid(now) {
 // value, by its average, by the SD-score to the nearest. The panel columns:
 // by the panel warrior's own strength, by the evolved warriors' average
 // against it, by the standard deviation of their scores against it.
-const MATRIX_SORTS = { rows: ['value', 'average', 'distance'], cols: ['strength', 'score', 'spread'] };
+const MATRIX_SORTS = { rows: ['value', 'average', 'row', 'distance'], cols: ['strength', 'score', 'spread'] };
 let matrixSort = { rows: 'value', rowsDir: -1, cols: 'strength', colsDir: -1 };
 try {
   const m = JSON.parse(localStorage.getItem('evolver-matrix-sort') ?? 'null');
@@ -435,12 +438,33 @@ function panelColumns() {
   return S.columns;
 }
 
+// Of each evolved warrior: its mean points over every cell of its row, the
+// other evolved warriors and the panel, what the colors of the row show
+// (with --average panel the push-off's average is over the panel only); once
+// per update.
+function rowMeans() {
+  if (S.rowsOf !== S.version) {
+    S.rowsOf = S.version;
+    const ms = alive(), others = [...ms.map((m) => m.id), ...S.panel];
+    S.rowMeans = new Map(ms.map((m) => {
+      let sum = 0, n = 0;
+      for (const o of others) {
+        const x = o === m.id ? null : points(resOf(m.id, o));
+        if (x !== null) sum += x, n++;
+      }
+      return [m.id, n ? sum / n : -1];
+    }));
+  }
+  return S.rowMeans;
+}
+
 function drawMatrix(now) {
   if (S.start?.params?.mapElites) return drawGrid(now);
   const canvas = $('matrix');
   const { ctx, w, h } = fit(canvas);
   if (!S.start) return;
-  const rowKey = { value: (m) => m.value ?? -1, average: (m) => m.avg ?? -1, distance: (m) => m.distance ?? -1 }[matrixSort.rows];
+  const rows = matrixSort.rows === 'row' ? rowMeans() : null;
+  const rowKey = { value: (m) => m.value ?? -1, average: (m) => m.avg ?? -1, row: (m) => rows.get(m.id) ?? -1, distance: (m) => m.distance ?? -1 }[matrixSort.rows];
   const ms = alive().sort((a, b) => matrixSort.rowsDir * (rowKey(a) - rowKey(b)) || a.id - b.id);
   const columns = matrixSort.cols === 'strength' ? null : panelColumns();
   const colKey = columns ? (p) => columns.get(p.id)[matrixSort.cols] : (p) => p.panelAvg ?? 0;
@@ -1007,11 +1031,13 @@ function drawChips() {
   $('c-cps').textContent = sp ? sp.candidatesPerSecond.toFixed(1) : '–';
   $('c-rps').textContent = sp ? fmtBig(sp.roundsPerSecond) : '–';
   $('c-ips').textContent = sp ? fmtBig(sp.instructions / sp.seconds) : '–';
-  $('c-busy').textContent = sp ? `${(100 * sp.busy).toFixed(0)}% of ${sp.threads}` : '–';
+  // a run that writes no more events (/runs says so) uses no cores: its last speed is history
+  const stopped = runs.some((x) => x.index === current && !x.running);
+  $('c-busy').textContent = stopped ? 'stopped' : sp ? `${(100 * sp.busy).toFixed(0)}% of ${sp.threads}` : '–';
   if (sp) busyHistory.push(sp.busy), busyHistory.length > 60 && busyHistory.shift();
   const c = $('cpu'), ctx = c.getContext('2d');
   ctx.clearRect(0, 0, 44, 44);
-  const busy = sp ? sp.busy : 0;
+  const busy = sp && !stopped ? sp.busy : 0;
   ctx.lineWidth = 5;
   ctx.strokeStyle = '#1c2033';
   ctx.beginPath();
@@ -1381,15 +1407,17 @@ try {
 } catch {}
 const ageOf = (x) => (x.bestBatch === null || x.batch < 0 ? null : Math.max(0, x.batch - x.bestBatch));
 
+// The running runs first, then the stopped ones (whose batch and age stand
+// still), each part in the order of the heading.
 function orderedRuns() {
   const byName = (a, b) => a.name.localeCompare(b.name, 'en', { numeric: true });
-  if (sortBy === 'name') return [...runs].sort((a, b) => sortDir * byName(a, b));
   const key = { batch: (x) => x.batch, age: ageOf, score: (x) => x.holdout }[sortBy];
-  return [...runs].sort((a, b) => {
+  const order = sortBy === 'name' ? (a, b) => sortDir * byName(a, b) : (a, b) => {
     const x = key(a), y = key(b);
     if (x === null || y === null) return (x === null) - (y === null) || byName(a, b); // those without a value last
     return sortDir * (x - y) || byName(a, b);
-  });
+  };
+  return [...runs].sort((a, b) => !a.running - !b.running || order(a, b));
 }
 
 // The color of a run's score among the runs: red for the lowest, yellow in
@@ -1414,7 +1442,8 @@ function renderRuns() {
     h.classList.toggle('on', on);
     h.textContent = `${h.dataset.label}${on ? (sortDir > 0 ? ' ↑' : ' ↓') : ''}`;
   }
-  $('side-list').innerHTML = orderedRuns().map((x) => {
+  const ordered = orderedRuns(), running = ordered.filter((x) => x.running).length;
+  $('side-list').innerHTML = ordered.map((x, i) => {
     const age = ageOf(x), batch = x.batch < 0 ? '' : fmtInt(x.batch), score = x.holdout === null ? '–' : x.holdout.toFixed(1);
     const title = [
       esc(x.name),
@@ -1422,7 +1451,8 @@ function renderRuns() {
       `best.red ${x.holdout === null ? 'not yet' : `${score} against the holdout${age === null ? '' : `, found ${fmtInt(age)} batches ago (batch ${fmtInt(x.bestBatch)})`}`}`,
       ...(x.running ? [] : ['stopped: no events for 3 batch times']),
     ].join(' · ');
-    return `<li class="${x.running ? '' : 'stopped'}"><button data-run="${x.index}" class="${x.index === current ? 'on' : ''}" title="${title}">`
+    const head = i === running && running > 0 ? `<li class="side-part">stopped · ${ordered.length - running}</li>` : '';
+    return `${head}<li class="${x.running ? '' : 'stopped'}"><button data-run="${x.index}" class="${x.index === current ? 'on' : ''}" title="${title}">`
       + `<i class="dot${x.running ? ' on' : ''}"></i><span class="nm">${esc(shortName(x.name))}</span><span class="sb">${batch}</span>`
       + `<span class="ag">${age === null ? '' : fmtInt(age)}</span><span class="sc" style="color:${runColor(x.holdout, lo, hi)}">${score}</span></button></li>`;
   }).join('');
@@ -1438,6 +1468,7 @@ async function refreshRuns() {
   const several = runs.length > 1;
   $('side').hidden = !several;
   document.body.classList.toggle('with-side', several);
+  chipsDirty = true; // the busy chip: whether the run still runs
   if (several) renderRuns();
 }
 
