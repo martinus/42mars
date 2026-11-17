@@ -80,6 +80,30 @@ test('--diversity panel: only the columns given count', () => {
   assert.deepEqual(v.map((x) => x.avg), pushoffValues(S, all).map((x) => x.avg));
 });
 
+test('--difference ahead: a column counts only where the first scores more', () => {
+  const all = [0, 1, 2, 3];
+  const near = (x, y) => Math.abs(x - y) < 1e-12;
+  // 1 is 5 ahead of 0 in columns 2 and 3: the whole SD-score one way, nothing the other
+  assert.ok(near(sdDistance(S, all, 1, 0, 'opponent', null, null, true), 1.7557391154451805));
+  assert.equal(sdDistance(S, all, 0, 1, 'opponent', null, null, true), 0);
+  // 2 against 3: 13 ahead in column 1, 1 behind in column 0, whose sigma
+  // (5, 0, 1 of rows 1, 2, 3) is sqrt(14/3); the two ways add up to the SD-score
+  const a23 = sdDistance(S, all, 2, 3, 'opponent', null, null, true), a32 = sdDistance(S, all, 3, 2, 'opponent', null, null, true);
+  assert.ok(near(a32, 1 / Math.sqrt(14 / 3)) && near(a23 + a32, 2.890943994708568), `${a23} ${a32}`);
+  // three equal strong warriors and one that loses to all: both ways keep
+  // the weak one (it differs) and push off a strong one; ahead it is nowhere
+  // ahead of anyone and goes (evolver-test.c has the same)
+  const W = [
+    [null, 150, 150, 250],
+    [150, null, 150, 250],
+    [150, 150, null, 250],
+    [50, 50, 50, null],
+  ];
+  const both = pushoffValues(W, all), ahead = pushoffValues(W, all, { ahead: true });
+  assert.ok(both[3].distance > 0 && weakest(both) === 2);
+  assert.ok(ahead[3].distance === 0 && weakest(ahead) === 3);
+});
+
 test('a column where everyone scores the same adds nothing', () => {
   const T = [
     [null, 7, 1],

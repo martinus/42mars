@@ -76,6 +76,7 @@ typedef struct {
   int average_panel;        // --average panel: the push-off's average over the panel's columns only
   int member_games_none;    // --member-games none: members never play each other (with --average panel --diversity panel)
   int simple;               // --simple: a candidate plays the panel only and stops when it cannot make it onto the hill
+  int ahead;                // --difference ahead: the SD-score counts a column only where the warrior scores more
   uint64_t draw_seed;       // the order of the opponent folder, so the panel and the holdout: --draw-seed, else the seed
   uint32_t niche;           // --niche N: each kind of style keeps at least N members (not the two kinds of junk)
   int map_elites;           // --map-elites: an archive instead of the list (#147), ME_CELLS or ME_CROWDING
@@ -605,7 +606,7 @@ static void panel_average_values(run *r, const double *pts) {
 
 static void compute_values(run *r) {
   pushoff_values(r->pts, r->cap, r->active, r->active_n, r->p.sd, r->p.alpha, r->p.noise > 0 ? r->se : 0, r->p.noise,
-                 r->p.distance_panel ? r->keep : 0, r->sigma, r->values);
+                 r->p.distance_panel ? r->keep : 0, r->p.ahead, r->sigma, r->values);
   share_values(r, r->pts);
   panel_average_values(r, r->pts);
 }
@@ -613,7 +614,7 @@ static void compute_values(run *r) {
 // The same on the results of the first stage (--stage).
 static void compute_values1(run *r) {
   pushoff_values(r->pts1, r->cap, r->active, r->active_n, r->p.sd, r->p.alpha, r->p.noise > 0 ? r->se1 : 0, r->p.noise,
-                 r->p.distance_panel ? r->keep : 0, r->sigma, r->values);
+                 r->p.distance_panel ? r->keep : 0, r->p.ahead, r->sigma, r->values);
   share_values(r, r->pts1);
   panel_average_values(r, r->pts1);
 }
@@ -804,7 +805,7 @@ static void event_start(run *r) {
           "\"rounds\":%u,\"screenRounds\":%u,\"benchEvery\":%u,\"benchRounds\":%u,\"initLength\":%u,"
           "\"screenFactor\":%.17g,\"alpha\":%.17g,\"reintroduce\":%.17g,\"sd\":\"%s\",\"seed\":%" PRIu64
           ",\"select\":\"%s\",\"rotate\":%u,\"fractions\":%.17g,\"race\":%u,\"raceKeep\":%u,\"prior\":\"%s\","
-          "\"parents\":\"%s\",\"screenMembers\":%u,\"noise\":%.17g,\"stage\":%u,\"fill\":%s,\"panelRounds\":%u,\"diversity\":\"%s\",\"niche\":%u,\"panelChoice\":\"%s\",\"mapElites\":%s,\"crowding\":%s,\"specialists\":%s,\"sharing\":%.17g,\"screenStop\":%.17g,\"screenCheck\":%.17g,\"tuneNovel\":%u,\"average\":\"%s\",\"memberGames\":\"%s\",\"simple\":%s,\"drawSeed\":%" PRIu64 "},"
+          "\"parents\":\"%s\",\"screenMembers\":%u,\"noise\":%.17g,\"stage\":%u,\"fill\":%s,\"panelRounds\":%u,\"diversity\":\"%s\",\"niche\":%u,\"panelChoice\":\"%s\",\"mapElites\":%s,\"crowding\":%s,\"specialists\":%s,\"sharing\":%.17g,\"screenStop\":%.17g,\"screenCheck\":%.17g,\"tuneNovel\":%u,\"average\":\"%s\",\"memberGames\":\"%s\",\"simple\":%s,\"drawSeed\":%" PRIu64 ",\"difference\":\"%s\"},"
           "\"opponents\":",
           m42_version(), p->rules.core_size, p->rules.max_cycles, p->rules.max_processes, p->rules.max_length,
           p->rules.min_distance, r->panel_n, r->hold_n, p->list, p->batch, p->survivors, p->rounds, p->screen_rounds,
@@ -819,7 +820,8 @@ static void event_start(run *r) {
                                             : "picked",
           p->map_elites ? "true" : "false", p->map_elites == ME_CROWDING ? "true" : "false",
           p->specialists ? "true" : "false", p->sharing, p->screen_stop, p->screen_check, p->tune_novel,
-          p->average_panel ? "panel" : "all", p->member_games_none ? "none" : "all", p->simple ? "true" : "false", p->draw_seed);
+          p->average_panel ? "panel" : "all", p->member_games_none ? "none" : "all", p->simple ? "true" : "false", p->draw_seed,
+          p->ahead ? "ahead" : "abs");
   json_str(f, p->opponents, 0);
   fputs(",\"panelFiles\":", f);
   json_str(f, p->panel_files, 0);
@@ -1008,12 +1010,12 @@ static void save_state(run *r) {
   fprintf(f, "42evolve-state 1\n");
   fprintf(f, "rules %u %u %u %u %u\n", p->rules.core_size, p->rules.max_cycles, p->rules.max_processes,
           p->rules.max_length, p->rules.min_distance);
-  fprintf(f, "params %u %u %u %u %u %u %u %u %u %u %.17g %.17g %.17g %d %" PRIu64 " %d %u %.17g %u %u %d %d %u %.17g %u %d %u %d %u %d %d %.17g %.17g %.17g %u %d %d %d %" PRIu64 "\n",
+  fprintf(f, "params %u %u %u %u %u %u %u %u %u %u %.17g %.17g %.17g %d %" PRIu64 " %d %u %.17g %u %u %d %d %u %.17g %u %d %u %d %u %d %d %.17g %.17g %.17g %u %d %d %d %" PRIu64 " %d\n",
           p->panel, p->holdout, p->list, p->batch, p->survivors, p->rounds, p->screen_rounds, p->bench_every,
           p->bench_rounds, p->init_length, p->screen_factor, p->alpha, p->reintroduce, p->sd, p->seed, p->select,
           p->rotate, p->fractions, p->race, p->race_keep, p->prior, p->parents, p->screen_members, p->noise, p->stage, p->fill,
           p->panel_rounds, p->distance_panel, p->niche, p->map_elites, p->specialists, p->sharing, p->screen_stop, p->screen_check,
-          p->tune_novel, p->average_panel, p->member_games_none, p->simple, p->draw_seed);
+          p->tune_novel, p->average_panel, p->member_games_none, p->simple, p->draw_seed, p->ahead);
   fprintf(f, "opponents %s\n", p->opponents);
   if (p->start[0]) fprintf(f, "start-dir %s\n", p->start);
   char mix[CH_COUNT * 32];
@@ -1153,12 +1155,12 @@ static int load_state(run *r, const char *path) {
       // --race-keep, --prior, --parents, --screen-members, --noise, --stage,
       // --fill; a state without them has none of them
       const int got = sscanf(line + 7,
-                             "%u %u %u %u %u %u %u %u %u %u %lg %lg %lg %d %" SCNu64 " %d %u %lg %u %u %d %d %u %lg %u %d %u %d %u %d %d %lg %lg %lg %u %d %d %d %" SCNu64,
+                             "%u %u %u %u %u %u %u %u %u %u %lg %lg %lg %d %" SCNu64 " %d %u %lg %u %u %d %d %u %lg %u %d %u %d %u %d %d %lg %lg %lg %u %d %d %d %" SCNu64 " %d",
                              &p->panel, &p->holdout, &p->list, &p->batch, &p->survivors, &p->rounds, &p->screen_rounds,
                              &p->bench_every, &p->bench_rounds, &p->init_length, &p->screen_factor, &p->alpha,
                              &p->reintroduce, &p->sd, &p->seed, &p->select, &p->rotate, &p->fractions, &p->race,
                              &p->race_keep, &p->prior, &p->parents, &p->screen_members, &p->noise, &p->stage, &p->fill, &p->panel_rounds,
-                             &p->distance_panel, &p->niche, &p->map_elites, &p->specialists, &p->sharing, &p->screen_stop, &p->screen_check, &p->tune_novel, &p->average_panel, &p->member_games_none, &p->simple, &p->draw_seed);
+                             &p->distance_panel, &p->niche, &p->map_elites, &p->specialists, &p->sharing, &p->screen_stop, &p->screen_check, &p->tune_novel, &p->average_panel, &p->member_games_none, &p->simple, &p->draw_seed, &p->ahead);
       if (got < 15) goto bad; // the first version had 15; what a state lacks keeps its default
       if (got < 39) p->draw_seed = p->seed; // a state from before --draw-seed: the folder in the order of the seed
     } else if (!strncmp(line, "opponents ", 10)) {
@@ -1442,7 +1444,8 @@ static void bench(run *r, uint32_t slot) {
 // The candidate's SD-score to the nearest warrior in, from its screen results
 // against the panel (row[j] for panel warrior j) and the panel columns of the
 // others, raised to alpha: its push-off value is about screen * this. The
-// standard deviations are those of the last compute_values().
+// standard deviations are those of the last compute_values(). With --difference
+// ahead only where the candidate scores more, as the push-off counts it.
 static double estimated_distance(const run *r, const unit *row, uint32_t rounds) {
   double best = INFINITY;
   for (uint32_t i = 0; i < r->active_n; i++) {
@@ -1450,7 +1453,8 @@ static double estimated_distance(const run *r, const unit *row, uint32_t rounds)
     double num = 0, den = 0, sum = 0;
     for (uint32_t k = 0; k < r->panel_n; k++) {
       if (k == o) continue;
-      const double d = fabs(points(row[k].s[0], rounds) - r->pts[o * r->cap + k]);
+      double d = points(row[k].s[0], rounds) - r->pts[o * r->cap + k];
+      d = r->p.ahead ? (d > 0 ? d : 0) : fabs(d);
       if (r->p.sd == SD_SUM) num += d, den += r->sigma[k];
       else if (r->sigma[k] > 0) sum += d / r->sigma[k];
     }
@@ -3490,6 +3494,7 @@ static void usage(void) {
           "         [--parents value|duel] [--start <dir>] [--changes name=weight,...]\n"
           "         [--panel-files a.red,b.red,...] [--screen-members N] [--noise z] [--stage N (screen rounds; 0 none)] [--fill]\n"
           "         [--panel-rounds N] [--diversity all|panel] [--average all|panel] [--member-games all|none] [--simple]\n"
+          "         [--difference abs|ahead]\n"
           "         [--islands N [--select-after B [--keep K]] [--score-rounds R]] [--draw-seed S]\n"
           "         [--niche N]\n"
           "         [--panel-choice picked|random|kinds] [--pick-sample 300] [--no-fill] [--map-elites [cells|crowding]]\n"
@@ -3497,7 +3502,7 @@ static void usage(void) {
           "         [--size 8000] [--cycles 80000] [--processes 8000] [--length 100] [--distance 100]\n"
           "         [--threads N] [--batches N] [--seconds S]\n"
           "       42evolve <run folder> [--threads N] [--batches N] [--seconds S] [--changes ...] [--reintroduce p] [--list N]\n"
-          "         [--tune-novel N] [--screen-stop z | --screen-check z]   (continue a run)\n"
+          "         [--tune-novel N] [--screen-stop z | --screen-check z] [--difference abs|ahead]   (continue a run)\n"
           "       42evolve <folder> --optimize <warrior.red> --opponents <dir> [--panel N | --panel-files ...]\n"
           "         [--rounds 100] [--holdout 100] [--bench-rounds 100] [--seed 1] [--threads N]   (its constants)\n");
   exit(2);
@@ -4019,6 +4024,7 @@ static const char *params_error(const params *p) {
   if (p->member_games_none && (!p->average_panel || !p->distance_panel || p->parents == PARENTS_DUEL || p->screen_members))
     return "--member-games none (also of --simple) only with --average panel and --diversity panel, not with --parents duel or "
            "--screen-members";
+  if (p->ahead && (p->simple || p->map_elites)) return "--difference ahead not with --simple or --map-elites";
   if (p->screen_stop > 0 && p->screen_check > 0) return "--screen-stop or --screen-check, not both";
   if (stops && (p->race || p->map_elites)) return "--screen-stop and --screen-check not with --race or --map-elites";
   if (p->tune_novel && p->map_elites) return "--tune-novel not with --map-elites";
@@ -4037,6 +4043,7 @@ int main(int argc, char **argv) {
   double new_reintroduce = -1;          // --reintroduce, also for a run that continues
   uint32_t new_list = 0;                // --list, also for a run that continues (it only grows)
   int64_t new_tune = -1;                // --tune-novel, also for a run that continues
+  int new_ahead = -1;                   // --difference, also for a run that continues
   int new_options = 0, stage_given = 0, screen_members_given = 0, diversity_given = 0, panel_rounds_given = 0, fill_given = 0;
   int panel_given = 0, panel_choice_given = 0, draw_seed_given = 0;
   uint32_t islands_n = 0, islands_keep = 0, islands_every = 0, islands_rounds = 100; // --islands, --keep, --select-after, --score-rounds
@@ -4133,6 +4140,10 @@ int main(int argc, char **argv) {
       if (!strcmp(v, "all")) p->average_panel = 0;
       else if (!strcmp(v, "panel")) p->average_panel = 1;
       else usage();
+    } else if (!strcmp(a, "--difference")) {
+      if (!strcmp(v, "abs")) p->ahead = new_ahead = 0;
+      else if (!strcmp(v, "ahead")) p->ahead = new_ahead = 1;
+      else usage();
     } else if (!strcmp(a, "--sd")) {
       if (!strcmp(v, "opponent")) p->sd = SD_OPPONENT;
       else if (!strcmp(v, "sum")) p->sd = SD_SUM;
@@ -4194,7 +4205,7 @@ int main(int argc, char **argv) {
     else if (!strcmp(a, "--distance")) p->rules.min_distance = u;
     else usage();
     if (!run_option && strcmp(a, "--changes") && strcmp(a, "--screen-stop") && strcmp(a, "--screen-check") &&
-        strcmp(a, "--reintroduce") && strcmp(a, "--list") && strcmp(a, "--tune-novel"))
+        strcmp(a, "--reintroduce") && strcmp(a, "--list") && strcmp(a, "--tune-novel") && strcmp(a, "--difference"))
       new_options = 1; // these go with a run that continues
   }
   if (!dir) usage();
@@ -4207,7 +4218,7 @@ int main(int argc, char **argv) {
     char isl[1100];
     snprintf(isl, sizeof isl, "%s/islands.txt", dir);
     if (access(isl, F_OK) == 0) { // a run of islands that continues
-      if (new_options || islands_option || changes_given || new_stop > 0 || new_check > 0 || new_reintroduce >= 0 || new_list || new_tune >= 0) {
+      if (new_options || islands_option || changes_given || new_stop > 0 || new_check > 0 || new_reintroduce >= 0 || new_list || new_tune >= 0 || new_ahead >= 0) {
         fprintf(stderr, "42evolve: %s has islands; only --threads, --batches and --seconds go with it\n", dir);
         return 2;
       }
@@ -4222,7 +4233,7 @@ int main(int argc, char **argv) {
     if (new_options) {
       fprintf(stderr,
               "42evolve: %s has a run; only --threads, --batches, --seconds, --changes, --reintroduce, --list (larger), "
-              "--tune-novel, --screen-stop and --screen-check go with it\n",
+              "--tune-novel, --screen-stop, --screen-check and --difference go with it\n",
               dir);
       return 2;
     }
@@ -4305,6 +4316,17 @@ int main(int argc, char **argv) {
     if (new_reintroduce >= 0) { // how often a warrior of the archive comes back, from now on
       r.p.reintroduce = new_reintroduce;
       fprintf(r.events, "{\"type\":\"reintroduce\",\"batch\":%u,\"reintroduce\":%.17g}\n", r.batch, r.p.reintroduce);
+    }
+    if (new_ahead >= 0) { // the push-off's difference from now on, and the values of the list with it
+      r.p.ahead = new_ahead;
+      const char *wrong = params_error(&r.p);
+      if (wrong) {
+        fprintf(stderr, "42evolve: %s\n", wrong);
+        return 2;
+      }
+      fprintf(r.events, "{\"type\":\"difference\",\"batch\":%u,\"difference\":\"%s\"}\n", r.batch, r.p.ahead ? "ahead" : "abs");
+      compute_values(&r);
+      event_values(&r);
     }
     if (new_stop > 0 || new_check > 0) { // the screen from now on
       if (new_stop > 0) r.p.screen_stop = new_stop, r.p.screen_check = 0;

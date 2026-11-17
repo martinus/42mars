@@ -31,17 +31,22 @@ double pushoff_se(uint32_t wins, uint32_t ties, uint32_t rounds);
 // |a_k - b_k| above z sqrt(se_ak^2 + se_bk^2): what the noise of the two
 // matches can explain is no difference (42evolve --noise z, #148). se 0:
 // the plain SD-score. cols (0: all): only the columns k with cols[k] count
-// (42evolve --diversity panel).
+// (42evolve --diversity panel). ahead (42evolve --difference ahead): a
+// column counts only a_k - b_k where it is positive, where a scores more
+// than b, so the score is not symmetric: a warrior is far from its nearest
+// only when it does better against someone, not when it does worse; with se
+// the part of a_k - b_k above z sqrt(se_ak^2 + se_bk^2).
 double pushoff_distance(const double *score, size_t stride, const uint32_t *active, uint32_t n, uint32_t a, uint32_t b,
-                        const double *sigma, const double *se, double z, const uint8_t *cols, int variant);
+                        const double *sigma, const double *se, double z, const uint8_t *cols, int variant, int ahead);
 
 // sigma[k] for every active k; sigma has an entry per index.
 void pushoff_sigma(const double *score, size_t stride, const uint32_t *active, uint32_t n, double *sigma);
 
 // out[i] for active[i]; sigma: scratch with an entry per index; se, z and
-// cols as for pushoff_distance() (the average is over all columns).
+// cols and ahead as for pushoff_distance() (the average is over all
+// columns); with ahead the nearest of a is the b it is least ahead of.
 void pushoff_values(const double *score, size_t stride, const uint32_t *active, uint32_t n, int variant, double alpha,
-                    const double *se, double z, const uint8_t *cols, double *sigma, pushoff_value *out);
+                    const double *se, double z, const uint8_t *cols, int ahead, double *sigma, pushoff_value *out);
 
 // The position in out[] of the lowest value among the ones with keep[index]
 // 0: on a tie the lower average, then the higher index. -1 if none.

@@ -25,6 +25,12 @@
 // of score[a][b]; a column then counts only the part of |a_k - b_k| above
 // z sqrt(se_ak^2 + se_bk^2), what the noise of the two matches cannot
 // explain. Without it, the plain SD-score (what the tournament scores).
+//
+// ahead (42evolve --difference ahead): a column counts only a_k - b_k where
+// it is positive, where a scores more than b. The score is then not
+// symmetric: a warrior is far from its nearest only when it does better
+// against someone, not when it does worse; with noise the part above
+// z sqrt(se_ak^2 + se_bk^2).
 
 // The standard error of a score in points per 100 rounds (3 a win, 1 a tie)
 // from one match: mu = (3W + T)/n, v = (9W + T)/n - mu^2, 100 sqrt(v / n).
@@ -36,7 +42,7 @@ export function standardError(wins, ties, rounds) {
 
 // score[a][b]: a's score against b (any scale, null or undefined on the
 // diagonal). active: the indices still in.
-export function sdDistance(score, active, a, b, variant = 'opponent', noise = null, columns = null) {
+export function sdDistance(score, active, a, b, variant = 'opponent', noise = null, columns = null, ahead = false) {
   let num = 0, den = 0, sum = 0;
   for (const k of active) {
     if (k === a || k === b || (columns && !columns[k])) continue;
@@ -46,12 +52,13 @@ export function sdDistance(score, active, a, b, variant = 'opponent', noise = nu
     let v = 0;
     for (const r of active) if (r !== k) v += (score[r][k] - mean) ** 2;
     const sigma = Math.sqrt(v / n);
-    let d = Math.abs(score[a][k] - score[b][k]);
+    let d = score[a][k] - score[b][k];
+    if (!ahead) d = Math.abs(d);
     if (noise) {
       const sa = noise.se[a][k], sb = noise.se[b][k];
       d -= noise.z * Math.sqrt(sa * sa + sb * sb);
-      if (d < 0) d = 0;
     }
+    if (d < 0) d = 0; // ahead: only where a scores more than b
     if (variant === 'sum') {
       num += d;
       den += sigma;
@@ -64,8 +71,9 @@ export function sdDistance(score, active, a, b, variant = 'opponent', noise = nu
 }
 
 // For each index of `active`: { avg, nearest, distance, value }.
-// value = avg * distance ** alpha, distance the lowest SD-score to any other.
-export function pushoffValues(score, active, { variant = 'opponent', alpha = 1, se = null, z = 0, columns = null } = {}) {
+// value = avg * distance ** alpha, distance the lowest SD-score to any other
+// (with ahead: from it to any other).
+export function pushoffValues(score, active, { variant = 'opponent', alpha = 1, se = null, z = 0, columns = null, ahead = false } = {}) {
   const noise = se ? { se, z } : null;
   return active.map((a) => {
     let avg = 0;
@@ -74,7 +82,7 @@ export function pushoffValues(score, active, { variant = 'opponent', alpha = 1, 
     let distance = Infinity, nearest = -1;
     for (const b of active) {
       if (b === a) continue;
-      const d = sdDistance(score, active, a, b, variant, noise, columns);
+      const d = sdDistance(score, active, a, b, variant, noise, columns, ahead);
       if (d < distance) { distance = d; nearest = b; }
     }
     if (nearest < 0) distance = 0;
