@@ -468,10 +468,17 @@ static void on_signal(int sig) {
   signal(sig, SIG_DFL); // a second Ctrl-C ends it at once
 }
 
+// The seed of every match against warrior id: its first position, later
+// rounds from it (semantics doc, 3.2). Never 0: Park-Miller stays at 0, and
+// every round would put the second warrior minDistance from the first. One
+// id in about 7,800 got 0; in pareto30 (17th November 2026) Bitter Robot II
+// learned that position and won 1,125,180 of 1,127,080 rounds against the
+// newcomers. The others keep their seeds.
 static int64_t seed_for(const run *r, uint64_t id) {
   const m42_rules *ru = &r->p.rules;
   const uint64_t range = ru->core_size - 2 * ru->min_distance + 1;
-  return (int64_t)(rng_mix(r->p.seed * 0x9e3779b97f4a7c15u ^ rng_mix(id + 1)) % range);
+  const uint64_t s = rng_mix(r->p.seed * 0x9e3779b97f4a7c15u ^ rng_mix(id + 1)) % range;
+  return (int64_t)(s ? s : 1);
 }
 
 static double points(m42_score s, uint32_t rounds) { return (3.0 * s.wins + s.ties) * 100.0 / rounds; }

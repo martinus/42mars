@@ -1458,6 +1458,24 @@ test('--difference ahead: the SD-score only where a warrior scores more; from th
   }
 });
 
+test('no match has seed 0: pMARS\'s generator stays there, and every round would have the same position', { skip }, () => {
+  // with --seed 36 and these rules the seed of every match against member 18 was 0 (the hash of its id modulo
+  // 761); Bitter Robot II of pareto30 learned such a fixed position and won 1,125,180 of 1,127,080 rounds
+  run(join(tmp, 'seed36'), [...without(TINY, '--seed'), '--seed', '36', '--threads', '2', '--batches', '6']);
+  const evs = events(join(tmp, 'seed36'));
+  const against18 = [], seeds = [];
+  for (const e of evs) {
+    if (!['enter', 'complete', 'bench'].includes(e.type)) continue; // the panel event logs no seeds
+    for (const [o, , , , seed] of e.scores) {
+      seeds.push(seed);
+      if (o === 18) against18.push(seed);
+    }
+  }
+  assert.ok(against18.length >= 10, `${against18.length} matches against member 18`);
+  assert.deepEqual([...new Set(against18)], [1]);
+  assert.equal(seeds.filter((s) => s === 0).length, 0);
+});
+
 test('--pushoff pareto: NSGA-II on panel, members and age; the same run on any thread count and after a resume', { skip }, () => {
   assert.equal(base[0].params.pushoff, 'value');
   const BATCHES = 12;
