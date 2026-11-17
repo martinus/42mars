@@ -110,6 +110,7 @@ function handle(e) {
       S.start = e;
       S.rounds = e.params.rounds;
       // the heading as the page has it, then what this run changes in it: one page shows several runs
+      $('matrix-sorts').hidden = !!e.params.mapElites; // an archive has no such order
       matrixHeading ??= document.querySelector('.matrix-panel h2').innerHTML;
       document.querySelector('.matrix-panel h2').innerHTML = matrixHeading;
       if (e.params.average === 'panel') $('matrix-average').textContent = 'average score against the panel (--average panel)';
@@ -398,13 +399,52 @@ function drawGrid(now) {
   }
 }
 
+// The order of the matrix, by a click on the buttons above it (again: turned
+// around). The evolved warriors, rows and their columns alike: by push-off
+// value, by its average, by the SD-score to the nearest. The panel columns:
+// by the panel warrior's own strength, by the evolved warriors' average
+// against it, by the standard deviation of their scores against it.
+const MATRIX_SORTS = { rows: ['value', 'average', 'distance'], cols: ['strength', 'score', 'spread'] };
+let matrixSort = { rows: 'value', rowsDir: -1, cols: 'strength', colsDir: -1 };
+try {
+  const m = JSON.parse(localStorage.getItem('evolver-matrix-sort') ?? 'null');
+  if (m && MATRIX_SORTS.rows.includes(m.rows) && MATRIX_SORTS.cols.includes(m.cols)) matrixSort = { rows: m.rows, rowsDir: m.rowsDir > 0 ? 1 : -1, cols: m.cols, colsDir: m.colsDir > 0 ? 1 : -1 };
+} catch {}
+
+function renderMatrixSorts() {
+  for (const b of document.querySelectorAll('#matrix-sorts button')) {
+    const on = matrixSort[b.dataset.axis] === b.dataset.sort;
+    b.classList.toggle('on', on);
+    b.dataset.label ??= b.textContent;
+    b.textContent = `${b.dataset.label}${on ? (matrixSort[`${b.dataset.axis}Dir`] > 0 ? ' ↑' : ' ↓') : ''}`;
+  }
+}
+
+// Of each panel warrior's column: the mean and the standard deviation of the
+// evolved warriors' points against it; once per update.
+function panelColumns() {
+  if (S.columnsOf !== S.version) {
+    S.columnsOf = S.version;
+    const ms = alive();
+    S.columns = new Map(S.panel.map((p) => {
+      const xs = ms.map((m) => points(resOf(m.id, p))).filter((x) => x !== null);
+      const mean = xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0;
+      return [p, { score: mean, spread: xs.length ? Math.sqrt(xs.reduce((a, b) => a + (b - mean) ** 2, 0) / xs.length) : 0 }];
+    }));
+  }
+  return S.columns;
+}
+
 function drawMatrix(now) {
   if (S.start?.params?.mapElites) return drawGrid(now);
   const canvas = $('matrix');
   const { ctx, w, h } = fit(canvas);
   if (!S.start) return;
-  const ms = alive().sort((a, b) => (b.value ?? -1) - (a.value ?? -1) || a.id - b.id);
-  const panel = S.panel.map(member).sort((a, b) => (b.panelAvg ?? 0) - (a.panelAvg ?? 0));
+  const rowKey = { value: (m) => m.value ?? -1, average: (m) => m.avg ?? -1, distance: (m) => m.distance ?? -1 }[matrixSort.rows];
+  const ms = alive().sort((a, b) => matrixSort.rowsDir * (rowKey(a) - rowKey(b)) || a.id - b.id);
+  const columns = matrixSort.cols === 'strength' ? null : panelColumns();
+  const colKey = columns ? (p) => columns.get(p.id)[matrixSort.cols] : (p) => p.panelAvg ?? 0;
+  const panel = S.panel.map(member).sort((a, b) => matrixSort.colsDir * (colKey(a) - colKey(b)) || a.id - b.id);
   ms.forEach((m, i) => {
     if (m.row === null || m.row === undefined) m.row = now - m.enteredAt < 2000 ? ms.length : i; // a newcomer slides in from below
     m.row += (i - m.row) * ease;
@@ -434,7 +474,7 @@ function drawMatrix(now) {
   matrix.cells = [];
   matrix.rows = [];
   const others = [...ms, ...panel];
-  const columnsKey = `${S.version}:${others.length}:${others[0]?.id}`;
+  const columnsKey = `${S.version}:${others.length}:${others[0]?.id}:${matrixSort.rows}${matrixSort.rowsDir}${matrixSort.cols}${matrixSort.colsDir}`;
   const drawRow = (m, y, alpha) => {
     ctx.globalAlpha = alpha;
     const sel = selected === m.id;
@@ -1261,6 +1301,17 @@ function wire() {
   $('c-best').addEventListener('click', () => { if (S.bestId !== null) select(S.bestId); });
   $('c-top').addEventListener('click', () => { const t = strongest(); if (t) select(t.id); });
   window.addEventListener('keydown', (e) => { if (e.key === 'Escape') select(null); });
+  renderMatrixSorts();
+  $('matrix-sorts').addEventListener('click', (e) => {
+    const b = e.target.closest('button');
+    if (!b) return;
+    const axis = b.dataset.axis;
+    if (matrixSort[axis] === b.dataset.sort) matrixSort[`${axis}Dir`] *= -1;
+    else matrixSort[axis] = b.dataset.sort, matrixSort[`${axis}Dir`] = -1;
+    try { localStorage.setItem('evolver-matrix-sort', JSON.stringify(matrixSort)); } catch {}
+    renderMatrixSorts();
+    lastChange = performance.now(); // let the rows slide into place
+  });
   let depth = 0;
   window.addEventListener('dragenter', (e) => { e.preventDefault(); depth++; $('drop').hidden = false; });
   window.addEventListener('dragleave', () => { if (--depth <= 0) $('drop').hidden = true, depth = 0; });
