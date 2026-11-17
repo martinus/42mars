@@ -16,7 +16,8 @@ import { fileURLToPath } from 'node:url';
 const script = fileURLToPath(new URL('../.claude/skills/ui-check/page.mjs', import.meta.url));
 const tmp = mkdtempSync(join(tmpdir(), 'ui-page-test-'));
 after(() => rmSync(tmp, { recursive: true, force: true }));
-const noChrome = spawnSync('google-chrome', ['--version'], { encoding: 'utf8' }).status !== 0 && 'no google-chrome';
+// the script speaks the DevTools protocol over Node's own WebSocket (Node 22 on): CI's Node 20 has none
+const noChrome = (typeof WebSocket === 'undefined' && 'no WebSocket in this Node') || (spawnSync('google-chrome', ['--version'], { encoding: 'utf8' }).status !== 0 && 'no google-chrome');
 
 // the script on a page, not blocking this process: it serves the page
 const page = (args) => new Promise((resolve) => {
