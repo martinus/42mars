@@ -25,6 +25,11 @@ Ctrl-C ends the run after the current batch. `build/42evolve runs/a` continues i
 | `--screen-factor x` | 0.8 | a candidate needs this share of the weakest member's panel average after the screen |
 | `--alpha x`, `--sd opponent\|sum` | 1, opponent | push-off value = average * distance^alpha; the reading of the SD-score |
 | `--diversity all\|panel` | panel | the columns of the push-off's SD-score: everyone in, or the panel only (the average stays over everyone). Among warriors of one design the results against each other differ in small details, so their rows look different by the evolved columns; against the fixed panel two warriors of one design score alike |
+| `--average all\|panel` | all | the push-off's average: over everyone in, or over the panel only (the members still play each other, and the screen with `--screen-members`). Over everyone, the design that holds most of the list sets what a high average is, and a design it beats leaves whatever its SD-score: in a merge of 8 islands, isl14's best (103.0 against the 1,107) had an average of 37.8 when it left, the list's median was 147. Not with `--sharing` or `--map-elites` |
+| `--member-games all\|none` | all | none: members never play each other. The screen plays the panel only (`--screen-members 0`), a survivor plays the rest of its rounds against the panel only, and the family name compares rows on the panel columns. Only with `--average panel --diversity panel`, where those games count for nothing, and not with `--parents duel`. The dashboard shows no cells between members |
+| `--islands N`, `--select-after B`, `--keep K`, `--score-rounds R` | | N runs in one process, in `<folder>/island-01` ... (each an ordinary run folder: it can be continued, served and read alone). The panel is picked once and every island has it and the same holdout (`--draw-seed`); island i evolves with seed + i - 1. One pool of threads, and the islands take turns, always the one with the fewest batches: they advance by batches, not by time, and the run is the same on any thread count. Every B batches of each, the `best.red` of each island and its three members best against the panel play every warrior of the opponent folder (R rounds each, 100); the first time, the K islands with the best of those scores go on and the others stop. The folder has `islands.jsonl` (events `islands`, `pick`, `score` with every score, the opponents and the seeds), `islands.txt` (its state) and `best.red`, the best warrior scored so far. `tools/serve.mjs --run <folder>` shows all its islands in the dashboard's list. A folder with islands continues with `--threads`, `--batches` (of each island) and `--seconds` only |
+| `--draw-seed S` | the seed | the order of the opponent folder, so which warriors are the panel and the holdout; the islands share it |
+| `--simple` | off | a candidate plays the panel only, in checkpoints of 5, S, 5 S and all F rounds (S `--screen-rounds`, F `--panel-rounds`), and stops when it cannot make it onto the hill: its average cannot reach `--screen-factor` of the weakest member's (strength), its first S rounds are those of a member against every panel warrior (twin, the same seeds), or its push-off value cannot reach the `--list`-th largest of the members' values and the other candidates' lower bounds (value). Whoever plays all F rounds enters, no quota of survivors, and the push-off decides. `--screen-stop z` (3) is how sure a stop is, `--screen-check z` plays everything and logs every row (event `simple`). Sets `--average panel --diversity panel --member-games none`, one length of match; not with `--race`, `--select value`, `--specialists`, `--niche`, `--rotate`, `--tune-novel`, `--sd sum` |
 | `--panel-rounds N` | 500, at least `--rounds` | rounds of a match against a panel warrior, at least `--rounds`: less noise in the panel's columns. Matches are played in blocks of at most 100 rounds, so the threads end a step together |
 | `--screen-stop z`, `--screen-check z` | off | the screen in steps of 5 rounds: a child stops when its score plus z standard errors cannot get past (below). `--screen-check` plays everything and logs what `--screen-stop` would have done. Both also go with a run that continues |
 | `--sharing c` | off | competitive fitness sharing: the average of the push-off value weights each panel warrior by 1 / (members' mean against it + c), so that a win against a panel warrior most members lose to counts more (below) |
@@ -33,6 +38,8 @@ Ctrl-C ends the run after the current batch. `build/42evolve runs/a` continues i
 | `--map-elites [cells\|crowding]` | cells | an archive instead of the list (#147, below): cells by style, or `crowding`, `--list` places where a child competes with its nearest by SD-score |
 | `--noise z` | 0 | the SD-score counts a column only as far as the difference is larger than z standard errors of the two scores: max(0, \|a_k - b_k\| - z sqrt(se_ak² + se_bk²)), each standard error from the wins, losses and ties of its match (#148); 0 is the plain SD-score of the tournament |
 | `--reintroduce p` | 0.02 | chance that a candidate is a warrior that was pushed off earlier (one of the last 256), unless its code is a member's or came back in the same batch. Also goes with a run that continues (event `reintroduce`). In a list that has settled they are most of what stays: in kd1a (483 batches from batch 7,453) 1,139 of 1,296 passed the screen and 201 of the 222 warriors still in after their batch had come back, 940 of 1,141 left in their batch, 12 stayed 10 batches; 204 were copies of a member, before that check. About three quarters of the completions went to them |
+| `--list N` on a run that continues | | the list grows to N (a smaller N is refused, as is a run with `--map-elites`); `--fill` goes off, so children of the members fill the new places, not random warriors. Event `list` |
+| `--tune-novel N` | 0 (never) | every N batches the survivor of the screen that entered and left again with the largest SD-score to the list gets the search of `--optimize` (2 passes at most); with a step confirmed it is the first candidate of the next batch (ops `tuned`). A new design loses on untuned constants against members tuned for thousands of batches. Event `tune`; also goes with a run that continues |
 | `--select screen\|value` | screen | what the survivors of the screen are picked by: the screen score, or the estimated push-off value (screen score times the SD-score to the nearest warrior in, on the panel columns, to the power alpha) |
 | `--start <dir>` | | the first batch starts from the warriors of the folder (as they are, then mutants of them) instead of random ones; each starts a family; an operand that points into the warrior's code becomes a reference |
 | `--parents value\|duel` | value | the tournament of two that picks a parent: the higher push-off value, or the one with more points in their match against each other (a draw by value) |
@@ -50,7 +57,7 @@ Ctrl-C ends the run after the current batch. `build/42evolve runs/a` continues i
 
 The defaults are the settings of the best run of the E5 comparisons (the eighth, 119.1 against the 1,107 '94nop Koenigstuhl warriors after an hour): a list of 80, a picked panel of 20 at 500 rounds a match, the push-off's SD-score over the panel only, 10 members in the screen, `--stage` at the screen rounds and `--fill`. A run started before keeps its own settings; the comparisons below name theirs.
 
-The run folder gets `events.jsonl` (everything that happened, one JSON object per line), `state.txt` (to continue) and `best.red` (the best warrior against the holdout so far).
+The run folder gets `events.jsonl` (everything that happened, one JSON object per line), `state.txt` (to continue) and `best.red` (the best warrior against the holdout so far). After each batch the event `parents` has, for every member that was a first parent in it, how far its children got: `[id, bred, evaluated, past the screen, still in after the batch]`.
 
 ## How it works
 
@@ -72,7 +79,7 @@ The run folder gets `events.jsonl` (everything that happened, one JSON object pe
 
 ## The dashboard
 
-[`ui/evolver.html`](../ui/evolver.html), on the events of a run: live through `node tools/serve.mjs --run <folder>`, or `?log=<url of an events.jsonl>`, or an `events.jsonl` dropped on the page. Live events are applied every 2 seconds (`?every=<seconds>`, 0 at once); in between the matrix and the map stand still, and the newcomers that came and went in one update are one line in the ticker. A run with `--stage` on 32 threads writes about 4 batches a second, and drawn as they come the matrix took a core of its own. A history longer than 16 MB goes out compacted: without the warriors that left, with only the last `values` event; a continued run of 7,453 batches had 463 MB of events, of which 5 MB are left that way, and the page showed nothing while it read them all. The server keeps the compacted history for the next page (the first took 21 s for 463 MB on a busy machine); `serve.mjs --full` sends everything.
+[`ui/evolver.html`](../ui/evolver.html), on the events of a run: live through `node tools/serve.mjs --run <folder>`, or `?log=<url of an events.jsonl>`, or an `events.jsonl` dropped on the page. Live events are applied every 2 seconds (`?every=<seconds>`, 0 at once); in between the matrix and the map stand still, and the newcomers that came and went in one update are one line in the ticker. A run with `--stage` on 32 threads writes about 4 batches a second, and drawn as they come the matrix took a core of its own. A history longer than 16 MB goes out compacted: without the warriors that left (except each that set a new best against the holdout, so that the ★ best chip names the warrior of `best.red`), with only the last `values` event, and with the progress chart of every batch computed from the whole history (the event `compacted` carries it); a continued run of 7,453 batches had 463 MB of events, of which 5 MB are left that way, and the page showed nothing while it read them all. The server keeps the compacted history for the next page (the first took 21 s for 463 MB on a busy machine) and makes it again once the run has grown by another 16 MB; `serve.mjs --full` sends everything.
 
 - **Score matrix**: the members by push-off value, against each other and the panel, points per 100 rounds. A newcomer slides in from below and glows, a member that leaves fades out. A click on a cell opens that match in the visualizer.
 - **Novelty map**: classical multidimensional scaling of the rows against the panel, with the SD-score as distance: two warriors are close when they win and lose against the same panel warriors. The axes are the two directions in which the rows differ most and have no unit; each end of an axis names the 2 panel warriors whose scores go most with it (the correlation over the members), "better against ... →". Grey points are the hill warriors, colored ones the members (a family shares a color), faint ones members that left. A newcomer flares up.
@@ -82,7 +89,7 @@ The run folder gets `events.jsonl` (everything that happened, one JSON object pe
 - **★ best** in the header is the best warrior against the holdout warriors so far, also after the push-off removed it from the list (the same warrior as `best.red`); **strongest now** is the member with the highest average against the panel. A click opens the card. The best one has a ★ in the matrix and on the map.
 - A click on a warrior opens its card: code, scores, parents, nearest warrior, its style (below), its result against each panel warrior, and every match with a **watch** button.
 
-**Several runs**: `node tools/serve.mjs --run ~/42evolve.a ~/42evolve.b ...` (one `--run`, any number of folders, so `--run ~/42evolve.*` works) serves each run's events; `ui/evolver.html?run=<n>` is the dashboard of run n (0 is the first), and [`ui/runs.html`](../ui/runs.html) shows them all on one page: the best against the holdout and the best member against the panel over the minutes of each run (the fair axis when runs share a machine), and a table with the settings in which they differ, where each stands, the speed, the families and the opcodes of the list.
+**Several runs**: `node tools/serve.mjs --run ~/42evolve.a ~/42evolve.b ...` (one `--run`, any number of folders, so `--run ~/42evolve.*` works) serves each run's events; `ui/evolver.html` is then one dashboard for all of them: a list on the left names each run with its batch, the age of its `best.red` (batches since it was found) and its score against the holdout, colored from red for the lowest of the runs to green for the highest (a click on a heading sorts by that column, a second one turns the order around; a grey dot when the run has not written for 3 of its batch times), a click or `[` and `]` switches the page to another run, and `?run=<n>` keeps which (0 is the first); the list comes from `/runs`, every 5 seconds. Besides, [`ui/runs.html`](../ui/runs.html) shows them all on one page: the best against the holdout and the best member against the panel over the minutes of each run (the fair axis when runs share a machine), and a table with the settings in which they differ, where each stands, the speed, the families and the opcodes of the list.
 
 **Watch** opens `ui/index.html#battle=...`, which carries both warriors, the rules, the seed and the rounds. It starts in the grid layout at learn speed, every step explained (`?layout=ring` and `?speed=` before the `#` still win). The visualizer plays the same rounds as the evolver did: the WebAssembly build gives the same results as the native one, and stepping a match round by round with a watch gives the same rounds as `m42_match()`. `test/evolver.test.js` replays logged matches in the WebAssembly engine.
 
@@ -149,6 +156,82 @@ ss2 went on until 06:45 on 16 threads (1,005 batches in all): `best.red` still 1
 
 Without Origami (np2: Dwarf, Lantern, Imp, Seeker, `--sharing 50`, 2.5 hours on 16 threads, 2,611 batches) the stones of Dwarf and Lantern took the list (58 stones, 18 scanners at batch 1,400) and got better: `best.red` 112.9, the 3 best by value **113.0**, 103.8, 105.1, the strongest by average 88.2, 80.3, 104.1, 23 points above Lantern. `best.red` is the classic stone loop of `SPL`, `ADD #1891`, `MOV.I $7, >8` and `DJN`, with lots of code that never runs after it.
 
+## E5, eleventh comparison: islands, the average over the panel, and a loop that stops early
+
+16th and 17th November 2026, all scored against the 1,107 '94nop Koenigstuhl warriors, `--panel-choice kinds --batch 128 --screen-stop 3` unless said otherwise.
+
+**Islands.** 8 runs from random code, seeds 11 to 18, 4 threads each, 2 hours:
+
+| Island | Batches | Best holdout | Best of 7 against the 1,107 |
+|---|---|---|---|
+| isl11 | 709 | 142.5 | **139.3** |
+| isl15 | 370 | 111.8 | 111.9 |
+| isl13 | 288 | 114.3 | 111.3 |
+| isl16 | 186 | 107.1 | 105.8 |
+| isl12 | 117 | 107.4 | 103.5 |
+| isl14 | 444 | 107.6 | 103.0 |
+| isl17 | 204 | 108.5 | 100.2 |
+| isl18 | 110 | 96.2 | 96.3 |
+
+- The same settings ended between 96.3 and 139.3: which design a run finds is the largest effect measured so far. kd1 had 130.7 after 3 hours on 16 threads.
+- In the same time the islands ran 110 to 709 batches: lists of long warriors with many processes play slow batches.
+
+**A merge collapses with the average over the list.** The best warrior of each island as `--start` for one run (seed 19, `--specialists`):
+
+| | mrg1: average over the list | mrg2: `--average panel` |
+|---|---|---|
+| Time, batches | 70 min on 32 threads, 1,789 | 27 min on 28 threads, 625 |
+| `best.red` | 142.7 | **142.9** |
+| 3 best by value | 134.6, 134.9, 130.9 | 140.1, 139.9, 142.2 |
+| 3 strongest by average | 120.1, 118.4, 121.1 | 140.1, 139.9, 142.2 |
+| The seed of isl14 (103.0) left at | batch 12, average 37.8, list median 147 | batch 28, average 79.8, list median 121 |
+| Members by seed | isl11 79, isl12 1 | isl11 69, isl12 11 |
+
+- In mrg1 the seed of isl14 had an SD-score of 5.8 to its nearest warrior against a median of about 4, and a quarter of the list's average: with 70 of 80 members scanners of isl11 that beat it, the average over the list is how well a warrior beats the majority. The SD-score of one warrior unlike 79 others stays small too: the column's standard deviation is taken over everyone in.
+- The average over the panel slowed the takeover and did not stop it: 10 of the 11 descendants of isl12's seed in mrg2 were scanners.
+- `best.red` of mrg1 (Cranky Mongoose VI, 4 instructions: `SPL.I #-3830, >-20`, `MOV.I *1, <1`, `MOV.I <0, <3989`, `DJN.X $-2, {1781`) copies cells in three streams that count down, 1,940 cells written after 4,000 instructions, 63 processes. `--optimize` took no step on it, against 20 warriors at 100 rounds and against 200 at 200.
+
+**`--average panel` against the list average**, seeds 21 to 24 from random code, 4 threads each:
+
+| Seed | al, 4 h | ap, 4 h | ap, 8 h | ap, 12 h | an, 4 h | an, 8 h | Batches in 4 h: al, ap, an |
+|---|---|---|---|---|---|---|---|
+| 21 | 99.4 | 99.3 | 119.1 | 119.1 | 99.5 | 105.3 | 609, 200, 1,225 |
+| 22 | 106.2 | 106.0 | 105.6 | 105.6 | 104.6 | 104.6 | 262, 232, 1,417 |
+| 23 | 114.7 | **126.8** | 126.8 | 126.8 | 109.4 | 109.4 | 1,664, 1,333, 2,675 |
+| 24 | 103.4 | **118.0** | **139.7** | 139.7 | 99.9 | 101.3 | 1,161, 514, 2,128 |
+| Mean | 105.9 | 112.5 | 122.8 | 122.8 | 103.4 | 105.2 | |
+
+al: the average over the list. ap: `--average panel`. an: `--average panel --member-games none`. Each number is `best.red`.
+
+- ap is ahead by 6.6 points after 4 hours with 33 to 89% of al's batches. Its 3 strongest by average score 102 to 120 on average, al's 70 to 92: the panel average ranks the list more like the hill does.
+- ap concentrates families: at equal batches one family held 52 to 74 of the 80 places in three of the four ap runs, 6 to 39 in al. The fourth, ap23, had 53 families and the best score at 4 hours.
+- ap stopped gaining between 8 and 12 hours.
+- an plays 2 to 6 times the batches and ends 17.6 points below ap after 8 hours. In seed 23 its list is better against the panel than ap's (median 118 against 113) and 17 points worse against the hill.
+- Games between members are 48% of the rounds of a batch (ap23: 154,280 rounds a batch, of them 13,789 in the screen, 25,600 in the first stage and 34,813 in the rest of the rounds).
+- One parent of ap23 had 1,485 children past the screen; the 10% of parents with the most such children had 54 to 69% of them, and the children that stay fell from 2.4 to 3.0 a batch in the first quarter of a run to 0.9 to 1.7 in the last. Children of a crossover stay as often as those of a mutation (0.88% against 0.95% of 241,000 and 1,514,000).
+
+**`--simple` on developed lists.** The final lists of ap21 to ap24 and an21 to an24 as `--start`, one thread each, 4 h 40 min. r: the run goes on as it was. s3, s1: `--simple` with z 3 and z 1 on the list's own panel. w1: `--simple`, z 1, a panel of about 55 at 200 rounds. The best of `best.red` and the 3 strongest by panel average:
+
+| | Start | r | s3 | s1 | w1 |
+|---|---|---|---|---|---|
+| Mean of the 8 lists | 115.8 | 116.6 | 116.2 | 117.1 | 116.9 |
+| Batches a run in the first 2 h 20 min | | | 40 | 263 | 274 |
+| Of about 85 candidates a batch, those that play all rounds | | | 34.2 | 2.9 | 1.0 |
+| Rounds a child that stays | | | 43,500 | 43,700 | 82,000 |
+
+- No arm moved a developed list: all end within 1.3 points of the start. The one step of the slot, about 10 points on the list of ap22, was found by r, s1 and w1.
+- How sure a stop is does not matter: z 3 and z 1 need the same rounds for a child that stays. With z 3 about 4 of 10 candidates of a developed list cannot be ruled out before their last round: a child of a member is good enough to enter, it just does not stay.
+- `--simple` is no loss and no gain here. From random code it is not measured.
+
+**The panel as a yardstick.** The 80 members of ap24's list against the 1,107, and their panel averages:
+
+| Panel | Correlation with the score against the 1,107 | Error of a line through it |
+|---|---|---|
+| 20 by kinds, 500 rounds | 0.77 | 7.1 points |
+| 53 (three such panels), 200 rounds | **0.91** | 4.5 points |
+
+The scores of the 80 spread by 11.1 points. 7 of the 20 columns do not go with the score at all (correlation -0.09 to 0.05: warriors the list beats anyway), the 20 columns are 7.2 independent directions, and 5 pairs correlate above 0.8, mostly the papers.
+
 ## Specialists and a panel of every kind: `--specialists`, `--panel-choice kinds`
 
 An hour of the defaults (pd81, 15th November 2026, 16 threads) kept 80 members whose rows against the panel differed, but 75 of them were the same design: SPL, MOV, DJN and ADD, a median of 825 processes and 1 copy of their own code. All 80 lost to King of Metal (6 points on average), 76 to procoptodon, 75 to Mirage 2: 6 of the 20 panel warriors beat everything evolved. A child that did a little better against one of them but worse overall left at once.
@@ -162,6 +245,10 @@ An hour of the defaults (pd81, 15th November 2026, 16 threads) kept 80 members w
 In kd1 a batch played about 120,000 rounds, 57% of them in the screen: 114 children, 20 rounds against each of 30 opponents, for 16 survivors. The mutation spectrum (below) found about half of all children fatal or identical to their parent. `--screen-stop z` plays the screen in steps of 5 rounds and stops a child after a step when it cannot get past. After n of the F rounds against each of the q opponents, x is its mean over the opponents of its points per 100 rounds. A round against opponent k gives 300, 100 or 0 points; from its wins, ties and losses there, each counted once more (5 losses in 5 rounds are not a certain loss), comes the variance v_k of one round, and one round's mean over the opponents has variance s2 = sum v_k / q^2. Its score after all F rounds lies around x with a standard deviation of sqrt(s2 (F - n) / (F n)): the rounds still to come, and the error of x. hi and lo are x plus and minus z of those. A child stops when hi is below the survivors' threshold (known before the screen), or below the 16th largest lo of the children still in (the survivors are the best 16 by screen score, so that many others end above it). With z 3 a bound fails in 0.13% of the cases of a normal distribution; the decisions are made in the batch, the same on any thread count.
 
 `--screen-check z` plays the whole screen as before, in the same steps, and logs per batch whom `--screen-stop z` would have stopped, every bound, the stopped children's whole screen and how many of the survivors it would have missed (event `screen`); the run is the one without it. On a copy of kd1 at batch 7,453, 150 batches with `--screen-check 3`: 10,639 of 17,025 children would have stopped, the screen would have played 61% of its rounds, 22.0% of all rounds of those batches, and of the 2,400 survivors none would have been missed.
+
+## Tuning new designs: `--tune-novel N`
+
+`--optimize` gained nothing on warriors evolution had tuned: the best of E5, a tuned hill warrior, and Humble Sloth V (135.3 against the 1,107; its constants 107, -2638 and 106, about 30 candidates each, none 2 standard errors ahead against kd1b's panel). It took a stone with a bad step from 12.5 to 70.9 against its panel. A child of a new design is in the second situation: it competes with untuned constants against members that have been tuned for thousands of batches. `--tune-novel N` gives it the search: every N batches, of the survivors of the screen that entered and left again in the batch, the one with the largest SD-score to the nearest warrior in (from its screen against the panel), 2 passes at most over its constants, each step confirmed as with `--optimize`. With a step the tuned warrior waits in the state and is the first candidate of the next batch (ops `tuned`), and has to win its place in the push-off like any child. On the tiny hill, seeded with the bad stone, 3 of 7 survivors were tuned (20.4 to 59.0, 27.8 to 46.1, 40.4 to 52.9 against the panel) and 2 of the tuned warriors stayed past their batch. On the real hill it did not pay (16th November 2026, from random code, seed 4, 16 threads each, the same time): the run with `--tune-novel 5` had a best holdout of 120.3 against 128.5 of the run without and 20 to 32% fewer batches; 15% of its searches found a step, and 2 of 26 tuned warriors stayed past their batch. The search does not close the gap of a new design, and it costs batches.
 
 ## Competitive fitness sharing: `--sharing c`
 

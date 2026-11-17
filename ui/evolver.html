@@ -22,9 +22,16 @@
     </div>
   </header>
 
+  <nav class="side" id="side" hidden>
+    <div class="side-head"><span id="side-count">runs</span></div>
+    <div class="side-cols" title="click a heading to sort by it, again to turn the order around · batch: where the run is · age: batches since its best.red was found · score: best.red against the holdout, red the lowest of the runs, green the highest"><span></span><button data-sort="name" data-label="run">run</button><button data-sort="batch" data-label="batch">batch</button><button data-sort="age" data-label="age">age</button><button data-sort="score" data-label="score">score</button></div>
+    <ol id="side-list"></ol>
+    <div class="side-foot">[ and ] switch</div>
+  </nav>
+
   <main>
     <section class="panel matrix-panel">
-      <h2>Score matrix <small>rows: the evolved warriors of the list, best push-off value on top (value = average score against everyone in, panel and evolved, × distance to the nearest other warrior) · columns: the same warriors, then the panel · cell: points per 100 rounds of the row against the column (3 a win, 1 a tie) · click a cell to watch the match</small></h2>
+      <h2>Score matrix <small>rows: the evolved warriors of the list, best push-off value on top (value = <span id="matrix-average">average score against everyone in, panel and evolved,</span> × distance to the nearest other warrior) · columns: the same warriors, then the panel · cell: points per 100 rounds of the row against the column (3 a win, 1 a tie) · click a cell to watch the match</small></h2>
       <div class="canvas-wrap"><canvas id="matrix"></canvas></div>
       <div class="scale"><span>0</span><i></i><span>300</span></div>
     </section>

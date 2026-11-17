@@ -131,6 +131,28 @@ main {
 .card td button { padding: 1px 8px; font-size: 11px; }
 .card .links a { cursor: pointer; margin-right: 8px; border-bottom: 1px dotted #555b78; text-decoration: none; }
 
+/* the list of runs when the server has several (tools/serve.mjs --run a b ...): one dashboard, the left column switches its stream */
+body.with-side { grid-template-columns: 214px minmax(0, 1fr); }
+body.with-side .bar { grid-column: 1 / -1; }
+.side { display: grid; grid-template-rows: auto auto minmax(0, 1fr) auto; min-height: 0; border-right: 1px solid var(--line); background: #090a11; }
+.side-head { display: flex; align-items: center; justify-content: space-between; gap: 6px; padding: 9px 10px 7px; color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: 0.1em; }
+.side ol { list-style: none; margin: 0; padding: 0 6px 6px; overflow-y: auto; }
+.side li button { width: 100%; display: grid; grid-template-columns: 6px minmax(0, 1fr) 40px 34px 38px; align-items: center; column-gap: 6px; text-align: left; background: transparent; border: 1px solid transparent; border-radius: 5px; padding: 1px 6px; line-height: 18px; }
+.side li button:hover { background: var(--panel-2); border-color: var(--line); }
+.side li button.on { background: #1d1708; border-color: #7a5d1c; }
+.side .nm { font: 600 12px var(--mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.side .sc { font: 600 12px var(--mono); color: var(--muted); text-align: right; }
+.side .sb, .side .ag { font: 10px var(--mono); color: var(--muted); text-align: right; }
+.side-cols { display: grid; grid-template-columns: 6px minmax(0, 1fr) 40px 34px 38px; column-gap: 6px; padding: 0 13px 3px; color: #565c76; font: 9px var(--mono); text-transform: uppercase; letter-spacing: 0.06em; }
+.side-cols button { font: inherit; color: inherit; background: none; border: 0; padding: 0; text-transform: inherit; letter-spacing: inherit; text-align: left; white-space: nowrap; }
+.side-cols button:nth-child(n+3) { text-align: right; }
+.side-cols button:hover, .side-cols button.on { color: var(--text); }
+.side .dot { width: 6px; height: 6px; border-radius: 50%; background: #444a60; flex: none; }
+.side .dot.on { background: #5dff9a; }
+.side li.stopped .nm { color: var(--muted); }
+.side-foot { padding: 6px 10px 9px; color: #565c76; font: 10px var(--mono); border-top: 1px solid var(--line); }
+@media (max-width: 1100px) { body.with-side { grid-template-columns: 150px minmax(0, 1fr); } }
+
 .tooltip { position: fixed; pointer-events: none; background: #0b0d16f2; border: 1px solid #2c3150; border-radius: 8px; padding: 6px 9px; font: 12px/1.4 var(--mono); z-index: 10; max-width: 340px; box-shadow: 0 8px 24px #0008; }
 .drop { position: fixed; inset: 0; display: grid; place-items: center; background: #06070ccc; font: 600 22px var(--sans); color: var(--accent); border: 3px dashed var(--accent); z-index: 20; }
 
