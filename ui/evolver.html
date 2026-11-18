@@ -23,7 +23,7 @@
   </header>
 
   <nav class="side" id="side" hidden>
-    <div class="side-head"><span id="side-count">runs</span></div>
+    <div class="side-head"><span id="side-count">runs</span><input id="side-filter" type="search" placeholder="filter" spellcheck="false" autocomplete="off" title="only the runs whose name contains this text"></div>
     <div class="side-cols" title="click a heading to sort by it, again to turn the order around · batch: where the run is · age: batches since its best.red was found · score: best.red against the holdout, red the lowest of the runs, green the highest"><span></span><button data-sort="name" data-label="run">run</button><button data-sort="batch" data-label="batch">batch</button><button data-sort="age" data-label="age">age</button><button data-sort="score" data-label="score">score</button></div>
     <ol id="side-list"></ol>
     <div class="side-foot">[ and ] switch</div>
