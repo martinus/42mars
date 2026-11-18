@@ -61,14 +61,26 @@ jobs:
             exit 1
           }
 
+  # make test under ASan and UBSan, its test files in two halves at the same
+  # time: the instrumented programs are about twice as slow (333 s of tests
+  # in one job, 18th November 2026).
   sanitizers:
+    name: sanitizers (${{ matrix.part }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - part: 1
+            tests: test/c-api.test.js test/cli.test.js test/evolver.test.js test/evolver-select.test.js test/evolver-map-elites.test.js test/evolver-crowding.test.js
+          - part: 2
+            tests: test/evolver-pareto.test.js test/evolver-sharing.test.js test/evolver-specialists.test.js test/evolver-tune.test.js
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
         with:
           node-version: 22
-      - run: make -j4 CC=clang CFLAGS='-O1 -g -fno-omit-frame-pointer -fsanitize=address,undefined -fno-sanitize-recover=all -Wall -Wextra -Werror' LDFLAGS='-fsanitize=address,undefined' test
+      - run: make -j4 CC=clang CFLAGS='-O1 -g -fno-omit-frame-pointer -fsanitize=address,undefined -fno-sanitize-recover=all -Wall -Wextra -Werror' LDFLAGS='-fsanitize=address,undefined' test TESTS='${{ matrix.tests }}'
 
   # 42mars against pMARS 0.9.5 (#91), built from its source archive and run
   # as a program only. The clean room (CLAUDE.md): nobody reads the files of
@@ -87,9 +99,16 @@ jobs:
   # compares scores, listings and outputs: the per-round instruction counts
   # and core hashes (--pmars-trace) and pMARS's evaluator (tools/expr-fuzz.mjs)
   # need patched builds and stay local checks. The seed is the run id.
+  # The comparisons in two parts at the same time: the whole corpus, and the
+  # rest (80 s one after another, 18th November 2026).
   pmars:
+    name: pmars (${{ matrix.part }})
     if: vars.PMARS_SOURCE_URL != '' && vars.PMARS_SOURCE_SHA256 != '' && vars.PMARS_BUILD != ''
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        part: [corpus, rest]
     env:
       PMARS_OUT: ${{ github.workspace }}/../ref-bin/pmars
     steps:
@@ -144,7 +163,10 @@ jobs:
           set -e
           echo "seed ${{ github.run_id }}"
           d="node tools/pmars-diff.mjs --pmars $PMARS_OUT --seed ${{ github.run_id }} --jobs 4"
-          $d --corpus warriors/koenigstuhl/94nop
+          if [ "${{ matrix.part }}" = corpus ]; then
+            $d --corpus warriors/koenigstuhl/94nop
+            exit 0
+          fi
           $d --corpus warriors/koenigstuhl/94nop --wasm-match --only battles
           $d --corpus warriors/koenigstuhl/94nop --permute --only battles,fuzz
           $d --corpus warriors/koenigstuhl/88 --icws88 --only listings,exprs,sources

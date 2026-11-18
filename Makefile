@@ -10,7 +10,8 @@
 #                        (test/c-api.test.js, test/cli.test.js,
 #                        test/evolver*.test.js; needs Node 20+)
 #   make test-lib        only the library and 42mars (test/c-api.test.js,
-#                        test/cli.test.js)
+#                        test/cli.test.js); make test TESTS='...' runs
+#                        those test files only
 #   make install         into $(DESTDIR)$(PREFIX): bin/42mars, include/42mars.h,
 #                        lib/lib42mars.a, the shared library, lib/pkgconfig/42mars.pc
 #   make dist            build/42mars-<version>-<os>-<cpu>.tar.gz, an install
@@ -101,8 +102,9 @@ build/evolver-test: test/c/evolver-test.c $(EVOLVER_SOURCES) build/lib42mars.a
 
 # test-lib: the library and 42mars only, without the evolver (CI builds the C11
 # code that MSVC compiles with it, test.yml)
+TESTS = test/c-api.test.js test/cli.test.js test/evolver*.test.js
 test: all build/api-test build/example build/parallel build/evolver-test
-	M42_BIN=build node --test test/c-api.test.js test/cli.test.js test/evolver*.test.js
+	M42_BIN=build node --test $(TESTS)
 
 test-lib: build/lib42mars.a build/$(SHARED) build/42mars build/api-test build/example build/parallel
 	M42_BIN=build node --test test/c-api.test.js test/cli.test.js
