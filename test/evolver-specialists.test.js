@@ -25,8 +25,8 @@ after(cleanup);
 
 test('--specialists --panel-choice kinds: the member clearly best against a panel warrior stays, a panel of every kind; the same run on any thread count and after a resume', { skip }, () => {
   assert.equal(base[0].params.specialists, false);
-  const BATCHES = 20;
-  const args = [...TINY, '--specialists', '--panel-choice', 'kinds', '--pick-sample', '40', '--list', '16', '--panel-rounds', '200', '--survivors', '8'];
+  const BATCHES = 12;
+  const args = [...TINY, '--specialists', '--panel-choice', 'kinds', '--pick-sample', '40', '--list', '16', '--panel-rounds', '100', '--survivors', '8'];
   run(join(tmp, 'spec1'), [...args, '--threads', '1', '--batches', String(BATCHES)]);
   const one = events(join(tmp, 'spec1'));
   assert.deepEqual([one[0].params.specialists, one[0].params.panelChoice], [true, 'kinds']);

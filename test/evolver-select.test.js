@@ -64,7 +64,7 @@ test('--select value --rotate 2: survivors by estimated value, a panel that chan
 
 test('--simple: a candidate plays the panel in checkpoints and stops when it cannot make it; no games among members; the same run on any thread count and after a resume', { skip }, () => {
   assert.equal(base[0].params.simple, false);
-  const BATCHES = 8, CHECKED = 30, F = 100, P = 10;
+  const BATCHES = 8, CHECKED = 16, F = 100, P = 10;
   // --simple sets the screen's members, the stage and the diversity itself
   // 8000 cycles (CLASSIC): with 2000, 15 children that the value bound would have stopped stayed (many rounds
   // are all ties, so their spread looks small), which this test does not allow

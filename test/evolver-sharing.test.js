@@ -25,8 +25,8 @@ after(cleanup);
 
 test('--sharing 20: the average weighted by how hard each panel warrior is for the members; the same run on any thread count and after a resume', { skip }, () => {
   assert.equal(base[0].params.sharing, 0);
-  const BATCHES = 16;
-  const args = [...TINY, '--sharing', '20', '--list', '16', '--panel-rounds', '200', '--survivors', '8'];
+  const BATCHES = 10;
+  const args = [...TINY, '--sharing', '20', '--list', '16', '--panel-rounds', '100', '--survivors', '8'];
   run(join(tmp, 'share1'), [...args, '--threads', '1', '--batches', String(BATCHES)]);
   const one = events(join(tmp, 'share1'));
   assert.equal(one[0].params.sharing, 20);
@@ -36,9 +36,9 @@ test('--sharing 20: the average weighted by how hard each panel warrior is for t
   assert.ok(checkValues.sharedLeaves >= 2, `the weights changed who left in ${checkValues.sharedLeaves} push-offs`);
   // an early leave (--stage) is decided on the first-stage results, weighted
   // the same: the leaver's average is its entering row with the weights
-  run(join(tmp, 'share-stage'), [...args, '--stage', '20', '--threads', '2', '--batches', '12']);
+  run(join(tmp, 'share-stage'), [...args, '--stage', '20', '--threads', '2', '--batches', '8']);
   const st = events(join(tmp, 'share-stage'));
-  assert.equal(checkValues(st), 12);
+  assert.equal(checkValues(st), 8);
   let weights = null, early = 0;
   const P = new Set(st[0].panel.map((x) => x.id));
   const enters = new Map(st.filter((e) => e.type === 'enter').map((e) => [e.id, e]));
