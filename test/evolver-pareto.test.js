@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Martin Leitner-Ankerl
 //
 // The evolver (evolver/, #142) on the tiny hill of warriors/koenigstuhl:
-// --pushoff pareto, pareto-age and pareto-sd, --difference ahead. What the evolver's test files share is in
+// --pushoff pareto, pareto-age and pareto-sd, --clear, --difference ahead. What the evolver's test files share is in
 // test/evolver-common.js; built with cc, or prebuilt in M42_BIN
 // (test/native.js). POSIX only.
 
@@ -88,19 +88,31 @@ test('--pushoff pareto: NSGA-II on panel and members, pareto-age also on the age
   assert.equal(sd[0].params.pushoff, 'pareto-sd');
   assert.equal(checkValues(sd), BATCHES);
   assert.ok(checkValues.paretoLeaves >= 2, `pareto-sd changed who left in ${checkValues.paretoLeaves} push-offs`);
-  assert.notDeepEqual(stable(sd).filter((e) => e.type === 'leave').map((e) => e.id), stable(one).filter((e) => e.type === 'leave').map((e) => e.id), 'pareto-sd pushed out the same as pareto');
+  const leaves = (evs) => stable(evs).filter((e) => e.type === 'leave').map((e) => e.id);
+  assert.notDeepEqual(leaves(sd), leaves(one), 'pareto-sd pushed out the same as pareto');
   // pareto-sd with --difference ahead: the SD-score only where a warrior scores more than its nearest
   run(join(tmp, 'pareto-sda'), [...without(args, '--pushoff'), '--pushoff', 'pareto-sd', '--difference', 'ahead', '--threads', '2', '--batches', String(BATCHES)]);
   const sda = events(join(tmp, 'pareto-sda'));
   assert.deepEqual([sda[0].params.pushoff, sda[0].params.difference], ['pareto-sd', 'ahead']);
   assert.equal(checkValues(sda), BATCHES);
-  assert.notDeepEqual(stable(sda).filter((e) => e.type === 'leave').map((e) => e.id), stable(sd).filter((e) => e.type === 'leave').map((e) => e.id), 'ahead pushed out the same as both ways');
+  assert.notDeepEqual(leaves(sda), leaves(sd), 'ahead pushed out the same as both ways');
+  // --clear: a member within SD-score 2 of a stronger one goes behind the fronts; every value and push-off
+  // replayed, also after a resume
+  const clearArgs = [...without(args, '--pushoff'), '--pushoff', 'pareto-sd', '--clear', '2'];
+  run(join(tmp, 'pareto-clear'), [...clearArgs, '--threads', '2', '--batches', String(BATCHES)]);
+  const cl = events(join(tmp, 'pareto-clear'));
+  assert.deepEqual([cl[0].params.pushoff, cl[0].params.clear], ['pareto-sd', 2]);
+  assert.equal(checkValues(cl), BATCHES);
+  assert.notDeepEqual(leaves(cl), leaves(sd), '--clear pushed out the same as pareto-sd');
+  run(join(tmp, 'pareto-clear-resumed'), [...clearArgs, '--threads', '1', '--batches', String(BATCHES >> 1)]);
+  run(join(tmp, 'pareto-clear-resumed'), ['--threads', '3', '--batches', String(BATCHES - (BATCHES >> 1))]);
+  assert.deepEqual(stable(events(join(tmp, 'pareto-clear-resumed'))), stable(cl));
   assert.equal(checkValues(st), 16);
   assert.ok(checkValues.olderSecond >= 1, `${checkValues.olderSecond} crossovers took the older line of the second parent`);
   const rule = checkEarly(st);
   assert.ok(rule.decisions >= 2, `${rule.decisions} early decisions`);
   // refused with the options that change the value otherwise, and a value other than value and pareto
-  for (const [bad, why] of [[['--sharing', '20'], /--pushoff pareto not with/], [['--select', 'value'], /--pushoff pareto not with/], [['--difference', 'ahead'], /pareto-sd only/], [['--pushoff', 'front'], /usage/]]) {
+  for (const [bad, why] of [[['--sharing', '20'], /--pushoff pareto not with/], [['--select', 'value'], /--pushoff pareto not with/], [['--difference', 'ahead'], /pareto-sd only/], [['--pushoff', 'front'], /usage/], [['--pushoff', 'value', '--clear', '2'], /--clear with --pushoff pareto/], [['--clear', '0'], /usage/]]) {
     const r = spawnSync(evolve, [join(tmp, 'pareto-bad'), ...args, ...bad, '--batches', '1'], { encoding: 'utf8' });
     assert.equal(r.status, 2, bad.join(' '));
     assert.match(r.stderr, why);

@@ -79,6 +79,7 @@ typedef struct {
   int ahead;                // --difference ahead: the SD-score counts a column only where the warrior scores more
   int pareto;               // --pushoff pareto: fronts on panel average and average against members (NSGA-II); 2 with age, 3 with SD-score
   int mirror;               // --positions mirror: each position twice, the second time with the warriors swapped
+  double clear;             // --clear R: with a pareto push-off, a member within SD-score R of a stronger one goes behind the fronts, 0 off
   uint64_t draw_seed;       // the order of the opponent folder, so the panel and the holdout: --draw-seed, else the seed
   uint32_t niche;           // --niche N: each kind of style keeps at least N members (not the two kinds of junk)
   int map_elites;           // --map-elites: an archive instead of the list (#147), ME_CELLS or ME_CROWDING
@@ -650,6 +651,41 @@ static void panel_average_values(run *r, const double *pts) {
   }
 }
 
+#define PARETO_STEP 10.0
+#define PARETO_END 5.0
+// --clear R: clearing (Petrowski 1996). On the fronts a copy of a strong
+// member that scores a bit better on one objective stays: in pareto-sd lists
+// of 18th November 2026 54 of 80 members were on the first front, the one
+// pushed off was at the 21st percentile of the SD-scores to the nearest
+// (with the value push-off always the nearest), and the members were half as
+// far apart as with the value push-off. With clearing, the members by
+// average, the strongest first, each a winner unless its SD-score to a
+// winner before it is below R; the cleared ones get the fronts after those of
+// the winners, so they leave first.
+static void clear_members(const run *r, const double *pts, const double *se, uint8_t *cleared) {
+  const uint32_t P = r->panel_n, n = r->active_n - P;
+  memset(cleared, 0, n);
+  if (!(r->p.clear > 0)) return;
+  uint32_t *order = xmalloc(n * sizeof *order);
+  for (uint32_t i = 0; i < n; i++) {
+    uint32_t k = i; // insertion by average, higher first, ties by index
+    while (k && r->values[P + order[k - 1]].avg < r->values[P + i].avg) order[k] = order[k - 1], k--;
+    order[k] = i;
+  }
+  for (uint32_t k = 0; k < n; k++) {
+    const uint32_t i = order[k];
+    if (r->values[P + i].distance >= r->p.clear) continue; // its nearest of all is farther
+    for (uint32_t q = 0; q < k && !cleared[i]; q++) {
+      const uint32_t w = order[q];
+      if (cleared[w]) continue;
+      const double d = pushoff_distance(pts, r->cap, r->active, r->active_n, r->values[P + i].index, r->values[P + w].index,
+                                        r->sigma, se, r->p.noise, r->p.distance_panel ? r->keep : 0, r->p.sd, r->p.ahead);
+      if (d < r->p.clear) cleared[i] = 1;
+    }
+  }
+  free(order);
+}
+
 // --pushoff pareto: instead of average * distance, the members' value is
 // their place in NSGA-II's order (Deb et al. 2002) on two objectives: the
 // average against the panel and the average against the other members.
@@ -664,31 +700,43 @@ static void panel_average_values(run *r, const double *pts) {
 // lowest value is the most crowded of the last front, and a tournament by
 // value is NSGA-II's crowded comparison. A copy of a warrior has its point
 // and crowding 0, and leaves first. Panel warriors keep their values.
-#define PARETO_STEP 10.0
-#define PARETO_END 5.0
-static void pareto_values(run *r, const double *pts) {
+static void pareto_values(run *r, const double *pts, const double *se) {
   if (!r->p.pareto) return;
   const uint32_t P = r->panel_n, n = r->active_n > P ? r->active_n - P : 0;
   if (!n) return;
   const uint32_t m = r->p.pareto >= 2 ? 3 : 2; // pareto-age: the youth of the line too; pareto-sd: the SD-score
   double *obj = xmalloc(3 * n * sizeof *obj), *crowd = xmalloc(n * sizeof *crowd);
-  uint32_t *front = xmalloc(n * sizeof *front), fronts = 0;
-  for (uint32_t i = 0; i < n; i++) {
-    const uint32_t a = r->values[P + i].index;
+  uint32_t *front = xmalloc(n * sizeof *front), *at = xmalloc(n * sizeof *at), won = 0;
+  uint8_t *cleared = xmalloc(n);
+  clear_members(r, pts, se, cleared);
+  // the winners first, then the cleared ones, each in the order of the list
+  for (uint32_t i = 0; i < n; i++)
+    if (!cleared[i]) at[won++] = i;
+  for (uint32_t i = 0, k = won; i < n; i++)
+    if (cleared[i]) at[k++] = i;
+  for (uint32_t j = 0; j < n; j++) {
+    const uint32_t a = r->values[P + at[j]].index;
     double e = 0;
-    for (uint32_t j = P; j < r->active_n; j++)
-      if (r->active[j] != a) e += pts[a * r->cap + r->active[j]];
-    obj[m * i] = panel_avg_on(r, pts, a);
-    obj[m * i + 1] = n > 1 ? e / (n - 1) : 0;
-    if (r->p.pareto == 2) obj[m * i + 2] = (double)r->slot[a]->origin; // a later start is a younger line
-    if (r->p.pareto == 3) obj[m * i + 2] = r->values[P + i].distance;  // farther from the nearest is better
+    for (uint32_t q = P; q < r->active_n; q++)
+      if (r->active[q] != a) e += pts[a * r->cap + r->active[q]];
+    obj[m * j] = panel_avg_on(r, pts, a);
+    obj[m * j + 1] = n > 1 ? e / (n - 1) : 0;
+    if (r->p.pareto == 2) obj[m * j + 2] = (double)r->slot[a]->origin;      // a later start is a younger line
+    if (r->p.pareto == 3) obj[m * j + 2] = r->values[P + at[j]].distance; // farther from the nearest is better
   }
-  pareto_fronts(obj, n, m, front, crowd);
-  for (uint32_t i = 0; i < n; i++)
-    if (front[i] + 1 > fronts) fronts = front[i] + 1;
-  for (uint32_t i = 0; i < n; i++)
-    r->values[P + i].value = PARETO_STEP * (fronts - front[i]) + (crowd[i] < PARETO_END ? crowd[i] : PARETO_END);
-  free(obj), free(crowd), free(front);
+  // the fronts of the winners, then those of the cleared ones behind them
+  pareto_fronts(obj, won, m, front, crowd);
+  pareto_fronts(obj + m * won, n - won, m, front + won, crowd + won);
+  uint32_t first = 0, fronts = 0;
+  for (uint32_t j = 0; j < won; j++)
+    if (front[j] + 1 > first) first = front[j] + 1;
+  for (uint32_t j = 0; j < n; j++) {
+    if (j >= won) front[j] += first;
+    if (front[j] + 1 > fronts) fronts = front[j] + 1;
+  }
+  for (uint32_t j = 0; j < n; j++)
+    r->values[P + at[j]].value = PARETO_STEP * (fronts - front[j]) + (crowd[j] < PARETO_END ? crowd[j] : PARETO_END);
+  free(obj), free(crowd), free(front), free(at), free(cleared);
 }
 
 static void compute_values(run *r) {
@@ -696,7 +744,7 @@ static void compute_values(run *r) {
                  r->p.distance_panel ? r->keep : 0, r->p.ahead, r->sigma, r->values);
   share_values(r, r->pts);
   panel_average_values(r, r->pts);
-  pareto_values(r, r->pts);
+  pareto_values(r, r->pts, r->p.noise > 0 ? r->se : 0);
 }
 
 // The same on the results of the first stage (--stage).
@@ -705,7 +753,7 @@ static void compute_values1(run *r) {
                  r->p.distance_panel ? r->keep : 0, r->p.ahead, r->sigma, r->values);
   share_values(r, r->pts1);
   panel_average_values(r, r->pts1);
-  pareto_values(r, r->pts1);
+  pareto_values(r, r->pts1, r->p.noise > 0 ? r->se1 : 0);
 }
 
 // A warrior's average against the panel, points per 100 rounds; a panel
@@ -894,7 +942,7 @@ static void event_start(run *r) {
           "\"rounds\":%u,\"screenRounds\":%u,\"benchEvery\":%u,\"benchRounds\":%u,\"initLength\":%u,"
           "\"screenFactor\":%.17g,\"alpha\":%.17g,\"reintroduce\":%.17g,\"sd\":\"%s\",\"seed\":%" PRIu64
           ",\"select\":\"%s\",\"rotate\":%u,\"fractions\":%.17g,\"race\":%u,\"raceKeep\":%u,\"prior\":\"%s\","
-          "\"parents\":\"%s\",\"screenMembers\":%u,\"noise\":%.17g,\"stage\":%u,\"fill\":%s,\"panelRounds\":%u,\"diversity\":\"%s\",\"niche\":%u,\"panelChoice\":\"%s\",\"mapElites\":%s,\"crowding\":%s,\"specialists\":%s,\"sharing\":%.17g,\"screenStop\":%.17g,\"screenCheck\":%.17g,\"tuneNovel\":%u,\"average\":\"%s\",\"memberGames\":\"%s\",\"simple\":%s,\"drawSeed\":%" PRIu64 ",\"difference\":\"%s\",\"pushoff\":\"%s\",\"positions\":\"%s\"},"
+          "\"parents\":\"%s\",\"screenMembers\":%u,\"noise\":%.17g,\"stage\":%u,\"fill\":%s,\"panelRounds\":%u,\"diversity\":\"%s\",\"niche\":%u,\"panelChoice\":\"%s\",\"mapElites\":%s,\"crowding\":%s,\"specialists\":%s,\"sharing\":%.17g,\"screenStop\":%.17g,\"screenCheck\":%.17g,\"tuneNovel\":%u,\"average\":\"%s\",\"memberGames\":\"%s\",\"simple\":%s,\"drawSeed\":%" PRIu64 ",\"difference\":\"%s\",\"pushoff\":\"%s\",\"positions\":\"%s\",\"clear\":%.17g},"
           "\"opponents\":",
           m42_version(), p->rules.core_size, p->rules.max_cycles, p->rules.max_processes, p->rules.max_length,
           p->rules.min_distance, r->panel_n, r->hold_n, p->list, p->batch, p->survivors, p->rounds, p->screen_rounds,
@@ -910,7 +958,7 @@ static void event_start(run *r) {
           p->map_elites ? "true" : "false", p->map_elites == ME_CROWDING ? "true" : "false",
           p->specialists ? "true" : "false", p->sharing, p->screen_stop, p->screen_check, p->tune_novel,
           p->average_panel ? "panel" : "all", p->member_games_none ? "none" : "all", p->simple ? "true" : "false", p->draw_seed,
-          p->ahead ? "ahead" : "abs", p->pareto == 3 ? "pareto-sd" : p->pareto == 2 ? "pareto-age" : p->pareto ? "pareto" : "value", p->mirror ? "mirror" : "pmars");
+          p->ahead ? "ahead" : "abs", p->pareto == 3 ? "pareto-sd" : p->pareto == 2 ? "pareto-age" : p->pareto ? "pareto" : "value", p->mirror ? "mirror" : "pmars", p->clear);
   json_str(f, p->opponents, 0);
   fputs(",\"panelFiles\":", f);
   json_str(f, p->panel_files, 0);
@@ -1100,12 +1148,12 @@ static void save_state(run *r) {
   fprintf(f, "42evolve-state 1\n");
   fprintf(f, "rules %u %u %u %u %u\n", p->rules.core_size, p->rules.max_cycles, p->rules.max_processes,
           p->rules.max_length, p->rules.min_distance);
-  fprintf(f, "params %u %u %u %u %u %u %u %u %u %u %.17g %.17g %.17g %d %" PRIu64 " %d %u %.17g %u %u %d %d %u %.17g %u %d %u %d %u %d %d %.17g %.17g %.17g %u %d %d %d %" PRIu64 " %d %d %d\n",
+  fprintf(f, "params %u %u %u %u %u %u %u %u %u %u %.17g %.17g %.17g %d %" PRIu64 " %d %u %.17g %u %u %d %d %u %.17g %u %d %u %d %u %d %d %.17g %.17g %.17g %u %d %d %d %" PRIu64 " %d %d %d %.17g\n",
           p->panel, p->holdout, p->list, p->batch, p->survivors, p->rounds, p->screen_rounds, p->bench_every,
           p->bench_rounds, p->init_length, p->screen_factor, p->alpha, p->reintroduce, p->sd, p->seed, p->select,
           p->rotate, p->fractions, p->race, p->race_keep, p->prior, p->parents, p->screen_members, p->noise, p->stage, p->fill,
           p->panel_rounds, p->distance_panel, p->niche, p->map_elites, p->specialists, p->sharing, p->screen_stop, p->screen_check,
-          p->tune_novel, p->average_panel, p->member_games_none, p->simple, p->draw_seed, p->ahead, p->pareto, p->mirror);
+          p->tune_novel, p->average_panel, p->member_games_none, p->simple, p->draw_seed, p->ahead, p->pareto, p->mirror, p->clear);
   fprintf(f, "opponents %s\n", p->opponents);
   if (p->start[0]) fprintf(f, "start-dir %s\n", p->start);
   char mix[CH_COUNT * 32];
@@ -1245,12 +1293,12 @@ static int load_state(run *r, const char *path) {
       // --race-keep, --prior, --parents, --screen-members, --noise, --stage,
       // --fill; a state without them has none of them
       const int got = sscanf(line + 7,
-                             "%u %u %u %u %u %u %u %u %u %u %lg %lg %lg %d %" SCNu64 " %d %u %lg %u %u %d %d %u %lg %u %d %u %d %u %d %d %lg %lg %lg %u %d %d %d %" SCNu64 " %d %d %d",
+                             "%u %u %u %u %u %u %u %u %u %u %lg %lg %lg %d %" SCNu64 " %d %u %lg %u %u %d %d %u %lg %u %d %u %d %u %d %d %lg %lg %lg %u %d %d %d %" SCNu64 " %d %d %d %lg",
                              &p->panel, &p->holdout, &p->list, &p->batch, &p->survivors, &p->rounds, &p->screen_rounds,
                              &p->bench_every, &p->bench_rounds, &p->init_length, &p->screen_factor, &p->alpha,
                              &p->reintroduce, &p->sd, &p->seed, &p->select, &p->rotate, &p->fractions, &p->race,
                              &p->race_keep, &p->prior, &p->parents, &p->screen_members, &p->noise, &p->stage, &p->fill, &p->panel_rounds,
-                             &p->distance_panel, &p->niche, &p->map_elites, &p->specialists, &p->sharing, &p->screen_stop, &p->screen_check, &p->tune_novel, &p->average_panel, &p->member_games_none, &p->simple, &p->draw_seed, &p->ahead, &p->pareto, &p->mirror);
+                             &p->distance_panel, &p->niche, &p->map_elites, &p->specialists, &p->sharing, &p->screen_stop, &p->screen_check, &p->tune_novel, &p->average_panel, &p->member_games_none, &p->simple, &p->draw_seed, &p->ahead, &p->pareto, &p->mirror, &p->clear);
       if (got < 15) goto bad; // the first version had 15; what a state lacks keeps its default
       if (got < 39) p->draw_seed = p->seed; // a state from before --draw-seed: the folder in the order of the seed
     } else if (!strncmp(line, "opponents ", 10)) {
@@ -1451,6 +1499,7 @@ typedef struct {
   uint32_t stop_at; // --screen-stop, --screen-check: the rounds after which it stopped (would have), 0 not
   int reached;     // 0 bred, 1 evaluated (not a repeat), 2 past the screen, 3 still in the list after its batch
   double race_key; // --race: the key after the first screen rounds
+  int keep;        // --start: a start warrior in the first batch, which enters whatever its screen
   uint64_t id;
 } candidate;
 
@@ -1495,6 +1544,13 @@ static int by_key(const void *a, const void *b) {
   const candidate *x = *(candidate *const *)a, *y = *(candidate *const *)b;
   if (x->key != y->key) return x->key < y->key ? 1 : -1;
   return x < y ? -1 : 1;
+}
+
+// The start warriors of the first batch (--start) first, then by_key.
+static int by_keep_key(const void *a, const void *b) {
+  const candidate *x = *(candidate *const *)a, *y = *(candidate *const *)b;
+  if (x->keep != y->keep) return x->keep ? -1 : 1;
+  return by_key(a, b);
 }
 
 static void bench(run *r, uint32_t slot) {
@@ -1727,7 +1783,7 @@ static uint32_t screen_decide(const run *r, candidate *c, uint32_t B, const unit
   }
   for (uint32_t i = 0; i < B; i++) {
     if (c[i].skip || c[i].out || c[i].would_stop) continue;
-    if (hi[i] < threshold || hi[i] < cut) {
+    if (!c[i].keep && (hi[i] < threshold || hi[i] < cut)) {
       if (log) { // its results so far against each opponent, [w,l,t,...]
         fprintf(log, "%s[", n ? "," : "");
         for (uint32_t k = 0; k < q; k++) {
@@ -2213,6 +2269,7 @@ static void run_batch(run *r) {
         x->g = r->starts[k];
         strcpy(x->ops, "start");
         reintro = 1; // always evaluated
+        x->keep = 1;
       } else {
         genome_breed(&x->g, &r->starts[k], &r->starts[(k + 1) % r->start_n], &g, core, p->rules.max_length, &r->style,
                      &p->changes, x->ops, sizeof x->ops);
@@ -2385,10 +2442,15 @@ static void run_batch(run *r) {
 
   candidate **sv = xmalloc(B * sizeof *sv);
   uint32_t sn = 0;
+  // --start: every start warrior enters in the first batch (the screen does not stop it; --race may drop it), the
+  // push-off then cuts the list to --list; the others take the places of the survivors left (a merge of 80 islands
+  // kept 13 of them with the cut of 16 survivors, 18th November 2026)
+  uint32_t kept = 0;
   for (uint32_t i = 0; i < B; i++)
-    if (!c[i].skip && !c[i].out && c[i].screen >= threshold) sv[sn++] = &c[i];
-  qsort(sv, sn, sizeof *sv, by_key);
-  if (!simple && sn > p->survivors) sn = p->survivors; // --simple: everyone that played the whole match
+    if (!c[i].skip && !c[i].out && c[i].screen >= threshold) sv[sn++] = &c[i], kept += c[i].keep;
+  qsort(sv, sn, sizeof *sv, by_keep_key);
+  const uint32_t most = kept > p->survivors ? kept : p->survivors;
+  if (!simple && sn > most) sn = most; // --simple: everyone that played the whole match
   if (stepping) { // event `screen`: what the steps saved, and with --screen-check what stopping would have changed
     uint64_t played = 0, full = 0;
     uint32_t missed = 0;
@@ -3595,7 +3657,7 @@ static void usage(void) {
           "         [--parents value|duel] [--start <dir>] [--changes name=weight,...]\n"
           "         [--panel-files a.red,b.red,...] [--screen-members N] [--noise z] [--stage N (screen rounds; 0 none)] [--fill]\n"
           "         [--panel-rounds N] [--diversity all|panel] [--average all|panel] [--member-games all|none] [--simple]\n"
-          "         [--difference abs|ahead] [--pushoff value|pareto|pareto-age|pareto-sd] [--positions mirror|pmars]\n"
+          "         [--difference abs|ahead] [--pushoff value|pareto|pareto-age|pareto-sd] [--clear R] [--positions mirror|pmars]\n"
           "         [--islands N [--select-after B [--keep K]] [--score-rounds R]] [--draw-seed S]\n"
           "         [--niche N]\n"
           "         [--panel-choice picked|random|kinds] [--pick-sample 300] [--no-fill] [--map-elites [cells|crowding]]\n"
@@ -4134,6 +4196,7 @@ static const char *params_error(const params *p) {
   // pareto-sd takes the SD-score as --difference computes it: ahead, only where a warrior scores more, makes
   // it far only when it does better than its nearest somewhere; pareto and pareto-age do not use it
   if (p->ahead && p->pareto && p->pareto != 3) return "--difference ahead with --pushoff pareto-sd only, not pareto or pareto-age";
+  if (p->clear > 0 && !p->pareto) return "--clear with --pushoff pareto, pareto-age or pareto-sd only";
   if (p->screen_stop > 0 && p->screen_check > 0) return "--screen-stop or --screen-check, not both";
   if (stops && (p->race || p->map_elites)) return "--screen-stop and --screen-check not with --race or --map-elites";
   if (p->tune_novel && p->map_elites) return "--tune-novel not with --map-elites";
@@ -4154,7 +4217,7 @@ int main(int argc, char **argv) {
   int64_t new_tune = -1;                // --tune-novel, also for a run that continues
   int new_ahead = -1;                   // --difference, also for a run that continues
   int new_options = 0, stage_given = 0, screen_members_given = 0, diversity_given = 0, panel_rounds_given = 0, fill_given = 0;
-  int panel_given = 0, panel_choice_given = 0, draw_seed_given = 0, positions_given = 0;
+  int panel_given = 0, panel_choice_given = 0, draw_seed_given = 0, positions_given = 0, pushoff_given = 0;
   uint32_t islands_n = 0, islands_keep = 0, islands_every = 0, islands_rounds = 100; // --islands, --keep, --select-after, --score-rounds
   int islands_option = 0;
   const char *optimize_file = 0; // --optimize: no run, the constants of this warrior
@@ -4250,6 +4313,7 @@ int main(int argc, char **argv) {
       else if (!strcmp(v, "panel")) p->average_panel = 1;
       else usage();
     } else if (!strcmp(a, "--pushoff")) {
+      pushoff_given = 1;
       if (!strcmp(v, "value")) p->pareto = 0;
       else if (!strcmp(v, "pareto")) p->pareto = 1;
       else if (!strcmp(v, "pareto-age")) p->pareto = 2;
@@ -4306,6 +4370,10 @@ int main(int argc, char **argv) {
     else if (!strcmp(a, "--sharing")) {
       if (!number || !(d > 0)) usage();
       p->sharing = d;
+    }
+    else if (!strcmp(a, "--clear")) {
+      if (!number || !(d > 0)) usage();
+      p->clear = d;
     }
     else if (!strcmp(a, "--fractions")) {
       if (d > 1) usage();
@@ -4385,6 +4453,12 @@ int main(int argc, char **argv) {
     }
     if (!fill_given) p->fill = 1;
     if (!positions_given) p->mirror = 1; // new runs: every position from both sides
+    // new runs: pareto-sd, first or tied first on the '94 and the tiny hill (docs/evolver.md); value where
+    // pareto does not go (params_error() says where)
+    if (!pushoff_given) {
+      p->pareto = 3;
+      if (params_error(p)) p->pareto = 0;
+    }
     if (!draw_seed_given) p->draw_seed = p->seed;
     if (p->simple) { // one length of match, the panel rounds; its first screen rounds are kept as the first stage
       p->rounds = p->panel_rounds;

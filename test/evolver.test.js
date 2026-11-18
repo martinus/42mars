@@ -597,7 +597,7 @@ test('the defaults: the best run of E5, with a panel picked from a round robin; 
   run(join(tmp, 'def4'), [...args, '--threads', '4']);
   const one = events(join(tmp, 'def4'));
   const p = one[0].params;
-  assert.deepEqual([p.list, p.panel, p.screenMembers, p.diversity, p.panelRounds, p.fill, p.stage, p.panelChoice, p.positions], [80, 20, 10, 'panel', 500, true, p.screenRounds, 'picked', 'mirror']);
+  assert.deepEqual([p.list, p.panel, p.screenMembers, p.diversity, p.panelRounds, p.fill, p.stage, p.panelChoice, p.positions, p.pushoff], [80, 20, 10, 'panel', 500, true, p.screenRounds, 'picked', 'mirror', 'pareto-sd']);
   const pick = one[1];
   assert.equal(pick.type, 'pick');
   assert.equal(pick.sample, 40);
@@ -612,6 +612,9 @@ test('the defaults: the best run of E5, with a panel picked from a round robin; 
   assert.ok(!one[0].holdout.some((h) => pick.picked.some((x) => x.file === h.file)), 'a picked warrior in the holdout');
   run(join(tmp, 'def1'), [...args, '--threads', '1']);
   assert.deepEqual(stable(events(join(tmp, 'def1'))), stable(one));
+  // the value push-off where pareto does not go
+  run(join(tmp, 'def-simple'), [...args, '--simple', '--threads', '4']);
+  assert.equal(events(join(tmp, 'def-simple'))[0].params.pushoff, 'value');
 });
 
 test('--start: the first batch starts from the warriors of a folder', { skip }, () => {
@@ -644,6 +647,25 @@ test('--start: the first batch starts from the warriors of a folder', { skip }, 
   assert.deepEqual(stable(events(join(tmp, 'start4'))), stable(one));
   // without --start nothing changes: batch 0 is random warriors
   assert.ok(base.filter((e) => e.type === 'enter' && e.batch === 0).every((e) => e.ops === 'random'));
+  // more start warriors than survivors, and a screen that stops often (z 0.5): every one enters in batch 0, and the
+  // push-off cuts the list to --list (a merge of 80 islands kept 13 with the cut of 16 survivors)
+  const many = join(tmp, 'start-many');
+  mkdirSync(many);
+  const hill = join(root, 'warriors/koenigstuhl/tiny');
+  for (const f of readdirSync(hill).filter((x) => x.endsWith('.red')).sort().slice(0, 12)) copyFileSync(join(hill, f), join(many, f));
+  run(join(tmp, 'start-many-run'), [...without(TINY, '--list'), '--list', '8', '--survivors', '3', '--screen-stop', '0.5', '--start', many, '--threads', '2', '--batches', '2']);
+  const mv = events(join(tmp, 'start-many-run'));
+  const n = mv[0].startWarriors.length;
+  assert.ok(n > 3, `${n} start warriors`);
+  const b0 = mv.filter((e) => e.batch === 0);
+  assert.ok(mv.find((e) => e.type === 'screen' && e.batch === 0).stopped > 0, 'the screen stopped none in batch 0');
+  assert.deepEqual([b0.filter((e) => e.type === 'enter' && e.ops === 'start').length, b0.filter((e) => e.type === 'enter').length], [n, n]);
+  assert.equal(b0.filter((e) => e.type === 'leave').length, n - 8);
+  assert.equal(checkValues(mv), 2);
+  // --simple: nobody stops in the first batch, the list is empty; every start warrior enters
+  run(join(tmp, 'start-many-simple'), [...without(TINY, '--list', '--diversity'), '--list', '8', '--simple', '--start', many, '--threads', '2', '--batches', '1']);
+  const sv = events(join(tmp, 'start-many-simple'));
+  assert.equal(sv.filter((e) => e.type === 'enter' && e.batch === 0 && e.ops === 'start').length, n);
 });
 
 test('42spectrum: every child of every change counted once, the same result on any thread count', { skip }, () => {
