@@ -2,7 +2,8 @@
 paths:
   - "evolver/**"
   - "docs/evolver.md"
-  - "test/evolver.test.js"
+  - "test/evolver*.test.js"
+  - "test/evolver-common.js"
 ---
 # Evolver rules
 
@@ -12,5 +13,5 @@ paths:
 - `--batches 0` and `--seconds 0` mean no limit, not none: `--batches 1` for a run that should only set itself up.
 - `--threads` changes the speed of a run, never its events. A run folder continues with `--threads`, `--batches`, `--seconds` and the few options its message names; an island folder with the first three only.
 - A new option goes into: the `params` struct, `event_start`, `save_state` and `load_state` (at the end of the `params` line, with its default for older states), `params_error()`, the usage text, the table of `docs/evolver.md`, and `checkValues` of the test when it changes a value.
-- Mutants of `evolver/*.c`: `node .claude/skills/engine-check/mutate.mjs <mutants.json> --timeout 600 -- <test command>`, the test command `node --test --test-name-pattern='<re>' test/evolver.test.js`. The test builds `42evolve` from the tree; check that a mutant failed on an assertion, not on the build.
+- Mutants of `evolver/*.c`: `node .claude/skills/engine-check/mutate.mjs <mutants.json> --timeout 600 -- <test command>`, the test command `node --test --test-name-pattern='<re>' test/evolver*.test.js` (or the one file of the test). The test builds `42evolve` from the tree (test/native.js, cached in `build/test/`); check that a mutant failed on an assertion, not on the build.
 - Long runs: `nice -n 10`, started by a script in the scratchpad that logs into a file and goes on by itself (score, next leg). The run folders are `~/42evolve.<name>`; `node tools/serve.mjs --run ~/42evolve.<name> ...` shows them.

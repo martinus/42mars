@@ -42,16 +42,28 @@ export function standardError(wins, ties, rounds) {
 
 // score[a][b]: a's score against b (any scale, null or undefined on the
 // diagonal). active: the indices still in.
-export function sdDistance(score, active, a, b, variant = 'opponent', noise = null, columns = null, ahead = false) {
-  let num = 0, den = 0, sum = 0;
+// sigma[k] of every column of the warriors in: what sdDistance() divides by.
+export function columnSigmas(score, active) {
+  const sigma = [];
   for (const k of active) {
-    if (k === a || k === b || (columns && !columns[k])) continue;
     let mean = 0, n = 0;
     for (const r of active) if (r !== k) { mean += score[r][k]; n++; }
     mean /= n;
     let v = 0;
     for (const r of active) if (r !== k) v += (score[r][k] - mean) ** 2;
-    const sigma = Math.sqrt(v / n);
+    sigma[k] = Math.sqrt(v / n);
+  }
+  return sigma;
+}
+
+// sigmas: columnSigmas(score, active), when the caller has it already
+// (pushoffValues: once for all pairs instead of once per pair).
+export function sdDistance(score, active, a, b, variant = 'opponent', noise = null, columns = null, ahead = false, sigmas = null) {
+  const sg = sigmas ?? columnSigmas(score, active);
+  let num = 0, den = 0, sum = 0;
+  for (const k of active) {
+    if (k === a || k === b || (columns && !columns[k])) continue;
+    const sigma = sg[k];
     let d = score[a][k] - score[b][k];
     if (!ahead) d = Math.abs(d);
     if (noise) {
@@ -75,6 +87,7 @@ export function sdDistance(score, active, a, b, variant = 'opponent', noise = nu
 // (with ahead: from it to any other).
 export function pushoffValues(score, active, { variant = 'opponent', alpha = 1, se = null, z = 0, columns = null, ahead = false } = {}) {
   const noise = se ? { se, z } : null;
+  const sigmas = columnSigmas(score, active);
   return active.map((a) => {
     let avg = 0;
     for (const b of active) if (b !== a) avg += score[a][b];
@@ -82,7 +95,7 @@ export function pushoffValues(score, active, { variant = 'opponent', alpha = 1, 
     let distance = Infinity, nearest = -1;
     for (const b of active) {
       if (b === a) continue;
-      const d = sdDistance(score, active, a, b, variant, noise, columns, ahead);
+      const d = sdDistance(score, active, a, b, variant, noise, columns, ahead, sigmas);
       if (d < distance) { distance = d; nearest = b; }
     }
     if (nearest < 0) distance = 0;
