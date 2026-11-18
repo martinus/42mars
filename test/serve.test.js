@@ -207,6 +207,19 @@ test('a folder of islands stands for its islands', { timeout: 15000 }, async () 
   const got = await read(reader, [], (g) => g.length >= 2);
   await reader.cancel();
   assert.deepEqual([JSON.parse(got[0].data).name, JSON.parse(got[1].data).run], ['isles/island-10', 'island-10']);
+  // the islands take turns: one whose own batches take 10 s and that wrote 5 minutes ago waits for the
+  // batches of 60 s of the others, the newest write of all is 150 s old (below 3 batches of 60 s); after a score islands.txt has the live ones,
+  // the others have stopped; when no island wrote for more than 3 of the slowest batches, the process is gone
+  const ago = (n, s) => utimesSync(join(isl, n, 'events.jsonl'), new Date(), new Date(Date.now() - s * 1000));
+  const speed = (n, s) => appendFileSync(join(isl, n, 'events.jsonl'), `{"type":"speed","batch":0,"seconds":${s}}\n`);
+  speed('island-01', 60), speed('island-02', 60), speed('island-10', 10);
+  ago('island-01', 150), ago('island-02', 300), ago('island-10', 300);
+  const running = async () => (await (await fetch(`${url}/runs`)).json()).slice(0, 3).map((x) => x.running);
+  assert.deepEqual(await running(), [true, true, true]);
+  writeFileSync(join(isl, 'islands.txt'), '42evolve-islands 1\nislands 10 2 100 1 200 101 110.5 100\nlive 1 0 0 0 0 0 0 0 0 1\n');
+  assert.deepEqual(await running(), [true, false, true]);
+  ago('island-01', 420), ago('island-10', 420);
+  assert.deepEqual(await running(), [false, false, false]);
 });
 
 test('a wrong option or port is refused with the usage', () => {

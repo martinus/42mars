@@ -1416,6 +1416,11 @@ try {
   if (k in SORTS) sortBy = k, sortDir = d === '-1' ? -1 : d === '1' ? 1 : SORTS[k];
 } catch {}
 const ageOf = (x) => (x.bestBatch === null || x.batch < 0 ? null : Math.max(0, x.batch - x.bestBatch));
+// The filter above the list: only the runs whose name contains its text (any
+// case); [ and ] step through those. Kept in localStorage like the order.
+let filterText = '';
+try { filterText = localStorage.getItem('evolver-side-filter') ?? ''; } catch {}
+const shown = (x) => !filterText || x.name.toLowerCase().includes(filterText.toLowerCase());
 
 // The running runs first, then the stopped ones (whose batch and age stand
 // still), each part in the order of the heading.
@@ -1427,7 +1432,7 @@ function orderedRuns() {
     if (x === null || y === null) return (x === null) - (y === null) || byName(a, b); // those without a value last
     return sortDir * (x - y) || byName(a, b);
   };
-  return [...runs].sort((a, b) => !a.running - !b.running || order(a, b));
+  return runs.filter(shown).sort((a, b) => !a.running - !b.running || order(a, b));
 }
 
 // The color of a run's score among the runs: red for the lowest, yellow in
@@ -1446,13 +1451,13 @@ function renderRuns() {
   const roots = new Set(runs.map((x) => (x.name.includes('/') ? x.name.split('/')[0] : null)));
   const oneRoot = roots.size === 1 && !roots.has(null);
   const shortName = (name) => (oneRoot ? name.split('/')[1] : name).replace(/^42evolve\./, '');
-  $('side-count').textContent = `${runs.length} runs`;
+  const ordered = orderedRuns(), running = ordered.filter((x) => x.running).length;
+  $('side-count').textContent = ordered.length === runs.length ? `${runs.length} runs` : `${ordered.length} of ${runs.length} runs`;
   for (const h of document.querySelectorAll('.side-cols [data-sort]')) {
     const on = h.dataset.sort === sortBy;
     h.classList.toggle('on', on);
     h.textContent = `${h.dataset.label}${on ? (sortDir > 0 ? ' ↑' : ' ↓') : ''}`;
   }
-  const ordered = orderedRuns(), running = ordered.filter((x) => x.running).length;
   $('side-list').innerHTML = ordered.map((x, i) => {
     const age = ageOf(x), batch = x.batch < 0 ? '' : fmtInt(x.batch), score = x.holdout === null ? '–' : x.holdout.toFixed(1);
     const title = [
@@ -1568,8 +1573,14 @@ async function main() {
       try { localStorage.setItem('evolver-side-sort', `${sortBy}:${sortDir}`); } catch {}
       renderRuns();
     });
+    $('side-filter').value = filterText;
+    $('side-filter').addEventListener('input', (e) => {
+      filterText = e.target.value.trim();
+      try { localStorage.setItem('evolver-side-filter', filterText); } catch {}
+      renderRuns();
+    });
     window.addEventListener('keydown', (e) => {
-      if (e.ctrlKey || e.metaKey || e.altKey || $('side').hidden) return;
+      if (e.ctrlKey || e.metaKey || e.altKey || $('side').hidden || e.target.closest?.('input, textarea')) return;
       if (e.key === '[') stepRun(-1);
       if (e.key === ']') stepRun(1);
     });

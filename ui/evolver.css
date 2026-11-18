@@ -137,7 +137,8 @@ main {
 .card .links a { cursor: pointer; margin-right: 8px; border-bottom: 1px dotted #555b78; text-decoration: none; }
 
 /* the list of runs when the server has several (tools/serve.mjs --run a b ...): one dashboard, the left column switches its stream */
-body.with-side { grid-template-columns: 214px minmax(0, 1fr); }
+body.with-side { grid-template-columns: 300px minmax(0, 1fr); }
+#side-filter { flex: 1; min-width: 0; max-width: 170px; font: 11px var(--mono); color: var(--text); background: var(--panel-2); border: 1px solid var(--line); border-radius: 4px; padding: 2px 6px; text-transform: none; letter-spacing: 0; }
 body.with-side .bar { grid-column: 1 / -1; }
 .side { display: grid; grid-template-rows: auto auto minmax(0, 1fr) auto; min-height: 0; border-right: 1px solid var(--line); background: #090a11; }
 .side-head { display: flex; align-items: center; justify-content: space-between; gap: 6px; padding: 9px 10px 7px; color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: 0.1em; }

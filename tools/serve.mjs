@@ -62,14 +62,15 @@ for (const args = process.argv.slice(2); args.length;) {
 const port = Number(portArg ?? process.env.PORT ?? 8000);
 if (!Number.isInteger(port) || port < 0 || port > 65535) usage(`not a port: '${portArg ?? process.env.PORT}'`);
 // a folder of islands (42evolve --islands: islands.txt, island-01, ...) stands for its islands
+const ISLAND = /^island-(\d+)$/;
 for (let i = 0; i < runDirs.length; i++) {
   if (!existsSync(join(runDirs[i], 'islands.txt'))) continue;
-  const islands = readdirSync(runDirs[i]).filter((n) => /^island-\d+$/.test(n)).sort().map((n) => join(runDirs[i], n));
+  const islands = readdirSync(runDirs[i]).filter((n) => ISLAND.test(n)).sort().map((n) => join(runDirs[i], n));
   runDirs.splice(i, 1, ...islands);
   i += islands.length - 1;
 }
 // the name of a run: its folder, an island with the folder of its islands before it
-const runName = (dir) => (/^island-\d+$/.test(basename(dir)) ? `${basename(resolve(dir, '..'))}/${basename(dir)}` : basename(dir));
+const runName = (dir) => (ISLAND.test(basename(dir)) ? `${basename(resolve(dir, '..'))}/${basename(dir)}` : basename(dir));
 for (const dir of runDirs) if (!existsSync(join(dir, 'events.jsonl'))) console.error(`${dir} has no events.jsonl yet; the dashboard shows the run once 42evolve writes it`);
 const runDir = runDirs[0] ?? null;
 const types = {
@@ -222,7 +223,7 @@ function follow(req, runDir, send) {
 // that is below 3 times its last batch (the speed event), at least 2 minutes
 // (a batch on one thread took over a minute, 17th November 2026).
 const summaries = new Map(); // folder -> { key, out, mtimeMs, seconds }: unchanged files are not read again
-async function summary(dir, index) {
+async function summary(dir) {
   const file = join(dir, 'events.jsonl'), red = join(dir, 'best.red');
   const [ev, best] = await Promise.all([stat(file).catch(() => null), stat(red).catch(() => null)]);
   const key = `${ev?.size} ${ev?.mtimeMs} ${best?.mtimeMs}`;
@@ -250,7 +251,33 @@ async function summary(dir, index) {
     }
     summaries.set(dir, c);
   }
-  return { index, ...c.out, running: Date.now() - c.mtimeMs < Math.max(120000, 3000 * c.seconds) };
+  return c;
+}
+
+// The islands of a folder are one process and take turns, one batch at a
+// time: an island waits for the batches of the others, so its own last write
+// says little (an island with batches of 10 s waited 5 minutes among seven
+// with batches of 40 to 60 s, 18th November 2026). So the running rule above
+// applies to the folder: its newest write against its slowest last batch.
+// An island the score dropped (0 in the live line of islands.txt) has stopped.
+async function runList() {
+  const cs = await Promise.all(runDirs.map(summary));
+  const folder = (dir) => (ISLAND.test(basename(dir)) ? resolve(dir, '..') : dir);
+  const last = new Map(); // folder -> { mtimeMs, seconds }
+  for (const [i, c] of cs.entries()) {
+    const l = last.get(folder(runDirs[i])) ?? { mtimeMs: 0, seconds: 0 };
+    last.set(folder(runDirs[i]), { mtimeMs: Math.max(l.mtimeMs, c.mtimeMs), seconds: Math.max(l.seconds, c.seconds) });
+  }
+  const live = new Map(); // folder -> the live flags of its islands
+  for (const f of last.keys()) {
+    const line = /^live((?: \d)*)$/m.exec(await readFile(join(f, 'islands.txt'), 'utf8').catch(() => ''));
+    if (line) live.set(f, line[1].trim().split(' ').map(Number));
+  }
+  return cs.map((c, index) => {
+    const dir = runDirs[index], l = last.get(folder(dir));
+    const going = live.get(folder(dir))?.[Number(ISLAND.exec(basename(dir))?.[1]) - 1] !== 0;
+    return { index, ...c.out, running: going && Date.now() - l.mtimeMs < Math.max(120000, 3000 * l.seconds) };
+  });
 }
 
 const eventStream = (res) => res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', connection: 'keep-alive' });
@@ -276,7 +303,7 @@ createServer(async (req, res) => {
     return;
   }
   if (path === '/runs') {
-    const list = await Promise.all(runDirs.map((dir, index) => summary(dir, index)));
+    const list = await runList();
     res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-cache' });
     res.end(JSON.stringify(list));
     return;
