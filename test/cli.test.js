@@ -15,12 +15,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
-import { lines, prebuilt, program, skip } from './native.js';
+import { builtProgram, lines, prebuilt, program, skip } from './native.js';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
 const tmp = mkdtempSync(join(tmpdir(), 'cli-'));
 after(() => rmSync(tmp, { recursive: true, force: true }));
-const bin = program(prebuilt ?? tmp, '42mars');
+let bin = prebuilt ? program(prebuilt, '42mars') : null;
 
 // P/: a PIN, an ORG, negative values and A-field modes; a source with an
 // error; a warrior that dies; NUL bytes.
@@ -43,7 +43,10 @@ const streams = {
   'crlf.txt': ';redcode\r\n;name A\r\nmov 0,1\r\n;redcode\r\n;name B\r\ndat 5\r\n',
 };
 
-before(() => (prebuilt || skip ? undefined : promisify(execFile)('cc', ['-O2', '-o', bin, join(root, 'cli/42mars.c'), join(root, 'lib/42mars.c')])));
+// on the library compiled once (test/native.js)
+before(async () => {
+  if (!prebuilt && !skip) bin = await builtProgram('42mars', ['cli/42mars.c']);
+});
 
 const cases = JSON.parse(readFileSync(new URL('./fixtures/cli.json', import.meta.url), 'utf8'));
 for (const c of cases) {
