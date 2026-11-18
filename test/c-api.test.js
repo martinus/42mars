@@ -15,28 +15,32 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createMarsSync, evaluate, assemble } from '../wasm/42mars.js';
-import { hasCc, lines, prebuilt, program, skip } from './native.js';
+import { built, builtProgram, hasCc, lines, prebuilt, program, skip } from './native.js';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
 const version = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).version;
 const tmp = mkdtempSync(join(tmpdir(), 'c-api-'));
 after(() => rmSync(tmp, { recursive: true, force: true }));
 
-// The builds take seconds each, so they run at the same time: the test
-// program, the examples with the plain commands of 42mars.h and
-// examples/parallel.c, and a syntax check of the M42_FIXED_CONTEXT build with libc, which nothing else builds.
+// The test program and examples/parallel.c (on the library compiled once,
+// test/native.js), the example with the plain command of 42mars.h, and a
+// syntax check of the M42_FIXED_CONTEXT build with libc, which nothing else
+// builds; at the same time.
 const run = promisify(execFile);
-const apiTest = program(prebuilt ?? tmp, 'api-test');
-const example = program(prebuilt ?? tmp, 'example');
-const parallel = program(prebuilt ?? tmp, 'parallel');
-before(() => {
-  if (!hasCc) return undefined;
-  return Promise.all([
-    prebuilt ? null : run('cc', ['-std=c11', '-O2', '-Wall', '-Wextra', '-o', apiTest, join(root, 'test/c/api-test.c'), join(root, 'lib/42mars.c')]),
-    prebuilt ? null : run('cc', ['-Ilib', '-o', example, 'examples/example.c', 'lib/42mars.c'], { cwd: root }),
-    prebuilt ? null : run('cc', ['-O2', '-pthread', '-Ilib', '-o', parallel, 'examples/parallel.c', 'lib/42mars.c'], { cwd: root }),
-    run('cc', ['-std=c11', '-fsyntax-only', '-Wall', '-Wextra', '-Werror=implicit-function-declaration', '-DM42_FIXED_CONTEXT', join(root, 'lib/42mars.c')]),
-  ]);
+let apiTest = prebuilt ? program(prebuilt, 'api-test') : null;
+let example = prebuilt ? program(prebuilt, 'example') : null;
+let parallel = prebuilt ? program(prebuilt, 'parallel') : null;
+before(async () => {
+  if (!hasCc) return;
+  const fixed = run('cc', ['-std=c11', '-fsyntax-only', '-Wall', '-Wextra', '-Werror=implicit-function-declaration', '-DM42_FIXED_CONTEXT', join(root, 'lib/42mars.c')]);
+  if (!prebuilt) {
+    [apiTest, example, parallel] = await Promise.all([
+      builtProgram('api-test', ['test/c/api-test.c'], ['-std=c11', '-Wall', '-Wextra']),
+      built('example', ['-Ilib', '-o', '$OUT', 'examples/example.c', 'lib/42mars.c'], ['examples/example.c']), // the command its test names
+      builtProgram('parallel', ['examples/parallel.c'], ['-pthread', '-Ilib']),
+    ]);
+  }
+  await fixed;
 });
 
 const warriorDir = join(root, 'warriors');
