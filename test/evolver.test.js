@@ -109,16 +109,16 @@ test('a run folder takes no new evolution options', { skip }, () => {
 
 // --pushoff pareto: the members' values of v as 42evolve computes them, their
 // place in NSGA-II's order on the panel average (without the own column) and
-// the average against the other members, with age (pareto-age) also the
-// origin of their line (later is younger): 10 (fronts - front) + min(crowding,
-// 5). Panel warriors keep theirs.
-function paretoValues(v, ids, score, panel, origins, age) {
+// the average against the other members, with pareto-age also the origin of
+// their line (later is younger), with pareto-sd the SD-score to the nearest of
+// v: 10 (fronts - front) + min(crowding, 5). Panel warriors keep theirs.
+function paretoValues(v, ids, score, panel, origins, third) {
   const ms = ids.map((id, i) => i).filter((i) => !panel.has(ids[i]));
   const obj = ms.map((i) => {
     const pc = ids.map((b, j) => j).filter((j) => panel.has(ids[j]) && j !== i);
     const mc = ms.filter((j) => j !== i);
     const o = [pc.reduce((t, j) => t + score[i][j], 0) / pc.length, mc.length ? mc.reduce((t, j) => t + score[i][j], 0) / mc.length : 0];
-    return age ? [...o, origins.get(ids[i])] : o;
+    return third === 'pareto-age' ? [...o, origins.get(ids[i])] : third === 'pareto-sd' ? [...o, v[i].distance] : o;
   });
   const { front, crowd } = paretoFronts(obj);
   const F = Math.max(...front) + 1;
@@ -175,7 +175,7 @@ function checkValues(evs) {
   // against the other members and the origin of their line (later is younger); 10 (fronts - front) + min(crowding, 5)
   const origins = new Map(); // id -> the batch its line started, from the enter events
   let paretoLeaves = 0, newLines = 0, olderSecond = 0;
-  const paretoed = (v, ids, score) => (start.params.pushoff?.startsWith('pareto') ? paretoValues(v, ids, score, panel, origins, start.params.pushoff === 'pareto-age') : v);
+  const paretoed = (v, ids, score) => (start.params.pushoff?.startsWith('pareto') ? paretoValues(v, ids, score, panel, origins, start.params.pushoff) : v);
   // --sharing c: the average of the push-off value weighted, panel warrior j
   // by 1 / (members' mean against it + c), a member's column by the mean of
   // those; the weights of the last 'sharing' event (uniform before the first)
@@ -721,7 +721,7 @@ function checkEarly(evs) {
     const score = ids.map((a) => ids.map((b) => (a === b ? null : p1.get(`${a},${b}`))));
     const columns = par.diversity === 'panel' ? ids.map((id) => P.has(id)) : null;
     const v = pushoffValues(score, ids.map((_, i) => i), { variant: par.sd, alpha: par.alpha, columns });
-    if (par.pushoff?.startsWith('pareto')) return { ids, v: paretoValues(v, ids, score, P, origins, par.pushoff === 'pareto-age') };
+    if (par.pushoff?.startsWith('pareto')) return { ids, v: paretoValues(v, ids, score, P, origins, par.pushoff) };
     if (par.average !== 'panel') return { ids, v };
     return { ids, v: v.map((x, i) => { // --average panel: the average over the panel's columns
       const row = score[i].filter((_, j) => j !== i && P.has(ids[j])), avg = row.reduce((p, q) => p + q, 0) / row.length;
@@ -1553,7 +1553,7 @@ test('no match has seed 0: pMARS\'s generator stays there, and every round would
   assert.equal(seeds.filter((s) => s === 0).length, 0);
 });
 
-test('--pushoff pareto: NSGA-II on panel and members, pareto-age also on the age of the line; the same run on any thread count and after a resume', { skip }, () => {
+test('--pushoff pareto: NSGA-II on panel and members, pareto-age also on the age of the line, pareto-sd on the SD-score, also one-sided; the same run on any thread count and after a resume', { skip }, () => {
   assert.equal(base[0].params.pushoff, 'value');
   const BATCHES = 12;
   const args = [...TINY, '--pushoff', 'pareto', '--list', '16', '--survivors', '8'];
@@ -1580,12 +1580,25 @@ test('--pushoff pareto: NSGA-II on panel and members, pareto-age also on the age
   run(join(tmp, 'pareto-stage'), [...without(args, '--pushoff'), '--pushoff', 'pareto-age', '--panel-rounds', '100', '--stage', '20', '--changes', cross, '--threads', '2', '--batches', '16']);
   const st = events(join(tmp, 'pareto-stage'));
   assert.equal(st[0].params.pushoff, 'pareto-age');
+  // pareto-sd: the SD-score to the nearest as the third objective, every value and push-off replayed
+  run(join(tmp, 'pareto-sd'), [...without(args, '--pushoff'), '--pushoff', 'pareto-sd', '--threads', '2', '--batches', String(BATCHES)]);
+  const sd = events(join(tmp, 'pareto-sd'));
+  assert.equal(sd[0].params.pushoff, 'pareto-sd');
+  assert.equal(checkValues(sd), BATCHES);
+  assert.ok(checkValues.paretoLeaves >= 2, `pareto-sd changed who left in ${checkValues.paretoLeaves} push-offs`);
+  assert.notDeepEqual(stable(sd).filter((e) => e.type === 'leave').map((e) => e.id), stable(one).filter((e) => e.type === 'leave').map((e) => e.id), 'pareto-sd pushed out the same as pareto');
+  // pareto-sd with --difference ahead: the SD-score only where a warrior scores more than its nearest
+  run(join(tmp, 'pareto-sda'), [...without(args, '--pushoff'), '--pushoff', 'pareto-sd', '--difference', 'ahead', '--threads', '2', '--batches', String(BATCHES)]);
+  const sda = events(join(tmp, 'pareto-sda'));
+  assert.deepEqual([sda[0].params.pushoff, sda[0].params.difference], ['pareto-sd', 'ahead']);
+  assert.equal(checkValues(sda), BATCHES);
+  assert.notDeepEqual(stable(sda).filter((e) => e.type === 'leave').map((e) => e.id), stable(sd).filter((e) => e.type === 'leave').map((e) => e.id), 'ahead pushed out the same as both ways');
   assert.equal(checkValues(st), 16);
   assert.ok(checkValues.olderSecond >= 1, `${checkValues.olderSecond} crossovers took the older line of the second parent`);
   const rule = checkEarly(st);
   assert.ok(rule.decisions >= 2, `${rule.decisions} early decisions`);
   // refused with the options that change the value otherwise, and a value other than value and pareto
-  for (const [bad, why] of [[['--sharing', '20'], /--pushoff pareto not with/], [['--select', 'value'], /--pushoff pareto not with/], [['--pushoff', 'front'], /usage/]]) {
+  for (const [bad, why] of [[['--sharing', '20'], /--pushoff pareto not with/], [['--select', 'value'], /--pushoff pareto not with/], [['--difference', 'ahead'], /pareto-sd only/], [['--pushoff', 'front'], /usage/]]) {
     const r = spawnSync(evolve, [join(tmp, 'pareto-bad'), ...args, ...bad, '--batches', '1'], { encoding: 'utf8' });
     assert.equal(r.status, 2, bad.join(' '));
     assert.match(r.stderr, why);
