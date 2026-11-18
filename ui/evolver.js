@@ -556,6 +556,17 @@ function drawMatrix(now) {
   };
   for (const g of S.ghosts) drawRow(g, top + g.row * ch, Math.max(0, 1 - (now - g.leftAt) / 900));
   for (const m of ms) drawRow(m, top + m.row * ch, 1);
+  // the selected warrior: its row (its matches) and its column (the matches
+  // of the others against it) framed
+  const si = others.findIndex((o) => o.id === selected);
+  if (si >= 0) {
+    const right = colX(others.length - 1) + cw - cg, bottom = top + ms.length * ch;
+    const m = si < ms.length ? ms[si] : null, ry = m ? top + m.row * ch : 0, cx = colX(si);
+    ctx.strokeStyle = '#ffc53d';
+    ctx.lineWidth = 1.5;
+    if (m) ctx.strokeRect(1.5, ry - 1, right, ch - rg + 2);
+    ctx.strokeRect(cx - 1, top - 9, cw - cg + 2, bottom - top + 10);
+  }
   const hv = mouseOf(canvas);
   if (hv) {
     const c = matrix.cells.find((c) => hv.x >= c.x && hv.x < c.x + c.w && hv.y >= c.y && hv.y < c.y + c.h);
