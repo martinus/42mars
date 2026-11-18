@@ -26,6 +26,9 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # The JavaScript and the library on every Node version. The evolver's tests
+  # (test/evolver*.test.js) test the C program: the native jobs run them on
+  # the programs make builds, and the sanitizers under ASan and UBSan.
   test:
     runs-on: ubuntu-latest
     strategy:
@@ -36,7 +39,7 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: ${{ matrix.node }}
-      - run: npm test
+      - run: node --test $(ls test/*.test.js | grep -v '^test/evolver')
 
   # The tests load the committed 42mars.wasm: this fails when it is not the
   # build of lib/ (also when lib/src/gen-dispatch.mjs changes dispatch.h).
@@ -135,7 +138,7 @@ jobs:
         run: |
           mkdir -p "$RUNNER_TEMP/t20"
           ls warriors/koenigstuhl/94nop | LC_ALL=C sort | head -20 | while read -r f; do cp "warriors/koenigstuhl/94nop/$f" "$RUNNER_TEMP/t20/"; done
-      - run: make
+      - run: make -j4
       - name: compare with pMARS
         run: |
           set -e
@@ -161,10 +164,12 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: 22
+      # everything builds; the library and 42mars are tested (the evolver is not
+      # built by MSVC, and its tests on the slower portable engine took 13 minutes)
       - name: C11 without compiler extensions (the code MSVC builds)
         if: runner.os == 'Linux'
         run: |
-          make -j4 CFLAGS='-O2 -std=c11 -pedantic -Wall -Wextra -Werror -DM42_PORTABLE' test
+          make -j4 CFLAGS='-O2 -std=c11 -pedantic -Wall -Wextra -Werror -DM42_PORTABLE' all test-lib
           make clean
       - name: make test
         if: runner.os != 'Windows'
