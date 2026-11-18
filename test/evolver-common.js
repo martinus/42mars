@@ -22,7 +22,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { assemble, createMarsSync } from '../wasm/42mars.js';
-import { paretoFronts, pushoffValues, sdDistance, standardError, weakest } from '../tools/diversity.js';
+import { columnSigmas, paretoFronts, pushoffValues, sdDistance, standardError, weakest } from '../tools/diversity.js';
 import { kind as styleKind, measureStyle } from '../tools/style.js';
 import { bestRedInfo } from '../tools/progress.js';
 import { builtProgram, prebuilt, program, skip as noCc } from './native.js';
@@ -47,6 +47,7 @@ export const TINY = ['--opponents', join(root, 'warriors/koenigstuhl/tiny'), '--
   // the defaults before the best run of E5 became them; test 'the defaults' has those
   '--list', '20', '--screen-members', '0', '--diversity', 'all', '--panel-rounds', '40', '--no-fill', '--panel-choice', 'random',
   '--positions', 'pmars', // the matches replayed with the seed alone; the mirror has its own test
+  '--pushoff', 'value', // the push-off replayed by tools/diversity.js; pareto has its own tests
   '--stage', '0']; // the tests of --stage set it
 
 export function run(dir, args) {
@@ -96,16 +97,35 @@ export async function setup() {
 // the average against the other members, with pareto-age also the origin of
 // their line (later is younger), with pareto-sd the SD-score to the nearest of
 // v: 10 (fronts - front) + min(crowding, 5). Panel warriors keep theirs.
-export function paretoValues(v, ids, score, panel, origins, third) {
+// clear: --clear, { radius, and the options of pushoffValues for the SD-score }:
+// the members by average, the strongest first, each a winner unless its
+// SD-score to a winner before it is below the radius; the fronts of the
+// winners, then those of the cleared ones.
+export function paretoValues(v, ids, score, panel, origins, third, clear = null) {
   const ms = ids.map((id, i) => i).filter((i) => !panel.has(ids[i]));
+  const cleared = ms.map(() => false);
+  if (clear?.radius > 0) {
+    const all = ids.map((_, i) => i), sigmas = columnSigmas(score, all);
+    const order = ms.map((_, k) => k).sort((a, b) => v[ms[b]].avg - v[ms[a]].avg || a - b);
+    order.forEach((k, q) => {
+      cleared[k] = order.slice(0, q).some((w) => !cleared[w] && sdDistance(score, all, ms[k], ms[w], clear.variant, clear.se ? { se: clear.se, z: clear.z } : null, clear.columns, clear.ahead, sigmas) < clear.radius);
+    });
+  }
   const obj = ms.map((i) => {
     const pc = ids.map((b, j) => j).filter((j) => panel.has(ids[j]) && j !== i);
     const mc = ms.filter((j) => j !== i);
     const o = [pc.reduce((t, j) => t + score[i][j], 0) / pc.length, mc.length ? mc.reduce((t, j) => t + score[i][j], 0) / mc.length : 0];
     return third === 'pareto-age' ? [...o, origins.get(ids[i])] : third === 'pareto-sd' ? [...o, v[i].distance] : o;
   });
-  const { front, crowd } = paretoFronts(obj);
-  const F = Math.max(...front) + 1;
+  const front = [], crowd = [];
+  let F = 0;
+  for (const c of [false, true]) {
+    const at = ms.map((_, k) => k).filter((k) => cleared[k] === c);
+    if (!at.length) continue;
+    const r = paretoFronts(at.map((k) => obj[k]));
+    at.forEach((k, j) => { front[k] = F + r.front[j]; crowd[k] = r.crowd[j]; });
+    F += Math.max(...r.front) + 1;
+  }
   const out = v.map((x) => ({ ...x }));
   ms.forEach((i, k) => { out[i].value = 10 * (F - front[k]) + Math.min(crowd[k], 5); });
   return out;
@@ -159,7 +179,7 @@ export function checkValues(evs) {
   // against the other members and the origin of their line (later is younger); 10 (fronts - front) + min(crowding, 5)
   const origins = new Map(); // id -> the batch its line started, from the enter events
   let paretoLeaves = 0, newLines = 0, olderSecond = 0;
-  const paretoed = (v, ids, score) => (start.params.pushoff?.startsWith('pareto') ? paretoValues(v, ids, score, panel, origins, start.params.pushoff) : v);
+  const paretoed = (v, ids, score, o) => (start.params.pushoff?.startsWith('pareto') ? paretoValues(v, ids, score, panel, origins, start.params.pushoff, { radius: start.params.clear, ...o }) : v);
   // --sharing c: the average of the push-off value weighted, panel warrior j
   // by 1 / (members' mean against it + c), a member's column by the mean of
   // those; the weights of the last 'sharing' event (uniform before the first)
@@ -295,7 +315,8 @@ export function checkValues(evs) {
       const score = ids.map((a) => ids.map((b) => (a === b ? null : pts.get(`${a},${b}`) ?? (noGames ? 0 : undefined))));
       const columns = start.params.diversity === 'panel' ? ids.map((id) => panel.has(id)) : null;
       const noise = start.params.noise ? { se: ids.map((a) => ids.map((b) => (a === b ? 0 : se.get(`${a},${b}`)))), z: start.params.noise } : {};
-      const v = paretoed(averaged(share(pushoffValues(score, ids.map((_, i) => i), { variant: start.params.sd, alpha: start.params.alpha, columns, ahead, ...noise }), ids, score), ids, score), ids, score);
+      const o = { variant: start.params.sd, alpha: start.params.alpha, columns, ahead, ...noise };
+      const v = paretoed(averaged(share(pushoffValues(score, ids.map((_, i) => i), o), ids, score), ids, score), ids, score, o);
       let keep = new Set(ids.map((id, i) => (panel.has(id) ? i : -1)).filter((i) => i >= 0));
       if (start.params.niche || start.params.specialists) {
         const safe = new Set(keep);
@@ -367,7 +388,8 @@ export function checkValues(evs) {
       const score = ids.map((a) => ids.map((b) => (a === b ? null : pts.get(`${a},${b}`) ?? (noGames ? 0 : undefined))));
       const noise = start.params.noise ? { se: ids.map((a) => ids.map((b) => (a === b ? 0 : se.get(`${a},${b}`)))), z: start.params.noise } : {};
       const columns = start.params.diversity === 'panel' ? ids.map((id) => panel.has(id)) : null; // --diversity panel
-      const js = paretoed(averaged(share(pushoffValues(score, ids.map((_, i) => i), { variant: start.params.sd, alpha: start.params.alpha, columns, ahead, ...noise }), ids, score), ids, score), ids, score);
+      const o = { variant: start.params.sd, alpha: start.params.alpha, columns, ahead, ...noise };
+      const js = paretoed(averaged(share(pushoffValues(score, ids.map((_, i) => i), o), ids, score), ids, score), ids, score, o);
       assert.deepEqual(e.values.map((v) => v[0]), ids);
       // the sixth number: the average against the panel, without the own column
       e.values.forEach(([id, , , , , pAvg]) => {
@@ -455,7 +477,7 @@ export function checkEarly(evs) {
     const score = ids.map((a) => ids.map((b) => (a === b ? null : p1.get(`${a},${b}`))));
     const columns = par.diversity === 'panel' ? ids.map((id) => P.has(id)) : null;
     const v = pushoffValues(score, ids.map((_, i) => i), { variant: par.sd, alpha: par.alpha, columns });
-    if (par.pushoff?.startsWith('pareto')) return { ids, v: paretoValues(v, ids, score, P, origins, par.pushoff) };
+    if (par.pushoff?.startsWith('pareto')) return { ids, v: paretoValues(v, ids, score, P, origins, par.pushoff, { radius: par.clear, variant: par.sd, columns }) };
     if (par.average !== 'panel') return { ids, v };
     return { ids, v: v.map((x, i) => { // --average panel: the average over the panel's columns
       const row = score[i].filter((_, j) => j !== i && P.has(ids[j])), avg = row.reduce((p, q) => p + q, 0) / row.length;
