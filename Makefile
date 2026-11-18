@@ -8,7 +8,9 @@
 #                        build/42evolve (the evolver, POSIX threads)
 #   make test            the C tests of the Node test suite on these builds
 #                        (test/c-api.test.js, test/cli.test.js,
-#                        test/evolver.test.js; needs Node 20+)
+#                        test/evolver*.test.js; needs Node 20+)
+#   make test-lib        only the library and 42mars (test/c-api.test.js,
+#                        test/cli.test.js)
 #   make install         into $(DESTDIR)$(PREFIX): bin/42mars, include/42mars.h,
 #                        lib/lib42mars.a, the shared library, lib/pkgconfig/42mars.pc
 #   make dist            build/42mars-<version>-<os>-<cpu>.tar.gz, an install
@@ -97,8 +99,13 @@ build/parallel: examples/parallel.c build/lib42mars.a
 build/evolver-test: test/c/evolver-test.c $(EVOLVER_SOURCES) build/lib42mars.a
 	$(CC) $(CFLAGS) $(LDFLAGS) -Ilib -Ievolver -o $@ test/c/evolver-test.c evolver/genome.c evolver/pushoff.c evolver/names.c build/lib42mars.a -lm
 
+# test-lib: the library and 42mars only, without the evolver (CI builds the C11
+# code that MSVC compiles with it, test.yml)
 test: all build/api-test build/example build/parallel build/evolver-test
-	M42_BIN=build node --test test/c-api.test.js test/cli.test.js test/evolver.test.js
+	M42_BIN=build node --test test/c-api.test.js test/cli.test.js test/evolver*.test.js
+
+test-lib: build/lib42mars.a build/$(SHARED) build/42mars build/api-test build/example build/parallel
+	M42_BIN=build node --test test/c-api.test.js test/cli.test.js
 
 install: all
 	install -d $(DESTDIR)$(BINDIR) $(DESTDIR)$(INCLUDEDIR) $(DESTDIR)$(LIBDIR)/pkgconfig
@@ -149,4 +156,4 @@ endif
 clean:
 	rm -rf build
 
-.PHONY: all test install dist fuzz clean
+.PHONY: all test test-lib install dist fuzz clean
