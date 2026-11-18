@@ -23,9 +23,10 @@ No dependencies: Node 20 or newer for the tests and tools, a C11 compiler for th
 ## Build and test
 
 ```sh
-npm test                    # all tests, about 9 s, on the committed 42mars.wasm
+npm test                    # all tests, under a minute, on the committed 42mars.wasm
 make                        # build/: lib42mars.a, the shared library, 42mars, 42evolve
 make test                   # the C tests on these builds
+make test-lib               # the same without the evolver's tests
 wasm/build.sh               # after every change in lib/: rebuilds dispatch.h and 42mars.wasm
 npm run serve               # the visualizer on http://127.0.0.1:8000/
 ```
@@ -52,7 +53,7 @@ With AFL++ (`test/fuzz/afl.sh`), the instances use different settings, as AFL++'
 
 With libFuzzer (`test/fuzz/run.sh`), every process runs under ASan and UBSan. `make fuzz` fails on any sanitizer report, an input that takes more than 10 s or a process above 2 GB. The input is written to `build/fuzz/<target>-crash-*` (or `-timeout-*`, `-oom-*`), the log of each process to `build/fuzz/<target>-<n>.log`; `make build/fuzz/fuzz_asm && build/fuzz/fuzz_asm build/fuzz/fuzz_asm-crash-<hash>` runs one input again, under a debugger if needed. An input that found a defect also becomes a regression test in `npm test`, through `assemble` or `test/c/api-test.c`, so it is checked on every run of the tests, without fuzzing.
 
-CI ([`test.yml`](../.github/workflows/test.yml)) runs `npm test` on Node 20 to 26, checks the wasm build, builds and tests the library on Linux (x64, arm64), macOS and Windows and under ASan and UBSan, and makes the release archives, which it unpacks and runs: `42mars` on two warriors, `examples/example.c` built against the unpacked library (no fuzzing: `make fuzz` runs by hand). Its `pmars` job builds pMARS 0.9.5 from its archive (output hidden, see [the clean room](../README.md#written-in-a-clean-room-so-it-can-be-mit)) and compares scores, listings and `42mars` outputs with `tools/pmars-diff.mjs`, the t20 tournament and `tools/example-check.mjs`; it runs on every pull request, with pMARS from a pinned commit (the repository variables are named at the top of the job). The per-round instruction counts and core hashes (`--pmars-trace`) and `tools/expr-fuzz.mjs` need patched pMARS builds and stay local checks. The Windows job reuses the MSVC object of `lib/42mars.c` from an earlier run while `lib/`, `build-msvc.bat` and the runner image stay the same (about 40 s less); a tag always compiles. A tag `v<version>` makes a GitHub release with the archives; nothing goes to npm. The version is in `lib/42mars.h` and `package.json`, and a test checks that both agree.
+CI ([`test.yml`](../.github/workflows/test.yml)) runs the tests of `npm test` but the evolver's on Node 20 to 26 (those run with `make test` in the native jobs), checks the wasm build, builds and tests the library on Linux (x64, arm64), macOS and Windows and under ASan and UBSan, and makes the release archives, which it unpacks and runs: `42mars` on two warriors, `examples/example.c` built against the unpacked library (no fuzzing: `make fuzz` runs by hand). Its `pmars` job builds pMARS 0.9.5 from its archive (output hidden, see [the clean room](../README.md#written-in-a-clean-room-so-it-can-be-mit)) and compares scores, listings and `42mars` outputs with `tools/pmars-diff.mjs`, the t20 tournament and `tools/example-check.mjs`; it runs on every pull request, with pMARS from a pinned commit (the repository variables are named at the top of the job). The per-round instruction counts and core hashes (`--pmars-trace`) and `tools/expr-fuzz.mjs` need patched pMARS builds and stay local checks. The Windows job reuses the MSVC object of `lib/42mars.c` from an earlier run while `lib/`, `build-msvc.bat` and the runner image stay the same (about 40 s less); a tag always compiles. A tag `v<version>` makes a GitHub release with the archives; nothing goes to npm. The version is in `lib/42mars.h` and `package.json`, and a test checks that both agree.
 
 ## Compare with pMARS
 
