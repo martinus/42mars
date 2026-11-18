@@ -77,7 +77,7 @@ typedef struct {
   int member_games_none;    // --member-games none: members never play each other (with --average panel --diversity panel)
   int simple;               // --simple: a candidate plays the panel only and stops when it cannot make it onto the hill
   int ahead;                // --difference ahead: the SD-score counts a column only where the warrior scores more
-  int pareto;               // --pushoff pareto: fronts on panel average and average against members (NSGA-II); 2 with age
+  int pareto;               // --pushoff pareto: fronts on panel average and average against members (NSGA-II); 2 with age, 3 with SD-score
   int mirror;               // --positions mirror: each position twice, the second time with the warriors swapped
   uint64_t draw_seed;       // the order of the opponent folder, so the panel and the holdout: --draw-seed, else the seed
   uint32_t niche;           // --niche N: each kind of style keeps at least N members (not the two kinds of junk)
@@ -656,7 +656,10 @@ static void panel_average_values(run *r, const double *pts) {
 // pareto-age adds the youth of their line (Schmidt and Lipson 2011,
 // age-fitness Pareto optimization), r->batch - origin smaller is better; in
 // pareto30 (17th November 2026) that left 73 to 80 of 80 members on the
-// first front, and the crowding alone decided. value = 10 (F - f) +
+// first front, and the crowding alone decided. pareto-sd adds the SD-score
+// to the nearest warrior instead (diversity as an objective, Mouret and
+// Doncieux 2012): on long30's list of 18th November 32 of 80 were on the
+// first front with it, 78 with the age. value = 10 (F - f) +
 // min(crowding, 5) with F fronts and f the warrior's, 0 the first: the
 // lowest value is the most crowded of the last front, and a tournament by
 // value is NSGA-II's crowded comparison. A copy of a warrior has its point
@@ -667,7 +670,7 @@ static void pareto_values(run *r, const double *pts) {
   if (!r->p.pareto) return;
   const uint32_t P = r->panel_n, n = r->active_n > P ? r->active_n - P : 0;
   if (!n) return;
-  const uint32_t m = r->p.pareto == 2 ? 3 : 2; // pareto-age: the youth of the line too
+  const uint32_t m = r->p.pareto >= 2 ? 3 : 2; // pareto-age: the youth of the line too; pareto-sd: the SD-score
   double *obj = xmalloc(3 * n * sizeof *obj), *crowd = xmalloc(n * sizeof *crowd);
   uint32_t *front = xmalloc(n * sizeof *front), fronts = 0;
   for (uint32_t i = 0; i < n; i++) {
@@ -677,7 +680,8 @@ static void pareto_values(run *r, const double *pts) {
       if (r->active[j] != a) e += pts[a * r->cap + r->active[j]];
     obj[m * i] = panel_avg_on(r, pts, a);
     obj[m * i + 1] = n > 1 ? e / (n - 1) : 0;
-    if (m == 3) obj[m * i + 2] = (double)r->slot[a]->origin; // a later start is a younger line
+    if (r->p.pareto == 2) obj[m * i + 2] = (double)r->slot[a]->origin; // a later start is a younger line
+    if (r->p.pareto == 3) obj[m * i + 2] = r->values[P + i].distance;  // farther from the nearest is better
   }
   pareto_fronts(obj, n, m, front, crowd);
   for (uint32_t i = 0; i < n; i++)
@@ -906,7 +910,7 @@ static void event_start(run *r) {
           p->map_elites ? "true" : "false", p->map_elites == ME_CROWDING ? "true" : "false",
           p->specialists ? "true" : "false", p->sharing, p->screen_stop, p->screen_check, p->tune_novel,
           p->average_panel ? "panel" : "all", p->member_games_none ? "none" : "all", p->simple ? "true" : "false", p->draw_seed,
-          p->ahead ? "ahead" : "abs", p->pareto == 2 ? "pareto-age" : p->pareto ? "pareto" : "value", p->mirror ? "mirror" : "pmars");
+          p->ahead ? "ahead" : "abs", p->pareto == 3 ? "pareto-sd" : p->pareto == 2 ? "pareto-age" : p->pareto ? "pareto" : "value", p->mirror ? "mirror" : "pmars");
   json_str(f, p->opponents, 0);
   fputs(",\"panelFiles\":", f);
   json_str(f, p->panel_files, 0);
@@ -3591,7 +3595,7 @@ static void usage(void) {
           "         [--parents value|duel] [--start <dir>] [--changes name=weight,...]\n"
           "         [--panel-files a.red,b.red,...] [--screen-members N] [--noise z] [--stage N (screen rounds; 0 none)] [--fill]\n"
           "         [--panel-rounds N] [--diversity all|panel] [--average all|panel] [--member-games all|none] [--simple]\n"
-          "         [--difference abs|ahead] [--pushoff value|pareto|pareto-age] [--positions mirror|pmars]\n"
+          "         [--difference abs|ahead] [--pushoff value|pareto|pareto-age|pareto-sd] [--positions mirror|pmars]\n"
           "         [--islands N [--select-after B [--keep K]] [--score-rounds R]] [--draw-seed S]\n"
           "         [--niche N]\n"
           "         [--panel-choice picked|random|kinds] [--pick-sample 300] [--no-fill] [--map-elites [cells|crowding]]\n"
@@ -4124,9 +4128,12 @@ static const char *params_error(const params *p) {
            "--screen-members";
   if (p->ahead && (p->simple || p->map_elites)) return "--difference ahead not with --simple or --map-elites";
   if (p->pareto && (p->simple || p->map_elites || p->sharing > 0 || p->average_panel || p->member_games_none || p->niche ||
-                    p->specialists || p->select == SELECT_VALUE || p->ahead))
+                    p->specialists || p->select == SELECT_VALUE))
     return "--pushoff pareto not with --simple, --map-elites, --sharing, --average panel, --member-games none, --niche, "
-           "--specialists, --select value or --difference ahead";
+           "--specialists or --select value";
+  // pareto-sd takes the SD-score as --difference computes it: ahead, only where a warrior scores more, makes
+  // it far only when it does better than its nearest somewhere; pareto and pareto-age do not use it
+  if (p->ahead && p->pareto && p->pareto != 3) return "--difference ahead with --pushoff pareto-sd only, not pareto or pareto-age";
   if (p->screen_stop > 0 && p->screen_check > 0) return "--screen-stop or --screen-check, not both";
   if (stops && (p->race || p->map_elites)) return "--screen-stop and --screen-check not with --race or --map-elites";
   if (p->tune_novel && p->map_elites) return "--tune-novel not with --map-elites";
@@ -4246,6 +4253,7 @@ int main(int argc, char **argv) {
       if (!strcmp(v, "value")) p->pareto = 0;
       else if (!strcmp(v, "pareto")) p->pareto = 1;
       else if (!strcmp(v, "pareto-age")) p->pareto = 2;
+      else if (!strcmp(v, "pareto-sd")) p->pareto = 3;
       else usage();
     } else if (!strcmp(a, "--positions")) {
       positions_given = 1;
