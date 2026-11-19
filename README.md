@@ -232,10 +232,11 @@ evolver/            42evolve, the evolver: a list kept by diversity push-off, on
 ui/                 Core War Theater, the visualizer, and the evolver's dashboard (plain ES modules, no build step)
 tools/              Node tools: asm, corpus, tournament, pushoff, serve, style, and the comparisons with pMARS
 bench/              speed measurements and A/B timing
-test/               npm test: 455 tests on node:test; C tests in test/c/, fuzz targets in test/fuzz/, recorded results in test/fixtures/
+test/               npm test: 456 tests on node:test; C tests in test/c/, fuzz targets in test/fuzz/, recorded results in test/fixtures/
 docs/               the semantics, the plan, the speed tricks, the performance log, development guide
 warriors/           sample warriors written for this repository, and Dewdney's Imp and Dwarf;
-                    koenigstuhl/: 5,261 hill warriors, test material without a license
+                    koenigstuhl/: 5,261 hill warriors, test material without a license;
+                    evolved/: the best warriors of 42evolve's runs, by hill
 Makefile            native build on Linux and macOS; build-msvc.bat for Windows
 CHANGELOG.md        the changes of the interface, from 1.0.0 on
 ```
@@ -244,4 +245,4 @@ CHANGELOG.md        the changes of the interface, from 1.0.0 on
 
 ## License
 
-MIT, see [LICENSE](LICENSE). The sample warriors in [`warriors/`](warriors) are MIT too, except Imp and Dwarf, the classic examples from A. K. Dewdney's 1984 article. The hill warriors in [`warriors/koenigstuhl/`](warriors/koenigstuhl) have no license and are not covered by it: they are test material, downloaded from the [Koenigstuhl](https://asdflkj.net/COREWAR/koenigstuhl.html) hills on 12th November 2026.
+MIT, see [LICENSE](LICENSE). The sample warriors in [`warriors/`](warriors) and the evolved ones in [`warriors/evolved/`](warriors/evolved) are MIT too, except Imp and Dwarf, the classic examples from A. K. Dewdney's 1984 article. The hill warriors in [`warriors/koenigstuhl/`](warriors/koenigstuhl) have no license and are not covered by it: they are test material, downloaded from the [Koenigstuhl](https://asdflkj.net/COREWAR/koenigstuhl.html) hills on 12th November 2026.
