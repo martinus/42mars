@@ -61,7 +61,7 @@ function handle(r, e) {
       r.holdout.push([r.minutes, r.bestHoldout.avg]);
       break;
     case 'batch':
-      r.batches++;
+      r.batches += e.batches ?? 1; // tools/serve.mjs sums the batches of a long history before the last 100 into one
       r.evaluated += e.evaluated;
       break;
     case 'speed':

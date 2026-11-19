@@ -24,10 +24,15 @@
 // with --full): without the warriors that left (their enter, complete,
 // leave and elite events; a warrior that set a new best against the holdout
 // stays), with only the last of the values, speed,
-// specialists and sharing events and the last 20 screen events; then the
-// new lines as they come. A continued run of 7,453 batches had 463 MB of
-// events, and the dashboard showed nothing while it read them all (16th
-// November 2026). The first line after the history is an event `compacted`.
+// specialists and sharing events and the last 20 screen events, without the
+// parents events (the dashboard does not read them), and with the batch
+// events before the last 100 as one: their sums of evaluated and of the
+// counts per change, and in `batches` how many; then the new lines as they
+// come. A continued run of 7,453 batches had 463 MB of events, and the
+// dashboard showed nothing while it read them all (16th November 2026); one
+// of 35,000 batches still went out as 58 MB, 35,000 batch and as many
+// parents lines (19th November 2026). The first line after the history is an
+// event `compacted`.
 import { createReadStream, existsSync, readdirSync } from 'node:fs';
 import { createInterface } from 'node:readline';
 import { createServer } from 'node:http';
@@ -43,6 +48,7 @@ const usage = (why) => {
 const runDirs = [];
 let portArg = null, full = false;
 const COMPACT_FROM = Number(process.env.SERVE_COMPACT_FROM ?? 16 << 20); // the tests set it lower
+const KEEP_BATCHES = Number(process.env.SERVE_KEEP_BATCHES ?? 100); // the batch events that go out as they are
 const histories = new Map(); // file -> { end, lines }: the last compacted history, for the next page
 for (const args = process.argv.slice(2); args.length;) {
   const a = args.shift();
@@ -101,13 +107,30 @@ const KEEP_LAST = new Set(['values', 'speed', 'specialists', 'sharing']);
 // lines are kept for the next request (it took 21 s for 463 MB on a busy
 // machine), which gets them and the lines from there on as they are, until
 // those are more than COMPACT_FROM too: a page that switches between runs
-// asks for a history with every click.
+// asks for a history with every click. One history is read at a time, and a
+// second request for the same run waits for the first: reading a run of
+// 2.4 GB took 2.5 GB of memory at its peak, and with several at once (the
+// runs page follows every run) the server ran out of its heap (19th November
+// 2026).
+let reading = Promise.resolve();
+const building = new Map(); // file -> the history being read
 async function compacted(file, end, send) {
-  const known = histories.get(file);
-  if (known && known.end <= end && end - known.end <= COMPACT_FROM) {
-    for (const line of known.lines) send('message', line);
-    return known.end;
+  let known = histories.get(file);
+  if (!(known && known.end <= end && end - known.end <= COMPACT_FROM)) {
+    let next = building.get(file);
+    if (!next) {
+      next = reading.then(() => readHistory(file, end));
+      reading = next.catch(() => {});
+      building.set(file, next);
+      next.then(() => building.delete(file), () => building.delete(file));
+    }
+    known = await next;
   }
+  for (const line of known.lines) send('message', line);
+  return known.end;
+}
+
+async function readHistory(file, end) {
   const lines = [];
   const gone = new Set(), last = new Map(), screens = []; // ids that left; the last line of a type; the screen lines
   // a warrior that was the best against the holdout when it was benched stays,
@@ -119,6 +142,7 @@ async function compacted(file, end, send) {
   // (the values event before it), best against the holdout so far (-1 none)];
   // the dashboard cannot draw it from a history without the warriors that left
   const panel = new Set(), history = [];
+  const batches = []; // the line numbers of the batch events
   let values = null;
   let n = 0, sent = 0, record = -Infinity;
   for await (const line of linesOf(file, end)) {
@@ -147,23 +171,40 @@ async function compacted(file, end, send) {
       if (r) gone.add(r[1]);
     }
     if (t === 'screen') screens.push(n);
+    if (t === 'batch') batches.push(n);
     last.set(t, n++);
   }
   for (const id of records) gone.delete(id);
   const keptScreens = new Set(screens.slice(-20));
+  const firstBatch = batches.length > KEEP_BATCHES ? batches[batches.length - KEEP_BATCHES] : -1; // the first kept as it is
+  const early = { type: 'batch', batch: -1, evaluated: 0, ops: undefined, batches: 0 }; // the ones before it, summed
   let at = 0;
   for await (const line of linesOf(file, end)) {
     const t = typeOf(line), i = at++;
     if ((t === 'enter' || t === 'complete' || t === 'leave' || t === 'elite') && gone.has(idOf(line))) continue;
     if (KEEP_LAST.has(t) && last.get(t) !== i) continue;
     if (t === 'screen' && !keptScreens.has(i)) continue;
+    if (t === 'parents') continue;
+    if (t === 'batch' && i < firstBatch) {
+      const e = JSON.parse(line);
+      early.batch = e.batch;
+      early.evaluated += e.evaluated ?? 0;
+      early.batches++;
+      for (const [op, c] of Object.entries(e.ops ?? {})) {
+        early.ops ??= {};
+        const sum = (early.ops[op] ??= c.map(() => 0));
+        c.forEach((v, k) => { sum[k] += v; });
+      }
+      continue;
+    }
+    if (i === firstBatch) lines.push(JSON.stringify(early)), sent++;
     lines.push(line);
     sent++;
   }
   lines.push(JSON.stringify({ type: 'compacted', lines: n, dropped: n - sent, gone: gone.size, history: history.length ? history : undefined }));
-  histories.set(file, { end, lines });
-  for (const line of lines) send('message', line);
-  return end;
+  const known = { end, lines };
+  histories.set(file, known);
+  return known;
 }
 
 // The last `bytes` of a file of `size` bytes (all of a shorter one).
