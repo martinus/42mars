@@ -547,9 +547,11 @@ export function checkSimple(evs) {
       x += a[k];
       s2 += e[k] * e[k];
     }
-    const avg = x / P, sd = Math.sqrt(s2) / P;
+    const avg = x / P, sd = Math.sqrt(s2) / P, hi = avg + z * sd;
     let dlo = Infinity, dhi = Infinity;
     for (const o of ids) {
+      // a member it may outscore is not in the upper bound: the push-off may drop it in the candidate's place
+      const mayGo = !panelIds.includes(o) && panelIds.reduce((a, k) => a + pts.get(`${o},${k}`), 0) / P <= hi;
       let d = 0, low = 0, e2 = 0;
       for (let k = 0; k < P; k++) {
         if (panelIds[k] === o || !(sigma[k] > 0)) continue;
@@ -560,9 +562,9 @@ export function checkSimple(evs) {
         e2 += q * q;
       }
       dlo = Math.min(dlo, low);
-      dhi = Math.min(dhi, d + z * Math.sqrt(e2));
+      if (!mayGo) dhi = Math.min(dhi, d + z * Math.sqrt(e2));
     }
-    return { avg, hi: avg + z * sd, vlo: Math.max(avg - z * sd, 0) * dlo, vhi: Math.max(avg + z * sd, 0) * dhi };
+    return { avg, hi, vlo: Math.max(avg - z * sd, 0) * dlo, vhi: Math.max(avg + z * sd, 0) * dhi };
   };
   let cur = null, next = null; // the state a batch starts from: everyone in, the members' values, the standard deviations
   for (const e of evs) {
