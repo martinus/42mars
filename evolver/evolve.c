@@ -1823,7 +1823,16 @@ static uint32_t screen_decide(const run *r, candidate *c, uint32_t B, const unit
 // below e_k: after 5 rounds the error alone would make every candidate look
 // unlike everybody). An error moves a column by at most itself, so D after
 // all rounds is below D + z sqrt(sum (e_k / sigma_k)^2) about as surely as z
-// says; the lower bound takes z e_k off every column. The value's bounds are the products.
+// says; the lower bound takes z e_k off every column. The upper bound leaves
+// out the members whose panel average is at most the candidate's upper bound:
+// the push-off may drop such a member for it, and the candidate then has that
+// member's distance to the others. The cut counts the members' values from
+// before the candidate entered; a near twin of a member would bring both
+// values down, and the one of the two that stays gets the old value back.
+// With those members in the bound, 136 of 920 candidates stopped by value
+// stayed in a '94nop run, 8 without (#162, docs/evolver.md). The 8: after a
+// push-off with many newcomers the list-th value can be below the cut. The
+// value's bounds are the products.
 // z is --screen-stop: 3 stops a candidate that almost surely cannot make it,
 // a z near 0 one whose value so far would not put it on the hill.
 enum { SIMPLE_STRENGTH = 1, SIMPLE_TWIN, SIMPLE_VALUE };
@@ -1861,6 +1870,9 @@ static void simple_bounds(const run *r, const unit *row, uint32_t n, uint32_t F,
   double dist = INFINITY, dlo = INFINITY, dhi = INFINITY;
   for (uint32_t i = 0; i < r->active_n; i++) {
     const uint32_t o = r->active[i];
+    // a member it may outscore may leave in its place, near twins one of
+    // which the push-off drops: the upper bound is to the others
+    const int may_go = i >= P && panel_avg(r, o) <= b->hi;
     double d = 0, low = 0, e2 = 0;
     for (uint32_t k = 0; k < P; k++) {
       if (k == o || !(r->sigma[k] > 0)) continue;
@@ -1875,7 +1887,7 @@ static void simple_bounds(const run *r, const unit *row, uint32_t n, uint32_t F,
     const double high = d + z * sqrt(e2);
     if (d < dist) dist = d;
     if (low < dlo) dlo = low;
-    if (high < dhi) dhi = high;
+    if (high < dhi && !may_go) dhi = high;
   }
   if (dist == INFINITY) dist = dlo = dhi = 0;
   b->dist = with_alpha(r, dist);

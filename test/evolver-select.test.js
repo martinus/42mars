@@ -18,7 +18,7 @@ import { assemble, createMarsSync } from '../wasm/42mars.js';
 import { paretoFronts, pushoffValues, sdDistance, standardError, weakest } from '../tools/diversity.js';
 import { kind as styleKind, measureStyle } from '../tools/style.js';
 import { bestRedInfo } from '../tools/progress.js';
-import { setup, cleanup, tmp, evolve, skip, RULES, TINY, run, events, without, stable, base, checkValues, checkOrder, checkOps, checkSimple, CLASSIC } from './evolver-common.js';
+import { setup, cleanup, tmp, evolve, skip, RULES, TINY, run, events, without, stable, base, checkValues, checkOrder, checkOps, checkSimple } from './evolver-common.js';
 
 before(setup);
 after(cleanup);
@@ -66,9 +66,8 @@ test('--simple: a candidate plays the panel in checkpoints and stops when it can
   assert.equal(base[0].params.simple, false);
   const BATCHES = 8, CHECKED = 16, F = 100, P = 10;
   // --simple sets the screen's members, the stage and the diversity itself
-  // 8000 cycles (CLASSIC): with 2000, 15 children that the value bound would have stopped stayed (many rounds
-  // are all ties, so their spread looks small), which this test does not allow
-  const args = [...without(CLASSIC, '--screen-members', '--stage', '--diversity', '--panel-rounds'), '--simple', '--panel-rounds', String(F), '--list', '16'];
+  // 2000 cycles (TINY): there the value bound stopped near twins of members that then stayed in their place (#162)
+  const args = [...without(TINY, '--screen-members', '--stage', '--diversity', '--panel-rounds'), '--simple', '--panel-rounds', String(F), '--list', '16'];
   // --screen-check: everyone plays the whole match, every row is logged, the rule replayed
   run(join(tmp, 'simple-check'), [...args, '--screen-check', '3', '--threads', '2', '--batches', String(CHECKED)]);
   const chk = events(join(tmp, 'simple-check'));
