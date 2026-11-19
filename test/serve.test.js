@@ -143,6 +143,28 @@ test('a long history: without the warriors that left, the last values and speed,
   assert.equal(third.got.at(-1).lines, ev.length + 4);
 });
 
+test('a long history: without the parents events, the batch events before the last ones summed into one', { timeout: 15000 }, async () => {
+  const run = join(dir, 'batches');
+  mkdirSync(run, { recursive: true });
+  const ev = [{ type: 'start', panel: [] }];
+  for (let b = 0; b < 5; b++) {
+    ev.push({ type: 'parents', batch: b, pairs: [[1, 2]] });
+    ev.push({ type: 'batch', batch: b, evaluated: 10 + b, ops: { random: [b, 1, 1, 0], ...(b === 1 ? { insert: [5, 4, 3, 2] } : {}) } });
+  }
+  writeFileSync(join(run, 'events.jsonl'), ev.map((e) => JSON.stringify(e)).join('\n') + '\n');
+  const url = await serve(['--run', run], { SERVE_COMPACT_FROM: '100', SERVE_KEEP_BATCHES: '2' });
+  const reader = (await fetch(`${url}/run/events`)).body.getReader();
+  const got = (await read(reader, [], (g) => g.some((e) => e.data?.includes('"compacted"')))).slice(1).map((e) => JSON.parse(e.data));
+  await reader.cancel();
+  assert.deepEqual(got.filter((e) => e.type === 'parents'), []);
+  // batches 0 to 2 as one: what the dashboard adds up (tried, the counts per change) stays the same
+  assert.deepEqual(got.filter((e) => e.type === 'batch'), [
+    { type: 'batch', batch: 2, evaluated: 33, ops: { random: [3, 3, 3, 0], insert: [5, 4, 3, 2] }, batches: 3 },
+    ev[8], ev[10],
+  ]);
+  assert.deepEqual(got.at(-1), { type: 'compacted', lines: ev.length, dropped: ev.length - got.length + 1, gone: 0 });
+});
+
 test('several runs: /runs lists them with their last batch and best score, /run/<n>/events streams each', { timeout: 15000 }, async () => {
   const dirs = ['first', 'second'].map((name) => {
     const d = join(dir, `multi-${name}`);
