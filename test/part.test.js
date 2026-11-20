@@ -31,9 +31,21 @@ test('every test file of make test is in exactly one part, for 1 to 5 parts', ()
 
 test('the parts are about even, and the table names only files that exist', () => {
   for (const f of Object.keys(SECONDS)) assert.ok(existsSync(`${root}/${f}`), `${f} is in the table of part.mjs but not in test/`);
-  const t = (list) => list.reduce((s, f) => s + (SECONDS[f] ?? 5), 0);
-  const p = parts(3).map(t);
-  assert.ok(Math.max(...p) - Math.min(...p) <= Math.max(...Object.values(SECONDS)), `3 parts of ${p.join(', ')} seconds`);
+  const time = (f) => SECONDS[f] ?? 20;
+  const t = (list) => list.reduce((s, f) => s + time(f), 0);
+  for (let n = 2; n <= 5; n++) {
+    const p = parts(n), sums = p.map(t), top = Math.max(...sums), k = sums.indexOf(top);
+    // no single file that moves from the longest part to another, or swaps with one there, makes it shorter
+    for (let q = 0; q < n; q++) {
+      if (q === k) continue;
+      for (const f of p[k]) {
+        for (const g of [null, ...p[q]]) {
+          const d = time(f) - (g ? time(g) : 0);
+          assert.ok(!(d > 0 && Math.max(top - d, sums[q] + d) < top - 1e-9), `${n} parts of ${sums.join(', ')} s: ${f} to part ${q + 1}${g ? ` for ${g}` : ''} is shorter`);
+        }
+      }
+    }
+  }
 });
 
 test('the command prints part k of n, and refuses a part that does not exist', () => {

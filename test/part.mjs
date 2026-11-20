@@ -50,6 +50,29 @@ export function parts(n, list = files()) {
     p.files.push(f);
     p.seconds += time(f);
   }
+  // then, while it makes the longest part shorter, a file of it moves to
+  // another part or swaps with one there (four sanitizer parts: 91.5 s of
+  // the times for the longest after the first pass, 83.4 s after this)
+  for (;;) {
+    const top = out.reduce((best, x) => (x.seconds > best.seconds ? x : best));
+    let best = null;
+    for (const q of out) {
+      if (q === top) continue;
+      for (const f of top.files) {
+        for (const g of [null, ...q.files]) {
+          const d = time(f) - (g ? time(g) : 0);
+          const worse = Math.max(top.seconds - d, q.seconds + d);
+          if (d > 0 && worse < top.seconds - 1e-9 && (!best || worse < best.worse)) best = { q, f, g, d, worse };
+        }
+      }
+    }
+    if (!best) break;
+    top.files.splice(top.files.indexOf(best.f), 1);
+    best.q.files.push(best.f);
+    if (best.g) best.q.files.splice(best.q.files.indexOf(best.g), 1), top.files.push(best.g);
+    top.seconds -= best.d;
+    best.q.seconds += best.d;
+  }
   return out.map((p) => list.filter((f) => p.files.includes(f)));
 }
 
