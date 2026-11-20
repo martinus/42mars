@@ -23,9 +23,9 @@ void pushoff_sigma(const double *score, size_t stride, const uint32_t *active, u
   }
 }
 
-double pushoff_se(uint32_t wins, uint32_t ties, uint32_t rounds) {
+double pushoff_se(uint32_t wins, uint32_t ties, uint32_t rounds, double tie) {
   if (!rounds) return 0;
-  const double n = rounds, mu = (3.0 * wins + ties) / n, v = (9.0 * wins + ties) / n - mu * mu;
+  const double n = rounds, mu = (3.0 * wins + tie * ties) / n, v = (9.0 * wins + tie * tie * ties) / n - mu * mu;
   return v > 0 ? 100 * sqrt(v / n) : 0;
 }
 

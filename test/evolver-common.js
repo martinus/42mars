@@ -142,11 +142,12 @@ export function checkValues(evs) {
   const noGames = start.params.memberGames === 'none'; // --member-games none: members never play each other
   const pts = new Map(); // "a,b" -> points per 100 rounds of a against b
   const se = new Map(); // "a,b" -> its standard error (--noise)
+  const tie = start.params.tiePoints ?? 1; // --tie-points: what a tie counts in the values and the screen
   const put = (a, b, w, l, t) => { // per 100 of the rounds played (--stage: fewer than `rounds` at first)
-    pts.set(`${a},${b}`, ((3 * w + t) * 100) / (w + l + t));
-    pts.set(`${b},${a}`, ((3 * l + t) * 100) / (w + l + t));
-    se.set(`${a},${b}`, standardError(w, t, w + l + t));
-    se.set(`${b},${a}`, standardError(l, t, w + l + t));
+    pts.set(`${a},${b}`, ((3 * w + tie * t) * 100) / (w + l + t));
+    pts.set(`${b},${a}`, ((3 * l + tie * t) * 100) / (w + l + t));
+    se.set(`${a},${b}`, standardError(w, t, w + l + t, tie));
+    se.set(`${b},${a}`, standardError(l, t, w + l + t, tie));
     played.set(`${a},${b}`, w + l + t);
     played.set(`${b},${a}`, w + l + t);
   };

@@ -28,10 +28,10 @@ typedef struct {
   double avg, distance, value;
 } pushoff_value;
 
-// The standard error of a score in points per 100 rounds (3 a win, 1 a tie)
-// from one match of `rounds` rounds: with mu = (3W + T)/n and
-// v = (9W + T)/n - mu^2, 100 sqrt(v / n).
-double pushoff_se(uint32_t wins, uint32_t ties, uint32_t rounds);
+// The standard error of a score in points per 100 rounds (3 a win, `tie` a
+// tie, 1 as on a hill) from one match of `rounds` rounds: with
+// mu = (3W + tie T)/n and v = (9W + tie^2 T)/n - mu^2, 100 sqrt(v / n).
+double pushoff_se(uint32_t wins, uint32_t ties, uint32_t rounds, double tie);
 
 // The SD-score of a and b; sigma[k] the standard deviation of column k over
 // the active rows other than k (pushoff_sigma()). With se (the standard
