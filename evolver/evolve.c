@@ -33,6 +33,7 @@
 #include <unistd.h>
 
 #include "42mars.h"
+#include "gen-change.h"
 #include "genome.h"
 #include "names.h"
 #include "pushoff.h"
@@ -1003,7 +1004,8 @@ static void event_start(run *r) {
     fputc(']', f);
   }
   fputs("},\"changes\":{", f);
-  for (int k = 0; k < CH_COUNT; k++) fprintf(f, "%s\"%s\":%u", k ? "," : "", genome_change_name(k), p->changes.w[k]);
+  for (int k = 0; k < (p->gen ? CH_ALL : CH_COUNT); k++) // a run on generators: the kinds that make structure too
+    fprintf(f, "%s\"%s\":%u", k ? "," : "", genome_change_name(k), p->changes.w[k]);
   fputc('}', f);
   for (int k = 0; k < 2; k++) {
     fputs(k ? ",\"holdout\":[" : ",\"panel\":[", f);
@@ -1175,7 +1177,7 @@ static void save_state(run *r) {
           p->tune_novel, p->average_panel, p->member_games_none, p->simple, p->draw_seed, p->difference, p->pareto, p->mirror, p->clear, p->gen);
   fprintf(f, "opponents %s\n", p->opponents);
   if (p->start[0]) fprintf(f, "start-dir %s\n", p->start);
-  char mix[CH_COUNT * 32];
+  char mix[CH_ALL * 32];
   genome_mix_text(&p->changes, mix, sizeof mix);
   fprintf(f, "changes %s\n", mix);
   for (uint32_t i = 0; i < r->panel_n; i++) fprintf(f, "panel-id %" PRIu64 " %s\n", r->panel[i].id, r->panel[i].file);
@@ -4220,6 +4222,14 @@ static int islands_resume(const char *dir, uint32_t threads, uint32_t batches, d
 }
 
 // What is wrong with the parameters of a new run (defaults applied), 0 nothing.
+// Does the mix draw a kind of change that only a generator has?
+static int structure_kinds(const genome_mix *m) {
+  for (int k = CH_COUNT; k < CH_ALL; k++)
+    if (m->w[k]) return 1;
+  return 0;
+}
+#define STRUCTURE_NEEDS_GEN "--changes repeat, count, fold, unroll, index, expression and constant with --genome gen only"
+
 static const char *params_error(const params *p) {
   static char text[96];
   const int stops = p->screen_stop > 0 || p->screen_check > 0;
@@ -4259,6 +4269,7 @@ static const char *params_error(const params *p) {
   if (stops && (p->race || p->map_elites)) return "--screen-stop and --screen-check not with --race or --map-elites";
   if (p->tune_novel && p->map_elites) return "--tune-novel not with --map-elites";
   if (p->tune_novel && p->gen) return "--tune-novel not with --genome gen: it changes the operands of a list";
+  if (!p->gen && structure_kinds(&p->changes)) return STRUCTURE_NEEDS_GEN;
   return 0;
 }
 
@@ -4332,6 +4343,8 @@ int main(int argc, char **argv) {
       if (genome_mix_parse(&p->changes, v) != 0) {
         fprintf(stderr, "42evolve: --changes takes name=weight,... with these names:");
         for (int k = 0; k < CH_COUNT; k++) fprintf(stderr, " %s", genome_change_name(k));
+        fprintf(stderr, "\nand with --genome gen:");
+        for (int k = CH_COUNT; k < CH_ALL; k++) fprintf(stderr, " %s", genome_change_name(k));
         fprintf(stderr, "\n");
         return 2;
       }
@@ -4496,9 +4509,14 @@ int main(int argc, char **argv) {
       fprintf(stderr, "42evolve: --tune-novel not with --genome gen: it changes the operands of a list\n");
       return 2;
     }
+    if (!r.p.gen && changes_given && structure_kinds(&new_changes)) {
+      fprintf(stderr, "42evolve: " STRUCTURE_NEEDS_GEN "\n");
+      return 2;
+    }
   } else {
     params *p = &r.p;
     if (!p->opponents[0]) usage();
+    if (p->gen && !changes_given) p->changes = gen_mix_default(); // the kinds that make structure too
     if (!p->batch) p->batch = 4 * threads;
     if (!p->survivors) p->survivors = p->batch / 8 ? p->batch / 8 : 1;
     if (!p->race_keep) p->race_keep = p->batch / 4 ? p->batch / 4 : 1;
@@ -4573,7 +4591,7 @@ int main(int argc, char **argv) {
     fprintf(r.events, "{\"type\":\"resume\",\"batch\":%u}\n", r.batch);
     if (changes_given) { // the weights of the changes from now on; the run is no longer the one without a break
       r.p.changes = new_changes;
-      char mix[CH_COUNT * 32];
+      char mix[CH_ALL * 32];
       genome_mix_text(&r.p.changes, mix, sizeof mix);
       fprintf(r.events, "{\"type\":\"changes\",\"batch\":%u,\"changes\":\"%s\"}\n", r.batch, mix);
     }

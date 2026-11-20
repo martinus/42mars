@@ -128,8 +128,10 @@ static void test_functions(void) {
          "f(5, t2)\n"
          "t2: f(i+7, 3)\n",
          "0: SPL.B $0, #5; JMP.B $-1, $1; SPL.B $0, #7; JMP.B $-1, $3;");
-  // a function sees the loops of its caller; an argument is the caller's expression
-  WRITES("g: def\n DAT.F #x, #i\nend\nrepeat 2\n g(i*10)\nend\n", "0: DAT.F #0, #0; DAT.F #10, #1;");
+  // a function does not see the loops of its caller, only its own; an argument is the caller's expression
+  WRITES("g: def\n DAT.F #x, #i\nend\nrepeat 2\n g(i*10)\nend\n", "0: DAT.F #0, #0; DAT.F #10, #0;");
+  WRITES("g: def\n repeat 2\n  DAT.F #i, #j+x\n end\nend\nrepeat 2\n g(i*10)\nend\n",
+         "0: DAT.F #0, #0; DAT.F #1, #0; DAT.F #0, #10; DAT.F #1, #10;");
   WRITES("h: def\n DAT.F #x, #y\nend\ng: def\n h(x+1, y*2)\nend\ng(3, 4)\n", "0: DAT.F #4, #8;");
   // an argument that is not given is 0, also outside a function
   WRITES("h: def\n DAT.F #x, #y\nend\nh()\nh(1)\nDAT.F #x, #y\n", "0: DAT.F #0, #0; DAT.F #1, #0; DAT.F #0, #0;");
@@ -651,6 +653,56 @@ static const char *text_of(const gen *x) {
   return buf[which];
 }
 
+// Do a and b write the same warrior?
+static int same_warrior(const gen *a, const gen *b, uint32_t max) {
+  m42_instruction ca[GEN_LINES], cb[GEN_LINES];
+  uint32_t sa, sb;
+  int ta, tb;
+  const uint32_t na = gen_compile(a, CORE, max, ca, &sa, &ta), nb = gen_compile(b, CORE, max, cb, &sb, &tb);
+  return na == nb && sa == sb && ta == tb && !memcmp(ca, cb, na * sizeof *ca);
+}
+
+// A random generator with what the rewrites look for: instructions that
+// repeat with a step or as they are, and far numbers that are equal, each
+// other's negative or double, or near each other.
+static void regular_gen(gen *x, rng *r) {
+  do random_gen(x, r);
+  while (x->n > 30);
+  for (uint32_t pass = 1 + rng_below(r, 3); pass; pass--) {
+    const uint32_t i = rng_below(r, x->n);
+    if (x->l[i].kind != GL_EMIT) continue;
+    memmove(&x->l[i + 1], &x->l[i], (x->n - i) * sizeof x->l[0]); // a copy in front; references behind it move
+    x->n++;
+    if (x->start > i) x->start++;
+    for (uint32_t j = 0; j < x->n; j++) {
+      if (x->l[j].kind == GL_CALL && x->l[j].callee > i) x->l[j].callee++;
+      for (int k = 0; k < 2; k++)
+        for (uint32_t t = 0; t < x->l[j].x[k].n; t++)
+          if ((x->l[j].x[k].kind[t] == GT_POS || x->l[j].x[k].kind[t] == GT_LEN) && x->l[j].x[k].v[t] > i) x->l[j].x[k].v[t]++;
+    }
+    for (int k = 0; k < 2; k++) { // some operands a number, with a step in the copy
+      if (rng_below(r, 2)) continue;
+      gen_expr *e = &x->l[i].x[k], *f = &x->l[i + 1].x[k];
+      memset(e, 0, sizeof *e);
+      e->n = 1, e->v[0] = rng_below(r, CORE);
+      *f = *e;
+      f->v[0] = (e->v[0] + rng_below(r, 20)) % CORE;
+    }
+  }
+  // an instruction in a block of its own, 1 to 4 times
+  const uint32_t i = rng_below(r, x->n);
+  if (x->l[i].kind == GL_EMIT && rng_below(r, 2) && gen_wrap(x, i, i + 1, CORE)) x->l[i].x[0].v[0] = 1 + rng_below(r, 4);
+  uint32_t *far[2 * GEN_TOKENS * GEN_LINES], fn = 0;
+  for (uint32_t i = 0; i < x->n; i++)
+    for (int k = 0; k < 2; k++)
+      for (uint32_t t = 0; t < x->l[i].x[k].n; t++)
+        if (x->l[i].x[k].kind[t] == GT_NUM && x->l[i].x[k].v[t] > 16 && x->l[i].x[k].v[t] < CORE - 16) far[fn++] = &x->l[i].x[k].v[t];
+  for (uint32_t pass = fn > 1 ? 3 : 0; pass; pass--) {
+    const uint32_t v = *far[rng_below(r, fn)], how = rng_below(r, 4);
+    *far[rng_below(r, fn)] = how == 0 ? v : how == 1 ? (CORE - v) % CORE : how == 2 ? v * 2 % CORE : (v + 1 + rng_below(r, 16)) % CORE;
+  }
+}
+
 // A generator without structure is the list genome under every change: the
 // same child, the same answer, the same random numbers used.
 static void test_mirror(void) {
@@ -744,14 +796,14 @@ static void test_structured(void) {
   rng r = rng_seed(91, 92, 93);
   static gen x, p2, before;
   char err[160];
-  uint32_t applied[CH_COUNT] = {0}, refused[CH_COUNT] = {0}, blocks = 0;
-  for (int round = 0; round < 40000; round++) {
+  uint32_t applied[CH_ALL] = {0}, refused[CH_ALL] = {0}, same[CH_ALL] = {0}, blocks = 0;
+  for (int round = 0; round < 60000; round++) {
     const uint32_t max = round % 3 ? 100 : 20;
-    do random_gen(&x, &r);
+    do round % 2 ? random_gen(&x, &r) : regular_gen(&x, &r);
     while (!keeps_limits(&x, max));
     do random_gen(&p2, &r);
     while (!keeps_limits(&p2, max));
-    const int kind = round % CH_COUNT;
+    const int kind = round % CH_ALL;
     before = x;
     const int ok = gen_change(&x, &p2, &r, CORE, max, 0, kind);
     ok ? applied[kind]++ : refused[kind]++;
@@ -766,24 +818,274 @@ static void test_structured(void) {
     }
     for (uint32_t i = 0; i < x.n; i++) blocks += x.l[i].kind == GL_REPEAT;
   }
-  for (int k = 0; k < CH_COUNT; k++) CHECK(applied[k] > 500, "%s applied %u times, refused %u times", genome_change_name(k), applied[k], refused[k]);
+  for (int k = 0; k < CH_ALL; k++)
+    CHECK(applied[k] > (k == CH_UNROLL || k == CH_INDEX || k == CH_FOLD ? 150 : 500), "%s applied %u times, refused %u times", genome_change_name(k), applied[k], refused[k]);
+  // A change of the structure changes the warrior (a rewrite alone would be
+  // skipped as seen). Measured where 42evolve is: on generators that grew
+  // from lists by changes that each gave another warrior.
+  memset(applied, 0, sizeof applied);
+  const genome_mix mix = gen_mix_default();
+  uint32_t total = 0;
+  for (int k = 0; k < CH_ALL; k++) total += mix.w[k];
+  for (int round = 0; round < 200000; round++) {
+    if (round % 400 == 0) {
+      static genome g;
+      genome_random(&g, &r, CORE, 2 + rng_below(&r, 10), 0);
+      gen_from_genome(&x, &g);
+      genome_random(&g, &r, CORE, 2 + rng_below(&r, 10), 0);
+      gen_from_genome(&p2, &g);
+    }
+    uint32_t d = rng_below(&r, total);
+    int kind = 0;
+    while (d >= mix.w[kind]) d -= mix.w[kind++];
+    before = x;
+    if (!gen_change(&x, &p2, &r, CORE, 100, 0, kind)) continue;
+    applied[kind]++;
+    if (same_warrior(&x, &before, 100)) same[kind]++, x = before; // as if never made
+    else if (round % 7 == 0) p2 = before;
+  }
+  for (int k = CH_COUNT; k < CH_ALL; k++)
+    CHECK(applied[k] > 300 && same[k] * 4 < applied[k], "%s left the warrior as it was %u of %u times", genome_change_name(k), same[k], applied[k]);
+  if (getenv("GEN_RATES"))
+    for (int k = 0; k < CH_ALL; k++) fprintf(stderr, "%-18s applied %6u, the same warrior %5.1f%%\n", genome_change_name(k), applied[k], 100.0 * same[k] / (applied[k] ? applied[k] : 1));
   CHECK(blocks > 10000, "only %u blocks in the children", blocks);
   // a long line of children stays within the limits
   do random_gen(&x, &r);
   while (!keeps_limits(&x, 100));
-  genome_mix all = genome_mix_default();
+  genome_mix all = gen_mix_default();
   all.w[CH_RELATED_OPCODE] = all.w[CH_RELATED_MODE] = all.w[CH_SHARED] = all.w[CH_TUNE] = 60;
-  for (int round = 0; round < 20000; round++) {
+  uint32_t structured = 0, constants = 0;
+  for (int round = 0; round < 30000; round++) {
     char ops[96];
     if (round % 50 == 0) do random_gen(&p2, &r);
       while (!keeps_limits(&p2, 100));
+    if (round % 3000 == 0) { // from a list again
+      static genome g;
+      genome_random(&g, &r, CORE, 1 + rng_below(&r, 12), 0);
+      gen_from_genome(&x, &g);
+    }
     gen_breed(&x, &x, &p2, &r, CORE, 100, 0, &all, ops, sizeof ops);
     if (gen_check(&x, CORE, err, sizeof err) || !keeps_limits(&x, 100)) {
       CHECK(0, "after %d generations (%s): %s\n%s", round, ops, err, text_of(&x));
       return;
     }
+    uint8_t used[GEN_CONSTS] = {0};
+    int repeat = 0;
+    for (uint32_t i = 0; i < x.n; i++) {
+      repeat |= x.l[i].kind == GL_REPEAT;
+      for (int k = 0; k < 2; k++)
+        for (uint32_t t = 0; t < x.l[i].x[k].n; t++)
+          if (x.l[i].x[k].kind[t] == GT_CONST) used[x.l[i].x[k].v[t]] = 1;
+    }
+    structured += repeat;
+    for (uint32_t k = 0; k < GEN_CONSTS; k++) {
+      constants += used[k];
+      CHECK(used[k] || !x.c[k], "c%u is set and not used after %s", k, ops);
+    }
+  }
+  CHECK(structured > 3000 && constants > 3000, "%u children with a repeat, %u constants in use", structured, constants);
+}
+
+static void parse(gen *x, const char *text);
+
+// The rewrites alone leave the warrior as it is.
+static void test_rewrites(void) {
+  rng r = rng_seed(111, 112, 113);
+  static gen x, y;
+  char err[160];
+  uint32_t wrapped = 0, folded = 0, unrolled = 0, bound = 0, linked = 0;
+#define KEPT(what)                                                                                                    \
+  do {                                                                                                                \
+    if (gen_check(&y, CORE, err, sizeof err)) CHECK(0, "%s: %s\nfrom\n%s\ncame\n%s", what, err, text_of(&x), text_of(&y)); \
+    else if (keeps_limits(&y, GEN_LINES) && !same_warrior(&x, &y, GEN_LINES))                                         \
+      CHECK(0, "%s gave another warrior\nfrom\n%s\ncame\n%s", what, text_of(&x), text_of(&y));                       \
+    if (failures > 3) return;                                                                                         \
+  } while (0)
+  for (int round = 0; round < 6000; round++) {
+    do round % 2 ? random_gen(&x, &r) : regular_gen(&x, &r);
+    while (!keeps_limits(&x, GEN_LINES));
+    for (uint32_t i = 0; i < x.n; i++) {
+      y = x;
+      if (gen_fold(&y, i, CORE)) {
+        folded++;
+        KEPT("gen_fold");
+        CHECK(y.n == x.n + 1 && y.l[i].kind == GL_REPEAT && y.l[i].x[0].v[0] == 2 && y.l[i + 2].kind == GL_END, "the lines of a fold");
+      } else {
+        CHECK(same_gen(&x, &y), "gen_fold said 0 and changed the generator");
+      }
+      y = x;
+      uint32_t copies = 0, lines = 0;
+      if (gen_unroll(&y, i, CORE, &copies, &lines)) {
+        unrolled++;
+        KEPT("gen_unroll");
+        CHECK(y.n == x.n - 2 - lines + copies * lines && copies == x.l[i].x[0].v[0], "the lines of an unrolled block");
+      } else {
+        CHECK(same_gen(&x, &y), "gen_unroll said 0 and changed the generator");
+      }
+      y = x;
+      const uint32_t end = i + 1 + rng_below(&r, x.n - i < 6 ? x.n - i : 6);
+      if (gen_wrap(&y, i, end, CORE)) {
+        wrapped++;
+        KEPT("gen_wrap");
+        CHECK(y.n == x.n + 2 && y.l[i].kind == GL_REPEAT && y.l[i].x[0].v[0] == 1 && y.l[end + 1].kind == GL_END, "the lines of a wrapped block");
+      } else {
+        CHECK(same_gen(&x, &y), "gen_wrap said 0 and changed the generator");
+      }
+      for (int k = 0; k < 2; k++)
+        for (uint32_t t = 0; t < x.l[i].x[k].n; t++) {
+          y = x;
+          const uint32_t c = rng_below(&r, GEN_CONSTS);
+          if (!gen_bind(&y, i, k, t, c, CORE)) {
+            CHECK(same_gen(&x, &y), "gen_bind said 0 and changed the generator");
+            continue;
+          }
+          bound++;
+          KEPT("gen_bind");
+          uint32_t uses = 0;
+          for (uint32_t j = 0; j < y.n; j++)
+            for (int m = 0; m < 2; m++)
+              for (uint32_t q = 0; q < y.l[j].x[m].n; q++) uses += y.l[j].x[m].kind[q] == GT_CONST && y.l[j].x[m].v[q] == c;
+          linked += uses > 1;
+        }
+    }
+  }
+#undef KEPT
+  CHECK(wrapped > 3000 && folded > 1000 && unrolled > 500 && bound > 3000 && linked > 300, "%u wrapped, %u folded, %u unrolled, %u bound, %u linked",
+        wrapped, folded, unrolled, bound, linked);
+  // by hand: a fold of two numbers is a + i*d; the same label stays; each its own label stays
+  parse(&x, "t: NOP.B $0, $0\na: DAT.F #5, $t\nb: DAT.F #-7, $t\nc: SPL.B $c, #100\nd: SPL.B $d, #90\n");
+  y = x;
+  CHECK(gen_fold(&y, 1, CORE) && gen_fold(&y, 4, CORE), "two folds");
+  CHECK(!strcmp(text_of(&y), "L0:     NOP.B   $0, $0\n"
+                             "        repeat  2\n"
+                             "          DAT.F   #5+i*-12, $L0\n"
+                             "        end\n"
+                             "        repeat  2\n"
+                             "L5:       SPL.B   $L5, #100+i*-10\n"
+                             "        end\n"),
+        "folded:\n%s", text_of(&y));
+  // not: other opcodes, modifiers or modes, the first line's label in the second, a label and a number, the start at
+  // the second, a third line that refers to the second
+  parse(&x, "DAT.F #1, #2\nDAT.A #1, #3\nDAT.A $1, #3\nDAT.A $1, $4\nb: NOP.B $0, $0\nNOP.B $b, #1\nc: MOV.I $0, #c\nMOV.I $0, #1\nd: JMP.B $0, $0\ne: JMP.B $0, $0\nNOP.B $0, #1\ns: NOP.B $0, #2\nMOV.I $s, $0\norg e\n");
+  for (uint32_t i = 0; i < x.n; i++) {
+    y = x;
+    CHECK(!gen_fold(&y, i, CORE), "line %u folds:\n%s", i, text_of(&y));
+  }
+  // an unrolled block: i its numbers, j comes in as i, the labels of each repetition its own
+  parse(&x, "repeat 2\n"
+            "  r: repeat 2\n"
+            "  a: DAT.F #i, #j\n"
+            "    repeat 2\n"
+            "      SPL.B $a, #i+j*10+k\n"
+            "    end\n"
+            "  e: end\n"
+            "  JMP.B $r, $e\n"
+            "end\n"
+            "NOP.B $a, $0\n");
+  y = x;
+  uint32_t copies, lines;
+  CHECK(gen_unroll(&y, 1, CORE, &copies, &lines) && copies == 2 && lines == 4, "the inner block unrolls");
+  CHECK(!strcmp(text_of(&y), "        repeat  2\n"
+                             "L1:       DAT.F   #0, #i\n"
+                             "          repeat  2\n"
+                             "            SPL.B   $L1, #i+j\n"
+                             "          end\n"
+                             "L5:       DAT.F   #1, #i\n"
+                             "          repeat  2\n"
+                             "            SPL.B   $L5, #i+10+j\n"
+                             "          end\n"
+                             "L9:       JMP.B   $L1, $L9\n"
+                             "        end\n"
+                             "        NOP.B   $L1, $0\n"),
+        "unrolled:\n%s", text_of(&y));
+  // what a number in place of i leaves behind goes: i*5 is 0, 5, 10; c0 - i is c0, c0-1; (i+1)*4000 stays where it is no number of the core
+  parse(&x, "c0 = 9\nrepeat 3\n  DAT.F #7+i*5, #c0-i\n  DAT.F #(i+1)*4000/3, #100/(i-1)\nend\n");
+  y = x;
+  CHECK(gen_unroll(&y, 0, CORE, 0, 0), "a block unrolls");
+  CHECK(!strcmp(text_of(&y), "c0 = 9\n"
+                             "        DAT.F   #7, #c0\n"
+                             "        DAT.F   #1333, #-100\n"
+                             "        DAT.F   #12, #c0-1\n"
+                             "        DAT.F   #2*4000/3, #0\n"
+                             "        DAT.F   #17, #c0-2\n"
+                             "        DAT.F   #3*4000/3, #100\n"),
+        "simplified:\n%s", text_of(&y));
+  // not: a count that is no number or above 16, the block's length used, an empty block
+  parse(&x, "a: repeat 2+1\nNOP.B $0, $0\nend\nb: repeat 17\nNOP.B $0, $0\nend\n"
+            "d: repeat 2\nNOP.B $0, #d.len\nend\ne: repeat 2\nend\nNOP.B $0, $0\n");
+  for (uint32_t i = 0; i < x.n; i++) {
+    y = x;
+    CHECK(!gen_unroll(&y, i, CORE, 0, 0), "line %u unrolls:\n%s", i, text_of(&y));
+  }
+  // a wrapped block: the loops of its lines move out
+  parse(&x, "repeat 3\n  DAT.F #i, #j\n  repeat 2\n    NOP.B #i, #j\n  end\nend\n");
+  y = x;
+  CHECK(gen_wrap(&y, 1, 5, CORE), "a wrap");
+  CHECK(!strcmp(text_of(&y), "        repeat  3\n"
+                             "          repeat  1\n"
+                             "            DAT.F   #j, #k\n"
+                             "            repeat  2\n"
+                             "              NOP.B   #i, #k\n"
+                             "            end\n"
+                             "          end\n"
+                             "        end\n"),
+        "wrapped:\n%s", text_of(&y));
+  y = x;
+  CHECK(!gen_wrap(&y, 1, 3, CORE) && !gen_wrap(&y, 2, 6, CORE) && !gen_wrap(&y, 3, 3, CORE) && !gen_wrap(&y, 4, 7, CORE), "half a block wraps");
+  parse(&x, "f: def\nend\nNOP.B $0, $0\n");
+  CHECK(!gen_wrap(&x, 0, 2, CORE) && gen_wrap(&x, 2, 3, CORE), "a def wraps");
+  // a constant: what is equal, its negative, its double and near it follows
+  parse(&x, "DAT.F #300, #-300\nDAT.F #600, #310\nDAT.F #300+5, #2*290\nDAT.F #16, #1000\nrepeat 300\nend\n");
+  y = x;
+  CHECK(gen_bind(&y, 0, 0, 0, 3, CORE), "a constant");
+  CHECK(!strcmp(text_of(&y), "c3 = 300\n"
+                             "        DAT.F   #c3, #0-c3\n"
+                             "        DAT.F   #c3*2, #c3+10\n"
+                             "        DAT.F   #c3+5, #2*(c3+-10)\n"
+                             "        DAT.F   #16, #1000\n"
+                             "        repeat  300\n"
+                             "        end\n"),
+        "bound:\n%s", text_of(&y));
+  CHECK(!gen_bind(&y, 3, 1, 0, 3, CORE) && !gen_bind(&y, 3, 0, 0, 4, CORE) && !gen_bind(&y, 0, 0, 0, 4, CORE) && !gen_bind(&y, 3, 1, 0, 16, CORE),
+        "a constant in use, a near number, a token that is no number, c16");
+}
+
+// The mix: the new kinds have names, the list never draws them, a generator does.
+static void test_kinds(void) {
+  genome_mix m;
+  char text[CH_ALL * 32];
+  CHECK(!genome_mix_parse(&m, "repeat=3,count=4,fold=5,unroll=6,index=7,expression=8,constant=9,tune=1"), "the names of the new kinds");
+  CHECK(m.w[CH_REPEAT] == 3 && m.w[CH_REPEATS] == 4 && m.w[CH_FOLD] == 5 && m.w[CH_UNROLL] == 6 && m.w[CH_INDEX] == 7 &&
+            m.w[CH_EXPRESSION] == 8 && m.w[CH_CONSTANT] == 9 && m.w[CH_TUNE] == 1 && m.w[CH_INSERT] == 0,
+        "their weights");
+  genome_mix_text(&m, text, sizeof text);
+  CHECK(!strcmp(text, "tune=1,repeat=3,count=4,fold=5,unroll=6,index=7,expression=8,constant=9"), "%s", text);
+  const genome_mix list = genome_mix_default(), gen = gen_mix_default();
+  uint32_t old = 0, new = 0;
+  for (int k = 0; k < CH_ALL; k++) {
+    CHECK(k >= CH_COUNT ? !list.w[k] && gen.w[k] : list.w[k] == gen.w[k], "the weight of %s", genome_change_name(k));
+    *(k < CH_COUNT ? &old : &new) += gen.w[k];
+  }
+  CHECK(old == 1000 && new == 235, "%u and %u", old, new);
+  // a list: the new kinds do not apply, and breeding with them draws the others
+  rng r = rng_seed(121, 122, 123);
+  static genome g, before, child;
+  for (int round = 0; round < 500; round++) {
+    genome_random(&g, &r, CORE, 1 + rng_below(&r, 20), 0);
+    before = g;
+    for (int k = CH_COUNT; k < CH_ALL; k++)
+      CHECK(!genome_change(&g, &before, &r, CORE, 100, 0, k) && g.len == before.len && !memcmp(g.g, before.g, g.len * sizeof g.g[0]),
+            "%s applies to a list", genome_change_name(k));
+    char ops[96];
+    rng r1 = rng_seed(124, (uint64_t)round, 0), r2 = r1;
+    genome_breed(&child, &g, &g, &r1, CORE, 100, 0, &gen, ops, sizeof ops);
+    CHECK(!strstr(ops, "repeat") && !strstr(ops, "fold") && !strstr(ops, "constant"), "a list bred with %s", ops);
+    // and the same child as without them: their weights are not drawn
+    genome_breed(&before, &g, &g, &r2, CORE, 100, 0, &list, ops, sizeof ops);
+    CHECK(r1.s == r2.s, "a list bred with the weights of the new kinds drew other numbers");
   }
 }
+
 
 static void parse(gen *x, const char *text) {
   char err[160];
@@ -1004,6 +1306,19 @@ static void test_parts(void) {
     CHECK(v >= -2 && v <= 2, "the label became %d", v);
   }
   CHECK(numbers > 10, "%u labels became numbers", numbers);
+  // the changes of a line take a line that the warrior has: not one of a function nobody calls or of a block that repeats 0 times
+  parse(&x, "f: def\n  DAT.F #1000, #f\nend\nrepeat 0\n  SPL.B #2000, $f\nend\nNOP.B $3000, $-3000\n");
+  for (uint64_t seed = 0; seed < 900; seed++) {
+    rng r = rng_seed(108, seed, 0);
+    y = x;
+    const int kinds[] = {CH_OPCODE, CH_MODIFIER, CH_AMODE, CH_BMODE, CH_AOPERAND, CH_BOPERAND, CH_REPLACE, CH_RELATED_OPCODE, CH_RELATED_MODE,
+                         CH_SHARED, CH_TUNE, CH_EXPRESSION, CH_CONSTANT};
+    const int kind = kinds[seed % 13];
+    if (!gen_change(&y, 0, &r, CORE, 100, 0, kind)) continue;
+    y.l[6] = x.l[6];
+    memcpy(y.c, x.c, sizeof y.c);
+    CHECK(same_gen(&x, &y), "%s changed a line that is never written:\n%s", genome_change_name(kind), text_of(&y));
+  }
   // a block is one unit: deleting, moving and duplicating never split one
   parse(&x, "NOP.B $0, $0\nrepeat 2\n  DAT.F #1, #1\n  repeat 2\n    SPL.B $0, $0\n  end\nend\nJMP.B $0, $0\n");
   for (uint64_t seed = 0; seed < 600; seed++) {
@@ -1103,6 +1418,8 @@ int main(void) {
   test_rebuild();
   test_crossover();
   test_parts();
+  test_rewrites();
+  test_kinds();
   test_state();
   if (failures) {
     fprintf(stderr, "%d failures\n", failures);

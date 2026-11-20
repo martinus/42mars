@@ -218,8 +218,7 @@ static int64_t eval(const compiler *c, const gen_expr *e, uint32_t f, uint32_t q
       case GT_CONST: r = v < GEN_CONSTS ? signed_value(c->x->c[v] % c->core, c->core) : 0; break;
       case GT_INDEX: {
         uint32_t left = v;
-        for (uint32_t g = f; g; g = c->fr[g].parent) {
-          if (c->fr[g].kind != FR_REPEAT) continue;
+        for (uint32_t g = f; g && c->fr[g].kind == FR_REPEAT; g = c->fr[g].parent) { // up to the function's call: its caller's loops are not its own
           if (!left--) {
             r = c->fr[g].index;
             break;

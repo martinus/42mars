@@ -50,6 +50,12 @@ typedef struct {
   uint32_t units[GEN_LINES + 1]; // how many units it has
   uint32_t emits;                // instruction lines
   uint32_t places;               // the units of all sequences, and one more for each
+  // what mark_live() adds: the lines that the warrior has, and how many of
+  // them are instructions. A change in a line that is never written (a
+  // function nobody calls, a block that repeats 0 times) gives the same
+  // warrior, which 42evolve has seen: the changes of a line take live ones.
+  uint8_t live[GEN_LINES];
+  uint32_t live_emits;
 } shape;
 
 // The lines of sequence s: from .. to-1.
@@ -83,6 +89,17 @@ static void shape_of(const gen *x, shape *sh) {
   }
   sh->places = 0;
   for (uint32_t s = 0; s < sh->nseq; s++) sh->places += (sh->units[s] = seq_units(x, sh, s, 0)) + 1;
+}
+
+static void mark_live(const gen *x, shape *sh, uint32_t core, uint32_t max_length) {
+  gen_info info;
+  m42_instruction code[GEN_LINES];
+  gen_compile_info(x, core, max_length, code, &info);
+  sh->live_emits = 0;
+  for (uint32_t i = 0; i < x->n; i++) {
+    sh->live[i] = info.pos[i] != GEN_NONE;
+    sh->live_emits += sh->live[i] && x->l[i].kind == GL_EMIT;
+  }
 }
 
 // A sequence, a longer one more often. A generator without blocks has one,
@@ -156,6 +173,13 @@ void gen_rebuild(gen *child, const gen *a, const gen *b, const slot *s, uint32_t
       line_from_gene(l, &g);
       continue;
     }
+    if (s[i].src == SLOT_REPEAT || s[i].src == SLOT_END) {
+      memset(l, 0, sizeof *l);
+      l->kind = s[i].src == SLOT_REPEAT ? GL_REPEAT : GL_END;
+      l->x[0].n = s[i].src == SLOT_REPEAT; // repeat 1
+      l->x[0].v[0] = l->x[0].n;
+      continue;
+    }
     const int from_a = s[i].src == SLOT_A;
     *l = from_a ? a->l[idx] : b->l[idx];
     if (l->kind == GL_CALL) {
@@ -199,29 +223,36 @@ void gen_rebuild(gen *child, const gen *a, const gen *b, const slot *s, uint32_t
 
 // ---------------------------------------------------------------- one change
 
+// Does x keep the limits of a child: no more instruction lines than
+// max_length, a warrior that is whole and not empty?
+static int keeps(const gen *x, uint32_t core, uint32_t max_length) {
+  uint32_t emits = 0;
+  for (uint32_t i = 0; i < x->n; i++) emits += x->l[i].kind == GL_EMIT;
+  if (emits > max_length) return 0;
+  gen_info info;
+  m42_instruction code[GEN_LINES];
+  gen_compile_info(x, core, max_length, code, &info);
+  if (info.truncated || !info.written) return 0;
+  return 1;
+}
+
 // x becomes the child made of the slots, when that child keeps the limits.
 static int rebuilt(gen *x, const gen *b, const slots *o, uint32_t core, uint32_t max_length, rng *r, const genome_style *st,
                    const gen_info *info_b) {
   if (o->over || !o->n) return 0;
   gen child;
-  gen_info info;
   gen_rebuild(&child, x, b, o->s, o->n, core, r, st, info_b);
-  uint32_t emits = 0;
-  for (uint32_t i = 0; i < child.n; i++) emits += child.l[i].kind == GL_EMIT;
-  if (emits > max_length) return 0;
-  m42_instruction code[GEN_LINES];
-  gen_compile_info(&child, core, max_length, code, &info);
-  if (info.truncated || !info.written) return 0;
+  if (!keeps(&child, core, max_length)) return 0;
   x->n = child.n;
   x->start = child.start;
   memcpy(x->l, child.l, child.n * sizeof child.l[0]);
   return 1;
 }
 
-// Instruction line number e of x.
-static gen_line *emit_line(gen *x, uint32_t e, uint32_t *at) {
+// Live instruction line number e of x.
+static gen_line *emit_line(gen *x, const shape *sh, uint32_t e, uint32_t *at) {
   for (uint32_t i = 0; i < x->n; i++)
-    if (x->l[i].kind == GL_EMIT && !e--) {
+    if (x->l[i].kind == GL_EMIT && sh->live[i] && !e--) {
       if (at) *at = i;
       return &x->l[i];
     }
@@ -229,12 +260,12 @@ static gen_line *emit_line(gen *x, uint32_t e, uint32_t *at) {
 }
 
 // The far numbers of x: the number tokens more than 16 away from 0 in the
-// operands of its instructions and the arguments of its calls.
-static uint32_t far_numbers(gen *x, uint32_t core, uint32_t **at) {
+// operands of its live instructions and the arguments of its live calls.
+static uint32_t far_numbers(gen *x, const shape *sh, uint32_t core, uint32_t **at) {
   uint32_t n = 0;
   for (uint32_t i = 0; i < x->n; i++) {
     gen_line *l = &x->l[i];
-    if (l->kind != GL_EMIT && l->kind != GL_CALL) continue;
+    if ((l->kind != GL_EMIT && l->kind != GL_CALL) || !sh->live[i]) continue;
     for (int k = 0; k < 2; k++)
       for (uint32_t t = 0; t < l->x[k].n; t++)
         if (l->x[k].kind[t] == GT_NUM && abs(signed_value(l->x[k].v[t], core)) > 16) at[n++] = &l->x[k].v[t];
@@ -266,6 +297,25 @@ static int change_operand(gen *x, uint32_t line, int k, rng *r, uint32_t core, u
   return 1;
 }
 
+// A change of the instruction at `line`: CH_OPCODE .. CH_REPLACE.
+static int point_change(gen *x, uint32_t line, int kind, rng *r, uint32_t core, uint32_t max_length, const genome_style *st) {
+  gen_line *l = &x->l[line];
+  switch (kind) {
+    case CH_OPCODE: l->op = genome_pick(r, st ? st->op : 0, GENOME_OPCODES); break;
+    case CH_MODIFIER: l->mod = genome_pick(r, st ? st->mod : 0, 7); break;
+    case CH_AMODE: l->am = genome_pick(r, st ? st->mode : 0, 8); break;
+    case CH_BMODE: l->bm = genome_pick(r, st ? st->mode : 0, 8); break;
+    case CH_AOPERAND: return change_operand(x, line, 0, r, core, max_length, st);
+    case CH_BOPERAND: return change_operand(x, line, 1, r, core, max_length, st);
+    case CH_ORG: x->start = rng_below(r, x->n); break;
+    default: {
+      const gene g = genome_random_gene(r, core, x->n, st);
+      line_from_gene(l, &g);
+    }
+  }
+  return 1;
+}
+
 // The functions that the lines marked in `in` call and that are not marked,
 // and what those call: their blocks are marked and put behind the slots.
 static void put_functions(slots *o, const gen *b, const shape *sb, uint8_t *in) {
@@ -283,32 +333,614 @@ static void put_functions(slots *o, const gen *b, const shape *sb, uint8_t *in) 
   }
 }
 
+// ---------------------------------------------------------------- the rewrites
+
+static void set(gen *x, const gen *child) {
+  x->n = child->n;
+  x->start = child->start;
+  memcpy(x->c, child->c, sizeof x->c);
+  memcpy(x->l, child->l, child->n * sizeof child->l[0]);
+}
+
+// The `i` of the lines from .. to-1 that means a loop around them, not one
+// of their own, moves out by one loop: i becomes j, j becomes k. 0 when a k
+// would have to move.
+static int index_out(gen *x, uint32_t from, uint32_t to) {
+  uint32_t own = 0; // their own repeats that are open
+  for (uint32_t i = from; i < to; i++) {
+    gen_line *l = &x->l[i];
+    if (l->kind == GL_END && own) own--;
+    for (int k = 0; k < 2; k++)
+      for (uint32_t t = 0; t < l->x[k].n; t++)
+        if (l->x[k].kind[t] == GT_INDEX && l->x[k].v[t] >= own) {
+          if (l->x[k].v[t] >= 2) return 0;
+          l->x[k].v[t]++;
+        }
+    if (l->kind == GL_REPEAT) own++;
+  }
+  return 1;
+}
+
+// Does a line refer to a line of a function from outside that function?
+// Such a label means the instance of the nearest call, and which call that
+// is changes when calls come into a block or out of one.
+static int function_labels(const gen *x) {
+  uint32_t match[GEN_LINES];
+  gen_blocks(x, match);
+  uint32_t def[GEN_LINES], open = NONE; // the def each line is in (a def and its end too)
+  for (uint32_t i = 0; i < x->n; i++) {
+    if (x->l[i].kind == GL_DEF) open = i;
+    def[i] = open;
+    if (open != NONE && i == match[open]) open = NONE;
+  }
+  for (uint32_t i = 0; i < x->n; i++)
+    for (int k = 0; k < 2; k++)
+      for (uint32_t t = 0; t < x->l[i].x[k].n; t++) {
+        const uint8_t kind = x->l[i].x[k].kind[t];
+        const uint32_t v = x->l[i].x[k].v[t];
+        if ((kind == GT_POS || kind == GT_LEN) && v < x->n && def[v] != NONE && def[v] != def[i]) return 1;
+      }
+  return 0;
+}
+
+int gen_wrap(gen *x, uint32_t first, uint32_t end, uint32_t core) {
+  if (first >= end || end > x->n || x->n + 2 > GEN_LINES) return 0;
+  uint32_t depth = 0;
+  int calls = 0;
+  for (uint32_t i = first; i < end; i++) {
+    const uint8_t kind = x->l[i].kind;
+    if (kind == GL_DEF || (kind == GL_END && !depth--)) return 0;
+    if (kind == GL_REPEAT) depth++;
+    calls |= kind == GL_CALL;
+  }
+  if (depth || (calls && function_labels(x))) return 0;
+  slots o;
+  o.n = 0, o.over = 0;
+  put(&o, SLOT_A, 0, first);
+  put(&o, SLOT_REPEAT, 0, 1);
+  put(&o, SLOT_A, first, end - first);
+  put(&o, SLOT_END, 0, 1);
+  put(&o, SLOT_A, end, x->n - end);
+  gen child;
+  gen_rebuild(&child, x, x, o.s, o.n, core, 0, 0, 0);
+  if (!index_out(&child, first + 1, end + 1)) return 0;
+  set(x, &child);
+  return 1;
+}
+
+// How the operands k of two instructions fold: FOLD_NOT, FOLD_SAME (one
+// expression for both), FOLD_STEP (two numbers, *step from the first to the
+// second).
+enum { FOLD_NOT, FOLD_SAME, FOLD_STEP };
+static int fold_rule(const gen *x, uint32_t line, int k, uint32_t core, uint32_t *step) {
+  const gen_expr *a = &x->l[line].x[k], *b = &x->l[line + 1].x[k];
+  if (a->n == 1 && b->n == 1 && a->kind[0] == GT_NUM && b->kind[0] == GT_NUM && a->v[0] != b->v[0]) {
+    *step = wrap((int64_t)signed_value(b->v[0], core) - signed_value(a->v[0], core), core);
+    return FOLD_STEP;
+  }
+  if (a->n == 1 && b->n == 1 && a->kind[0] == GT_POS && b->kind[0] == GT_POS && a->v[0] == line && b->v[0] == line + 1)
+    return FOLD_SAME; // each its own label
+  if (a->n != b->n) return FOLD_NOT;
+  for (uint32_t t = 0; t < a->n; t++) {
+    if (a->kind[t] != b->kind[t] || a->v[t] != b->v[t]) return FOLD_NOT;
+    if ((a->kind[t] == GT_POS || a->kind[t] == GT_LEN) && (a->v[t] == line || a->v[t] == line + 1)) return FOLD_NOT;
+    if (a->kind[t] == GT_INDEX && a->v[t] >= 2) return FOLD_NOT; // no room for one more loop
+  }
+  return FOLD_SAME;
+}
+
+// Can the instructions at line and line + 1 become one in a repeat?
+static int foldable(const gen *x, uint32_t line, uint32_t core) {
+  if (line + 1 >= x->n) return 0;
+  const gen_line *l = &x->l[line], *m = &x->l[line + 1];
+  if (l->kind != GL_EMIT || m->kind != GL_EMIT || l->op != m->op || l->mod != m->mod || l->am != m->am || l->bm != m->bm) return 0;
+  uint32_t step;
+  if (!fold_rule(x, line, 0, core, &step) || !fold_rule(x, line, 1, core, &step)) return 0;
+  // nothing but itself refers to the second: it will be the second repetition of the first
+  if (x->start == line + 1) return 0;
+  for (uint32_t i = 0; i < x->n; i++) {
+    if (i == line + 1) continue;
+    if (x->l[i].kind == GL_CALL && x->l[i].callee == line + 1) return 0;
+    for (int k = 0; k < 2; k++)
+      for (uint32_t t = 0; t < x->l[i].x[k].n; t++)
+        if ((x->l[i].x[k].kind[t] == GT_POS || x->l[i].x[k].kind[t] == GT_LEN) && x->l[i].x[k].v[t] == line + 1) return 0;
+  }
+  return 1;
+}
+
+int gen_fold(gen *x, uint32_t line, uint32_t core) {
+  if (x->n + 1 > GEN_LINES || !foldable(x, line, core)) return 0;
+  uint32_t step[2] = {0, 0};
+  const int rule[2] = {fold_rule(x, line, 0, core, &step[0]), fold_rule(x, line, 1, core, &step[1])};
+  slots o;
+  o.n = 0, o.over = 0;
+  put(&o, SLOT_A, 0, line);
+  put(&o, SLOT_REPEAT, 0, 1);
+  put(&o, SLOT_A, line, 1);
+  put(&o, SLOT_END, 0, 1);
+  put(&o, SLOT_A, line + 2, x->n - line - 2);
+  gen child;
+  gen_rebuild(&child, x, x, o.s, o.n, core, 0, 0, 0);
+  if (!index_out(&child, line + 1, line + 2)) return 0;
+  for (int k = 0; k < 2; k++) {
+    if (rule[k] != FOLD_STEP) continue;
+    gen_expr *e = &child.l[line + 1].x[k]; // a + i * step
+    e->n = 5;
+    e->kind[1] = GT_INDEX, e->v[1] = 0;
+    e->kind[2] = GT_NUM, e->v[2] = step[k];
+    e->kind[3] = GT_MUL, e->v[3] = 0;
+    e->kind[4] = GT_ADD, e->v[4] = 0;
+  }
+  child.l[line].x[0].v[0] = 2;
+  set(x, &child);
+  return 1;
+}
+
+// e without the operations that a number in place of `i` leaves behind: two
+// numbers and their operation become their result (when that is a number of
+// the core, so that a division behind it gives the same), and + 0, - 0,
+// * 1 and / 1 go. The value of e stays.
+static void simplify(gen_expr *e, uint32_t core) {
+  for (uint32_t t = 0; t + 1 < e->n;) {
+    uint32_t cut = 0; // tokens to take out behind t
+    if (e->kind[t] == GT_NUM && e->kind[t + 1] >= GT_ADD) {
+      const int64_t b = signed_value(e->v[t], core);
+      const uint8_t op = e->kind[t + 1];
+      if (t && (((op == GT_ADD || op == GT_SUB) && b == 0) || ((op == GT_MUL || op == GT_DIV) && b == 1))) {
+        memmove(&e->kind[t], &e->kind[t + 2], (e->n - t - 2) * sizeof e->kind[0]);
+        memmove(&e->v[t], &e->v[t + 2], (e->n - t - 2) * sizeof e->v[0]);
+        e->n -= 2;
+        t = 0;
+        continue;
+      }
+    }
+    if (t + 2 < e->n && e->kind[t] == GT_NUM && e->kind[t + 1] == GT_NUM && e->kind[t + 2] >= GT_ADD) {
+      const int64_t a = signed_value(e->v[t], core), b = signed_value(e->v[t + 1], core);
+      const uint8_t op = e->kind[t + 2];
+      const int64_t v = op == GT_ADD ? a + b : op == GT_SUB ? a - b : op == GT_MUL ? a * b : !b ? 0 : op == GT_DIV ? a / b : a % b;
+      if (v >= -(int64_t)(core - core / 2 - 1) && v <= (int64_t)(core / 2)) { // a value that a number stands for
+        e->v[t] = wrap(v, core);
+        cut = 2;
+      }
+    }
+    if (!cut) {
+      t++;
+      continue;
+    }
+    memmove(&e->kind[t + 1], &e->kind[t + 1 + cut], (e->n - t - 1 - cut) * sizeof e->kind[0]);
+    memmove(&e->v[t + 1], &e->v[t + 1 + cut], (e->n - t - 1 - cut) * sizeof e->v[0]);
+    e->n = (uint8_t)(e->n - cut);
+    t = 0;
+  }
+  for (uint32_t t = e->n; t < GEN_TOKENS; t++) e->kind[t] = 0, e->v[t] = 0;
+}
+
+// Can the repeat at line R become its repetitions (gen_unroll())?
+static int unrollable(const gen *x, const uint32_t *match, uint32_t R) {
+  if (R >= x->n || x->l[R].kind != GL_REPEAT) return 0;
+  const gen_expr *count = &x->l[R].x[0];
+  if (count->n != 1 || count->kind[0] != GT_NUM || count->v[0] < 1 || count->v[0] > 16) return 0;
+  const uint32_t E = match[R];
+  if (E >= x->n || E == R + 1) return 0;
+  if (x->n - 2 + (count->v[0] - 1) * (E - R - 1) > GEN_LINES) return 0;
+  for (uint32_t i = R + 1; i < E; i++) {
+    if (x->l[i].kind == GL_CALL && function_labels(x)) return 0;
+    // a count in the block (an argument may be one) that uses a place of
+    // the block sees the repetitions before its own, which will be other lines
+    if (x->l[i].kind != GL_CALL && x->l[i].kind != GL_REPEAT) continue;
+    for (int k = 0; k < 2; k++)
+      for (uint32_t t = 0; t < x->l[i].x[k].n; t++)
+        if ((x->l[i].x[k].kind[t] == GT_POS || x->l[i].x[k].kind[t] == GT_LEN) && x->l[i].x[k].v[t] >= R && x->l[i].x[k].v[t] <= E) return 0;
+  }
+  // the end of the block is a place: the line behind it has to be one that
+  // is written where the block ends, not the end of a block around it
+  const uint8_t behind = E + 1 < x->n ? x->l[E + 1].kind : GL_END;
+  const int last = behind != GL_EMIT && behind != GL_REPEAT && behind != GL_CALL;
+  if (last && x->start == E) return 0;
+  for (uint32_t i = 0; i < x->n; i++) {
+    if (last && x->l[i].kind == GL_CALL && x->l[i].callee == E) return 0;
+    for (int k = 0; k < 2; k++)
+      for (uint32_t t = 0; t < x->l[i].x[k].n; t++) {
+        const uint8_t kind = x->l[i].x[k].kind[t];
+        const uint32_t v = x->l[i].x[k].v[t];
+        if (kind == GT_LEN && (v == R || v == E)) return 0;
+        if (kind == GT_POS && v == E && last) return 0;
+      }
+  }
+  return 1;
+}
+
+int gen_unroll(gen *x, uint32_t R, uint32_t core, uint32_t *copies, uint32_t *lines) {
+  uint32_t match[GEN_LINES];
+  gen_blocks(x, match);
+  if (!unrollable(x, match, R)) return 0;
+  const uint32_t n = x->l[R].x[0].v[0], E = match[R], B = E - R - 1;
+  // where line t is then, seen from repetition c (from outside: the first)
+#define AT(t, c) ((t) < R ? (t) : (t) == R ? R : (t) < E ? R + (c)*B + ((t)-R - 1) : (t) == E ? R + n * B : (t)-2 - B + n * B)
+  gen child;
+  child.n = x->n - 2 - B + n * B;
+  memcpy(child.c, x->c, sizeof child.c);
+  uint32_t o = 0;
+  for (uint32_t i = 0; i < x->n; i++) {
+    const int inside = i == R;
+    for (uint32_t c = 0; c < (inside ? n : 1); c++) {
+      uint32_t own = 0; // the repeats of the block's lines that are open
+      for (uint32_t j = inside ? R + 1 : i; j < (inside ? E : i + 1); j++) {
+        gen_line l = x->l[j];
+        if (l.kind == GL_END && own) own--;
+        if (l.kind == GL_CALL) l.callee = AT(l.callee, c);
+        for (int k = 0; k < 2; k++)
+          for (uint32_t t = 0; t < l.x[k].n; t++) {
+            uint8_t *kind = &l.x[k].kind[t];
+            uint32_t *v = &l.x[k].v[t];
+            if (*kind == GT_POS || *kind == GT_LEN) *v = AT(*v, c);
+            else if (*kind == GT_INDEX && inside && *v == own) *kind = GT_NUM, *v = c; // the loop that is gone
+            else if (*kind == GT_INDEX && inside && *v > own) --*v;
+          }
+        if (inside) simplify(&l.x[0], core), simplify(&l.x[1], core);
+        if (l.kind == GL_REPEAT) own++;
+        child.l[o++] = l;
+      }
+    }
+    if (inside) i = E;
+  }
+  child.start = AT(x->start, 0);
+  if (child.start >= child.n) child.start = 0;
+#undef AT
+  set(x, &child);
+  if (copies) *copies = n;
+  if (lines) *lines = B;
+  return 1;
+}
+
+int gen_bind(gen *x, uint32_t line, int k, uint32_t t, uint32_t c, uint32_t core) {
+  if (line >= x->n || k < 0 || k > 1 || c >= GEN_CONSTS) return 0;
+  gen_expr *e = &x->l[line].x[k];
+  if (t >= e->n || e->kind[t] != GT_NUM) return 0;
+  const uint32_t v = e->v[t];
+  const int32_t sv = signed_value(v, core);
+  if (abs(sv) <= 16) return 0;
+  for (uint32_t i = 0; i < x->n; i++)
+    for (int j = 0; j < 2; j++)
+      for (uint32_t s = 0; s < x->l[i].x[j].n; s++)
+        if (x->l[i].x[j].kind[s] == GT_CONST && x->l[i].x[j].v[s] == c) return 0;
+  x->c[c] = v;
+  e->kind[t] = GT_CONST;
+  e->v[t] = c;
+  for (uint32_t i = 0; i < x->n; i++) {
+    if (x->l[i].kind != GL_EMIT && x->l[i].kind != GL_CALL) continue;
+    for (int j = 0; j < 2; j++) {
+      gen_expr *f = &x->l[i].x[j];
+      for (uint32_t s = 0; s < f->n; s++) {
+        if (f->kind[s] != GT_NUM) continue;
+        const uint32_t w = f->v[s];
+        const int32_t sw = signed_value(w, core);
+        if (abs(sw) <= 16) continue;
+        if (w == v) {
+          f->kind[s] = GT_CONST, f->v[s] = c;
+          continue;
+        }
+        uint8_t kind[3] = {GT_CONST, GT_NUM, GT_ADD};
+        uint32_t value[3] = {c, 0, 0};
+        // as integers, not mod the core size: the number may be divided further on
+        if (sw == -sv) kind[0] = GT_NUM, value[0] = 0, kind[1] = GT_CONST, value[1] = c, kind[2] = GT_SUB; // 0 - c
+        else if (sw == 2 * sv) value[1] = 2, kind[2] = GT_MUL;                                              // c * 2
+        else if (abs(sw - sv) <= 16) value[1] = wrap((int64_t)sw - sv, core);                                                    // c + d
+        else continue;
+        if (f->n + 2 > GEN_TOKENS) continue;
+        memmove(&f->kind[s + 3], &f->kind[s + 1], (f->n - s - 1) * sizeof f->kind[0]);
+        memmove(&f->v[s + 3], &f->v[s + 1], (f->n - s - 1) * sizeof f->v[0]);
+        memcpy(&f->kind[s], kind, sizeof kind);
+        memcpy(&f->v[s], value, sizeof value);
+        f->n += 2;
+        s += 2;
+      }
+    }
+  }
+  return 1;
+}
+
+// ---------------------------------------------------------------- changes of the structure
+
+// How many repeats are around `line`, and whether a def is.
+static uint32_t loops_around(const gen *x, const uint32_t *match, uint32_t line, int *in_def) {
+  uint32_t depth = 0;
+  *in_def = 0;
+  for (uint32_t j = 0; j < line; j++) {
+    if (match[j] == NONE || match[j] <= line) continue; // no opener, or closed before the line
+    if (x->l[j].kind == GL_REPEAT) depth++;
+    else if (x->l[j].kind == GL_DEF) *in_def = 1;
+  }
+  return depth;
+}
+
+// A step per repetition: small, or a far value.
+static uint32_t random_step(rng *r, uint32_t core, const genome_style *st) {
+  if (rng_chance(r, 0.5)) return genome_far_value(r, core, st);
+  const int32_t d = rng_range(r, 1, 8);
+  return wrap(rng_below(r, 2) ? d : -d, core);
+}
+
+// e becomes e + i * d, i the loop `level` out; 0 without the room.
+static int add_step(gen_expr *e, uint32_t level, uint32_t d) {
+  if (!e->n || e->n + 4 > GEN_TOKENS) return 0;
+  const uint8_t kind[4] = {GT_INDEX, GT_NUM, GT_MUL, GT_ADD};
+  const uint32_t v[4] = {level, d, 0, 0};
+  memcpy(&e->kind[e->n], kind, sizeof kind);
+  memcpy(&e->v[e->n], v, sizeof v);
+  e->n += 4;
+  return 1;
+}
+
+// A value for an expression of a line with `depth` repeats around it.
+static void random_leaf(const gen *x, rng *r, uint32_t core, const genome_style *st, uint32_t depth, int in_def, uint8_t *kind,
+                        uint32_t *v) {
+  const uint32_t d = rng_below(r, 100);
+  *kind = GT_NUM;
+  if (d < 35) {
+    *v = rng_chance(r, 0.6) ? wrap(rng_range(r, -16, 16), core) : genome_far_value(r, core, st);
+  } else if (d < 55) {
+    *kind = GT_POS, *v = rng_below(r, x->n);
+  } else if (d < 70 && depth) {
+    *kind = GT_INDEX, *v = depth > 1 ? rng_below(r, depth < 3 ? depth : 3) : 0;
+  } else if (d >= 70 && d < 80 && in_def) {
+    *kind = GT_ARG, *v = rng_below(r, 2);
+  } else if (d >= 80 && d < 90) { // a constant that has a value, else any
+    uint32_t c[GEN_CONSTS], cn = 0;
+    for (uint32_t k = 0; k < GEN_CONSTS; k++)
+      if (x->c[k]) c[cn++] = k;
+    *kind = GT_CONST, *v = cn ? c[rng_below(r, cn)] : rng_below(r, GEN_CONSTS);
+  } else if (d >= 90 && d < 95) { // the length of a block or a call
+    uint32_t at[GEN_LINES], an = 0;
+    for (uint32_t i = 0; i < x->n; i++)
+      if (x->l[i].kind == GL_REPEAT || x->l[i].kind == GL_CALL || x->l[i].kind == GL_DEF) at[an++] = i;
+    if (an) *kind = GT_LEN, *v = at[rng_below(r, an)];
+    else *v = wrap(rng_range(r, -16, 16), core);
+  } else if (d >= 95) {
+    *kind = GT_CORE, *v = 0;
+  } else { // a kind that means nothing here: a small number
+    *v = wrap(rng_range(r, -16, 16), core);
+  }
+}
+
+// Nothing behind the tokens of e (gen_check()).
+static void tidy(gen_expr *e) {
+  for (uint32_t t = e->n; t < GEN_TOKENS; t++) e->kind[t] = 0, e->v[t] = 0;
+}
+
+static int take(gen *x, const gen *child, uint32_t core, uint32_t max_length) {
+  if (!keeps(child, core, max_length)) return 0;
+  set(x, child);
+  return 1;
+}
+
+static int structure_change(gen *x, const shape *sh, rng *r, uint32_t core, uint32_t max_length, const genome_style *st, int kind) {
+  gen cand;
+  cand.n = 0;
+  set(&cand, x);
+  gen_info info;
+  m42_instruction code[GEN_LINES];
+  unit u[GEN_LINES];
+  uint32_t at[GEN_LINES], an = 0;
+  switch (kind) {
+    case CH_REPEAT: { // units into a repeat of 2 to 8, and half of the time one operand steps with it
+      const uint32_t s = pick_sequence(sh, r), count = seq_units(x, sh, s, u);
+      if (!count) return 0;
+      const uint32_t k = genome_block(r, count), from = rng_below(r, count - k + 1);
+      const uint32_t first = u[from].first, end = unit_line(x, sh, s, u, count, from + k);
+      gen_compile_info(x, core, max_length, code, &info);
+      uint32_t wrote = 0;
+      for (uint32_t j = from; j < from + k; j++)
+        if (info.len[u[j].first] != GEN_NONE) wrote += info.len[u[j].first];
+      if (!wrote || !gen_wrap(&cand, first, end, core)) return 0; // nothing to repeat
+      const uint32_t room = (max_length - info.written) / wrote + 1;
+      if (room < 2) return 0;
+      uint32_t n = 2;
+      while (n < 8 && n < room && rng_chance(r, 0.5)) n++;
+      cand.l[first].x[0].v[0] = n;
+      if (rng_chance(r, 0.5)) {
+        for (uint32_t j = from; j < from + k; j++)
+          if (x->l[u[j].first].kind == GL_EMIT) at[an++] = u[j].first + 1; // behind the new line
+        if (an) {
+          gen_line *l = &cand.l[at[rng_below(r, an)]];
+          gen_expr *e = &l->x[rng_below(r, 2)];
+          add_step(e, 0, random_step(r, core, st));
+        }
+      }
+      return take(x, &cand, core, max_length);
+    }
+    case CH_REPEATS: { // a count: one more or less, doubled, halved, or new
+      for (uint32_t i = 0; i < x->n; i++)
+        if (x->l[i].kind == GL_REPEAT && sh->live[i]) at[an++] = i;
+      if (!an) return 0;
+      gen_expr *e = &cand.l[at[rng_below(r, an)]].x[0];
+      uint32_t leaf[GEN_TOKENS], ln = 0;
+      for (uint32_t t = 0; t < e->n; t++)
+        if (e->kind[t] == GT_NUM) leaf[ln++] = t;
+      if (ln) {
+        uint32_t *v = &e->v[leaf[ln > 1 ? rng_below(r, ln) : 0]];
+        const int32_t sv = signed_value(*v, core);
+        const uint32_t d = rng_below(r, 100);
+        int64_t nv = d < 50 ? (int64_t)sv + (rng_below(r, 2) ? 1 : -1) : d < 65 ? (int64_t)sv * 2 : d < 80 ? sv / 2 : (int64_t)rng_below(r, 9);
+        if (nv < 0) nv = 0;
+        if (nv == sv) return 0;
+        *v = wrap(nv, core);
+      } else { // a count without a number: one more or less
+        if (!e->n || e->n + 2 > GEN_TOKENS) return 0;
+        e->kind[e->n] = GT_NUM, e->v[e->n++] = 1;
+        e->kind[e->n] = rng_below(r, 2) ? GT_ADD : GT_SUB, e->v[e->n++] = 0;
+      }
+      return take(x, &cand, core, max_length);
+    }
+    case CH_FOLD: { // two instructions into a repeat 2, which then goes on to 3 or more
+      for (uint32_t i = 0; i + 1 < x->n; i++)
+        if (sh->live[i] && sh->live[i + 1] && foldable(x, i, core)) at[an++] = i;
+      if (!an) return 0;
+      const uint32_t line = at[rng_below(r, an)];
+      gen_compile_info(x, core, max_length, code, &info);
+      const uint32_t room = max_length - info.written + 2;
+      if (room < 3 || !gen_fold(&cand, line, core)) return 0;
+      uint32_t n = 3;
+      while (n < 10 && n < room && rng_chance(r, 0.5)) n++;
+      cand.l[line].x[0].v[0] = n;
+      return take(x, &cand, core, max_length);
+    }
+    case CH_UNROLL: { // a repeat into its repetitions, and one change of an instruction of one of them
+      for (uint32_t i = 0; i < x->n; i++)
+        if (sh->live[i] && unrollable(x, sh->match, i)) at[an++] = i;
+      if (!an) return 0;
+      const uint32_t line = at[rng_below(r, an)];
+      uint32_t copies, lines;
+      if (!gen_unroll(&cand, line, core, &copies, &lines)) return 0;
+      an = 0;
+      for (uint32_t i = line; i < line + copies * lines; i++)
+        if (cand.l[i].kind == GL_EMIT) at[an++] = i;
+      if (!an) return 0;
+      static const uint32_t w[6] = {81, 81, 54, 54, 108, 108}; // as genome_mix_default()
+      const uint32_t target = at[rng_below(r, an)];
+      if (!point_change(&cand, target, CH_OPCODE + genome_pick(r, w, 6), r, core, max_length, st)) return 0;
+      return take(x, &cand, core, max_length);
+    }
+    case CH_INDEX: { // an operand in a repeat: its step per repetition changes, or it gets one
+      int in_def;
+      for (uint32_t i = 0; i < x->n; i++)
+        if (x->l[i].kind == GL_EMIT && sh->live[i] && loops_around(x, sh->match, i, &in_def)) at[an++] = i;
+      if (!an) return 0;
+      const uint32_t line = at[rng_below(r, an)], depth = loops_around(x, sh->match, line, &in_def);
+      gen_expr *e = &cand.l[line].x[rng_below(r, 2)];
+      uint32_t t = 0;
+      while (t + 2 < e->n && !(e->kind[t] == GT_INDEX && e->kind[t + 1] == GT_NUM && e->kind[t + 2] == GT_MUL)) t++;
+      if (t + 2 < e->n) {
+        const int32_t sv = signed_value(e->v[t + 1], core);
+        const uint32_t d = rng_below(r, 100);
+        int64_t nv;
+        if (d < 40) {
+          const int32_t by = rng_range(r, 1, 4);
+          nv = rng_below(r, 2) ? (int64_t)sv + by : (int64_t)sv - by;
+        } else if (d < 55) {
+          nv = -(int64_t)sv;
+        } else if (d < 75) {
+          nv = rng_below(r, 2) ? (int64_t)sv * 2 : sv / 2;
+        } else {
+          nv = signed_value(random_step(r, core, st), core);
+        }
+        if (wrap(nv, core) == e->v[t + 1]) return 0;
+        e->v[t + 1] = wrap(nv, core);
+      } else {
+        const uint32_t most = depth < 3 ? depth : 3;
+        const uint32_t level = most > 1 && rng_chance(r, 0.25) ? 1 + rng_below(r, most - 1) : 0;
+        if (!add_step(e, level, random_step(r, core, st))) return 0;
+      }
+      return take(x, &cand, core, max_length);
+    }
+    case CH_EXPRESSION: { // an operand or an argument: a value replaced, an operation more, or one less
+      struct {
+        uint32_t line;
+        int k;
+      } ex[2 * GEN_LINES];
+      uint32_t en = 0;
+      for (uint32_t i = 0; i < x->n; i++)
+        for (int k = 0; k < 2; k++)
+          if ((x->l[i].kind == GL_EMIT || x->l[i].kind == GL_CALL) && sh->live[i] && x->l[i].x[k].n) ex[en].line = i, ex[en++].k = k;
+      if (!en) return 0;
+      const uint32_t pick = rng_below(r, en), line = ex[pick].line;
+      gen_expr *e = &cand.l[line].x[ex[pick].k];
+      int in_def;
+      const uint32_t depth = loops_around(x, sh->match, line, &in_def), d = rng_below(r, 100);
+      uint8_t leaf_kind;
+      uint32_t leaf_v;
+      if (d < 40) {
+        uint32_t leaf[GEN_TOKENS], ln = 0;
+        for (uint32_t t = 0; t < e->n; t++)
+          if (e->kind[t] < GT_ADD) leaf[ln++] = t;
+        const uint32_t t = leaf[rng_below(r, ln)];
+        random_leaf(x, r, core, st, depth, in_def, &leaf_kind, &leaf_v);
+        if (e->kind[t] == leaf_kind && e->v[t] == leaf_v) return 0;
+        e->kind[t] = leaf_kind, e->v[t] = leaf_v;
+      } else if (d < 80) {
+        if (e->n + 2 > GEN_TOKENS) return 0;
+        random_leaf(x, r, core, st, depth, in_def, &leaf_kind, &leaf_v);
+        const uint32_t op = rng_below(r, 100);
+        e->kind[e->n] = leaf_kind, e->v[e->n++] = leaf_v;
+        e->kind[e->n] = op < 40 ? GT_ADD : op < 60 ? GT_SUB : op < 80 ? GT_MUL : op < 90 ? GT_DIV : GT_MOD, e->v[e->n++] = 0;
+      } else { // the last operation goes: its left or its right side stays
+        if (e->n < 3 || e->kind[e->n - 1] < GT_ADD) return 0;
+        uint32_t right = e->n - 1, need = 1; // where the right side starts
+        while (need && right) {
+          right--;
+          need += e->kind[right] >= GT_ADD ? 1 : (uint32_t)-1;
+        }
+        if (need || !right) return 0;
+        if (rng_below(r, 2)) {
+          e->n = (uint8_t)right;
+        } else {
+          const uint32_t len = e->n - 1 - right;
+          memmove(&e->kind[0], &e->kind[right], len * sizeof e->kind[0]);
+          memmove(&e->v[0], &e->v[right], len * sizeof e->v[0]);
+          e->n = (uint8_t)len;
+        }
+        tidy(e);
+      }
+      return take(x, &cand, core, max_length);
+    }
+    case CH_CONSTANT: { // a constant moves, with all that uses it; or a far number becomes one, and moves
+      uint8_t used[GEN_CONSTS] = {0}; // 1: by some line, 2: by a live one
+      struct {
+        uint32_t line, t;
+        int k;
+      } far[2 * GEN_TOKENS * GEN_LINES];
+      uint32_t fn = 0, un = 0, unused = NONE;
+      for (uint32_t i = 0; i < x->n; i++)
+        for (int k = 0; k < 2; k++)
+          for (uint32_t t = 0; t < x->l[i].x[k].n; t++) {
+            const gen_expr *e = &x->l[i].x[k];
+            if (e->kind[t] == GT_CONST && e->v[t] < GEN_CONSTS && used[e->v[t]] < 2) used[e->v[t]] = sh->live[i] ? 2 : 1;
+            if (e->kind[t] == GT_NUM && (x->l[i].kind == GL_EMIT || x->l[i].kind == GL_CALL) && sh->live[i] &&
+                abs(signed_value(e->v[t], core)) > 16)
+              far[fn].line = i, far[fn].k = k, far[fn++].t = t;
+          }
+      for (uint32_t k = GEN_CONSTS; k-- > 0;) {
+        if (used[k] == 2) at[un++] = k;
+        else if (!used[k]) unused = k;
+      }
+      const int bind = fn && unused != NONE;
+      if (!un && !bind) return 0;
+      if (un && (!bind || rng_chance(r, 0.5))) {
+        const uint32_t c = at[rng_below(r, un)];
+        cand.c[c] = genome_tune(r, core, cand.c[c]);
+      } else {
+        const uint32_t f = rng_below(r, fn);
+        if (!gen_bind(&cand, far[f].line, far[f].k, far[f].t, unused, core)) return 0;
+        cand.c[unused] = genome_tune(r, core, cand.c[unused]);
+      }
+      return take(x, &cand, core, max_length);
+    }
+    default: return 0;
+  }
+}
+
+genome_mix gen_mix_default(void) {
+  genome_mix m = genome_mix_default();
+  m.w[CH_REPEAT] = 30, m.w[CH_REPEATS] = 40, m.w[CH_FOLD] = 30, m.w[CH_UNROLL] = 15;
+  m.w[CH_INDEX] = 40, m.w[CH_EXPRESSION] = 40, m.w[CH_CONSTANT] = 40;
+  return m;
+}
+
 int gen_change(gen *x, const gen *p2, rng *r, uint32_t core, uint32_t max_length, const genome_style *st, int kind) {
   if (max_length > GEN_LINES) max_length = GEN_LINES;
   shape sh, sh2;
   shape_of(x, &sh);
+  mark_live(x, &sh, core, max_length);
   slots o;
   o.n = 0, o.over = 0;
   unit u[GEN_LINES], u2[GEN_LINES];
   if (kind <= CH_REPLACE) {
-    if (!sh.emits) return 0;
+    if (!sh.live_emits) return 0;
     uint32_t line = 0;
-    gen_line *l = emit_line(x, rng_below(r, sh.emits), &line);
-    switch (kind) {
-      case CH_OPCODE: l->op = genome_pick(r, st ? st->op : 0, GENOME_OPCODES); break;
-      case CH_MODIFIER: l->mod = genome_pick(r, st ? st->mod : 0, 7); break;
-      case CH_AMODE: l->am = genome_pick(r, st ? st->mode : 0, 8); break;
-      case CH_BMODE: l->bm = genome_pick(r, st ? st->mode : 0, 8); break;
-      case CH_AOPERAND: return change_operand(x, line, 0, r, core, max_length, st);
-      case CH_BOPERAND: return change_operand(x, line, 1, r, core, max_length, st);
-      case CH_ORG: x->start = rng_below(r, x->n); break;
-      default: {
-        const gene g = genome_random_gene(r, core, x->n, st);
-        line_from_gene(l, &g);
-      }
-    }
-    return 1;
+    emit_line(x, &sh, rng_below(r, sh.live_emits), &line);
+    return point_change(x, line, kind, r, core, max_length, st);
   }
+  if (kind >= CH_COUNT) return structure_change(x, &sh, r, core, max_length, st, kind);
   switch (kind) {
     case CH_INSERT: {
       if (sh.emits >= max_length) return 0;
@@ -394,7 +1026,7 @@ int gen_change(gen *x, const gen *p2, rng *r, uint32_t core, uint32_t max_length
     case CH_RELATED_OPCODE: {
       uint32_t cand[GEN_LINES], cn = 0;
       for (uint32_t i = 0; i < x->n; i++)
-        if (x->l[i].kind == GL_EMIT && genome_opcode_family(x->l[i].op) >= 0) cand[cn++] = i;
+        if (x->l[i].kind == GL_EMIT && sh.live[i] && genome_opcode_family(x->l[i].op) >= 0) cand[cn++] = i;
       if (!cn) return 0;
       gen_line *l = &x->l[cand[rng_below(r, cn)]];
       uint8_t same[GENOME_OPCODES];
@@ -405,8 +1037,8 @@ int gen_change(gen *x, const gen *p2, rng *r, uint32_t core, uint32_t max_length
       return 1;
     }
     case CH_RELATED_MODE: {
-      if (!sh.emits) return 0;
-      gen_line *l = emit_line(x, rng_below(r, sh.emits), 0);
+      if (!sh.live_emits) return 0;
+      gen_line *l = emit_line(x, &sh, rng_below(r, sh.live_emits), 0);
       uint8_t *m = rng_below(r, 2) ? &l->am : &l->bm;
       if (*m == 0) {
         *m = 1;
@@ -421,22 +1053,27 @@ int gen_change(gen *x, const gen *p2, rng *r, uint32_t core, uint32_t max_length
     }
     case CH_SHARED: {
       uint32_t *at[2 * GEN_TOKENS * GEN_LINES];
-      const uint32_t fn = far_numbers(x, core, at);
+      const uint32_t fn = far_numbers(x, &sh, core, at);
       if (fn < 2) return 0;
       const uint32_t to = rng_below(r, fn);
       uint32_t from = rng_below(r, fn - 1);
       if (from >= to) from++;
-      const uint32_t v = *at[from];
+      const uint32_t v = *at[from], old = *at[to];
       *at[to] = rng_below(r, 2) ? v : wrap(-(int64_t)v, core);
-      return 1;
+      if (keeps(x, core, max_length)) return 1;
+      *at[to] = old; // an argument that is a count: the warrior would not be whole
+      return 0;
     }
     case CH_TUNE: {
       uint32_t *at[2 * GEN_TOKENS * GEN_LINES];
-      const uint32_t fn = far_numbers(x, core, at);
+      const uint32_t fn = far_numbers(x, &sh, core, at);
       if (!fn) return 0;
       uint32_t *v = at[rng_below(r, fn)];
+      const uint32_t old = *v;
       *v = genome_tune(r, core, *v);
-      return 1;
+      if (keeps(x, core, max_length)) return 1;
+      *v = old;
+      return 0;
     }
     default: return 0;
   }
@@ -451,7 +1088,7 @@ void gen_breed(gen *child, const gen *p1, const gen *p2, rng *r, uint32_t core, 
   const genome_mix def = genome_mix_default();
   if (!mix) mix = &def;
   uint64_t total = 0;
-  for (int k = 0; k < CH_COUNT; k++) total += mix->w[k];
+  for (int k = 0; k < CH_ALL; k++) total += mix->w[k];
   if (child != p1) *child = *p1;
   uint32_t changes = 1;
   while (changes < 6 && rng_chance(r, 0.35)) changes++;
@@ -471,6 +1108,14 @@ void gen_breed(gen *child, const gen *p1, const gen *p2, rng *r, uint32_t core, 
       }
     }
   }
+  // a constant that nothing uses any more is 0
+  uint8_t used[GEN_CONSTS] = {0};
+  for (uint32_t i = 0; i < child->n; i++)
+    for (int k = 0; k < 2; k++)
+      for (uint32_t t = 0; t < child->l[i].x[k].n; t++)
+        if (child->l[i].x[k].kind[t] == GT_CONST && child->l[i].x[k].v[t] < GEN_CONSTS) used[child->l[i].x[k].v[t]] = 1;
+  for (uint32_t k = 0; k < GEN_CONSTS; k++)
+    if (!used[k]) child->c[k] = 0;
 }
 
 // ---------------------------------------------------------------- state file
