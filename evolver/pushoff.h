@@ -14,6 +14,14 @@
 
 enum { SD_OPPONENT, SD_SUM };
 
+// How a column counts in the SD-score from a to b (42evolve --difference):
+// |a_k - b_k|, max(0, a_k - b_k), or shape: |a_k - b_k - c| with the c that
+// makes the sum smallest, so two rows that differ by a constant are at
+// distance 0 (#167). That c is the weighted median of the differences
+// (pushoff_shift()), the weights those of the sum: 1 / sigma_k for the
+// columns with sigma_k > 0 (SD_OPPONENT), 1 for all (SD_SUM).
+enum { DIFF_ABS, DIFF_AHEAD, DIFF_SHAPE };
+
 typedef struct {
   uint32_t index;   // the warrior
   uint32_t nearest; // the other warrior with the lowest SD-score, UINT32_MAX if none
@@ -35,18 +43,25 @@ double pushoff_se(uint32_t wins, uint32_t ties, uint32_t rounds);
 // column counts only a_k - b_k where it is positive, where a scores more
 // than b, so the score is not symmetric: a warrior is far from its nearest
 // only when it does better against someone, not when it does worse; with se
-// the part of a_k - b_k above z sqrt(se_ak^2 + se_bk^2).
+// the part of a_k - b_k above z sqrt(se_ak^2 + se_bk^2). difference is
+// DIFF_ABS, DIFF_AHEAD or DIFF_SHAPE; with DIFF_SHAPE and se the part of
+// |a_k - b_k - c| above z sqrt(se_ak^2 + se_bk^2).
 double pushoff_distance(const double *score, size_t stride, const uint32_t *active, uint32_t n, uint32_t a, uint32_t b,
-                        const double *sigma, const double *se, double z, const uint8_t *cols, int variant, int ahead);
+                        const double *sigma, const double *se, double z, const uint8_t *cols, int variant, int difference);
+
+// The c that makes sum w_k |x_k - c| smallest, the weighted median of x:
+// with the x sorted (on a tie by position), the first whose weights up to
+// and including it reach half of all. 0 for m 0 or no weight.
+double pushoff_shift(const double *x, const double *w, uint32_t m);
 
 // sigma[k] for every active k; sigma has an entry per index.
 void pushoff_sigma(const double *score, size_t stride, const uint32_t *active, uint32_t n, double *sigma);
 
 // out[i] for active[i]; sigma: scratch with an entry per index; se, z and
-// cols and ahead as for pushoff_distance() (the average is over all
-// columns); with ahead the nearest of a is the b it is least ahead of.
+// cols and difference as for pushoff_distance() (the average is over all
+// columns); with DIFF_AHEAD the nearest of a is the b it is least ahead of.
 void pushoff_values(const double *score, size_t stride, const uint32_t *active, uint32_t n, int variant, double alpha,
-                    const double *se, double z, const uint8_t *cols, int ahead, double *sigma, pushoff_value *out);
+                    const double *se, double z, const uint8_t *cols, int difference, double *sigma, pushoff_value *out);
 
 // Non-dominated sorting and crowding distance of NSGA-II (Deb et al. 2002)
 // for n warriors on m objectives, larger better: obj[i * m + k]. front[i]:

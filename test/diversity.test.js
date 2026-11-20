@@ -11,7 +11,7 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { paretoFronts, pushoff, pushoffValues, sdDistance, standardError, weakest } from '../tools/diversity.js';
+import { columnSigmas, paretoFronts, pushoff, pushoffValues, sdDistance, standardError, weakest, weightedMedian } from '../tools/diversity.js';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
 const dir = mkdtempSync(join(tmpdir(), 'diversity-test-'));
@@ -102,6 +102,58 @@ test('--difference ahead: a column counts only where the first scores more', () 
   const both = pushoffValues(W, all), ahead = pushoffValues(W, all, { ahead: true });
   assert.ok(both[3].distance > 0 && weakest(both) === 2);
   assert.ok(ahead[3].distance === 0 && weakest(ahead) === 3);
+});
+
+test('--difference shape: a column counts |a_k - b_k - c|, c the weighted median of the differences', () => {
+  const all = [0, 1, 2, 3];
+  const near = (x, y) => Math.abs(x - y) < 1e-12;
+  // the weighted median: the first sorted value whose weights reach half of all; on a tie the earlier position
+  assert.equal(weightedMedian([3, 1, 2], [1, 1, 1]), 2);
+  assert.equal(weightedMedian([4, 1, 3, 2], [1, 1, 1, 1]), 2);
+  assert.equal(weightedMedian([1, 2, 3], [1, 1, 5]), 3);
+  assert.equal(weightedMedian([], []), 0);
+  // 0 and 1 differ by 5 in both columns that count (2 and 3): the same profile, distance 0
+  assert.equal(sdDistance(S, all, 0, 1, 'opponent', null, null, 'shape'), 0);
+  assert.equal(sdDistance(S, all, 0, 1, 'sum', null, null, 'shape'), 0);
+  // 2 against 3: differences -1 (column 0, sigma sqrt(14/3)) and 13 (column 1, sigma
+  // sqrt(86/3)); the weights 1/sigma put the median at -1, so 14 / sqrt(86/3) is left
+  const s0 = Math.sqrt(14 / 3), s1 = Math.sqrt(86 / 3);
+  assert.ok(near(sdDistance(S, all, 2, 3, 'opponent', null, null, 'shape'), 14 / s1));
+  assert.ok(near(sdDistance(S, all, 3, 2, 'opponent', null, null, 'shape'), 14 / s1));
+  assert.ok(near(sdDistance(S, all, 2, 3, 'sum', null, null, 'shape'), 14 / (s0 + s1)));
+  // the older names of the other two
+  assert.equal(sdDistance(S, all, 2, 3, 'opponent', null, null, 'abs'), sdDistance(S, all, 2, 3));
+  assert.equal(sdDistance(S, all, 2, 3, 'opponent', null, null, 'ahead'), sdDistance(S, all, 2, 3, 'opponent', null, null, true));
+  // random rows: the smallest sum over every shift c (the sum is convex and piecewise linear, its minimum is at one
+  // of the differences), symmetric, and 0 for a row plus a constant
+  let seed = 167;
+  const rnd = () => ((seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648);
+  for (let t = 0; t < 50; t++) {
+    const n = 4 + (t % 7), R = Array.from({ length: n }, (_, i) => Array.from({ length: n }, (_, j) => (i === j ? null : Math.round(300 * rnd()))));
+    const ids = R.map((_, i) => i), sg = columnSigmas(R, ids);
+    const ks = ids.filter((k) => k !== 0 && k !== 1 && sg[k] > 0);
+    const x = ks.map((k) => R[0][k] - R[1][k]);
+    const best = Math.min(...x.map((c) => ks.reduce((a, k, i) => a + Math.abs(x[i] - c) / sg[k], 0)));
+    const d = sdDistance(R, ids, 0, 1, 'opponent', null, null, 'shape');
+    assert.ok(Math.abs(d - best) < 1e-9, `case ${t}: ${d}, the smallest sum ${best}`);
+    assert.ok(Math.abs(d - sdDistance(R, ids, 1, 0, 'opponent', null, null, 'shape')) < 1e-9, `case ${t}: not symmetric`);
+    const shifted = R.map((row, i) => (i === 1 ? row.map((v, j) => (j === 0 || j === 1 ? v : v + 40)) : row));
+    const moved = sdDistance(shifted, ids, 0, 1, 'opponent', null, null, 'shape', sg); // the same sigmas
+    assert.ok(Math.abs(moved - d) < 1e-9, `case ${t}: a shift by 40 made ${d} ${moved}`);
+  }
+  // a weaker copy of a profile is near its stronger relative and leaves first; a weak warrior of another profile
+  // stays. 1 is 0 less 50 against everyone else; 4 is weak but does best against 3 (evolver-test.c has the same)
+  const W = [
+    [null, 150, 200, 100, 150],
+    [100, null, 150, 50, 100],
+    [150, 200, null, 120, 140],
+    [180, 220, 160, null, 130],
+    [60, 90, 40, 200, null],
+  ];
+  const five = [0, 1, 2, 3, 4], abs = pushoffValues(W, five), shape = pushoffValues(W, five, { difference: 'shape' });
+  assert.ok(abs[1].distance > 0 && weakest(abs) !== 1, `abs: ${weakest(abs)} leaves`);
+  assert.deepEqual([shape[1].distance, shape[1].nearest, weakest(shape)], [0, 0, 1]);
+  assert.ok(shape[4].distance > 0);
 });
 
 test('--pushoff pareto: fronts and crowding of NSGA-II, a copy the most crowded (evolver-test.c has the same)', () => {
