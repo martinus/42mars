@@ -177,6 +177,18 @@ A list genome becomes a generator line by line: an operand that is a reference b
   - an unroll when something uses the block's length, or its end while no instruction, repeat or call follows it, or when a count inside the block uses a place of the block (a count sees the repetitions before its own);
   - a fold when a third line refers to the second instruction;
   - a constant's double or negative only as integers, not mod the core size: the number may be divided further on.
+- **Refactoring in place (`--refactor p`).** A rewrite alone never enters the list, but a member can be rewritten where it is: its warrior, and so every score it has, stays. Each batch, before breeding, each member's generator gets one refactoring with probability p (`gen_refactor()`), and its children start from the new structure. No battles are played for it. What is drawn:
+
+| weight | refactoring | what it does |
+|---|---|---|
+| 4 | `fold` | a row of alike groups of 1 to 4 instructions becomes a block: two groups that are the same, or three with one step (any two alike instructions have some step; that alone is no structure) |
+| 4 | `absorb` | a block takes in the repetition behind it or in front of it, or the block that goes on where it ends |
+| 4 | `share` | two groups of 2 to 6 instructions that are alike but for up to 2 pairs of numbers become one function with two calls, the numbers its arguments (`gen_share()`): a change of the function changes both |
+| 3 | `constant` | a far number that at least one other number follows becomes a constant |
+| 3 | `inline`, `unwrap` | what does nothing goes: a function with one call, a block that repeats once |
+| 1 | `parameter`, `unroll`, `inline` | what makes room for differences or takes structure apart: a number of a function with two calls becomes an argument, a block of up to 4 repetitions its repetitions, one of several calls its lines. Only when drawn first: as what the others give way to, an unroll would undo every fold |
+
+  Before any of them every expression is worked out as far as its numbers go (`-75+2*284` is 493). A first version drew `extract`, `parameter` and `repeat 1` freely; in 60 batches on the tiny hill 169 of its 225 refactorings were those two, and the best generator was functions that called functions that held one line. Structure that says nothing more is no gain, so the kinds above either say more with less or take such structure away. Not measured on a hill yet; off unless given.
 - **How often a change leaves the warrior as it was,** on generators grown from lists by 200,000 changes that each gave another warrior (the default mix; such a child is skipped as seen):
 
 | | | | | | |
@@ -194,6 +206,7 @@ Nobody writes a function: `extract` makes one from lines that evolved, `call` an
 - **`--genome list|gen`,** `list` the default. A run folder keeps its kind.
 - **The `genome` struct** has a `gen` next to its list (26 KB instead of 4). For a generator the list holds the compiled warrior, so `make_warrior()`, `genome_hash()`, `genome_text()`, the names, the style and the events' `length` need no change. `genome_breed()`, `genome_save()` and `genome_load()` branch on the kind; a random or a start warrior is made as a list and becomes a generator line for line (`genome_as_generator()`).
 - **Random starts** are generators without structure, drawn as today: structure has to pay to appear.
+- **`--refactor p`** (0 to 1, 0 unless given): the refactoring in place of "Changes". An event `refactor` has the member's id, what was done and its generator as it is then.
 - **`--start`** takes the `.gen` files of its folder too, generators as `42gen` reads them: the `best.gen` of other runs enter with their structure, so that a run can mix what several runs found.
 - **Events** carry the generator's text next to the code (`"gen"`), `best.gen` is the generator of `best.red`, and the state file has the generator's numbers (`gen_save()`).
 - **`--changes`** takes the new names, with `--genome gen` only. Without `--changes` a run on generators draws the weights of a list and `repeat` 30, `count` 40, `fold` 30, `unroll` 15, `index` 40, `expression` 40, `constant` 40, `extract` 20, `parameter` 20, `call` 25, `inline` 10, `transplant` 15: a quarter of the changes. A first guess, not measured.
@@ -263,4 +276,4 @@ L9:       MOV.I   @L9+i*L4+5, <c1+-3+i*-12
 - **Trees with names and scopes.** A changed tree needs its names checked and repaired. Line indices that one rebuild renumbers, and `i`, `x` without names, need neither.
 - **Conditions and recursion.** A generator has no input, so a condition only selects by `i`; two lines in a `repeat` do that. Left out until something needs them.
 - **A library shared by the list.** Functions live in the generator that uses them and travel by crossover. A shared library needs credit assignment between warriors and a second kind of state.
-- **Changes that keep the warrior, entering the list.** They would need the seen-table to let them pass and a rule for which of two equal warriors stays.
+- **Changes that keep the warrior, entering the list as children.** They would need the seen-table to let them pass and a rule for which of two equal warriors stays. Rewriting a member in place needs neither (`--refactor`).
