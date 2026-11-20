@@ -797,9 +797,9 @@ static void test_structured(void) {
   static gen x, p2, before;
   char err[160];
   uint32_t applied[CH_ALL] = {0}, refused[CH_ALL] = {0}, same[CH_ALL] = {0}, blocks = 0;
-  for (int round = 0; round < 60000; round++) {
-    const uint32_t max = round % 3 ? 100 : 20;
-    do round % 2 ? random_gen(&x, &r) : regular_gen(&x, &r);
+  for (int round = 0; round < 90000; round++) {
+    const uint32_t max = round % 7 < 5 ? 100 : 20;
+    do round / CH_ALL % 2 ? random_gen(&x, &r) : regular_gen(&x, &r);
     while (!keeps_limits(&x, max));
     do random_gen(&p2, &r);
     while (!keeps_limits(&p2, max));
@@ -819,7 +819,7 @@ static void test_structured(void) {
     for (uint32_t i = 0; i < x.n; i++) blocks += x.l[i].kind == GL_REPEAT;
   }
   for (int k = 0; k < CH_ALL; k++)
-    CHECK(applied[k] > (k == CH_UNROLL || k == CH_INDEX || k == CH_FOLD ? 150 : 500), "%s applied %u times, refused %u times", genome_change_name(k), applied[k], refused[k]);
+    CHECK(applied[k] > (k == CH_UNROLL || k == CH_INDEX || k == CH_FOLD || k == CH_PARAMETER || k == CH_INLINE ? 100 : 500), "%s applied %u times, refused %u times", genome_change_name(k), applied[k], refused[k]);
   // A change of the structure changes the warrior (a rewrite alone would be
   // skipped as seen). Measured where 42evolve is: on generators that grew
   // from lists by changes that each gave another warrior.
@@ -854,7 +854,7 @@ static void test_structured(void) {
   while (!keeps_limits(&x, 100));
   genome_mix all = gen_mix_default();
   all.w[CH_RELATED_OPCODE] = all.w[CH_RELATED_MODE] = all.w[CH_SHARED] = all.w[CH_TUNE] = 60;
-  uint32_t structured = 0, constants = 0;
+  uint32_t structured = 0, constants = 0, functions = 0;
   for (int round = 0; round < 30000; round++) {
     char ops[96];
     if (round % 50 == 0) do random_gen(&p2, &r);
@@ -878,12 +878,28 @@ static void test_structured(void) {
           if (x.l[i].x[k].kind[t] == GT_CONST) used[x.l[i].x[k].v[t]] = 1;
     }
     structured += repeat;
+    // every function is called or referred to
+    uint32_t match[GEN_LINES];
+    gen_blocks(&x, match);
+    for (uint32_t d = 0; d < x.n; d++) {
+      if (x.l[d].kind != GL_DEF) continue;
+      int needed = x.start >= d && x.start <= match[d];
+      for (uint32_t i = 0; i < x.n; i++) {
+        if (i >= d && i <= match[d]) continue;
+        needed |= x.l[i].kind == GL_CALL && x.l[i].callee >= d && x.l[i].callee <= match[d];
+        for (int k = 0; k < 2; k++)
+          for (uint32_t t = 0; t < x.l[i].x[k].n; t++)
+            needed |= (x.l[i].x[k].kind[t] == GT_POS || x.l[i].x[k].kind[t] == GT_LEN) && x.l[i].x[k].v[t] >= d && x.l[i].x[k].v[t] <= match[d];
+      }
+      functions++;
+      CHECK(needed, "a function that nothing calls or refers to stayed after %s:\n%s", ops, text_of(&x));
+    }
     for (uint32_t k = 0; k < GEN_CONSTS; k++) {
       constants += used[k];
       CHECK(used[k] || !x.c[k], "c%u is set and not used after %s", k, ops);
     }
   }
-  CHECK(structured > 3000 && constants > 3000, "%u children with a repeat, %u constants in use", structured, constants);
+  CHECK(structured > 3000 && constants > 3000 && functions > 3000, "%u children with a repeat, %u constants in use, %u functions", structured, constants, functions);
 }
 
 static void parse(gen *x, const char *text);
@@ -893,7 +909,7 @@ static void test_rewrites(void) {
   rng r = rng_seed(111, 112, 113);
   static gen x, y;
   char err[160];
-  uint32_t wrapped = 0, folded = 0, unrolled = 0, bound = 0, linked = 0;
+  uint32_t wrapped = 0, folded = 0, unrolled = 0, bound = 0, linked = 0, extracted = 0, inlined = 0, parameters = 0, dropped = 0;
 #define KEPT(what)                                                                                                    \
   do {                                                                                                                \
     if (gen_check(&y, CORE, err, sizeof err)) CHECK(0, "%s: %s\nfrom\n%s\ncame\n%s", what, err, text_of(&x), text_of(&y)); \
@@ -931,8 +947,37 @@ static void test_rewrites(void) {
       } else {
         CHECK(same_gen(&x, &y), "gen_wrap said 0 and changed the generator");
       }
+      y = x;
+      uint32_t def = 0;
+      if (gen_extract(&y, i, end, CORE, &def)) {
+        extracted++;
+        KEPT("gen_extract");
+        CHECK(y.n == x.n + 3 && y.l[i].kind == GL_CALL && y.l[i].callee == def && y.l[def].kind == GL_DEF && def + (end - i) + 2 == y.n &&
+                  y.l[y.n - 1].kind == GL_END,
+              "the lines of an extracted function");
+      } else {
+        CHECK(same_gen(&x, &y), "gen_extract said 0 and changed the generator");
+      }
+      y = x;
+      uint32_t at = 0, body = 0;
+      if (gen_inline(&y, i, CORE, &at, &body)) {
+        inlined++;
+        KEPT("gen_inline");
+        dropped += y.n < x.n + body - 1;
+        CHECK((y.n == x.n + body - 1 || y.n + 3 == x.n) && body, "the lines of an inlined call: %u, %u and %u", x.n, y.n, body);
+      } else {
+        CHECK(same_gen(&x, &y), "gen_inline said 0 and changed the generator");
+      }
       for (int k = 0; k < 2; k++)
         for (uint32_t t = 0; t < x.l[i].x[k].n; t++) {
+          y = x;
+          if (gen_parameter(&y, i, k, t, rng_below(&r, 2), CORE)) {
+            parameters++;
+            KEPT("gen_parameter");
+            CHECK(y.n == x.n && y.l[i].x[k].kind[t] == GT_ARG, "the token of a parameter");
+          } else {
+            CHECK(same_gen(&x, &y), "gen_parameter said 0 and changed the generator");
+          }
           y = x;
           const uint32_t c = rng_below(&r, GEN_CONSTS);
           if (!gen_bind(&y, i, k, t, c, CORE)) {
@@ -952,6 +997,100 @@ static void test_rewrites(void) {
 #undef KEPT
   CHECK(wrapped > 3000 && folded > 1000 && unrolled > 500 && bound > 3000 && linked > 300, "%u wrapped, %u folded, %u unrolled, %u bound, %u linked",
         wrapped, folded, unrolled, bound, linked);
+  CHECK(extracted > 3000 && inlined > 300 && dropped > 10 && parameters > 300, "%u extracted, %u inlined (%u with the function gone), %u parameters",
+        extracted, inlined, dropped, parameters);
+  // by hand: a function from lines in a loop of a function: the loop and the argument they use are its arguments
+  parse(&x, "g: def\n"
+            "  repeat 2\n"
+            "    a: DAT.F #i+x, #a\n"
+            "    repeat 2\n"
+            "      SPL.B $a, #i+j\n"
+            "    end\n"
+            "  end\n"
+            "end\n"
+            "g(7)\n");
+  y = x;
+  CHECK(gen_extract(&y, 2, 6, CORE, 0), "an extract");
+  CHECK(!strcmp(text_of(&y), "f0:     def\n"
+                             "          repeat  2\n"
+                             "            f6(i, x)\n"
+                             "          end\n"
+                             "        end\n"
+                             "        f0(7)\n"
+                             "f6:     def\n"
+                             "L7:       DAT.F   #x+y, #L7\n"
+                             "          repeat  2\n"
+                             "            SPL.B   $L7, #i+x\n"
+                             "          end\n"
+                             "        end\n"),
+        "extracted:\n%s", text_of(&y));
+  CHECK(same_warrior(&x, &y, 100), "an extract gave another warrior");
+  // not: three values from around the lines; a def among them; half a block
+  parse(&x, "g: def\n  repeat 2\n    DAT.F #i+x, #y\n  end\nend\ng(7, 8)\nNOP.B $0, $0\n");
+  y = x;
+  CHECK(!gen_extract(&y, 2, 3, CORE, 0) && !gen_extract(&y, 0, 5, CORE, 0) && !gen_extract(&y, 1, 3, CORE, 0) && gen_extract(&y, 6, 7, CORE, 0),
+        "what does not extract");
+  // a call into the function's lines: the arguments are the caller's expressions, in the loops of each line
+  parse(&x, "f: def\n"
+            "  DAT.F #x, #y+1\n"
+            "  repeat 2\n"
+            "t:   SPL.B $t, #x+i\n"
+            "  end\n"
+            "end\n"
+            "repeat 2\n"
+            "  f(i*10, 5)\n"
+            "end\n"
+            "f(3)\n");
+  y = x;
+  uint32_t at = 0, lines = 0, copies;
+  CHECK(gen_inline(&y, 7, CORE, &at, &lines) && at == 7 && lines == 4, "an inline: %u, %u", at, lines);
+  CHECK(!strcmp(text_of(&y), "f0:     def\n"
+                             "          DAT.F   #x, #y+1\n"
+                             "          repeat  2\n"
+                             "L3:         SPL.B   $L3, #x+i\n"
+                             "          end\n"
+                             "        end\n"
+                             "        repeat  2\n"
+                             "          DAT.F   #i*10, #6\n"
+                             "          repeat  2\n"
+                             "L9:         SPL.B   $L9, #j*10+i\n"
+                             "          end\n"
+                             "        end\n"
+                             "        f0(3)\n"),
+        "inlined:\n%s", text_of(&y));
+  CHECK(same_warrior(&x, &y, 100), "an inline gave another warrior");
+  // the last call inlined: the function goes
+  CHECK(gen_inline(&y, 12, CORE, &at, &lines), "the last call");
+  uint32_t defs = 0;
+  for (uint32_t i = 0; i < y.n; i++) defs += y.l[i].kind == GL_DEF;
+  CHECK(!defs && same_warrior(&x, &y, 100) && !strcmp(text_of(&y), "        repeat  2\n"
+                                                                    "          DAT.F   #i*10, #6\n"
+                                                                    "          repeat  2\n"
+                                                                    "L3:         SPL.B   $L3, #j*10+i\n"
+                                                                    "          end\n"
+                                                                    "        end\n"
+                                                                    "        DAT.F   #3, #1\n"
+                                                                    "        repeat  2\n"
+                                                                    "L8:       SPL.B   $L8, #3+i\n"
+                                                                    "        end\n"),
+        "after the last call:\n%s", text_of(&y));
+  // a function does not see its caller's loops: its i is 0, also after it came into a loop
+  parse(&x, "f: def\n  DAT.F #i, #x\nend\nrepeat 2\n  f(i+5)\nend\n");
+  y = x;
+  CHECK(gen_inline(&y, 4, CORE, 0, 0) && !strcmp(text_of(&y), "        repeat  2\n          DAT.F   #0, #i+5\n        end\n"), "inlined into a loop:\n%s", text_of(&y));
+  // a number of a function as its argument: every call passes it
+  parse(&x, "f: def\n  DAT.F #x, #300\n  NOP.B $0, #5\nend\nf(1)\nf(2)\n");
+  y = x;
+  CHECK(gen_parameter(&y, 1, 1, 0, 1, CORE), "a parameter");
+  CHECK(!strcmp(text_of(&y), "f0:     def\n          DAT.F   #x, #y\n          NOP.B   $0, #5\n        end\n        f0(1, 300)\n        f0(2, 300)\n"),
+        "a parameter:\n%s", text_of(&y));
+  CHECK(same_warrior(&x, &y, 100) && y.l[4].x[1].v[0] == 300 && y.l[5].x[1].v[0] == 300 && y.l[1].x[1].kind[0] == GT_ARG, "a parameter gave another warrior");
+  CHECK(!gen_parameter(&y, 2, 1, 0, 1, CORE) && !gen_parameter(&y, 2, 1, 0, 0, CORE) && !gen_parameter(&y, 4, 0, 0, 0, CORE) && !gen_parameter(&y, 1, 0, 0, 0, CORE),
+        "an argument that is used for another number, a line outside a function, a token that is no number");
+  // a number that every call passes already takes the same argument
+  parse(&x, "f: def\n  DAT.F #x, #300\nend\nf(300)\nf(300)\n");
+  CHECK(gen_parameter(&x, 1, 1, 0, 0, CORE) && !strcmp(text_of(&x), "f0:     def\n          DAT.F   #x, #x\n        end\n        f0(300)\n        f0(300)\n"),
+        "the same argument:\n%s", text_of(&x));
   // by hand: a fold of two numbers is a + i*d; the same label stays; each its own label stays
   parse(&x, "t: NOP.B $0, $0\na: DAT.F #5, $t\nb: DAT.F #-7, $t\nc: SPL.B $c, #100\nd: SPL.B $d, #90\n");
   y = x;
@@ -983,7 +1122,6 @@ static void test_rewrites(void) {
             "end\n"
             "NOP.B $a, $0\n");
   y = x;
-  uint32_t copies, lines;
   CHECK(gen_unroll(&y, 1, CORE, &copies, &lines) && copies == 2 && lines == 4, "the inner block unrolls");
   CHECK(!strcmp(text_of(&y), "        repeat  2\n"
                              "L1:       DAT.F   #0, #i\n"
@@ -1066,7 +1204,10 @@ static void test_kinds(void) {
     CHECK(k >= CH_COUNT ? !list.w[k] && gen.w[k] : list.w[k] == gen.w[k], "the weight of %s", genome_change_name(k));
     *(k < CH_COUNT ? &old : &new) += gen.w[k];
   }
-  CHECK(old == 1000 && new == 235, "%u and %u", old, new);
+  CHECK(old == 1000 && new == 325, "%u and %u", old, new);
+  CHECK(!genome_mix_parse(&m, "extract=1,parameter=2,call=3,inline=4,transplant=5") && m.w[CH_EXTRACT] == 1 && m.w[CH_PARAMETER] == 2 &&
+            m.w[CH_CALL] == 3 && m.w[CH_INLINE] == 4 && m.w[CH_TRANSPLANT] == 5,
+        "the kinds of functions");
   // a list: the new kinds do not apply, and breeding with them draws the others
   rng r = rng_seed(121, 122, 123);
   static genome g, before, child;
@@ -1318,6 +1459,22 @@ static void test_parts(void) {
     y.l[6] = x.l[6];
     memcpy(y.c, x.c, sizeof y.c);
     CHECK(same_gen(&x, &y), "%s changed a line that is never written:\n%s", genome_change_name(kind), text_of(&y));
+  }
+  // after breeding, a function that nothing calls is gone, and one that is called stays
+  parse(&x, "dead: def\n  DAT.F #1, #1\nend\nlive: def\n  NOP.B $1000, $0\nend\nlive()\nlater: def\n  SPL.B $0, $0\nend\nMOV.I $0, $later\n");
+  for (uint64_t seed = 0; seed < 50; seed++) {
+    rng r = rng_seed(109, seed, 0);
+    genome_mix only = {{0}};
+    only.w[CH_TUNE] = 1;
+    char ops[64];
+    gen_breed(&y, &x, 0, &r, CORE, 100, 0, &only, ops, sizeof ops);
+    uint32_t defs = 0, calls = 0;
+    for (uint32_t i = 0; i < y.n; i++) defs += y.l[i].kind == GL_DEF, calls += y.l[i].kind == GL_CALL && y.l[y.l[i].callee].kind == GL_DEF;
+    char err[160];
+    CHECK(defs == 2 && calls == 1 && y.n == x.n - 3 && !gen_check(&y, CORE, err, sizeof err) && strstr(ops, "tune"), "after %s:\n%s", ops, text_of(&y));
+    m42_instruction code[GEN_LINES];
+    uint32_t start;
+    CHECK(gen_compile(&y, CORE, 100, code, &start, 0) == 2 && code[0].opcode == 16 && code[1].opcode == 0, "the warrior after %s", ops);
   }
   // a block is one unit: deleting, moving and duplicating never split one
   parse(&x, "NOP.B $0, $0\nrepeat 2\n  DAT.F #1, #1\n  repeat 2\n    SPL.B $0, $0\n  end\nend\nJMP.B $0, $0\n");

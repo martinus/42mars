@@ -4228,7 +4228,7 @@ static int structure_kinds(const genome_mix *m) {
     if (m->w[k]) return 1;
   return 0;
 }
-#define STRUCTURE_NEEDS_GEN "--changes repeat, count, fold, unroll, index, expression and constant with --genome gen only"
+#define STRUCTURE_NEEDS_GEN "--changes with a kind of generators (repeat to transplant) needs --genome gen"
 
 static const char *params_error(const params *p) {
   static char text[96];

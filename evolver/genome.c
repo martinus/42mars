@@ -245,7 +245,8 @@ const char *genome_change_name(int kind) {
   static const char *const names[CH_ALL] = {
       "opcode", "modifier", "a-mode", "b-mode", "a-operand", "b-operand", "org", "replace", "insert", "delete",
       "duplicate", "move", "crossover-insert", "crossover-replace", "related-opcode", "related-mode", "shared-constant",
-      "tune", "repeat", "count", "fold", "unroll", "index", "expression", "constant"};
+      "tune", "repeat", "count", "fold", "unroll", "index", "expression", "constant", "extract", "parameter", "call", "inline",
+      "transplant"};
   return kind >= 0 && kind < CH_ALL ? names[kind] : "?";
 }
 

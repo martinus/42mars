@@ -1,6 +1,6 @@
 # Generators: a genome that writes the warrior
 
-Design, 20th November 2026. Status: steps 1, 2a and 2b are built. Step 1 is the language (`evolver/generator.c`, the program `42gen`). Step 2a is the changes of a list on generators (`evolver/gen-change.c`) and `42evolve --genome gen`; with the changes of a list it is the run on lists, event for event. Step 2b is seven kinds of change that make and vary blocks, steps and constants, which `--genome gen` draws by default. Functions (2c) and steps 3 and 4 are the plan.
+Design, 20th November 2026. Status: steps 1 and 2 are built. Step 1 is the language (`evolver/generator.c`, the program `42gen`). Step 2a is the changes of a list on generators (`evolver/gen-change.c`) and `42evolve --genome gen`; with the changes of a list it is the run on lists, event for event. Step 2b is seven kinds of change that make and vary blocks, steps and constants, step 2c five that make and use functions; `--genome gen` draws both by default. Step 2c is not measured on a hill yet; steps 3 and 4 are the plan.
 
 ## The goal
 
@@ -152,7 +152,7 @@ A list genome becomes a generator line by line: an operand that is a reference b
 - **A crossover** takes units of one sequence of the second parent, and the functions that they call. A label of a line that does not come along becomes its distance in the second parent's warrior, a constant its number. A `def` goes to the top level only.
 - **`shared-constant` and `tune`** take the far numbers in the operands of instructions and in the arguments of calls. A count is not one.
 
-**The new kinds.** Each rewrites and then varies (principle 5). The first seven are built (step 2b), the functions are step 2c:
+**The new kinds.** Each rewrites and then varies (principle 5). The first seven are step 2b, the five of functions step 2c:
 
 | kind | rewrite, which leaves the warrior as it is | variation |
 |---|---|---|
@@ -163,14 +163,15 @@ A list genome becomes a generator line by line: an operand that is a reference b
 | `index` | | an operand inside a `repeat`: the d of its `i*d` changes, or it gets `+ i*d` (d 1 to 8 or a far value; a quarter of the time the `i` of a loop further out) |
 | `expression` | | an operand or an argument: a value replaced (40%), one more operation with a new value (40%), or the last operation removed and one of its sides kept (20%) |
 | `constant` | a far number becomes an unused `cN`; other far numbers that are the same, its negative, its double or within 16 of it become `cN`, `0-cN`, `cN*2`, `cN+d` (`gen_bind()`) | the constant moves by a `tune` step: every use moves with it. Half of the time (when a constant is in use) one of those moves instead |
-| `extract` | a run of units becomes a `def` and one call | a second call somewhere else |
-| `parameter` | a number in a function becomes `x` or `y`; every call passes that number | one call passes another |
-| `call` | | one more call of a function, with the arguments of an existing call, one of them changed |
-| `inline` | a call becomes the function's lines, arguments filled in | one change in them |
-| `transplant` | | a function of the second parent and a call of it |
+| `extract` | a run of units becomes a `def` behind the last line and one call (`gen_extract()`); what the lines use of a loop around them or of the arguments of their function becomes the arguments, at most 2 | the call a second time, at another place |
+| `parameter` | a number in a function with a live call becomes its free argument `x` or `y`; every call passes that number (`gen_parameter()`) | one live call passes another: the number changed as an operand is |
+| `call` | | a live call a second time at another place, one number of its arguments changed |
+| `inline` | a call becomes the function's lines, the arguments filled in (`gen_inline()`); the function goes with its last call | one point change in those lines |
+| `transplant` | | a live call of the second parent at a place drawn, with its function and the functions that one calls |
 
 - **Live lines.** A change of a line takes a line that the warrior has. A line of a function nobody calls, or of a block that repeats 0 times, gives the same warrior whatever it becomes, and `42evolve` has seen that one. In a generator without structure every line is live.
-- **A constant that nothing uses any more is 0** after breeding, so that the text of a generator shows the ones that matter.
+- **A constant that nothing uses any more is 0** after breeding, and a function that nothing calls or refers to is removed, so that the text of a generator shows what matters.
+- **Every rewrite ends by compiling** the generator before and after, and does not apply when the warrior would differ. The cases below are the ones found; the comparison catches the ones not thought of (a line that only a later repetition writes, 8 frames deep already).
 - **Where a rewrite does not apply,** because it would not keep the warrior:
   - a wrap or an unroll with a call among the lines, while some line refers to a line of a function from outside that function: such a label means the nearest call's instance, and the block changes which one that is;
   - an unroll when something uses the block's length, or its end while no instruction, repeat or call follows it, or when a count inside the block uses a place of the block (a count sees the repetitions before its own);
@@ -180,8 +181,9 @@ A list genome becomes a generator line by line: an operand that is a reference b
 
 | | | | | | |
 |---|---|---|---|---|---|
-| `repeat` 0.0% | `count` 0.1% | `fold` 0.0% | `unroll` 9% | `index` 14% | `expression` 8% |
-| `constant` 1.5% | `opcode` 6% | `modifier` 14% | `a-mode`, `b-mode` 12% | `a-operand`, `b-operand` 5% | `move` 10% |
+| `repeat` 0.0% | `count` 1.4% | `fold` 0.0% | `unroll` 9% | `index` 13% | `expression` 10% |
+| `constant` 2.2% | `extract` 6% | `parameter` 5% | `call` 14% | `inline` 8% | `transplant` 11% |
+| `opcode` 6% | `modifier` 14% | `a-mode`, `b-mode` 12% | `a-operand`, `b-operand` 5% | `move` 10% | |
 
 Nobody writes a function: `extract` makes one from lines that evolved, `call` and `parameter` reuse and vary it, `transplant` and the crossovers carry it to other warriors, and a function nobody calls is removed.
 
@@ -193,7 +195,7 @@ Nobody writes a function: `extract` makes one from lines that evolved, `call` an
 - **The `genome` struct** has a `gen` next to its list (26 KB instead of 4). For a generator the list holds the compiled warrior, so `make_warrior()`, `genome_hash()`, `genome_text()`, the names, the style and the events' `length` need no change. `genome_breed()`, `genome_save()` and `genome_load()` branch on the kind; a random or a start warrior is made as a list and becomes a generator line for line (`genome_as_generator()`).
 - **Random starts** are generators without structure, drawn as today: structure has to pay to appear.
 - **Events** carry the generator's text next to the code (`"gen"`), `best.gen` is the generator of `best.red`, and the state file has the generator's numbers (`gen_save()`).
-- **`--changes`** takes the new names, with `--genome gen` only. Without `--changes` a run on generators draws the weights of a list and `repeat` 30, `count` 40, `fold` 30, `unroll` 15, `index` 40, `expression` 40, `constant` 40: a fifth of the changes. A first guess; step 2 sets it by measurement.
+- **`--changes`** takes the new names, with `--genome gen` only. Without `--changes` a run on generators draws the weights of a list and `repeat` 30, `count` 40, `fold` 30, `unroll` 15, `index` 40, `expression` 40, `constant` 40, `extract` 20, `parameter` 20, `call` 25, `inline` 10, `transplant` 15: a quarter of the changes. A first guess, not measured.
 - **Refused with `--genome gen` at first:** `--tune-novel`, which writes into the list's operands. Later it tunes the numbers and constants of the generator. (`--optimize` takes a warrior file and stays a list.)
 - **The dashboard** shows the generator's text above the code (step 4). No parser in JavaScript: the text comes from the events.
 
@@ -204,7 +206,7 @@ Nobody writes a function: `extract` makes one from lines that evolved, `call` an
 | 1, done | The language: `gen_compile()`, text form both ways, `42gen` | The hand-written decoy and boot of 20th November as a generator gives the same warrior. 2,000 random list genomes as generators compile to `genome_code()`, and the 282 warriors of `warriors/evolved` write themselves. 20,000 random generators, 3,000 with random bytes and 5,000 changed texts stay within the limits under ASan and UBSan. 38 mutants of `generator.c`: 37 fail a test, one is equivalent (an eighth token is refused one push later) |
 | 2a, done | The old kinds on generators, `--genome gen` | For generators without structure: the same child, the same answer and the same random numbers as `genome_change()` in 60,000 changes of all 18 kinds, and as `genome_breed()` in 20,000 children. A run with `--genome gen` writes the events of `--genome list`, the generator texts aside: 40 batches on the tiny hill with the default mix and with all 18 kinds, 3 islands, and both equal the build before this step. 40,000 changes of random generators with structure give well-formed children within the limits. 44 mutants: all fail a test |
 | 2b, done | `repeat`, `count`, `fold`, `unroll`, `index`, `expression`, `constant` | Tiny hill, the setting of the thirteenth comparison, 48 pairs of islands with the same seeds: the mean at batch 100 not below the list's by more than 1 point. It is 3.2 above ("Step 2b on the tiny hill" below) |
-| 2c | Functions: `extract`, `parameter`, `call`, `inline`, `transplant` | The same comparison |
+| 2c, built | Functions: `extract`, `parameter`, `call`, `inline`, `transplant` | The same comparison: not run yet. Built and tested: 6,000 random generators under every rewrite (37,000 extracts, 1,800 inlines, 7,100 parameters) write the same warrior; 90,000 changes of all 30 kinds give well-formed children within the limits; 26 mutants, 25 fail a test and one check was redundant and is gone |
 | 3 | '94nop: 8 islands against 8, the setting of the twelfth comparison, then the long runs | The top three against the 1,107: above the list's. And by looking: decoys, tables, a second stage? |
 | 4 | The dashboard shows the generator; `--optimize` and `--tune-novel` on generators | |
 
