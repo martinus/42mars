@@ -84,6 +84,24 @@ int gen_check(const gen *x, uint32_t core_size, char *err, size_t err_n);
 uint32_t gen_compile(const gen *x, uint32_t core_size, uint32_t max_length, m42_instruction *out, uint32_t *start,
                      int *truncated);
 
+// gen_compile() that says more: `written` is the number of instructions the
+// lines wrote (0 when the warrior is the one empty cell), pos[i] where the
+// first instance of line i is and len[i] how many instructions it wrote,
+// GEN_NONE for a line that was never written (a def nobody calls, a line
+// behind a truncation). What the changes of gen-change.c need.
+#define GEN_NONE UINT32_MAX
+typedef struct {
+  uint32_t n, start, written;
+  int truncated;
+  uint32_t pos[GEN_LINES], len[GEN_LINES];
+} gen_info;
+uint32_t gen_compile_info(const gen *x, uint32_t core_size, uint32_t max_length, m42_instruction *out, gen_info *info);
+
+// The blocks of x as gen_compile() sees them: match[i] is the GL_END of the
+// GL_REPEAT or GL_DEF at line i (x->n when it is never closed), the opener
+// of a GL_END (GEN_NONE without one), and GEN_NONE for every other line.
+void gen_blocks(const gen *x, uint32_t *match);
+
 // The generator of a warrior's instructions (len 1 .. GEN_LINES, start below
 // len), one line per instruction: an operand that is not immediate (#) and
 // points at an instruction of the warrior is a GT_POS, the others a GT_NUM,

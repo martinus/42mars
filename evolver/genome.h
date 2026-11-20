@@ -15,6 +15,7 @@
 #include <stdint.h>
 
 #include "42mars.h"
+#include "generator.h"
 #include "rng.h"
 
 #define GENOME_MAX 256 // most instructions; the rules may allow fewer
@@ -27,9 +28,17 @@ typedef struct {
   uint32_t a, b; // an index below len when a reference, else a value below the core size
 } gene;
 
+// With `generated` 1 the genome is the generator p (generator.h,
+// docs/evolver-gen.md), and the list is the warrior it writes, all operands
+// values: genome_code(), genome_hash() and genome_text() are those of the
+// warrior, genome_breed() changes the generator (gen-change.h), and
+// genome_save() and genome_load() keep it. The other functions here are
+// those of a list and leave `generated` 0.
 typedef struct {
   uint32_t len, start; // 1 .. GENOME_MAX instructions; start is an index (ORG)
   gene g[GENOME_MAX];
+  uint32_t generated;
+  gen p;
 } genome;
 
 // How new instructions and values are drawn. `fraction`: the probability
@@ -100,6 +109,25 @@ const char *genome_change_name(int kind);
 int genome_change(genome *x, const genome *p2, rng *r, uint32_t core_size, uint32_t max_length,
                   const genome_style *style, int kind);
 
+// The parts of a change that the changes of a generator share
+// (gen-change.c), so that both draw the same numbers: one of n choices by
+// the weights w (uniform when they are all 0 or w is 0); a new instruction
+// for a genome of n instructions; a changed operand, `offset` the distance a
+// reference stands for (its target less its own index); the length of a
+// block of up to len; the family of an opcode and of a mode (-1: none).
+uint8_t genome_pick(rng *r, const uint32_t *w, uint32_t n);
+gene genome_random_gene(rng *r, uint32_t core_size, uint32_t n, const genome_style *style);
+void genome_mutate_operand(rng *r, uint32_t core_size, uint32_t n, int64_t offset, const genome_style *style,
+                           uint8_t *ref, uint32_t *v);
+uint32_t genome_block(rng *r, uint32_t len);
+uint32_t genome_tune(rng *r, uint32_t core_size, uint32_t v); // a far value moved by one step of CH_TUNE
+int genome_opcode_family(uint8_t op);
+int genome_mode_family(uint8_t m);
+
+// The generator of x becomes its genome: p is the list line for line, a
+// reference a label (gen_from_genome()), and `generated` is 1.
+void genome_as_generator(genome *x);
+
 // How often genome_breed() picks each kind of change: weights, any scale.
 typedef struct {
   uint32_t w[CH_COUNT];
@@ -127,7 +155,10 @@ size_t genome_mix_text(const genome_mix *m, char *buf, size_t n);
 void genome_breed(genome *child, const genome *p1, const genome *p2, rng *r, uint32_t core_size, uint32_t max_length,
                   const genome_style *style, const genome_mix *mix, char *ops, size_t ops_n);
 
-// Text form for the state file: "len start" then 8 numbers per instruction.
+// Text form for the state file: "len start" then 8 numbers per instruction;
+// of a generator "gen" and the numbers of gen_save(). GENOME_SAVE_MAX bytes
+// hold any of them.
+#define GENOME_SAVE_MAX (GEN_LINES * 224 + 256)
 size_t genome_save(const genome *x, char *buf, size_t n);
 // Reads that form; 0 on success, -1 on a malformed or out-of-range genome.
 int genome_load(genome *x, const char *text, uint32_t core_size, const char **end);
