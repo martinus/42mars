@@ -189,3 +189,29 @@ test('--genome gen: the changes that make structure, the same run on any thread 
   run(join(tmp, 'default-gen'), ['--changes', 'insert=1,constant=1,repeat=1', '--threads', '2', '--batches', '1']);
   assert.equal(events(join(tmp, 'default-gen')).filter((e) => e.type === 'changes')[0].changes, 'insert=1,repeat=1,constant=1');
 });
+
+test('--genome gen --start: the generators of a folder start a run as they are', { skip }, () => {
+  const dir = join(tmp, 'start-gens');
+  mkdirSync(dir);
+  copyFileSync(join(root, 'warriors', 'dwarf.red'), join(dir, 'dwarf.red'));
+  writeFileSync(join(dir, 'a.gen'), '; a row and a function\nf: def\n  SPL.B $0, <x\nend\nrepeat 3\n  MOV.I $0, $1+i*7\nend\nf(5)\nf(9)\n');
+  writeFileSync(join(dir, 'bad.gen'), 'MOV.I $0, $nowhere\n'); // no generator
+  writeFileSync(join(dir, 'long.gen'), 'repeat 30\n  DAT.F #i, #0\nend\n'); // more than the 20 instructions of the hill
+  const r = run(join(tmp, 'from-gens'), [...ARGS, '--genome', 'gen', '--start', dir, '--threads', '2', '--batches', '2']);
+  assert.match(r.stderr, /bad\.gen is no generator of a warrior of these rules \(line 1: an unknown label\), not a start warrior/);
+  assert.match(r.stderr, /long\.gen is no generator of a warrior of these rules \(it writes nothing, too much, or has too many instruction lines\)/);
+  const evs = events(join(tmp, 'from-gens'));
+  assert.deepEqual(evs[0].startWarriors.map((w) => [w.name, w.file]), [['a', 'a.gen'], ['Dwarf', 'dwarf.red']]);
+  const starts = evs.filter((e) => e.type === 'enter' && e.ops === 'start');
+  assert.equal(starts.length, 2);
+  const a = starts.find((e) => /repeat/.test(e.gen));
+  // as 42gen prints it, and its warrior: three MOV with a step of 7 and the two SPL of the calls
+  const text = spawnSync(gen, ['--size', '800', '--length', '20', '--text', join(dir, 'a.gen')], { encoding: 'utf8' });
+  assert.equal(a.gen, lines(text.stdout));
+  assert.equal(a.length, 5);
+  assert.deepEqual(code(a.code), written(a.gen, 'a.gen'));
+  assert.deepEqual(code(a.code).code.map((c) => c[5]), [1, 8, 15, 5, 9]);
+  // a run on lists takes the .red files only
+  run(join(tmp, 'from-gens-list'), [...ARGS, '--start', dir, '--threads', '2', '--batches', '1']);
+  assert.deepEqual(events(join(tmp, 'from-gens-list'))[0].startWarriors.map((w) => w.file), ['dwarf.red']);
+});
