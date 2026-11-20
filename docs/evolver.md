@@ -261,7 +261,7 @@ Two different designs in parallel (an `SPL` to the second, booted 4000 on) score
 
 - 85 cells of decoy lift every warrior by 1.1 to 3.4 points over the same boot without one, rising with the size where measured. Against the warrior as evolved: +0.5 to +2.3.
 - Where the body goes matters as much: Cranky Mongoose VI 135.3 booted 2000 on, 140.9 at 6000. At 4000 its streams (`MOV.I <0, <3989`) write onto the decoy it left behind, and the decoy cost it 3.8 points, Restless Gremlin 15.
-- So a warrior that keeps most of its length behind as a decoy and runs a small part elsewhere gains a few points; the gap to the median hill warrior (145) and its top is much larger. Evolution could reach it with a change that wraps the running part in a boot to an evolved offset, the rest of the genome staying behind; not built.
+- So a warrior that keeps most of its length behind as a decoy and runs a small part elsewhere gains a few points; the gap to the median hill warrior (145) and its top is much larger. Evolution could reach it with a change that wraps the running part in a boot to an evolved offset, the rest of the genome staying behind; not built. What came of it instead is a genome that can say such things in general, a program that writes the warrior: [`evolver-gen.md`](evolver-gen.md).
 
 ## E5, eleventh comparison: islands, the average over the panel, and a loop that stops early
 
