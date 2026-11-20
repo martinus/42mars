@@ -824,7 +824,9 @@ static warrior *load_opponent(const run *r, const char *name, int quiet) {
 }
 
 // The names of the .red files of a folder, sorted.
-static char **red_files(const char *dir, uint32_t *count) {
+// The names of the .red files of a folder, sorted; with `also` (".gen") the
+// files of that ending too.
+static char **red_files(const char *dir, uint32_t *count, const char *also) {
   DIR *d = opendir(dir);
   if (!d) {
     fprintf(stderr, "42evolve: cannot open %s\n", dir);
@@ -834,7 +836,7 @@ static char **red_files(const char *dir, uint32_t *count) {
   char **names = xmalloc(cap * sizeof *names);
   for (struct dirent *e; (e = readdir(d));) {
     const size_t len = strlen(e->d_name);
-    if (len < 5 || strcmp(e->d_name + len - 4, ".red") != 0) continue;
+    if (len < 5 || (strcmp(e->d_name + len - 4, ".red") != 0 && (!also || strcmp(e->d_name + len - 4, also) != 0))) continue;
     if (n == cap) {
       names = realloc(names, (cap *= 2) * sizeof *names);
       if (!names) exit(1);
@@ -850,7 +852,7 @@ static char **red_files(const char *dir, uint32_t *count) {
 // All .red files of the folder that fit the rules, shuffled with the seed.
 static char **opponent_files(run *r, uint32_t *count) {
   uint32_t n;
-  char **names = red_files(r->p.opponents, &n);
+  char **names = red_files(r->p.opponents, &n, 0);
   uint32_t k = 0;
   for (uint32_t i = 0; i < n; i++) {
     warrior *w = load_opponent(r, names[i], 1);
@@ -894,7 +896,7 @@ static char **opponent_files(run *r, uint32_t *count) {
 static void load_starts(run *r) {
   if (!r->p.start[0]) return;
   uint32_t n;
-  char **names = red_files(r->p.start, &n);
+  char **names = red_files(r->p.start, &n, r->p.gen ? ".gen" : 0); // a run on generators starts from generators too
   r->starts = xmalloc((n ? n : 1) * sizeof *r->starts);
   r->start_noun = xmalloc((n ? n : 1) * sizeof *r->start_noun);
   r->start_name = xmalloc((n ? n : 1) * sizeof *r->start_name);
@@ -904,6 +906,28 @@ static void load_starts(run *r) {
     snprintf(path, sizeof path, "%s/%s", r->p.start, names[i]);
     size_t len;
     char *src = read_file(path, &len);
+    if (!strcmp(names[i] + strlen(names[i]) - 4, ".gen")) { // a generator, as 42gen reads one (best.gen of a run)
+      gen *p = xmalloc(sizeof *p);
+      char why[160] = "cannot read it";
+      int ok = src && strlen(src) == len && !gen_parse(p, src, r->p.rules.core_size, why, sizeof why);
+      if (ok && !gen_keeps(p, r->p.rules.core_size, r->p.rules.max_length))
+        ok = 0, snprintf(why, sizeof why, "it writes nothing, too much, or has too many instruction lines");
+      free(src);
+      if (!ok) {
+        fprintf(stderr, "42evolve: %s is no generator of a warrior of these rules (%s), not a start warrior\n", path, why);
+        free(p);
+        free(names[i]);
+        continue;
+      }
+      const uint32_t k = r->start_n++;
+      genome_from_generator(&r->starts[k], p, r->p.rules.core_size, r->p.rules.max_length);
+      free(p);
+      snprintf(r->start_name[k], sizeof r->start_name[k], "%.*s", (int)(strlen(names[i]) - 4), names[i]); // the file's name
+      rng g = rng_seed(r->p.seed, 0x7374617274u, k); // "start"
+      r->start_noun[k] = rng_below(&g, NAME_NOUNS);
+      r->start_file[k] = names[i];
+      continue;
+    }
     int status;
     m42_warrior *w = src ? m42_assemble_new(src, len, &r->p.rules, 0, 0, &status) : 0;
     free(src);

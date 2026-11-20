@@ -96,6 +96,11 @@ int gen_inline(gen *x, uint32_t line, uint32_t core_size, uint32_t *at, uint32_t
 // 25, inline 10, transplant 15 (a quarter of the changes).
 genome_mix gen_mix_default(void);
 
+// Does x keep the limits of a child: no more instruction lines than
+// max_length, and a warrior that is not truncated and not empty? (For a
+// generator that comes from a file.)
+int gen_keeps(const gen *x, uint32_t core_size, uint32_t max_length);
+
 // One change of the given kind (CH_* of genome.h). Returns 0 and leaves x as
 // it was when the kind does not apply.
 int gen_change(gen *x, const gen *p2, rng *r, uint32_t core_size, uint32_t max_length, const genome_style *style,

@@ -9,6 +9,8 @@
 
 #define NONE UINT32_MAX
 
+static int keeps(const gen *x, uint32_t core, uint32_t max_length);
+
 static uint32_t wrap(int64_t v, uint32_t core) {
   int64_t m = v % (int64_t)core;
   return (uint32_t)(m < 0 ? m + core : m);
@@ -223,6 +225,8 @@ void gen_rebuild(gen *child, const gen *a, const gen *b, const slot *s, uint32_t
 }
 
 // ---------------------------------------------------------------- one change
+
+int gen_keeps(const gen *x, uint32_t core, uint32_t max_length) { return keeps(x, core, max_length); }
 
 // Does x keep the limits of a child: no more instruction lines than
 // max_length, a warrior that is whole and not empty?
