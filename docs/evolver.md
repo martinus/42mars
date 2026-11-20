@@ -231,6 +231,23 @@ pareto-sd keeps fewer families than value: at batch 99 the median island had 9 a
 
 Not kept: abs stays the default; `--difference shape` stays an option. The SD-score goes against strength because of where the list puts its members, not because of the level of a row, and that is what keeps other designs in a pareto-sd list.
 
+## The panel by kinds and the batch of 128, at the same number of children
+
+20th November 2026. The twelfth comparison ran `--panel-choice kinds` and `--batch 128` together. Each alone on the tiny hill: 16 islands per arm from seed 201, the defaults otherwise (a panel of 20, `--screen-stop 3`), 400 batches of 32 or 100 of 128, so 12,800 children per island, scored against the 429 tiny warriors (`--islands 16 --select-after`; a run with `--batches` equal to `--select-after` ends before it scores, one more batch does it).
+
+| panel, batch | mean | sd | worst | median | best |
+|---|---|---|---|---|---|
+| picked, 32 | 89.5 | 10.4 | 71.7 | 87.5 | 106.1 |
+| kinds, 32 | 84.7 | 8.9 | 73.8 | 82.6 | 99.8 |
+| picked, 128 | 84.2 | 8.1 | 73.3 | 82.8 | 105.9 |
+| kinds, 128 | 87.8 | 12.5 | 75.1 | 83.2 | 123.8 |
+
+- Neither shows an effect: kinds less picked is -0.6 over both batch sizes (t -0.23, 32 islands each), a batch of 128 less one of 32 is -1.1 over both panels (t -0.42). The single differences go both ways, -4.8 and +3.6 for kinds, -5.3 and +3.2 for the batch, each within the noise (t between -1.6 and 1.0).
+- The one island far ahead (123.8) has both, the setting of the twelfth comparison. One island is no evidence.
+- 16 islands per arm see about 7 points. A smaller effect of either would need the 48 pairs of the thirteenth comparison.
+
+The same pair on '94nop for `--average panel` against pareto-sd was stopped at batch 35 and 43 of 100 and gave nothing.
+
 ## Stages around evolved warriors
 
 20th November 2026. Every evolved warrior so far is one phase: an `SPL` loop and one to three `MOV` streams of 2 to 7 instructions. Strong hill warriors are often several: a boot, a quick scan, the main loop, a clear. Would a stage written by hand lift an evolved one? Five warriors of `warriors/evolved/94nop` with stages written for this test (none taken from another warrior), each against the 1,107 '94nop Koenigstuhl warriors, 100 rounds (`tools/tournament.mjs --bench`, the same seed; about 0.4 points of standard error):

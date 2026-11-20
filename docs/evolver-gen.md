@@ -203,12 +203,49 @@ Nobody writes a function: `extract` makes one from lines that evolved, `call` an
 |---|---|---|
 | 1, done | The language: `gen_compile()`, text form both ways, `42gen` | The hand-written decoy and boot of 20th November as a generator gives the same warrior. 2,000 random list genomes as generators compile to `genome_code()`, and the 282 warriors of `warriors/evolved` write themselves. 20,000 random generators, 3,000 with random bytes and 5,000 changed texts stay within the limits under ASan and UBSan. 38 mutants of `generator.c`: 37 fail a test, one is equivalent (an eighth token is refused one push later) |
 | 2a, done | The old kinds on generators, `--genome gen` | For generators without structure: the same child, the same answer and the same random numbers as `genome_change()` in 60,000 changes of all 18 kinds, and as `genome_breed()` in 20,000 children. A run with `--genome gen` writes the events of `--genome list`, the generator texts aside: 40 batches on the tiny hill with the default mix and with all 18 kinds, 3 islands, and both equal the build before this step. 40,000 changes of random generators with structure give well-formed children within the limits. 44 mutants: all fail a test |
-| 2b | `repeat`, `count`, `fold`, `unroll`, `index`, `expression`, `constant` | Tiny hill, the setting of the thirteenth comparison, 48 pairs of islands with the same seeds: the mean at batch 100 not below the list's by more than 1 point. Reported next to it: how many members have structure, which kinds made children that entered the list |
+| 2b, done | `repeat`, `count`, `fold`, `unroll`, `index`, `expression`, `constant` | Tiny hill, the setting of the thirteenth comparison, 48 pairs of islands with the same seeds: the mean at batch 100 not below the list's by more than 1 point. It is 3.2 above ("Step 2b on the tiny hill" below) |
 | 2c | Functions: `extract`, `parameter`, `call`, `inline`, `transplant` | The same comparison |
 | 3 | '94nop: 8 islands against 8, the setting of the twelfth comparison, then the long runs | The top three against the 1,107: above the list's. And by looking: decoys, tables, a second stage? |
 | 4 | The dashboard shows the generator; `--optimize` and `--tune-novel` on generators | |
 
 The reference for "rivals" is to be measured once before step 3: the scores of the hill's own warriors on the same bench (median 145; the top is not recorded yet).
+
+## Step 2b on the tiny hill
+
+20th November 2026. The setting of the thirteenth comparison of `docs/evolver.md`: 16 islands per run, a panel of 30 picked by kinds, `--batch 128 --screen-stop 3 --positions mirror --pushoff pareto-sd`, each island's best of four warriors against the 429 tiny warriors at batch 100. `--genome gen` with its default mix on seeds 201, 217 and 233; the list arm is that comparison's (`sh167-abs`), and its block 201 run again with this build gave the same 16 scores. An island of each arm starts from the same random warriors.
+
+| | mean | sd | worst, best | blocks 201, 217, 233 |
+|---|---|---|---|---|
+| lists | 89.9 | 10.3 | 79.7, 128.7 | 91.2, 90.1, 88.4 |
+| generators | 93.1 | 11.9 | 74.1, 123.9 | 98.0, 90.4, 90.8 |
+
+- **Island by island:** generators less lists is +3.2 (sd 15.0, t 1.45), ahead on 31 of 48. The gate (not more than 1 point below) holds; that generators are better is likely and not shown.
+- **The structure is used.** Of the 15,360 warriors that entered in batches 80 to 99, 70% have a `repeat`, 83% a constant, and 69% write more instructions than they have instruction lines.
+- **The new kinds make warriors that enter about as often as the old ones:** 17% of the changes behind the warriors that entered, with 19% of the draws (`constant` 5,780, `expression` 3,963, `index` 3,089, `count` 1,146, `repeat` 1,137, `unroll` 1,062, `fold` 186).
+- **What they build** is rows of one instruction with a step. The best island's best warrior (Binary Hedgehog IX, 123.9, 20 instructions from 12 instruction lines):
+
+```
+c0 = 232
+c1 = -137
+        SPL.F   #2, #L2-2
+        repeat  7
+L2:       MOV.I   }3, }14+i*(-3-c0)
+        end
+L4:     SPL.B   #15+14, #L6--4
+        repeat  3
+L6:       MOV.I   }1, }14+i*c0
+        end
+        repeat  2
+L9:       MOV.I   @L9+i*L4+5, <c1+-3+i*-12
+          JMP.A   <317, }12+i*46
+        end
+        JMP.A   }4, }11
+        JMN.BA  {12, <c1
+        JMP.A   }4, }16
+        JMN.BA  {4, <c1+6
+```
+
+- **What this hill cannot show:** its warriors have 20 instructions at most, and both arms fill them (17.9 and 18.7 on average, 57% and 56% at 20). There is no room for a decoy or a second stage. That is the '94 hill, step 3.
 
 ## Risks
 
