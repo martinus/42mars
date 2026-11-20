@@ -109,6 +109,11 @@ enum {
   CH_INDEX,             // an operand in a repeat gets a step per repetition, or another one
   CH_EXPRESSION,        // an expression: a value replaced, an operation more or less
   CH_CONSTANT,          // a far number becomes a constant that every equal or near number follows; or a constant moves
+  CH_EXTRACT,           // units become a function with two calls
+  CH_PARAMETER,         // a number in a function becomes an argument, and one call passes another
+  CH_CALL,              // one more call of a function
+  CH_INLINE,            // a call becomes the function's lines, one of them changed
+  CH_TRANSPLANT,        // a call of the second parent, with its function
   CH_ALL
 };
 const char *genome_change_name(int kind);
