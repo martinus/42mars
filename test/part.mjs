@@ -7,26 +7,29 @@
 // the same time (#161): `make test TESTS="$(node test/part.mjs 1/3)"`.
 // Every file is in exactly one part, a new one too. The files go by their
 // time, the longest first, each to the part with the least time so far;
-// the times are seconds of each file alone, natively on 32 threads (20th
-// November 2026), and a file not listed counts 5. A wrong time makes the
-// parts uneven, it does not leave a file out.
+// the times are the seconds of each file's tests under ASan and UBSan on CI
+// (sanitizers of run 44681419973, 20th November 2026), and a file not
+// listed counts 20. On 4 cores the files run 3 at a time and slow each
+// other: these sums, not the times of a file alone on 32 threads (which
+// made one native part 110 s of tests and the other 61 s). A wrong time
+// makes the parts uneven, it does not leave a file out.
 
 import { readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 export const SECONDS = {
-  'test/evolver-defaults.test.js': 13.3,
-  'test/evolver-tune.test.js': 11.2,
-  'test/evolver.test.js': 9.9,
-  'test/evolver-difference.test.js': 9.8,
-  'test/evolver-sharing.test.js': 9.3,
-  'test/evolver-select.test.js': 9.1,
-  'test/evolver-pareto.test.js': 7.9,
-  'test/evolver-crowding.test.js': 7.5,
-  'test/evolver-specialists.test.js': 6.9,
-  'test/evolver-map-elites.test.js': 3.7,
-  'test/cli.test.js': 0.4,
-  'test/c-api.test.js': 0.3,
+  'test/evolver-tune.test.js': 48.2,
+  'test/evolver-sharing.test.js': 45.8,
+  'test/evolver-crowding.test.js': 38.7,
+  'test/evolver-difference.test.js': 32.0,
+  'test/evolver-defaults.test.js': 29.6,
+  'test/evolver.test.js': 29.2,
+  'test/evolver-pareto.test.js': 28.9,
+  'test/evolver-select.test.js': 22.6,
+  'test/evolver-specialists.test.js': 16.5,
+  'test/evolver-map-elites.test.js': 10.1,
+  'test/c-api.test.js': 1.0,
+  'test/cli.test.js': 0.8,
 };
 
 // The files of `make test`, in the order of the Makefile's list.
@@ -37,7 +40,7 @@ export function files(dir = fileURLToPath(new URL('.', import.meta.url))) {
 
 // parts[i]: the files of part i + 1 of n, each in the order of files().
 export function parts(n, list = files()) {
-  const time = (f) => SECONDS[f] ?? 5;
+  const time = (f) => SECONDS[f] ?? 20;
   const out = Array.from({ length: n }, () => ({ files: [], seconds: 0 }));
   for (const f of [...list].sort((a, b) => time(b) - time(a) || (a < b ? -1 : 1))) {
     const p = out.reduce((best, x) => (x.seconds < best.seconds ? x : best));
