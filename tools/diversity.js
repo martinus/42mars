@@ -43,11 +43,12 @@
 //
 // difference: false or 'abs' (the plain SD-score), true or 'ahead', 'shape'.
 
-// The standard error of a score in points per 100 rounds (3 a win, 1 a tie)
-// from one match: mu = (3W + T)/n, v = (9W + T)/n - mu^2, 100 sqrt(v / n).
-export function standardError(wins, ties, rounds) {
+// The standard error of a score in points per 100 rounds (3 a win, `tie` a
+// tie, 1 as on a hill) from one match: mu = (3W + tie T)/n,
+// v = (9W + tie^2 T)/n - mu^2, 100 sqrt(v / n).
+export function standardError(wins, ties, rounds, tie = 1) {
   if (!rounds) return 0;
-  const n = rounds, mu = (3 * wins + ties) / n, v = (9 * wins + ties) / n - mu * mu;
+  const n = rounds, mu = (3 * wins + tie * ties) / n, v = (9 * wins + tie * tie * ties) / n - mu * mu;
   return v > 0 ? 100 * Math.sqrt(v / n) : 0;
 }
 

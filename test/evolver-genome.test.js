@@ -15,7 +15,7 @@ import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from
 import { join } from 'node:path';
 import { assemble } from '../wasm/42mars.js';
 import { builtProgram, lines, prebuilt, program } from './native.js';
-import { setup, cleanup, root, tmp, evolve, skip, RULES, TINY, run, events, stable } from './evolver-common.js';
+import { setup, cleanup, root, tmp, evolve, skip, RULES, TINY, run, events, stable, checkValues } from './evolver-common.js';
 
 let gen = prebuilt ? program(prebuilt, '42gen') : null;
 before(async () => {
@@ -132,11 +132,11 @@ test('--genome gen: start warriors, what it refuses, and a state from before it'
   // a state without the field (written before --genome) is a run on lists
   const file = join(tmp, 'start-list', 'state.txt');
   const state = readFileSync(file, 'latin1');
-  const old = state.replace(/^(params .*) 0$/m, '$1');
+  const old = state.replace(/^(params .*) 0 0 0 1$/m, '$1'); // and without --refactor, --min-length and --tie-points
   assert.notEqual(old, state);
   writeFileSync(file, old, 'latin1');
   run(join(tmp, 'start-list'), ['--threads', '2', '--batches', '1']);
-  assert.match(readFileSync(file, 'latin1'), /^params .* 0$/m);
+  assert.match(readFileSync(file, 'latin1'), /^params .* 0 0 0 1$/m);
   assert.ok(events(join(tmp, 'start-list')).every((e) => !('gen' in e)));
 });
 
@@ -254,4 +254,99 @@ test('--refactor: members get another structure for the same warrior, the same r
   assert.equal(r.status, 2);
   assert.match(r.stderr, /--refactor 0 to 1/);
   assert.ok(!existsSync(join(tmp, 'bad3')));
+});
+
+test('--min-length: no child with fewer instructions that are not DAT.F $0, $0 is played, the same run on any thread count and after a resume', { skip }, () => {
+  const empty = code('DAT.F $0, $0').code[0];
+  const filled = (e) => code(e.code).code.filter((c) => JSON.stringify(c) !== JSON.stringify(empty)).length;
+  // without it short warriors enter: a test that could not fail otherwise
+  const base = events(join(tmp, 'one'));
+  assert.equal(base[0].params.minLength, 0);
+  assert.ok(base.some((e) => e.type === 'enter' && filled(e) < 12));
+  for (const genome of ['list', 'gen']) {
+    const args = [...TINY, '--genome', genome, '--min-length', '12'];
+    run(join(tmp, `min-${genome}`), [...args, '--threads', '1', '--batches', '12']);
+    const one = events(join(tmp, `min-${genome}`));
+    assert.equal(one[0].params.minLength, 12);
+    const entered = one.filter((e) => e.type === 'enter');
+    assert.ok(entered.length >= 30, `${entered.length} entered`);
+    for (const e of entered) assert.ok(filled(e) >= 12, `${genome}: ${e.code}`);
+    // random warriors of the start are 12 long (--init-length is 10): all of them could enter
+    assert.ok(entered.some((e) => e.ops === 'random'));
+    run(join(tmp, `min-${genome}2`), [...args, '--threads', '3', '--batches', '5']);
+    run(join(tmp, `min-${genome}2`), ['--threads', '2', '--batches', '7']);
+    assert.deepEqual(stable(events(join(tmp, `min-${genome}2`))), stable(one));
+  }
+  // a dwarf with 7 more instructions and 6 empty cells starts the run: 11 that count, so its children play when a
+  // change fills an empty cell, and not when they keep all 6 (the dwarf itself plays, as every start warrior)
+  const dir = join(tmp, 'padded');
+  mkdirSync(dir);
+  writeFileSync(join(dir, 'padded.red'), readFileSync(join(root, 'warriors', 'dwarf.red'), 'latin1').replace(/^\s*end\b.*$/m, (end) => 'DAT.F #1, #1\n'.repeat(7) + 'DAT.F $0, $0\n'.repeat(6) + end));
+  run(join(tmp, 'min-padded'), [...TINY, '--min-length', '12', '--start', dir, '--threads', '2', '--batches', '6']);
+  const padded = events(join(tmp, 'min-padded')).filter((e) => e.type === 'enter');
+  assert.ok(padded.some((e) => e.ops === 'start' && filled(e) === 11));
+  assert.ok(padded.length >= 10, `${padded.length} entered`);
+  for (const e of padded) if (e.ops !== 'start') assert.ok(filled(e) >= 12, e.code);
+  let r = spawnSync(evolve, [join(tmp, 'bad4'), ...TINY, '--min-length', '21'], { encoding: 'utf8', timeout: 60000 });
+  assert.equal(r.status, 2);
+  assert.match(r.stderr, /--min-length at most --length/);
+  r = spawnSync(evolve, [join(tmp, 'bad4'), ...TINY, '--min-length', '5', '--map-elites'], { encoding: 'utf8', timeout: 60000 });
+  assert.equal(r.status, 2);
+  assert.match(r.stderr, /--min-length not with --map-elites/);
+  assert.ok(!existsSync(join(tmp, 'bad4')));
+});
+
+test('--tie-points: what a tie counts where the run selects, not where it scores, the same run on any thread count and after a resume', { skip }, () => {
+  const args = [...TINY, '--tie-points', '0'];
+  run(join(tmp, 'ties'), [...args, '--threads', '1', '--batches', '10']);
+  const evs = events(join(tmp, 'ties'));
+  assert.equal(evs[0].params.tiePoints, 0);
+  assert.equal(events(join(tmp, 'one'))[0].params.tiePoints, 1);
+  // the screen: points of 10 rounds without ties are 30 a win
+  const shown = evs.filter((e) => e.type === 'enter').flatMap((e) => e.screenPoints);
+  assert.ok(shown.length > 100 && shown.every((x) => Math.abs(x / 30 - Math.round(x / 30)) < 1e-9));
+  assert.ok(events(join(tmp, 'one')).filter((e) => e.type === 'enter').flatMap((e) => e.screenPoints).some((x) => Math.abs(x / 30 - Math.round(x / 30)) > 1e-6));
+  // the values of the last batch: averages over the results of the state, a tie 0
+  const panel = new Set(evs[0].panel.map((w) => w.id)), score = new Map();
+  for (const line of readFileSync(join(tmp, 'ties', 'state.txt'), 'latin1').split('\n')) {
+    const m = line.match(/^score (\d+) (\d+) (\d+) (\d+) (\d+)$/);
+    if (m) score.set(`${m[1]} ${m[2]}`, [+m[3], +m[4], +m[5]]).set(`${m[2]} ${m[1]}`, [+m[4], +m[3], +m[5]]);
+  }
+  const points = (a, b, tie) => {
+    const [w, l, t] = score.get(`${a} ${b}`);
+    return (3 * w + tie * t) * 100 / (w + l + t);
+  };
+  const values = evs.filter((e) => e.type === 'values').at(-1).values, ids = values.map((v) => v[0]);
+  let ties = 0;
+  const mean = (xs) => xs.reduce((s, x) => s + x, 0) / xs.length;
+  for (const [id, avg, , , , panelAvg] of values) {
+    if (panel.has(id)) continue;
+    const others = ids.filter((o) => o !== id);
+    ties += others.reduce((s, o) => s + score.get(`${id} ${o}`)[2], 0);
+    assert.ok(Math.abs(mean(others.map((o) => points(id, o, 0))) - avg) < 1e-4, `${id}`);
+    assert.ok(Math.abs(mean(others.filter((o) => panel.has(o)).map((o) => points(id, o, 0))) - panelAvg) < 1e-4, `${id}`);
+  }
+  assert.ok(ties > 100, `${ties} ties`);
+  // and every value, screen and estimate of the run, as tools/diversity.js computes them with a tie 0
+  assert.equal(checkValues(evs), 10);
+  // the standard errors too: --noise takes them from the values
+  run(join(tmp, 'ties-noise'), [...args, '--noise', '1', '--threads', '2', '--batches', '10']);
+  assert.equal(checkValues(events(join(tmp, 'ties-noise'))), 10);
+  // the holdout counts a tie 1, as the hill does
+  const bench = evs.filter((e) => e.type === 'bench');
+  assert.ok(bench.length >= 2 && bench.some((e) => e.scores.some((s) => s[3] > 0)));
+  for (const e of bench) assert.ok(Math.abs(mean(e.scores.map(([, w, l, t]) => (3 * w + t) * 100 / (w + l + t))) - e.avg) < 1e-4);
+  // 3 threads, and in two parts
+  run(join(tmp, 'ties2'), [...args, '--threads', '3', '--batches', '4']);
+  run(join(tmp, 'ties2'), ['--threads', '2', '--batches', '6']);
+  assert.deepEqual(stable(events(join(tmp, 'ties2'))), stable(evs));
+  for (const [t, message] of [['4', /--tie-points 0 to 3/], ['-1', /--tie-points 0 to 3/]]) {
+    const r = spawnSync(evolve, [join(tmp, 'bad5'), ...TINY, '--tie-points', t], { encoding: 'utf8', timeout: 60000 });
+    assert.equal(r.status, 2);
+    assert.match(r.stderr, message);
+  }
+  const r = spawnSync(evolve, [join(tmp, 'bad5'), ...TINY, '--tie-points', '0.5', '--map-elites'], { encoding: 'utf8', timeout: 60000 });
+  assert.equal(r.status, 2);
+  assert.match(r.stderr, /--tie-points not with --map-elites/);
+  assert.ok(!existsSync(join(tmp, 'bad5')));
 });

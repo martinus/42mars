@@ -329,8 +329,8 @@ static void test_pushoff(void) {
   const double L[15] = {0, 4, 0, 1, 3, 1, 2, 2, 2, 3, 1, 3, 4, 0, 4};
   pareto_fronts(L, 5, 3, fr, cr);
   CHECK(fr[0] == 0 && fr[2] == 0 && fr[4] == 0 && fabs(cr[1] - 1.5) < 1e-12 && fabs(cr[2] - 1.5) < 1e-12 && isinf(cr[0]), "a line: %g %g", cr[1], cr[2]);
-  CHECK(fabs(pushoff_se(50, 20, 100) - 13.453624047073712) < 1e-12, "standard error");
-  CHECK(pushoff_se(100, 0, 100) == 0 && pushoff_se(0, 0, 0) == 0, "standard error of a constant score");
+  CHECK(fabs(pushoff_se(50, 20, 100, 1) - 13.453624047073712) < 1e-12, "standard error");
+  CHECK(pushoff_se(100, 0, 100, 1) == 0 && pushoff_se(0, 0, 0, 1) == 0, "standard error of a constant score");
 }
 
 static void test_names(void) {
