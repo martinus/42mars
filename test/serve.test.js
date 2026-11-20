@@ -201,13 +201,19 @@ test('several runs: /runs lists them with their last batch and best score, /run/
   const res = await fetch(`${url}/runs/events`);
   assert.equal(res.headers.get('content-type'), 'text/event-stream');
   const reader = res.body.getReader();
-  const got = await read(reader, [], (g) => g.length >= 8);
-  await reader.cancel();
-  const seen = got.map(({ ev, data }) => {
-    const [, n, rest] = /^(\d+) (.*)$/.exec(data);
+  const label = ({ ev, data }) => {
+    const m = /^(\d+) (.*)$/.exec(data ?? '');
+    if (!m) return '';
+    const [, n, rest] = m;
     return `${n} ${ev} ${ev === 'run' ? JSON.parse(rest).name : JSON.parse(rest).run}`;
-  }).filter((x) => !x.endsWith(' undefined')).sort(); // the start lines and the names, not the batches
-  assert.deepEqual(seen, ['0 message first', '0 run multi-first', '1 message second', '1 run multi-second']);
+  };
+  const want = ['0 message first', '0 run multi-first', '1 message second', '1 run multi-second'];
+  // until all four came: the two runs' lines may come in either order, and reading a fixed count of events
+  // left out the first run's start line when the second run's 7 events came first
+  const got = await read(reader, [], (g) => want.every((w) => g.some((x) => label(x) === w)));
+  await reader.cancel();
+  const seen = got.map(label).filter((x) => x && !x.endsWith(' undefined')).sort(); // the start lines and the names, not the batches
+  assert.deepEqual(seen, want);
 });
 
 test('a folder of islands stands for its islands', { timeout: 15000 }, async () => {
