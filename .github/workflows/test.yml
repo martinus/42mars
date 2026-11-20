@@ -79,6 +79,7 @@ jobs:
       - uses: ./.github/actions/lib-object
         with:
           flags: asan
+          cc: clang
       - run: make -j4 CC=clang CFLAGS='-O1 -g -fno-omit-frame-pointer -fsanitize=address,undefined -fno-sanitize-recover=all -Wall -Wextra -Werror' LDFLAGS='-fsanitize=address,undefined' test TESTS="$(node test/part.mjs ${{ matrix.part }}/3)"
 
   # 42mars against pMARS 0.9.5 (#91), built from its source archive and run

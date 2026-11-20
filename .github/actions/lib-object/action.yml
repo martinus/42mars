@@ -1,28 +1,31 @@
 name: lib-object
 description: >-
   build/42mars.o from an earlier run with the same lib/, Makefile, workflow,
-  compiler flags and runner image (#161), touched so that make takes it as
-  built. lib/42mars.c is one translation unit and the longest compile of a
+  compiler flags and compiler (its --version; the runner image changes
+  from job to job while a new one rolls out), touched so that make takes
+  it as built (#161). lib/42mars.c is one translation unit and the longest compile of a
   job (57 s under ASan, 11 s at -O3, 18th November 2026); most pull requests
   do not change lib/. A tag always compiles.
 inputs:
   flags:
     description: a short name for the compiler flags the job builds the library with
     required: true
+  cc:
+    description: the compiler the job builds the library with
+    default: cc
 runs:
   using: composite
   steps:
-    - id: image
+    - id: compiler
       if: ${{ !startsWith(github.ref, 'refs/tags/') }}
       shell: bash
-      # without ImageVersion the key is unique to the run, so nothing is reused
-      run: echo "version=${ImageVersion:-run-$GITHUB_RUN_ID}" >> "$GITHUB_OUTPUT"
+      run: echo "version=$(${{ inputs.cc }} --version | cksum | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
     - id: cache
       if: ${{ !startsWith(github.ref, 'refs/tags/') }}
       uses: actions/cache@v6
       with:
         path: build/42mars.o
-        key: lib-object-${{ inputs.flags }}-${{ runner.os }}-${{ runner.arch }}-${{ steps.image.outputs.version }}-${{ hashFiles('lib/**', 'Makefile', '.github/workflows/test.yml') }}
+        key: lib-object-${{ inputs.flags }}-${{ runner.os }}-${{ runner.arch }}-${{ steps.compiler.outputs.version }}-${{ hashFiles('lib/**', 'Makefile', '.github/workflows/test.yml') }}
     - if: ${{ steps.cache.outputs.cache-hit == 'true' }}
       shell: bash
       run: touch build/42mars.o
