@@ -134,7 +134,7 @@ test('the defaults: the best run of E5, with a panel picked from a round robin; 
   run(join(tmp, 'def4'), [...args, '--threads', '4']);
   const one = events(join(tmp, 'def4'));
   const p = one[0].params;
-  assert.deepEqual([p.list, p.panel, p.screenMembers, p.diversity, p.panelRounds, p.fill, p.stage, p.panelChoice, p.positions, p.pushoff], [80, 20, 10, 'panel', 500, true, p.screenRounds, 'picked', 'mirror', 'pareto-sd']);
+  assert.deepEqual([p.list, p.panel, p.screenMembers, p.diversity, p.panelRounds, p.fill, p.stage, p.panelChoice, p.positions, p.pushoff, p.screenStop, p.screenCheck], [80, 20, 10, 'panel', 500, true, p.screenRounds, 'picked', 'mirror', 'pareto-sd', 3, 0]);
   const pick = one[1];
   assert.equal(pick.type, 'pick');
   assert.equal(pick.sample, 40);
@@ -152,4 +152,20 @@ test('the defaults: the best run of E5, with a panel picked from a round robin; 
   // the value push-off where pareto does not go
   run(join(tmp, 'def-simple'), [...args, '--simple', '--threads', '4']);
   assert.equal(events(join(tmp, 'def-simple'))[0].params.pushoff, 'value');
+  // --screen-stop 3 where it goes: not with --race or --map-elites; 0 is off, also for a run that continues
+  for (const [extra, stop] of [[['--race', '3'], 0], [['--map-elites'], 0], [['--screen-stop', '0'], 0], [['--screen-stop', '1.5'], 1.5], [['--screen-check', '2'], 0]]) {
+    const d = join(tmp, `def-stop-${extra.join('')}`);
+    run(d, [...args, ...extra, '--threads', '2']);
+    assert.equal(events(d)[0].params.screenStop, stop, extra.join(' '));
+  }
+  run(join(tmp, 'def4'), ['--screen-stop', '0', '--threads', '2', '--batches', '2']);
+  const off = events(join(tmp, 'def4')).find((e) => e.type === 'screen-options');
+  assert.deepEqual([off.batch, off.screenStop, off.screenCheck], [1, 0, 0]);
+  // --simple needs a z: refused with --screen-stop 0, from the start and on a run that continues
+  const bad = spawnSync(evolve, [join(tmp, 'def-simple0'), ...args, '--simple', '--screen-stop', '0'], { encoding: 'utf8' });
+  assert.equal(bad.status, 2);
+  assert.match(bad.stderr, /--simple needs --screen-stop or --screen-check above 0/);
+  const later = spawnSync(evolve, [join(tmp, 'def-simple'), '--screen-stop', '0', '--batches', '2'], { encoding: 'utf8' });
+  assert.equal(later.status, 2);
+  assert.match(later.stderr, /--simple needs --screen-stop or --screen-check above 0/);
 });
