@@ -99,7 +99,17 @@ enum {
   CH_RELATED_MODE,   // another mode of the same family ($ @ *, < > { }; # becomes $)
   CH_SHARED,         // a far value set to another far value of the warrior, or its negative
   CH_TUNE,           // a far value moved by up to 2% of its size (at least 4)
-  CH_COUNT
+  CH_COUNT,          // the kinds of a list
+  // The kinds that make and change the structure of a generator
+  // (gen-change.h); on a list they do not apply.
+  CH_REPEAT = CH_COUNT, // units into a repeat block
+  CH_REPEATS,           // the count of a repeat
+  CH_FOLD,              // two instructions that differ by a step become a repeat, which goes on
+  CH_UNROLL,            // a repeat becomes its repetitions, one of them changed
+  CH_INDEX,             // an operand in a repeat gets a step per repetition, or another one
+  CH_EXPRESSION,        // an expression: a value replaced, an operation more or less
+  CH_CONSTANT,          // a far number becomes a constant that every equal or near number follows; or a constant moves
+  CH_ALL
 };
 const char *genome_change_name(int kind);
 
@@ -116,6 +126,7 @@ int genome_change(genome *x, const genome *p2, rng *r, uint32_t core_size, uint3
 // reference stands for (its target less its own index); the length of a
 // block of up to len; the family of an opcode and of a mode (-1: none).
 uint8_t genome_pick(rng *r, const uint32_t *w, uint32_t n);
+uint32_t genome_far_value(rng *r, uint32_t core_size, const genome_style *style); // any value, or a fraction of the core (--fractions)
 gene genome_random_gene(rng *r, uint32_t core_size, uint32_t n, const genome_style *style);
 void genome_mutate_operand(rng *r, uint32_t core_size, uint32_t n, int64_t offset, const genome_style *style,
                            uint8_t *ref, uint32_t *v);
@@ -130,7 +141,7 @@ void genome_as_generator(genome *x);
 
 // How often genome_breed() picks each kind of change: weights, any scale.
 typedef struct {
-  uint32_t w[CH_COUNT];
+  uint32_t w[CH_ALL];
 } genome_mix;
 
 // The rates before there was a mix (14th November 2026): 54% a point change
