@@ -22,7 +22,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { assemble, createMarsSync } from '../wasm/42mars.js';
-import { columnSigmas, paretoFronts, pushoffValues, sdDistance, standardError, weakest } from '../tools/diversity.js';
+import { columnSigmas, paretoFronts, pushoffValues, sdDistance, standardError, weakest, weightedMedian } from '../tools/diversity.js';
 import { kind as styleKind, measureStyle } from '../tools/style.js';
 import { bestRedInfo } from '../tools/progress.js';
 import { builtProgram, prebuilt, program, skip as noCc } from './native.js';
@@ -108,7 +108,7 @@ export function paretoValues(v, ids, score, panel, origins, third, clear = null)
     const all = ids.map((_, i) => i), sigmas = columnSigmas(score, all);
     const order = ms.map((_, k) => k).sort((a, b) => v[ms[b]].avg - v[ms[a]].avg || a - b);
     order.forEach((k, q) => {
-      cleared[k] = order.slice(0, q).some((w) => !cleared[w] && sdDistance(score, all, ms[k], ms[w], clear.variant, clear.se ? { se: clear.se, z: clear.z } : null, clear.columns, clear.ahead, sigmas) < clear.radius);
+      cleared[k] = order.slice(0, q).some((w) => !cleared[w] && sdDistance(score, all, ms[k], ms[w], clear.variant, clear.se ? { se: clear.se, z: clear.z } : null, clear.columns, clear.difference, sigmas) < clear.radius);
     });
   }
   const obj = ms.map((i) => {
@@ -173,8 +173,9 @@ export function checkValues(evs) {
   };
   let protectedNow = new Set(); // at the start of the batch, for the parents
   let listNow = start.params.list; // --list on a run that continues: event `list`
-  // --difference ahead: the SD-score counts only where a warrior scores more; also from a resume on (event `difference`)
-  let ahead = start.params.difference === 'ahead', aheadLeaves = 0;
+  // --difference ahead: the SD-score counts only where a warrior scores more; shape: less the shift that makes it
+  // smallest; also from a resume on (event `difference`)
+  let difference = start.params.difference ?? 'abs', differenceLeaves = 0;
   // --pushoff pareto: the members' value is their place in NSGA-II's order on the panel average, the average
   // against the other members and the origin of their line (later is younger); 10 (fronts - front) + min(crowding, 5)
   const origins = new Map(); // id -> the batch its line started, from the enter events
@@ -227,10 +228,20 @@ export function checkValues(evs) {
     }
     let best = Infinity;
     for (const o of snap.ids) {
-      let num = 0, den = 0, sum = 0;
+      let num = 0, den = 0, sum = 0, c = 0;
+      if (difference === 'shape') {
+        const x = [], w = [];
+        snap.cols.forEach((k, i) => {
+          const sg = snap.sigma.get(k);
+          if (k === o || (start.params.sd !== 'sum' && !(sg > 0))) return;
+          x.push(e.screenPoints[i] - pts.get(`${o},${k}`));
+          w.push(start.params.sd === 'sum' ? 1 : 1 / sg);
+        });
+        c = weightedMedian(x, w);
+      }
       snap.cols.forEach((k, i) => {
         if (k === o) return;
-        const x = e.screenPoints[i] - pts.get(`${o},${k}`), d = ahead ? Math.max(0, x) : Math.abs(x), sg = snap.sigma.get(k);
+        const x = e.screenPoints[i] - pts.get(`${o},${k}`) - c, d = difference === 'ahead' ? Math.max(0, x) : Math.abs(x), sg = snap.sigma.get(k);
         if (start.params.sd === 'sum') num += d, den += sg;
         else if (sg > 0) sum += d / sg;
       });
@@ -315,7 +326,7 @@ export function checkValues(evs) {
       const score = ids.map((a) => ids.map((b) => (a === b ? null : pts.get(`${a},${b}`) ?? (noGames ? 0 : undefined))));
       const columns = start.params.diversity === 'panel' ? ids.map((id) => panel.has(id)) : null;
       const noise = start.params.noise ? { se: ids.map((a) => ids.map((b) => (a === b ? 0 : se.get(`${a},${b}`)))), z: start.params.noise } : {};
-      const o = { variant: start.params.sd, alpha: start.params.alpha, columns, ahead, ...noise };
+      const o = { variant: start.params.sd, alpha: start.params.alpha, columns, difference, ...noise };
       const v = paretoed(averaged(share(pushoffValues(score, ids.map((_, i) => i), o), ids, score), ids, score), ids, score, o);
       let keep = new Set(ids.map((id, i) => (panel.has(id) ? i : -1)).filter((i) => i >= 0));
       if (start.params.niche || start.params.specialists) {
@@ -340,16 +351,16 @@ export function checkValues(evs) {
         `batch ${e.batch}: ${e.id} left, the push-off says ${ids[k]}`);
       if (k !== j) roundings++;
       if (shareW || start.params.average === 'panel') { // the plain average would have pushed out another one
-        const plain = pushoffValues(score, ids.map((_, i) => i), { variant: start.params.sd, alpha: start.params.alpha, columns, ahead, ...noise });
+        const plain = pushoffValues(score, ids.map((_, i) => i), { variant: start.params.sd, alpha: start.params.alpha, columns, difference, ...noise });
         if (ids[weakest(plain, keep)] !== e.id) shareW ? sharedLeaves++ : panelLeaves++;
       }
       if (start.params.pushoff?.startsWith('pareto')) { // the push-off value would have pushed out another one
         const plain = pushoffValues(score, ids.map((_, i) => i), { variant: start.params.sd, alpha: start.params.alpha, columns, ...noise });
         if (ids[weakest(plain, keep)] !== e.id) paretoLeaves++;
       }
-      if (ahead) { // the SD-score both ways would have pushed out another one
+      if (difference !== 'abs') { // the plain SD-score would have pushed out another one
         const both = averaged(share(pushoffValues(score, ids.map((_, i) => i), { variant: start.params.sd, alpha: start.params.alpha, columns, ...noise }), ids, score), ids, score);
-        if (ids[weakest(both, keep)] !== e.id) aheadLeaves++;
+        if (ids[weakest(both, keep)] !== e.id) differenceLeaves++;
       }
       pushoffs++;
     }
@@ -358,7 +369,7 @@ export function checkValues(evs) {
       slots[slots.indexOf(e.id)] = null;
     }
     if (e.type === 'list') listNow = e.list;
-    if (e.type === 'difference') ahead = e.difference === 'ahead';
+    if (e.type === 'difference') difference = e.difference;
     if (e.type === 'sharing') { // the weights from the members' means at the end of the batch
       const ids = slots.filter((x) => x !== null), ms = ids.filter((m) => !panel.has(m));
       const c = start.params.sharing, w = new Map();
@@ -388,7 +399,7 @@ export function checkValues(evs) {
       const score = ids.map((a) => ids.map((b) => (a === b ? null : pts.get(`${a},${b}`) ?? (noGames ? 0 : undefined))));
       const noise = start.params.noise ? { se: ids.map((a) => ids.map((b) => (a === b ? 0 : se.get(`${a},${b}`)))), z: start.params.noise } : {};
       const columns = start.params.diversity === 'panel' ? ids.map((id) => panel.has(id)) : null; // --diversity panel
-      const o = { variant: start.params.sd, alpha: start.params.alpha, columns, ahead, ...noise };
+      const o = { variant: start.params.sd, alpha: start.params.alpha, columns, difference, ...noise };
       const js = paretoed(averaged(share(pushoffValues(score, ids.map((_, i) => i), o), ids, score), ids, score), ids, score, o);
       assert.deepEqual(e.values.map((v) => v[0]), ids);
       // the sixth number: the average against the panel, without the own column
@@ -403,7 +414,7 @@ export function checkValues(evs) {
         // the nearest: the replay's, or one as near up to rounding (copies tie, and the last bits of their sums
         // depend on the compiler: CI's gcc named another one of two in the run of --pushoff pareto with --stage)
         const k = ids.indexOf(nearest);
-        assert.ok(nearest === ids[js[i].nearest] || (k >= 0 && near(sdDistance(score, ids.map((_, j) => j), i, k, start.params.sd, noise.se ? noise : null, columns, ahead), js[i].distance)),
+        assert.ok(nearest === ids[js[i].nearest] || (k >= 0 && near(sdDistance(score, ids.map((_, j) => j), i, k, start.params.sd, noise.se ? noise : null, columns, difference), js[i].distance)),
           `nearest of ${id}: ${nearest}, the replay says ${ids[js[i].nearest]}`);
       });
       checked++;
@@ -419,7 +430,7 @@ export function checkValues(evs) {
   checkValues.sharedLeaves = sharedLeaves; // push-offs where the weights changed who left
   checkValues.roundings = roundings; // push-offs decided between values equal up to rounding
   checkValues.panelLeaves = panelLeaves; // push-offs where --average panel changed who left
-  checkValues.aheadLeaves = aheadLeaves; // push-offs where --difference ahead changed who left
+  checkValues.differenceLeaves = differenceLeaves; // push-offs where --difference ahead or shape changed who left
   checkValues.paretoLeaves = paretoLeaves; // push-offs where --pushoff pareto changed who left
   checkValues.newLines = newLines; // children that started a line of their own (a new family)
   checkValues.olderSecond = olderSecond; // crossovers that took the older line of the second parent

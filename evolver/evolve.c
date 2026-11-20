@@ -76,7 +76,7 @@ typedef struct {
   int average_panel;        // --average panel: the push-off's average over the panel's columns only
   int member_games_none;    // --member-games none: members never play each other (with --average panel --diversity panel)
   int simple;               // --simple: a candidate plays the panel only and stops when it cannot make it onto the hill
-  int ahead;                // --difference ahead: the SD-score counts a column only where the warrior scores more
+  int difference;           // --difference: DIFF_ABS, DIFF_AHEAD (a column only where the warrior scores more) or DIFF_SHAPE (#167)
   int pareto;               // --pushoff pareto: fronts on panel average and average against members (NSGA-II); 2 with age, 3 with SD-score
   int mirror;               // --positions mirror: each position twice, the second time with the warriors swapped
   double clear;             // --clear R: with a pareto push-off, a member within SD-score R of a stronger one goes behind the fronts, 0 off
@@ -574,6 +574,8 @@ static void rebuild_active(run *r) {
 static uint32_t members(const run *r) { return r->active_n - r->panel_n; }
 
 // A distance to the power alpha (--alpha, 1 by default).
+static const char *difference_name(int d) { return d == DIFF_SHAPE ? "shape" : d == DIFF_AHEAD ? "ahead" : "abs"; }
+
 static double with_alpha(const run *r, double d) { return r->p.alpha == 1 ? d : pow(d, r->p.alpha); }
 
 // --sharing c (competitive fitness sharing): a win against a panel warrior
@@ -679,7 +681,7 @@ static void clear_members(const run *r, const double *pts, const double *se, uin
       const uint32_t w = order[q];
       if (cleared[w]) continue;
       const double d = pushoff_distance(pts, r->cap, r->active, r->active_n, r->values[P + i].index, r->values[P + w].index,
-                                        r->sigma, se, r->p.noise, r->p.distance_panel ? r->keep : 0, r->p.sd, r->p.ahead);
+                                        r->sigma, se, r->p.noise, r->p.distance_panel ? r->keep : 0, r->p.sd, r->p.difference);
       if (d < r->p.clear) cleared[i] = 1;
     }
   }
@@ -741,7 +743,7 @@ static void pareto_values(run *r, const double *pts, const double *se) {
 
 static void compute_values(run *r) {
   pushoff_values(r->pts, r->cap, r->active, r->active_n, r->p.sd, r->p.alpha, r->p.noise > 0 ? r->se : 0, r->p.noise,
-                 r->p.distance_panel ? r->keep : 0, r->p.ahead, r->sigma, r->values);
+                 r->p.distance_panel ? r->keep : 0, r->p.difference, r->sigma, r->values);
   share_values(r, r->pts);
   panel_average_values(r, r->pts);
   pareto_values(r, r->pts, r->p.noise > 0 ? r->se : 0);
@@ -750,7 +752,7 @@ static void compute_values(run *r) {
 // The same on the results of the first stage (--stage).
 static void compute_values1(run *r) {
   pushoff_values(r->pts1, r->cap, r->active, r->active_n, r->p.sd, r->p.alpha, r->p.noise > 0 ? r->se1 : 0, r->p.noise,
-                 r->p.distance_panel ? r->keep : 0, r->p.ahead, r->sigma, r->values);
+                 r->p.distance_panel ? r->keep : 0, r->p.difference, r->sigma, r->values);
   share_values(r, r->pts1);
   panel_average_values(r, r->pts1);
   pareto_values(r, r->pts1, r->p.noise > 0 ? r->se1 : 0);
@@ -958,7 +960,7 @@ static void event_start(run *r) {
           p->map_elites ? "true" : "false", p->map_elites == ME_CROWDING ? "true" : "false",
           p->specialists ? "true" : "false", p->sharing, p->screen_stop, p->screen_check, p->tune_novel,
           p->average_panel ? "panel" : "all", p->member_games_none ? "none" : "all", p->simple ? "true" : "false", p->draw_seed,
-          p->ahead ? "ahead" : "abs", p->pareto == 3 ? "pareto-sd" : p->pareto == 2 ? "pareto-age" : p->pareto ? "pareto" : "value", p->mirror ? "mirror" : "pmars", p->clear);
+          difference_name(p->difference), p->pareto == 3 ? "pareto-sd" : p->pareto == 2 ? "pareto-age" : p->pareto ? "pareto" : "value", p->mirror ? "mirror" : "pmars", p->clear);
   json_str(f, p->opponents, 0);
   fputs(",\"panelFiles\":", f);
   json_str(f, p->panel_files, 0);
@@ -1153,7 +1155,7 @@ static void save_state(run *r) {
           p->bench_rounds, p->init_length, p->screen_factor, p->alpha, p->reintroduce, p->sd, p->seed, p->select,
           p->rotate, p->fractions, p->race, p->race_keep, p->prior, p->parents, p->screen_members, p->noise, p->stage, p->fill,
           p->panel_rounds, p->distance_panel, p->niche, p->map_elites, p->specialists, p->sharing, p->screen_stop, p->screen_check,
-          p->tune_novel, p->average_panel, p->member_games_none, p->simple, p->draw_seed, p->ahead, p->pareto, p->mirror, p->clear);
+          p->tune_novel, p->average_panel, p->member_games_none, p->simple, p->draw_seed, p->difference, p->pareto, p->mirror, p->clear);
   fprintf(f, "opponents %s\n", p->opponents);
   if (p->start[0]) fprintf(f, "start-dir %s\n", p->start);
   char mix[CH_COUNT * 32];
@@ -1298,7 +1300,7 @@ static int load_state(run *r, const char *path) {
                              &p->bench_every, &p->bench_rounds, &p->init_length, &p->screen_factor, &p->alpha,
                              &p->reintroduce, &p->sd, &p->seed, &p->select, &p->rotate, &p->fractions, &p->race,
                              &p->race_keep, &p->prior, &p->parents, &p->screen_members, &p->noise, &p->stage, &p->fill, &p->panel_rounds,
-                             &p->distance_panel, &p->niche, &p->map_elites, &p->specialists, &p->sharing, &p->screen_stop, &p->screen_check, &p->tune_novel, &p->average_panel, &p->member_games_none, &p->simple, &p->draw_seed, &p->ahead, &p->pareto, &p->mirror, &p->clear);
+                             &p->distance_panel, &p->niche, &p->map_elites, &p->specialists, &p->sharing, &p->screen_stop, &p->screen_check, &p->tune_novel, &p->average_panel, &p->member_games_none, &p->simple, &p->draw_seed, &p->difference, &p->pareto, &p->mirror, &p->clear);
       if (got < 15) goto bad; // the first version had 15; what a state lacks keeps its default
       if (got < 39) p->draw_seed = p->seed; // a state from before --draw-seed: the folder in the order of the seed
     } else if (!strncmp(line, "opponents ", 10)) {
@@ -1595,22 +1597,34 @@ static void bench(run *r, uint32_t slot) {
 // against the panel (row[j] for panel warrior j) and the panel columns of the
 // others, raised to alpha: its push-off value is about screen * this. The
 // standard deviations are those of the last compute_values(). With --difference
-// ahead only where the candidate scores more, as the push-off counts it.
+// ahead only where the candidate scores more, with shape less the shift, as
+// the push-off counts it.
 static double estimated_distance(const run *r, const unit *row, uint32_t rounds) {
   double best = INFINITY;
+  double *x = xmalloc(r->panel_n * sizeof *x), *w = xmalloc(r->panel_n * sizeof *w);
   for (uint32_t i = 0; i < r->active_n; i++) {
     const uint32_t o = r->active[i];
-    double num = 0, den = 0, sum = 0;
+    double num = 0, den = 0, sum = 0, c = 0;
+    if (r->p.difference == DIFF_SHAPE) {
+      uint32_t m = 0;
+      for (uint32_t k = 0; k < r->panel_n; k++) {
+        if (k == o || (r->p.sd != SD_SUM && !(r->sigma[k] > 0))) continue;
+        x[m] = points(row[k].s[0], rounds) - r->pts[o * r->cap + k];
+        w[m++] = r->p.sd == SD_SUM ? 1 : 1 / r->sigma[k];
+      }
+      c = pushoff_shift(x, w, m);
+    }
     for (uint32_t k = 0; k < r->panel_n; k++) {
       if (k == o) continue;
-      double d = points(row[k].s[0], rounds) - r->pts[o * r->cap + k];
-      d = r->p.ahead ? (d > 0 ? d : 0) : fabs(d);
+      double d = points(row[k].s[0], rounds) - r->pts[o * r->cap + k] - c;
+      d = r->p.difference == DIFF_AHEAD ? (d > 0 ? d : 0) : fabs(d);
       if (r->p.sd == SD_SUM) num += d, den += r->sigma[k];
       else if (r->sigma[k] > 0) sum += d / r->sigma[k];
     }
     const double dist = r->p.sd == SD_SUM ? (den > 0 ? num / den : 0) : sum;
     if (dist < best) best = dist;
   }
+  free(x), free(w);
   if (best == INFINITY) best = 0;
   return with_alpha(r, best);
 }
@@ -3657,7 +3671,7 @@ static void usage(void) {
           "         [--parents value|duel] [--start <dir>] [--changes name=weight,...]\n"
           "         [--panel-files a.red,b.red,...] [--screen-members N] [--noise z] [--stage N (screen rounds; 0 none)] [--fill]\n"
           "         [--panel-rounds N] [--diversity all|panel] [--average all|panel] [--member-games all|none] [--simple]\n"
-          "         [--difference abs|ahead] [--pushoff value|pareto|pareto-age|pareto-sd] [--clear R] [--positions mirror|pmars]\n"
+          "         [--difference abs|ahead|shape] [--pushoff value|pareto|pareto-age|pareto-sd] [--clear R] [--positions mirror|pmars]\n"
           "         [--islands N [--select-after B [--keep K]] [--score-rounds R]] [--draw-seed S]\n"
           "         [--niche N]\n"
           "         [--panel-choice picked|random|kinds] [--pick-sample 300] [--no-fill] [--map-elites [cells|crowding]]\n"
@@ -3665,7 +3679,7 @@ static void usage(void) {
           "         [--size 8000] [--cycles 80000] [--processes 8000] [--length 100] [--distance 100]\n"
           "         [--threads N] [--batches N] [--seconds S]\n"
           "       42evolve <run folder> [--threads N] [--batches N] [--seconds S] [--changes ...] [--reintroduce p] [--list N]\n"
-          "         [--tune-novel N] [--screen-stop z | --screen-check z] [--difference abs|ahead]   (continue a run)\n"
+          "         [--tune-novel N] [--screen-stop z | --screen-check z] [--difference abs|ahead|shape]   (continue a run)\n"
           "       42evolve <folder> --optimize <warrior.red> --opponents <dir> [--panel N | --panel-files ...]\n"
           "         [--rounds 100] [--holdout 100] [--bench-rounds 100] [--seed 1] [--threads N]   (its constants)\n");
   exit(2);
@@ -4188,14 +4202,15 @@ static const char *params_error(const params *p) {
   if (p->member_games_none && (!p->average_panel || !p->distance_panel || p->parents == PARENTS_DUEL || p->screen_members))
     return "--member-games none (also of --simple) only with --average panel and --diversity panel, not with --parents duel or "
            "--screen-members";
-  if (p->ahead && (p->simple || p->map_elites)) return "--difference ahead not with --simple or --map-elites";
+  if (p->difference && (p->simple || p->map_elites)) return p->difference == DIFF_SHAPE ? "--difference shape not with --simple or --map-elites" : "--difference ahead not with --simple or --map-elites";
   if (p->pareto && (p->simple || p->map_elites || p->sharing > 0 || p->average_panel || p->member_games_none || p->niche ||
                     p->specialists || p->select == SELECT_VALUE))
     return "--pushoff pareto not with --simple, --map-elites, --sharing, --average panel, --member-games none, --niche, "
            "--specialists or --select value";
   // pareto-sd takes the SD-score as --difference computes it: ahead, only where a warrior scores more, makes
   // it far only when it does better than its nearest somewhere; pareto and pareto-age do not use it
-  if (p->ahead && p->pareto && p->pareto != 3) return "--difference ahead with --pushoff pareto-sd only, not pareto or pareto-age";
+  if (p->difference && p->pareto && p->pareto != 3)
+    return p->difference == DIFF_SHAPE ? "--difference shape with --pushoff pareto-sd only, not pareto or pareto-age" : "--difference ahead with --pushoff pareto-sd only, not pareto or pareto-age";
   if (p->clear > 0 && !p->pareto) return "--clear with --pushoff pareto, pareto-age or pareto-sd only";
   if (p->screen_stop > 0 && p->screen_check > 0) return "--screen-stop or --screen-check, not both";
   if (stops && (p->race || p->map_elites)) return "--screen-stop and --screen-check not with --race or --map-elites";
@@ -4325,8 +4340,9 @@ int main(int argc, char **argv) {
       else if (!strcmp(v, "pmars")) p->mirror = 0;
       else usage();
     } else if (!strcmp(a, "--difference")) {
-      if (!strcmp(v, "abs")) p->ahead = new_ahead = 0;
-      else if (!strcmp(v, "ahead")) p->ahead = new_ahead = 1;
+      if (!strcmp(v, "abs")) p->difference = new_ahead = DIFF_ABS;
+      else if (!strcmp(v, "ahead")) p->difference = new_ahead = DIFF_AHEAD;
+      else if (!strcmp(v, "shape")) p->difference = new_ahead = DIFF_SHAPE;
       else usage();
     } else if (!strcmp(a, "--sd")) {
       if (!strcmp(v, "opponent")) p->sd = SD_OPPONENT;
@@ -4513,13 +4529,13 @@ int main(int argc, char **argv) {
       fprintf(r.events, "{\"type\":\"reintroduce\",\"batch\":%u,\"reintroduce\":%.17g}\n", r.batch, r.p.reintroduce);
     }
     if (new_ahead >= 0) { // the push-off's difference from now on, and the values of the list with it
-      r.p.ahead = new_ahead;
+      r.p.difference = new_ahead;
       const char *wrong = params_error(&r.p);
       if (wrong) {
         fprintf(stderr, "42evolve: %s\n", wrong);
         return 2;
       }
-      fprintf(r.events, "{\"type\":\"difference\",\"batch\":%u,\"difference\":\"%s\"}\n", r.batch, r.p.ahead ? "ahead" : "abs");
+      fprintf(r.events, "{\"type\":\"difference\",\"batch\":%u,\"difference\":\"%s\"}\n", r.batch, difference_name(r.p.difference));
       compute_values(&r);
       event_values(&r);
     }

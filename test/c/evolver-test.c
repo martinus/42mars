@@ -299,6 +299,23 @@ static void test_pushoff(void) {
   CHECK(v[3].distance > 0 && pushoff_weakest(v, 4, 0) == 2, "both ways: the weak one stays");
   pushoff_values(W, 4, all, 4, SD_OPPONENT, 1, 0, 0, 0, 1, sw, v);
   CHECK(v[3].distance == 0 && pushoff_weakest(v, 4, 0) == 3, "ahead: the weak one goes");
+  // --difference shape (test/diversity.test.js has the arithmetic): the weighted median, then |a_k - b_k - c|
+  CHECK(pushoff_shift((const double[]){3, 1, 2}, (const double[]){1, 1, 1}, 3) == 2, "median of 3");
+  CHECK(pushoff_shift((const double[]){4, 1, 3, 2}, (const double[]){1, 1, 1, 1}, 4) == 2, "median of 4");
+  CHECK(pushoff_shift((const double[]){1, 2, 3}, (const double[]){1, 1, 5}, 3) == 3, "weighted median");
+  pushoff_sigma(S, 4, all, 4, sigma);
+  CHECK(pushoff_distance(S, 4, all, 4, 0, 1, sigma, 0, 0, 0, SD_OPPONENT, DIFF_SHAPE) == 0, "shape 0 1");
+  CHECK(fabs(pushoff_distance(S, 4, all, 4, 2, 3, sigma, 0, 0, 0, SD_OPPONENT, DIFF_SHAPE) - 14 / sqrt(86.0 / 3)) < 1e-12, "shape 2 3");
+  CHECK(fabs(pushoff_distance(S, 4, all, 4, 3, 2, sigma, 0, 0, 0, SD_OPPONENT, DIFF_SHAPE) - 14 / sqrt(86.0 / 3)) < 1e-12, "shape 3 2");
+  CHECK(fabs(pushoff_distance(S, 4, all, 4, 2, 3, sigma, 0, 0, 0, SD_SUM, DIFF_SHAPE) - 14 / (sqrt(14.0 / 3) + sqrt(86.0 / 3))) < 1e-12,
+        "shape 2 3, Eq. 6");
+  // a weaker copy of a profile leaves first, a weak warrior of another profile stays
+  const double WS[25] = {0, 150, 200, 100, 150, 100, 0, 150, 50, 100, 150, 200, 0, 120, 140,
+                         180, 220, 160, 0, 130, 60, 90, 40, 200, 0};
+  pushoff_values(WS, 5, five, 5, SD_OPPONENT, 1, 0, 0, 0, DIFF_ABS, sg, v);
+  CHECK(v[1].distance > 0 && pushoff_weakest(v, 5, 0) != 1, "abs: the weaker copy stays");
+  pushoff_values(WS, 5, five, 5, SD_OPPONENT, 1, 0, 0, 0, DIFF_SHAPE, sg, v);
+  CHECK(v[1].distance == 0 && v[1].nearest == 0 && pushoff_weakest(v, 5, 0) == 1 && v[4].distance > 0, "shape: the weaker copy goes");
   // --pushoff pareto: 0, 1 and 2 are not dominated, 3 is (by 0), 4 is a
   // copy of 0. Crowding of 0: by the first objective 2, 0, 4, 1 gives
   // (1 - 0) / 2, by the second 1, 0, 4, 2 gives (1 - 0) / 2; the copy 0
