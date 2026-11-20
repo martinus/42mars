@@ -129,14 +129,14 @@ function handle(e) {
       S.panel = e.panel.map((p) => p.id);
       S.slots = S.panel.slice();
       const r = e.rules, p = e.params;
-      $('run-info').textContent = `core ${r.size} · cycles ${r.cycles} · length ${r.length} · panel ${p.panel} · holdout ${p.holdout} · list ${p.list} · batch ${p.batch} · ${p.rounds} rounds · SD ${p.sd} · alpha ${p.alpha} · select ${p.select ?? 'screen'} · rotate ${p.rotate ?? 0} · seed ${p.seed} · 42mars ${e.version}`;
+      $('run-info').textContent = `core ${r.size} · cycles ${r.cycles} · length ${r.length} · panel ${p.panel} · holdout ${p.holdout} · list ${p.list} · batch ${p.batch} · ${p.rounds} rounds · SD ${p.sd} · alpha ${p.alpha} · select ${p.select ?? 'screen'} · rotate ${p.rotate ?? 0} · seed ${p.seed}${p.screenMembers ? ` · screen ${p.screenMembers} members, ${p.screenRounds} rounds` : ''}${p.genome === 'gen' ? ` · generators${p.refactor ? `, refactor ${p.refactor}` : ''}` : ''}${p.tiePoints !== undefined && p.tiePoints !== 1 ? ` · a tie ${p.tiePoints}` : ''}${p.minLength ? ` · min length ${p.minLength}` : ''} · 42mars ${e.version}`;
       break;
     }
     case 'panel':
       for (const [a, b, w, l, t, seed] of e.scores) setRes(a, b, w, l, t, seed, a);
       break;
     case 'enter': {
-      const x = { id: e.id, kind: 'member', name: e.name ?? `e${e.id}`, code: e.code, parents: e.parents, ops: e.ops, length: e.length, screen: e.screen, estimate: e.estimate, born: e.batch, died: null, alive: true, enteredAt: now, value: null, newFamily: !!e.newFamily, parentDifference: e.parentDifference };
+      const x = { id: e.id, kind: 'member', name: e.name ?? `e${e.id}`, code: e.code, gen: e.gen ?? null, refactors: [], parents: e.parents, ops: e.ops, length: e.length, screen: e.screen, estimate: e.estimate, born: e.batch, died: null, alive: true, enteredAt: now, value: null, newFamily: !!e.newFamily, parentDifference: e.parentDifference };
       x.hue = hueFor(e.id, e.parents, x.newFamily);
       S.w.set(e.id, x);
       let s = S.slots.indexOf(null, S.panel.length);
@@ -190,6 +190,14 @@ function handle(e) {
       const x = S.w.get(e.id);
       if (x) x.panelAvg = panelAvg(e.id);
       S.mapDirty = true;
+      break;
+    }
+    case 'refactor': { // --refactor: a member's generator rewritten in place, its warrior the same
+      const x = S.w.get(e.id);
+      if (!x) break;
+      x.gen = e.gen;
+      (x.refactors ??= []).push(`${e.how} (batch ${e.batch})`);
+      if (selected === e.id) renderCard();
       break;
     }
     case 'leave': {
@@ -1190,6 +1198,48 @@ function listing(code, start) {
   }).map((l, i) => (start !== null && i === start + 1 ? `<span class="start">${l}</span>` : l)).join('\n');
 }
 
+// A generator (--genome gen, docs/evolver-gen.md) as 42gen prints it: the
+// words of the language, labels, constants and the loop and argument names
+// set apart from the instructions.
+function genListing(text) {
+  const expr = (s) => {
+    let out = '', at = 0;
+    for (const m of s.matchAll(/([A-Za-z_]\w*)(\.len)?|(-?\d+)/g)) {
+      const [all, name, len, num] = m;
+      out += esc(s.slice(at, m.index));
+      at = m.index + all.length;
+      if (num !== undefined) out += `<span class="num">${num}</span>`;
+      else if (/^(c\d+|[ijkxy])$/.test(name)) out += `<span class="var">${name}</span>`;
+      else out += name === 'CORESIZE' ? all : `<span class="lbl">${esc(name)}</span>${len ?? ''}`;
+    }
+    return out + esc(s.slice(at));
+  };
+  return text.split('\n').filter((l) => l.trim()).map((l) => {
+    const m = /^(\w+:)?(\s*)(.*)$/.exec(l);
+    const label = m[1] ? `<span class="lbl">${esc(m[1])}</span>` : '';
+    const rest = m[3];
+    let body;
+    let w;
+    if ((w = /^(repeat|def|end|org)\b(.*)$/.exec(rest))) body = `<span class="kw">${w[1]}</span>${expr(w[2])}`;
+    else if ((w = /^(c\d+)(\s*=\s*)(.*)$/.exec(rest))) body = `<span class="var">${w[1]}</span>${w[2]}${expr(w[3])}`;
+    else if ((w = /^([A-Z]{3})(\.[A-Z]+)?(.*)$/.exec(rest))) body = `<span class="op">${w[1]}</span><span class="mod">${w[2] ?? ''}</span>${expr(w[3])}`;
+    else if ((w = /^(\w+)(\(.*)$/.exec(rest))) body = `<span class="call">${esc(w[1])}</span>${expr(w[2])}`;
+    else body = expr(rest);
+    return `${label}${m[2]}${body}`;
+  }).join('\n');
+}
+
+function generatorBlock(x) {
+  const lines = x.gen.split('\n').filter((l) => l.trim() && !/^\s*org\b/.test(l) && !/^c\d+\s*=/.test(l)).length;
+  const blocks = (x.gen.match(/^\w*:?\s*repeat\b/gm) ?? []).length, fns = (x.gen.match(/^\w*:?\s*def\b/gm) ?? []).length;
+  const parts = [`${lines} lines for ${x.length} instructions`];
+  if (blocks) parts.push(`${blocks} repeat${blocks > 1 ? 's' : ''}`);
+  if (fns) parts.push(`${fns} function${fns > 1 ? 's' : ''}`);
+  const done = x.refactors ?? [];
+  if (done.length) parts.push(`refactored ${done.length}×: ${done.slice(-3).join(', ')}`);
+  return `<h4>Generator <small>(${esc(parts.join(' · '))})</small></h4><pre class="gen">${genListing(x.gen)}</pre>`;
+}
+
 function renderCard() {
   const card = $('card');
   if (selected === null || !S.w.has(selected)) {
@@ -1219,6 +1269,7 @@ function renderCard() {
       ${stat('distance', x.distance?.toFixed(2) ?? '–')}${stat('nearest', x.nearest !== undefined && x.nearest !== null && S.w.has(x.nearest) ? link(x.nearest) : '–')}${stat('screen', `${f1(x.screen)}${x.estimate !== undefined ? ` <small style="color:#7f86a0">est. ${x.estimate.toFixed(0)}</small>` : ''}`)}</div>
       <div class="links">parents: ${parents}</div>
       <div class="sub style" id="card-style">style: measuring…</div>
+      ${x.gen ? generatorBlock(x) : ''}
       <h4>Code</h4><pre>${listing(x.code, Number(/ORG\s+(\d+)/.exec(x.code)?.[1] ?? 0))}</pre>`;
   } else {
     head = `<h3 style="color:${color}">${esc(x.name)}</h3><div class="sub">${esc(x.author)} · ${esc(x.file)} · ${{ panel: 'panel', holdout: 'holdout', retired: 'former panel' }[x.kind]} warrior from the hill</div>
@@ -1232,19 +1283,23 @@ function renderCard() {
 }
 
 // The style of a warrior (tools/style.js): a few rounds against the first 3
-// panel warriors with the watch, in this page; once per warrior.
-let styleEngine = null;
+// panel warriors with the watch, in this page; once per warrior. The engine,
+// its opponents and what it measured belong to the run shown: another run
+// has other rules and its own warriors under the same ids.
+let styleModule = null, styleEngine = null;
 const styles = new Map();
 async function showStyle(x) {
   const id = x.id;
   try {
+    styleModule ??= await compileMars();
+    if (styleEngine?.start !== S.start) {
+      const r = S.start.rules;
+      styleEngine = { start: S.start, rules: { coreSize: r.size, maxCycles: r.cycles, maxProcesses: r.processes, maxLength: r.length, minDistance: r.distance } };
+      styleEngine.m = createMarsSync({ ...styleEngine.rules, watch: true }, styleModule);
+      styleEngine.opponents = S.panel.slice(0, 3).map((p) => assemble(S.w.get(p).source, styleEngine.rules));
+      styles.clear();
+    }
     if (!styles.has(id)) {
-      if (!styleEngine) {
-        const r = S.start.rules;
-        styleEngine = { rules: { coreSize: r.size, maxCycles: r.cycles, maxProcesses: r.processes, maxLength: r.length, minDistance: r.distance }, module: await compileMars() };
-        styleEngine.m = createMarsSync({ ...styleEngine.rules, watch: true }, styleEngine.module);
-        styleEngine.opponents = S.panel.slice(0, 3).map((p) => assemble(S.w.get(p).source, styleEngine.rules));
-      }
       const w = assemble(x.kind === 'member' ? `;name x\n${x.code}` : x.source, styleEngine.rules);
       styles.set(id, describe(measureStyle(styleEngine.m, w, styleEngine.opponents)));
     }
