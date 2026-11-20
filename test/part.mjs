@@ -7,29 +7,32 @@
 // the same time (#161): `make test TESTS="$(node test/part.mjs 1/3)"`.
 // Every file is in exactly one part, a new one too. The files go by their
 // time, the longest first, each to the part with the least time so far;
-// the times are the seconds of each file's tests under ASan and UBSan on CI
-// (sanitizers of run 44681419973, 20th November 2026), and a file not
-// listed counts 20. On 4 cores the files run 3 at a time and slow each
-// other: these sums, not the times of a file alone on 32 threads (which
-// made one native part 110 s of tests and the other 61 s). A wrong time
-// makes the parts uneven, it does not leave a file out.
+// the times are the seconds of each file's tests under ASan and UBSan on
+// CI, the mean of two runs (44681419973 and 44681879635, 20th November
+// 2026; one file's time moved by up to 20 s between them, with what ran
+// next to it), and a file not listed counts 20. On 4 cores the files run 3
+// at a time and slow each other: these sums, not the times of a file alone
+// on 32 threads (which made one native part 110 s of tests and the other
+// 61 s). The same times split the native jobs about evenly (81.7 and 81.6
+// s of their own tests). A wrong time makes the parts uneven, it does not
+// leave a file out.
 
 import { readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 export const SECONDS = {
-  'test/evolver-tune.test.js': 48.2,
-  'test/evolver-sharing.test.js': 45.8,
-  'test/evolver-crowding.test.js': 38.7,
-  'test/evolver-difference.test.js': 32.0,
-  'test/evolver-defaults.test.js': 29.6,
-  'test/evolver.test.js': 29.2,
-  'test/evolver-pareto.test.js': 28.9,
-  'test/evolver-select.test.js': 22.6,
-  'test/evolver-specialists.test.js': 16.5,
-  'test/evolver-map-elites.test.js': 10.1,
-  'test/c-api.test.js': 1.0,
-  'test/cli.test.js': 0.8,
+  'test/evolver-tune.test.js': 49.0,
+  'test/evolver-crowding.test.js': 37.3,
+  'test/evolver-difference.test.js': 36.7,
+  'test/evolver-sharing.test.js': 35.5,
+  'test/evolver.test.js': 34.7,
+  'test/evolver-pareto.test.js': 34.5,
+  'test/evolver-defaults.test.js': 31.1,
+  'test/evolver-select.test.js': 24.6,
+  'test/evolver-specialists.test.js': 23.1,
+  'test/evolver-map-elites.test.js': 13.2,
+  'test/c-api.test.js': 0.8,
+  'test/cli.test.js': 0.6,
 };
 
 // The files of `make test`, in the order of the Makefile's list.

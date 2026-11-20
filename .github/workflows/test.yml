@@ -61,16 +61,17 @@ jobs:
             exit 1
           }
 
-  # make test under ASan and UBSan, its test files in three parts at the same
-  # time (test/part.mjs): the instrumented programs are about 3.5 times as
-  # slow (333 s of tests in one job, 18th November 2026).
+  # make test under ASan and UBSan, its test files in four parts at the same
+  # time (test/part.mjs, about 80 s of tests each, 45 to 50 s of a job): the
+  # instrumented programs are about 3.5 times as slow (333 s of tests in one
+  # job, 18th November 2026).
   sanitizers:
     name: sanitizers (${{ matrix.part }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        part: [1, 2, 3]
+        part: [1, 2, 3, 4]
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -80,7 +81,7 @@ jobs:
         with:
           flags: asan
           cc: clang
-      - run: make -j4 CC=clang CFLAGS='-O1 -g -fno-omit-frame-pointer -fsanitize=address,undefined -fno-sanitize-recover=all -Wall -Wextra -Werror' LDFLAGS='-fsanitize=address,undefined' test TESTS="$(node test/part.mjs ${{ matrix.part }}/3)"
+      - run: make -j4 CC=clang CFLAGS='-O1 -g -fno-omit-frame-pointer -fsanitize=address,undefined -fno-sanitize-recover=all -Wall -Wextra -Werror' LDFLAGS='-fsanitize=address,undefined' test TESTS="$(node test/part.mjs ${{ matrix.part }}/4)"
 
   # 42mars against pMARS 0.9.5 (#91), built from its source archive and run
   # as a program only. The clean room (CLAUDE.md): nobody reads the files of
