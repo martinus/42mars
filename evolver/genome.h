@@ -144,6 +144,9 @@ int genome_mode_family(uint8_t m);
 // reference a label (gen_from_genome()), and `generated` is 1.
 void genome_as_generator(genome *x);
 
+// x is the generator p: the list is the warrior p writes, `generated` 1.
+void genome_from_generator(genome *x, const gen *p, uint32_t core_size, uint32_t max_length);
+
 // How often genome_breed() picks each kind of change: weights, any scale.
 typedef struct {
   uint32_t w[CH_ALL];

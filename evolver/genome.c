@@ -474,6 +474,11 @@ static void generate(genome *x, uint32_t core, uint32_t max_length) {
     x->g[i] = (gene){code[i].opcode, code[i].modifier, code[i].a_mode, code[i].b_mode, 0, 0, 0, code[i].a, code[i].b};
 }
 
+void genome_from_generator(genome *x, const gen *p, uint32_t core, uint32_t max_length) {
+  x->p = *p;
+  generate(x, core, max_length);
+}
+
 void genome_as_generator(genome *x) {
   gen_from_genome(&x->p, x);
   x->generated = 1;
