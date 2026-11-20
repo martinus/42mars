@@ -230,6 +230,41 @@ pareto-sd keeps fewer families than value: at batch 99 the median island had 9 a
 
 Not kept: abs stays the default; `--difference shape` stays an option. The SD-score goes against strength because of where the list puts its members, not because of the level of a row, and that is what keeps other designs in a pareto-sd list.
 
+## Stages around evolved warriors
+
+20th November 2026. Every evolved warrior so far is one phase: an `SPL` loop and one to three `MOV` streams of 2 to 7 instructions. Strong hill warriors are often several: a boot, a quick scan, the main loop, a clear. Would a stage written by hand lift an evolved one? Five warriors of `warriors/evolved/94nop` with stages written for this test (none taken from another warrior), each against the 1,107 '94nop Koenigstuhl warriors, 100 rounds (`tools/tournament.mjs --bench`, the same seed; about 0.4 points of standard error):
+
+| | Cranky Mongoose VI | Twisted Jackal II | Restless Gremlin | Humble Sloth V | Scarlet Dodo II |
+|---|---|---|---|---|---|
+| as evolved | **142.7** | **139.7** | **139.3** | **135.3** | **125.0** |
+| boot: the body copied 2000 / 4000 cells on and run there, the original left as a decoy | 135.3 / 138.0 | 136.6 / 138.5 | 130.4 / 136.2 | 133.5 / 133.6 | 124.9 / 123.9 |
+| an imp, `MOV.I #0, 1`, in a process of its own | 134.3 | 125.8 | 133.6 | 128.2 | 115.9 |
+| boot and imp | 128.1 | 85.5 | 131.3 | 118.1 | 110.1 |
+| a quick scan in front (pairs of cells compared over the core, 20 `DAT` bombs around a find), 50 / 100 / 200 pairs | 126.8 / 127.4 / 127.9 | 127.8 / 130.3 / 133.7 | 126.4 / 126.8 / 128.5 | 128.4 / 129.7 / 130.9 | 78.9 / 104.0 / 113.7 |
+| the same 16 instructions of the scan in front, never run | 122.5 | 120.5 | 121.8 | 120.8 | 14.3 |
+| the body booted 4000 on, without / with the quick scan of 200 pairs first | 136.8 / 131.7 | 138.9 / 138.7 | 130.0 / 128.3 | 134.3 / 134.4 | 125.1 / 121.5 |
+
+Two different designs in parallel (an `SPL` to the second, booted 4000 on) scored 88.4 to 126.4, below both of their warriors each time.
+
+- No stage lifted a warrior. The imp turns wins into ties: an imp that runs into the opponent's code makes its processes imps too, which do not die (Cranky Mongoose VI: wins 46,301 to 38,737, ties 19,052 to 32,508). Two designs halve each other's turns and bomb each other.
+- The quick scan wins a few hundred to 1,500 more games than the same layout without it, and loses more ties: the body starts up to 800 cycles later.
+- Evolved warriors depend on what lies next to them: 16 instructions placed in front and never run cost 15 to 20 points, Scarlet Dodo II 111. They read the empty core around them as data (Twisted Jackal II: `MOV.I @-1, <3515` reads the cell before it). A stage that runs before the body, and changes its own counters next to it, changes the body. A composition of evolved parts has to give each part empty core around it, by booting it away.
+- These stages are simple. Human quick scans find where the opponent is before they attack, and human decoys are built to stall scanners. The test says that adding a stage does not lift what evolution finds now; it does not say that stages cannot pay.
+
+**A decoy left behind.** A small warrior is hard to find. The body booted on, with D cells of decoy left where it started (`DAT.F #i, #(37 i mod 800)`, all different, so that a scanner comparing two cells sees them):
+
+| | boot | D 0 | D 20 | D 50 | D 85 | as evolved |
+|---|---|---|---|---|---|---|
+| Twisted Jackal II | 4000 | 138.5 | 138.8 | 139.7 | **140.5** | 139.7 |
+| Humble Sloth V | 4000 | 133.6 | 134.2 | 134.8 | **135.8** | 135.3 |
+| Scarlet Dodo II | 4000 | 123.9 | 125.1 | 125.6 | **127.3** | 125.0 |
+| Cranky Mongoose VI | 2000 / 3000 / 6000 | 135.3 / 136.5 / 140.9 | | | 137.6 / 138.4 / **143.7** | 142.7 |
+| Restless Gremlin | 2000 / 3000 / 6000 | 130.4 / 133.4 / 138.7 | | | 132.9 / 135.2 / **139.8** | 139.3 |
+
+- 85 cells of decoy lift every warrior by 1.1 to 3.4 points over the same boot without one, rising with the size where measured. Against the warrior as evolved: +0.5 to +2.3.
+- Where the body goes matters as much: Cranky Mongoose VI 135.3 booted 2000 on, 140.9 at 6000. At 4000 its streams (`MOV.I <0, <3989`) write onto the decoy it left behind, and the decoy cost it 3.8 points, Restless Gremlin 15.
+- So a warrior that keeps most of its length behind as a decoy and runs a small part elsewhere gains a few points; the gap to the median hill warrior (145) and its top is much larger. Evolution could reach it with a change that wraps the running part in a boot to an evolved offset, the rest of the genome staying behind; not built.
+
 ## E5, eleventh comparison: islands, the average over the panel, and a loop that stops early
 
 16th and 17th November 2026, all scored against the 1,107 '94nop Koenigstuhl warriors, `--panel-choice kinds --batch 128 --screen-stop 3` unless said otherwise.
