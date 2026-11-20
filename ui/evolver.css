@@ -12,6 +12,7 @@
   --hot: #ff5a8a;
   --mono: ui-monospace, "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
   --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --narrow: "Arial Narrow", "Liberation Sans Narrow", "Nimbus Sans Narrow", "Roboto Condensed", sans-serif;
   color-scheme: dark;
 }
 
@@ -128,6 +129,10 @@ main {
 .card pre .num { color: #ffc98a; }
 .card pre .cmt { color: #5d6380; }
 .card pre .start { background: #ffc53d22; }
+.card pre .kw { color: #ff9ab8; font-weight: 600; }
+.card pre .lbl { color: #b9a7ff; }
+.card pre .var { color: #8be3a8; }
+.card pre .call { color: #ffd166; }
 .card .fp { display: flex; align-items: flex-end; gap: 2px; height: 70px; padding: 4px 0; border-bottom: 1px solid var(--line); }
 .card .fp i { flex: 1; min-width: 2px; border-radius: 2px 2px 0 0; }
 .card table { width: 100%; border-collapse: collapse; font: 12px var(--mono); }
@@ -137,7 +142,7 @@ main {
 .card .links a { cursor: pointer; margin-right: 8px; border-bottom: 1px dotted #555b78; text-decoration: none; }
 
 /* the list of runs when the server has several (tools/serve.mjs --run a b ...): one dashboard, the left column switches its stream */
-body.with-side { grid-template-columns: 300px minmax(0, 1fr); }
+body.with-side { grid-template-columns: 330px minmax(0, 1fr); }
 #side-filter { flex: 1; min-width: 0; max-width: 170px; font: 11px var(--mono); color: var(--text); background: var(--panel-2); border: 1px solid var(--line); border-radius: 4px; padding: 2px 6px; text-transform: none; letter-spacing: 0; }
 body.with-side .bar { grid-column: 1 / -1; }
 .side { display: grid; grid-template-rows: auto auto minmax(0, 1fr) auto; min-height: 0; border-right: 1px solid var(--line); background: #090a11; }
@@ -146,7 +151,7 @@ body.with-side .bar { grid-column: 1 / -1; }
 .side li button { width: 100%; display: grid; grid-template-columns: 6px minmax(0, 1fr) 40px 34px 38px; align-items: center; column-gap: 6px; text-align: left; background: transparent; border: 1px solid transparent; border-radius: 5px; padding: 1px 6px; line-height: 18px; }
 .side li button:hover { background: var(--panel-2); border-color: var(--line); }
 .side li button.on { background: #1d1708; border-color: #7a5d1c; }
-.side .nm { font: 600 12px var(--mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.side .nm { font: 600 12px var(--narrow); font-stretch: condensed; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; } /* island names such as sh167-rank10-201/island-01: 187 px in the monospace, 142 px narrow */
 .side .sc { font: 600 12px var(--mono); color: var(--muted); text-align: right; }
 .side .sb, .side .ag { font: 10px var(--mono); color: var(--muted); text-align: right; }
 .side-cols { display: grid; grid-template-columns: 6px minmax(0, 1fr) 40px 34px 38px; column-gap: 6px; padding: 0 13px 3px; color: #565c76; font: 9px var(--mono); text-transform: uppercase; letter-spacing: 0.06em; }
