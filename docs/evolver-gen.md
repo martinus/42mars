@@ -1,6 +1,6 @@
 # Generators: a genome that writes the warrior
 
-Design, 20th November 2026. Status: step 1 is built (the language in `evolver/generator.c`, the program `42gen`, `test/c/generator-test.c`, `test/evolver-gen.test.js`). Breeding and `42evolve --genome gen` are not: steps 2 to 4 below are the plan.
+Design, 20th November 2026. Status: steps 1 and 2a are built. Step 1 is the language (`evolver/generator.c`, the program `42gen`). Step 2a is the changes of a list on generators (`evolver/gen-change.c`) and `42evolve --genome gen`, which so far is the run on lists, event for event. The changes that make structure (2b, 2c) and steps 3 and 4 are the plan.
 
 ## The goal
 
@@ -144,7 +144,13 @@ A list genome becomes a generator line by line: an operand that is a reference b
 
 **Units.** A unit is an instruction line, a call, or a whole block (`repeat` or `def` with everything to its `end`). The old changes that insert, delete, duplicate, move or cross over work on runs of units within one block, through one rebuild that renumbers every reference, as `genome_rebuild()` does. In a generator without structure the units are the lines, and the rebuild is the list's.
 
-**The old kinds,** unchanged in name and weight: `opcode`, `modifier`, `a-mode`, `b-mode`, `a-operand`, `b-operand`, `org`, `replace`, `insert`, `delete`, `duplicate`, `move`, `crossover-insert`, `crossover-replace`, `related-opcode`, `related-mode`, `shared-constant`, `tune`. An operand change replaces the whole expression by a number or a label, as today. A crossover takes the functions along that the copied lines call.
+**The old kinds** (built), unchanged in name and weight: `opcode`, `modifier`, `a-mode`, `b-mode`, `a-operand`, `b-operand`, `org`, `replace`, `insert`, `delete`, `duplicate`, `move`, `crossover-insert`, `crossover-replace`, `related-opcode`, `related-mode`, `shared-constant`, `tune`. On a generator with structure:
+
+- **The point changes** take one of the instruction lines.
+- **An operand change** takes one number or label of the expression and changes it as today; `i`, `x`, the constants and the operations stay. A label that becomes a number is the distance it stood for in the warrior.
+- **Insert, delete, duplicate, move** take a sequence (the top level or the inside of a block, a longer one more often), then units of it as today.
+- **A crossover** takes units of one sequence of the second parent, and the functions that they call. A label of a line that does not come along becomes its distance in the second parent's warrior, a constant its number. A `def` goes to the top level only.
+- **`shared-constant` and `tune`** take the far numbers in the operands of instructions and in the arguments of calls. A count is not one.
 
 **The new kinds.** Each rewrites and then varies (principle 5):
 
@@ -170,11 +176,11 @@ Nobody writes a function: `extract` makes one from lines that evolved, `call` an
 ## In `42evolve` (step 2)
 
 - **`--genome list|gen`,** `list` the default. A run folder keeps its kind.
-- **The `genome` struct** gets a `gen` next to its list. For a generator the list holds the compiled warrior, so `make_warrior()`, `genome_hash()`, `genome_text()`, the names, the style and the events' `length` need no change. `genome_breed()`, `genome_random()`, `genome_from_code()`, `genome_save()` and `genome_load()` branch on the kind.
+- **The `genome` struct** has a `gen` next to its list (26 KB instead of 4). For a generator the list holds the compiled warrior, so `make_warrior()`, `genome_hash()`, `genome_text()`, the names, the style and the events' `length` need no change. `genome_breed()`, `genome_save()` and `genome_load()` branch on the kind; a random or a start warrior is made as a list and becomes a generator line for line (`genome_as_generator()`).
 - **Random starts** are generators without structure, drawn as today: structure has to pay to appear.
-- **Events** carry the generator's text next to the code (`"gen"`); the state file its numbers.
+- **Events** carry the generator's text next to the code (`"gen"`), `best.gen` is the generator of `best.red`, and the state file has the generator's numbers (`gen_save()`).
 - **`--changes`** takes the new names. The default mix with `--genome gen` gives the new kinds a share that step 2 sets by measurement.
-- **Refused with `--genome gen` at first:** `--optimize` and `--tune-novel`, which write into the list's operands. Later they tune the numbers and constants of the generator.
+- **Refused with `--genome gen` at first:** `--tune-novel`, which writes into the list's operands. Later it tunes the numbers and constants of the generator. (`--optimize` takes a warrior file and stays a list.)
 - **The dashboard** shows the generator's text above the code (step 4). No parser in JavaScript: the text comes from the events.
 
 ## Steps and gates
@@ -182,7 +188,7 @@ Nobody writes a function: `extract` makes one from lines that evolved, `call` an
 | step | what | gate |
 |---|---|---|
 | 1, done | The language: `gen_compile()`, text form both ways, `42gen` | The hand-written decoy and boot of 20th November as a generator gives the same warrior. 2,000 random list genomes as generators compile to `genome_code()`, and the 282 warriors of `warriors/evolved` write themselves. 20,000 random generators, 3,000 with random bytes and 5,000 changed texts stay within the limits under ASan and UBSan. 38 mutants of `generator.c`: 37 fail a test, one is equivalent (an eighth token is refused one push later) |
-| 2a | The old kinds on generators, `--genome gen` | For generators without structure: the same child as `genome_change()`, kind by kind, 10,000 random cases. A run with `--genome gen` and the old mix writes the same `events.jsonl` as `--genome list`, the generator texts aside |
+| 2a, done | The old kinds on generators, `--genome gen` | For generators without structure: the same child, the same answer and the same random numbers as `genome_change()` in 60,000 changes of all 18 kinds, and as `genome_breed()` in 20,000 children. A run with `--genome gen` writes the events of `--genome list`, the generator texts aside: 40 batches on the tiny hill with the default mix and with all 18 kinds, 3 islands, and both equal the build before this step. 40,000 changes of random generators with structure give well-formed children within the limits. 44 mutants: all fail a test |
 | 2b | `repeat`, `count`, `fold`, `unroll`, `index`, `expression`, `constant` | Tiny hill, the setting of the thirteenth comparison, 48 pairs of islands with the same seeds: the mean at batch 100 not below the list's by more than 1 point. Reported next to it: how many members have structure, which kinds made children that entered the list |
 | 2c | Functions: `extract`, `parameter`, `call`, `inline`, `transplant` | The same comparison |
 | 3 | '94nop: 8 islands against 8, the setting of the twelfth comparison, then the long runs | The top three against the 1,107: above the list's. And by looking: decoys, tables, a second stage? |

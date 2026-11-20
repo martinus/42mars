@@ -27,7 +27,7 @@ before(async () => {
   if (skip || prebuilt) return;
   [gen, unit] = await Promise.all([
     builtProgram('42gen', ['evolver/gen.c', 'evolver/generator.c'], ['-Ilib']),
-    builtProgram('generator-test', ['test/c/generator-test.c', 'evolver/generator.c', 'evolver/genome.c'], ['-Ilib', '-Ievolver']),
+    builtProgram('generator-test', ['test/c/generator-test.c', 'evolver/generator.c', 'evolver/gen-change.c', 'evolver/genome.c'], ['-Ilib', '-Ievolver']),
   ]);
 });
 after(() => rmSync(tmp, { recursive: true, force: true }));
