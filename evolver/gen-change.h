@@ -58,8 +58,9 @@ void gen_rebuild(gen *child, const gen *a, const gen *b, const slot *s, uint32_t
 // change which one that is (the same for gen_unroll()).
 // gen_fold(): the instructions at line and line + 1 become a `repeat 2` at
 // `line` around one instruction: the same opcode, modifier and modes, each
-// pair of operands two numbers (then a + i*d), the same expression, or each
-// its own label; nothing else may refer to the second.
+// pair of operands two numbers (then a + i*d), the same expression, each its
+// own label, or two other expressions (then the first + i*d, d from what the
+// two instructions hold); nothing else may refer to the second.
 // gen_unroll(): the repeat at `line`, whose count is a number from 1 to 16,
 // becomes its repetitions, `i` their numbers; not when something uses the
 // block's length, or its end while no instruction, repeat or call follows. *copies and *lines (may be 0): how many, and the lines of each.
@@ -67,8 +68,20 @@ void gen_rebuild(gen *child, const gen *a, const gen *b, const slot *s, uint32_t
 // constant c, which must be unused; the other far numbers that are equal to
 // it, its negative, its double or within 16 of it follow as c, 0-c, c*2,
 // c+d, where their expressions have the room.
+// gen_fold_period(): the same for two groups of `period` instructions behind
+// each other, from `first`; a label of a line of its own group stays one.
+// gen_absorb(): the instructions behind the repeat at `line` that are its
+// next repetition come into it: its count, a number, is one more.
 int gen_wrap(gen *x, uint32_t first, uint32_t end, uint32_t core_size);
 int gen_fold(gen *x, uint32_t line, uint32_t core_size);
+int gen_fold_period(gen *x, uint32_t first, uint32_t period, uint32_t core_size);
+int gen_absorb(gen *x, uint32_t line, uint32_t core_size);
+// gen_absorb_front(): the same for the instructions in front of it, which
+// are the repetition before its first. gen_merge(): the repeat at `line` and
+// the repeat directly behind it, which goes on where the first ends, become
+// one.
+int gen_absorb_front(gen *x, uint32_t line, uint32_t core_size);
+int gen_merge(gen *x, uint32_t line, uint32_t core_size);
 int gen_unroll(gen *x, uint32_t line, uint32_t core_size, uint32_t *copies, uint32_t *lines);
 int gen_bind(gen *x, uint32_t line, int k, uint32_t t, uint32_t c, uint32_t core_size);
 
@@ -89,6 +102,32 @@ int gen_bind(gen *x, uint32_t line, int k, uint32_t t, uint32_t c, uint32_t core
 int gen_extract(gen *x, uint32_t first, uint32_t end, uint32_t core_size, uint32_t *def);
 int gen_parameter(gen *x, uint32_t line, int k, uint32_t t, uint32_t j, uint32_t core_size);
 int gen_inline(gen *x, uint32_t line, uint32_t core_size, uint32_t *at, uint32_t *lines);
+
+// gen_share(): the `lines` (2 or more) instructions from a and those from b,
+// which do not overlap and are alike but for up to 2 pairs of numbers,
+// become one function with two calls; the numbers that differ are its
+// arguments. A change of the function is then a change of both.
+int gen_share(gen *x, uint32_t a, uint32_t b, uint32_t lines, uint32_t core_size);
+
+// One refactoring of x, drawn: a rewrite alone, so that the warrior stays
+// and the generator has another structure for the changes to come. Drawn
+// most often is what says more with less: fold (a row of alike groups of 1
+// to 4 instructions into a block: two groups that are the same, or three
+// with one step), absorb (a block that takes in the repetition behind it or
+// in front of it, or the block that goes on),
+// share (two alike groups into a function), each weight 4, and constant (a
+// far number that at least one other number follows, 3). Then what takes
+// away structure that does nothing: inline of a function with one call and
+// unwrap of a block that repeats once (3 each). Least what makes room for
+// differences or takes structure apart: parameter (a number of a function
+// with two calls or more), unroll, inline (1 each), and only when drawn
+// first. A kind that does not apply gives way to another of the first two
+// groups. Before it every expression is worked out as
+// far as its numbers go. 1 and *how (may be 0) the name of what was done
+// ("simplify" when only that), 0 and x as it was when nothing applies.
+// 42evolve does this to members in place (--refactor): their warriors and so
+// their scores stay.
+int gen_refactor(gen *x, rng *r, uint32_t core_size, uint32_t max_length, const char **how);
 
 // How often gen_breed() picks each kind without a mix of its own: the
 // weights of genome_mix_default(), and repeat 30, count 40, fold 30, unroll

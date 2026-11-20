@@ -10,6 +10,7 @@
 #define NONE UINT32_MAX
 
 static int keeps(const gen *x, uint32_t core, uint32_t max_length);
+static void simplify(gen_expr *e, uint32_t core);
 
 static uint32_t wrap(int64_t v, uint32_t core) {
   int64_t m = v % (int64_t)core;
@@ -427,68 +428,187 @@ int gen_wrap(gen *x, uint32_t first, uint32_t end, uint32_t core) {
 // How the operands k of two instructions fold: FOLD_NOT, FOLD_SAME (one
 // expression for both), FOLD_STEP (two numbers, *step from the first to the
 // second).
-enum { FOLD_NOT, FOLD_SAME, FOLD_STEP };
-static int fold_rule(const gen *x, uint32_t line, int k, uint32_t core, uint32_t *step) {
-  const gen_expr *a = &x->l[line].x[k], *b = &x->l[line + 1].x[k];
+enum { FOLD_NOT, FOLD_SAME, FOLD_STEP, FOLD_VALUE };
+// Operand k of the instructions at first + j and first + period + j, two
+// groups of `period` lines behind each other.
+static int fold_rule(const gen *x, uint32_t first, uint32_t period, uint32_t j, int k, uint32_t core, uint32_t *step) {
+  const gen_expr *a = &x->l[first + j].x[k], *b = &x->l[first + period + j].x[k];
   if (a->n == 1 && b->n == 1 && a->kind[0] == GT_NUM && b->kind[0] == GT_NUM && a->v[0] != b->v[0]) {
     *step = wrap((int64_t)signed_value(b->v[0], core) - signed_value(a->v[0], core), core);
     return FOLD_STEP;
   }
-  if (a->n == 1 && b->n == 1 && a->kind[0] == GT_POS && b->kind[0] == GT_POS && a->v[0] == line && b->v[0] == line + 1)
-    return FOLD_SAME; // each its own label
-  if (a->n != b->n) return FOLD_NOT;
+  int same = a->n == b->n;
   for (uint32_t t = 0; t < a->n; t++) {
-    if (a->kind[t] != b->kind[t] || a->v[t] != b->v[t]) return FOLD_NOT;
-    if ((a->kind[t] == GT_POS || a->kind[t] == GT_LEN) && (a->v[t] == line || a->v[t] == line + 1)) return FOLD_NOT;
-    if (a->kind[t] == GT_INDEX && a->v[t] >= 2) return FOLD_NOT; // no room for one more loop
+    const uint32_t va = a->v[t], vb = same ? b->v[t] : 0;
+    if (a->kind[t] == GT_INDEX && va >= 2) return FOLD_NOT; // no room for one more loop
+    if ((a->kind[t] == GT_POS || a->kind[t] == GT_LEN) && va >= first + period && va < first + 2 * period)
+      return FOLD_NOT; // the first group refers into the second
+    if (!same) continue;
+    if (a->kind[t] != b->kind[t]) same = 0;
+    else if (a->kind[t] == GT_POS || a->kind[t] == GT_LEN) same = va >= first && va < first + period ? vb == va + period : vb == va; // its own group's label, or the same
+    else same = va == vb;
   }
-  return FOLD_SAME;
+  if (same) return FOLD_SAME;
+  // other expressions: the first one and a step, by what the two instructions hold (the caller compares the warriors)
+  return a->n && a->n + 4 <= GEN_TOKENS ? FOLD_VALUE : FOLD_NOT;
 }
 
-// Can the instructions at line and line + 1 become one in a repeat?
-static int foldable(const gen *x, uint32_t line, uint32_t core) {
-  if (line + 1 >= x->n) return 0;
-  const gen_line *l = &x->l[line], *m = &x->l[line + 1];
-  if (l->kind != GL_EMIT || m->kind != GL_EMIT || l->op != m->op || l->mod != m->mod || l->am != m->am || l->bm != m->bm) return 0;
+// Can the `period` instructions from `first` and the `period` behind them
+// become the two repetitions of a block?
+static int foldable(const gen *x, uint32_t first, uint32_t period, uint32_t core) {
+  if (!period || first + 2 * period > x->n) return 0;
   uint32_t step;
-  if (!fold_rule(x, line, 0, core, &step) || !fold_rule(x, line, 1, core, &step)) return 0;
-  // nothing but itself refers to the second: it will be the second repetition of the first
-  if (x->start == line + 1) return 0;
+  for (uint32_t j = 0; j < period; j++) {
+    const gen_line *l = &x->l[first + j], *m = &x->l[first + period + j];
+    if (l->kind != GL_EMIT || m->kind != GL_EMIT || l->op != m->op || l->mod != m->mod || l->am != m->am || l->bm != m->bm) return 0;
+    if (!fold_rule(x, first, period, j, 0, core, &step) || !fold_rule(x, first, period, j, 1, core, &step)) return 0;
+  }
+  // nothing but itself refers to the second group: it will be the second repetition of the first
+  const uint32_t from = first + period, to = first + 2 * period;
+  if (x->start >= from && x->start < to) return 0;
   for (uint32_t i = 0; i < x->n; i++) {
-    if (i == line + 1) continue;
-    if (x->l[i].kind == GL_CALL && x->l[i].callee == line + 1) return 0;
+    if (i >= from && i < to) continue;
+    if (x->l[i].kind == GL_CALL && x->l[i].callee >= from && x->l[i].callee < to) return 0;
     for (int k = 0; k < 2; k++)
       for (uint32_t t = 0; t < x->l[i].x[k].n; t++)
-        if ((x->l[i].x[k].kind[t] == GT_POS || x->l[i].x[k].kind[t] == GT_LEN) && x->l[i].x[k].v[t] == line + 1) return 0;
+        if ((x->l[i].x[k].kind[t] == GT_POS || x->l[i].x[k].kind[t] == GT_LEN) && x->l[i].x[k].v[t] >= from && x->l[i].x[k].v[t] < to) return 0;
   }
   return 1;
 }
 
-int gen_fold(gen *x, uint32_t line, uint32_t core) {
-  if (x->n + 1 > GEN_LINES || !foldable(x, line, core)) return 0;
-  uint32_t step[2] = {0, 0};
-  const int rule[2] = {fold_rule(x, line, 0, core, &step[0]), fold_rule(x, line, 1, core, &step[1])};
+int gen_fold_period(gen *x, uint32_t first, uint32_t period, uint32_t core) {
+  if (x->n + 2 > GEN_LINES + period || !foldable(x, first, period, core)) return 0;
   slots o;
   o.n = 0, o.over = 0;
-  put(&o, SLOT_A, 0, line);
+  put(&o, SLOT_A, 0, first);
   put(&o, SLOT_REPEAT, 0, 1);
-  put(&o, SLOT_A, line, 1);
+  put(&o, SLOT_A, first, period);
   put(&o, SLOT_END, 0, 1);
-  put(&o, SLOT_A, line + 2, x->n - line - 2);
+  put(&o, SLOT_A, first + 2 * period, x->n - first - 2 * period);
+  if (o.over) return 0;
   gen child;
   gen_rebuild(&child, x, x, o.s, o.n, core, 0, 0, 0);
-  if (!index_out(&child, line + 1, line + 2)) return 0;
-  for (int k = 0; k < 2; k++) {
-    if (rule[k] != FOLD_STEP) continue;
-    gen_expr *e = &child.l[line + 1].x[k]; // a + i * step
-    e->n = 5;
-    e->kind[1] = GT_INDEX, e->v[1] = 0;
-    e->kind[2] = GT_NUM, e->v[2] = step[k];
-    e->kind[3] = GT_MUL, e->v[3] = 0;
-    e->kind[4] = GT_ADD, e->v[4] = 0;
-  }
-  child.l[line].x[0].v[0] = 2;
+  if (!index_out(&child, first + 1, first + 1 + period)) return 0;
+  gen_info info;
+  m42_instruction code[GEN_LINES];
+  gen_compile_info(x, core, GEN_LINES, code, &info);
+  for (uint32_t j = 0; j < period; j++)
+    for (int k = 0; k < 2; k++) {
+      uint32_t step = 0;
+      const int rule = fold_rule(x, first, period, j, k, core, &step);
+      if (rule == FOLD_SAME) continue;
+      gen_expr *e = &child.l[first + 1 + j].x[k];
+      if (rule == FOLD_VALUE) { // the step from what the two instructions hold in the warrior
+        const uint32_t pa = info.pos[first + j], pb = info.pos[first + period + j];
+        if (pa == GEN_NONE || pb == GEN_NONE) return 0;
+        step = wrap((int64_t)(k ? code[pb].b : code[pa == pb ? pa : pb].a) - (k ? code[pa].b : code[pa].a), core);
+        step = wrap(signed_value(step, core), core);
+      } else {
+        e->n = 1; // a + i * step
+      }
+      e->kind[e->n] = GT_INDEX, e->v[e->n++] = 0;
+      e->kind[e->n] = GT_NUM, e->v[e->n++] = step;
+      e->kind[e->n] = GT_MUL, e->v[e->n++] = 0;
+      e->kind[e->n] = GT_ADD, e->v[e->n++] = 0;
+    }
+  child.l[first].x[0].v[0] = 2;
   if (!same_warrior(x, &child, core)) return 0;
+  set(x, &child);
+  return 1;
+}
+
+int gen_fold(gen *x, uint32_t line, uint32_t core) { return gen_fold_period(x, line, 1, core); }
+
+int gen_absorb(gen *x, uint32_t R, uint32_t core) {
+  uint32_t match[GEN_LINES];
+  gen_blocks(x, match);
+  if (R >= x->n || x->l[R].kind != GL_REPEAT) return 0;
+  const gen_expr *count = &x->l[R].x[0];
+  const uint32_t E = match[R];
+  if (count->n != 1 || count->kind[0] != GT_NUM || count->v[0] < 1 || count->v[0] >= GEN_LINES || E >= x->n) return 0;
+  const uint32_t body = E - R - 1;
+  if (!body || E + body >= x->n) return 0;
+  for (uint32_t j = 0; j < body; j++) { // instructions, and the same ones behind the block
+    const gen_line *l = &x->l[R + 1 + j], *m = &x->l[E + 1 + j];
+    if (l->kind != GL_EMIT || m->kind != GL_EMIT || l->op != m->op || l->mod != m->mod || l->am != m->am || l->bm != m->bm) return 0;
+  }
+  slots o;
+  o.n = 0, o.over = 0;
+  put(&o, SLOT_A, 0, E + 1);
+  put(&o, SLOT_A, E + 1 + body, x->n - E - 1 - body);
+  gen child;
+  gen_rebuild(&child, x, x, o.s, o.n, core, 0, 0, 0);
+  child.l[R].x[0].v[0] = count->v[0] + 1;
+  if (!same_warrior(x, &child, core)) return 0; // they were not the next repetition
+  set(x, &child);
+  return 1;
+}
+
+// e + i*d at the end of an expression becomes e - d + i*d: the block starts
+// one repetition earlier. 0 without the room.
+static int step_back(gen_expr *e) {
+  const uint32_t n = e->n;
+  if (n < 5 || e->kind[n - 1] != GT_ADD || e->kind[n - 2] != GT_MUL || e->kind[n - 3] != GT_NUM || e->kind[n - 4] != GT_INDEX || e->v[n - 4] != 0)
+    return 1; // no step: the same in every repetition
+  if (n + 2 > GEN_TOKENS) return 0;
+  const uint32_t d = e->v[n - 3];
+  e->kind[n - 4] = GT_NUM, e->v[n - 4] = d; // e d - i d * +
+  e->kind[n - 3] = GT_SUB, e->v[n - 3] = 0;
+  e->kind[n - 2] = GT_INDEX, e->v[n - 2] = 0;
+  e->kind[n - 1] = GT_NUM, e->v[n - 1] = d;
+  e->kind[n] = GT_MUL, e->v[n] = 0;
+  e->kind[n + 1] = GT_ADD, e->v[n + 1] = 0;
+  e->n = (uint8_t)(n + 2);
+  return 1;
+}
+
+int gen_absorb_front(gen *x, uint32_t R, uint32_t core) {
+  uint32_t match[GEN_LINES];
+  gen_blocks(x, match);
+  if (R >= x->n || x->l[R].kind != GL_REPEAT) return 0;
+  const gen_expr *count = &x->l[R].x[0];
+  const uint32_t E = match[R];
+  if (count->n != 1 || count->kind[0] != GT_NUM || count->v[0] < 1 || count->v[0] >= GEN_LINES || E >= x->n) return 0;
+  const uint32_t body = E - R - 1;
+  if (!body || R < body) return 0;
+  for (uint32_t j = 0; j < body; j++) { // instructions, and the same ones in front of the block
+    const gen_line *l = &x->l[R + 1 + j], *m = &x->l[R - body + j];
+    if (l->kind != GL_EMIT || m->kind != GL_EMIT || l->op != m->op || l->mod != m->mod || l->am != m->am || l->bm != m->bm) return 0;
+  }
+  slots o;
+  o.n = 0, o.over = 0;
+  put(&o, SLOT_A, 0, R - body);
+  put(&o, SLOT_A, R, x->n - R);
+  gen child;
+  gen_rebuild(&child, x, x, o.s, o.n, core, 0, 0, 0);
+  const uint32_t at = R - body;
+  child.l[at].x[0].v[0] = count->v[0] + 1;
+  for (uint32_t j = 0; j < body; j++)
+    for (int k = 0; k < 2; k++) {
+      if (!step_back(&child.l[at + 1 + j].x[k])) return 0;
+      simplify(&child.l[at + 1 + j].x[k], core);
+    }
+  if (!same_warrior(x, &child, core)) return 0; // they were not the repetition before the first
+  set(x, &child);
+  return 1;
+}
+
+int gen_merge(gen *x, uint32_t R, uint32_t core) {
+  uint32_t match[GEN_LINES];
+  gen_blocks(x, match);
+  if (R >= x->n || x->l[R].kind != GL_REPEAT || match[R] + 1 >= x->n) return 0;
+  const uint32_t E = match[R], S = E + 1; // the block behind it
+  const gen_expr *count = &x->l[R].x[0], *second = &x->l[S].x[0];
+  if (x->l[S].kind != GL_REPEAT || match[S] >= x->n || match[S] - S != E - R) return 0;
+  if (count->n != 1 || count->kind[0] != GT_NUM || second->n != 1 || second->kind[0] != GT_NUM || count->v[0] + second->v[0] >= GEN_LINES) return 0;
+  slots o;
+  o.n = 0, o.over = 0;
+  put(&o, SLOT_A, 0, S);
+  put(&o, SLOT_A, match[S] + 1, x->n - match[S] - 1);
+  gen child;
+  gen_rebuild(&child, x, x, o.s, o.n, core, 0, 0, 0);
+  child.l[R].x[0].v[0] = count->v[0] + second->v[0];
+  if (!same_warrior(x, &child, core)) return 0; // the second block did not go on where the first ends
   set(x, &child);
   return 1;
 }
@@ -1047,7 +1167,7 @@ static int structure_change(gen *x, const gen *p2, const shape *sh, rng *r, uint
     }
     case CH_FOLD: { // two instructions into a repeat 2, which then goes on to 3 or more
       for (uint32_t i = 0; i + 1 < x->n; i++)
-        if (sh->live[i] && sh->live[i + 1] && foldable(x, i, core)) at[an++] = i;
+        if (sh->live[i] && sh->live[i + 1] && foldable(x, i, 1, core)) at[an++] = i;
       if (!an) return 0;
       const uint32_t line = at[rng_below(r, an)];
       gen_compile_info(x, core, max_length, code, &info);
@@ -1276,6 +1396,235 @@ static int structure_change(gen *x, const gen *p2, const shape *sh, rng *r, uint
     }
     default: return 0;
   }
+}
+
+// ---------------------------------------------------------------- refactoring
+
+// Every expression of x worked out as far as numbers go: 1 when one changed.
+static int simplify_all(gen *x, uint32_t core) {
+  int changed = 0;
+  for (uint32_t i = 0; i < x->n; i++)
+    for (int k = 0; k < 2; k++) {
+      const uint8_t n = x->l[i].x[k].n;
+      simplify(&x->l[i].x[k], core);
+      changed |= x->l[i].x[k].n != n;
+    }
+  return changed;
+}
+
+// Are the `lines` instructions from a and from b the same but for numbers:
+// the same opcodes, modifiers and modes, each pair of operands the same
+// expression (a label of its own group stays one) or two different numbers?
+static int alike(const gen *x, uint32_t a, uint32_t b, uint32_t lines) {
+  if (a + lines > b || b + lines > x->n) return 0;
+  for (uint32_t j = 0; j < lines; j++) {
+    const gen_line *l = &x->l[a + j], *m = &x->l[b + j];
+    if (l->kind != GL_EMIT || m->kind != GL_EMIT || l->op != m->op || l->mod != m->mod || l->am != m->am || l->bm != m->bm) return 0;
+    for (int k = 0; k < 2; k++) {
+      const gen_expr *e = &l->x[k], *f = &m->x[k];
+      if (e->n == 1 && f->n == 1 && e->kind[0] == GT_NUM && f->kind[0] == GT_NUM) continue;
+      if (e->n != f->n) return 0;
+      for (uint32_t t = 0; t < e->n; t++) {
+        if (e->kind[t] != f->kind[t]) return 0;
+        const int label = e->kind[t] == GT_POS || e->kind[t] == GT_LEN, own = label && e->v[t] >= a && e->v[t] < a + lines;
+        if (own ? f->v[t] != e->v[t] - a + b : f->v[t] != e->v[t]) return 0;
+      }
+    }
+  }
+  return 1;
+}
+
+int gen_share(gen *x, uint32_t a, uint32_t b, uint32_t lines, uint32_t core) {
+  if (lines < 2 || !alike(x, a, b, lines)) return 0;
+  // the numbers that differ, as pairs: each pair becomes an argument
+  uint32_t pa[2] = {0, 0}, pb[2] = {0, 0}, pairs = 0;
+  for (uint32_t j = 0; j < lines; j++)
+    for (int k = 0; k < 2; k++) {
+      const gen_expr *e = &x->l[a + j].x[k], *f = &x->l[b + j].x[k];
+      if (e->kind[0] != GT_NUM || e->n != 1 || e->v[0] == f->v[0]) continue;
+      uint32_t q = 0;
+      while (q < pairs && (pa[q] != e->v[0] || pb[q] != f->v[0])) q++;
+      if (q < pairs) continue;
+      if (pairs == 2) return 0;
+      pa[pairs] = e->v[0], pb[pairs++] = f->v[0];
+    }
+  gen y;
+  y.n = 0;
+  set(&y, x);
+  uint32_t def;
+  if (!gen_extract(&y, a, a + lines, core, &def)) return 0; // the first group is a function and a call at a
+  const gen_line *call = &y.l[a];
+  // the arguments the function has from what was around the group (a loop):
+  // the second call passes the same expressions, which mean its own loop there
+  uint32_t given = (call->x[0].n != 0) + (call->x[1].n != 0);
+  if (given + pairs > 2) return 0;
+  uint32_t slot[2] = {0, 0};
+  for (uint32_t q = 0; q < pairs; q++) slot[q] = given + q;
+  for (uint32_t j = 0; j < lines; j++) // the numbers that differ become arguments
+    for (int k = 0; k < 2; k++) {
+      const gen_expr *e = &x->l[a + j].x[k], *f = &x->l[b + j].x[k];
+      if (e->kind[0] != GT_NUM || e->n != 1 || e->v[0] == f->v[0]) continue;
+      const uint32_t q = pa[0] == e->v[0] && pb[0] == f->v[0] ? 0 : 1;
+      if (!gen_parameter(&y, def + 1 + j, k, 0, slot[q], core)) return 0;
+    }
+  // the second group becomes a call
+  const uint32_t at = b - (lines - 1);
+  slots o;
+  o.n = 0, o.over = 0;
+  put(&o, SLOT_A, 0, at);
+  put(&o, SLOT_B, a, 1); // the first call again
+  put(&o, SLOT_A, at + lines, y.n - at - lines);
+  gen child;
+  gen_rebuild(&child, &y, &y, o.s, o.n, core, 0, 0, 0);
+  gen_line *second = &child.l[at];
+  for (uint32_t q = 0; q < pairs; q++) second->x[slot[q]].v[0] = pb[q];
+  if (!same_warrior(x, &child, core)) return 0;
+  set(x, &child);
+  return 1;
+}
+
+int gen_refactor(gen *x, rng *r, uint32_t core, uint32_t max_length, const char **how) {
+  enum { RF_FOLD, RF_ABSORB, RF_SHARE, RF_CONSTANT, RF_INLINE_ONE, RF_UNWRAP, RF_PARAMETER, RF_UNROLL, RF_INLINE, RF_COUNT };
+  static const char *const names[RF_COUNT] = {"fold", "absorb", "share", "constant", "inline", "unwrap", "parameter", "unroll", "inline"};
+  // What makes a generator say more with less is drawn most often (a row
+  // into a block, a block one longer, two alike groups into a function, a
+  // number that others follow into a constant); then what takes away
+  // structure that does nothing (a function with one call, a block that
+  // repeats once); least what takes structure apart.
+  static const uint32_t weight[RF_COUNT] = {4, 4, 4, 3, 3, 3, 1, 1, 1};
+  gen cand, before;
+  cand.n = before.n = 0;
+  set(&before, x);
+  set(&cand, x);
+  const int simpler = simplify_all(&cand, core) && same_warrior(x, &cand, core);
+  if (!simpler) set(&cand, x);
+  shape sh;
+  uint8_t tried[RF_COUNT] = {0};
+  for (;;) {
+    uint32_t total = 0, kind = 0;
+    for (int k = 0; k < RF_COUNT; k++) total += tried[k] ? 0 : weight[k];
+    if (!total) break;
+    uint32_t d = rng_below(r, total);
+    while (tried[kind] || d >= weight[kind]) d -= tried[kind] ? 0 : weight[kind], kind++;
+    tried[kind] = 1;
+    // what takes structure apart only when it is drawn first: as what the
+    // others give way to, an unroll would undo every fold
+    tried[RF_PARAMETER] = tried[RF_UNROLL] = tried[RF_INLINE] = 1;
+    gen y;
+    y.n = 0;
+    set(&y, &cand);
+    shape_of(&y, &sh);
+    mark_live(&y, &sh, core, max_length);
+    uint32_t at[4 * GEN_LINES], an = 0;
+    int done = 0;
+    switch (kind) {
+      case RF_FOLD: // two groups of 1 to 4 instructions
+        for (uint32_t period = 1; period <= 4; period++)
+          for (uint32_t i = 0; i + 2 * period <= y.n; i++)
+            if (sh.live[i] && sh.live[i + period] && foldable(&y, i, period, core)) at[an++] = i * 8 + period;
+        for (uint32_t tries = an < 6 ? an : 6; tries && !done; tries--) {
+          const uint32_t pick = rng_below(r, an), p = at[pick], first = p / 8, period = p % 8;
+          at[pick] = at[--an]; // each candidate once
+          // a row: two groups that are the same, or three with one step. Any
+          // two alike instructions have some step; that alone is no structure.
+          int same = 1;
+          uint32_t step;
+          for (uint32_t j = 0; j < period; j++)
+            same &= fold_rule(&y, first, period, j, 0, core, &step) == FOLD_SAME && fold_rule(&y, first, period, j, 1, core, &step) == FOLD_SAME;
+          done = gen_fold_period(&y, first, period, core) && (same || gen_absorb(&y, first, core));
+          if (!done) set(&y, &cand);
+        }
+        break;
+      case RF_ABSORB:
+        for (uint32_t i = 0; i < y.n; i++)
+          if (y.l[i].kind == GL_REPEAT && sh.live[i]) at[an++] = i;
+        for (uint32_t tries = an < 4 ? an : 4; tries && !done; tries--) { // what is behind it, in front of it, or the next block
+          const uint32_t block = at[rng_below(r, an)];
+          done = gen_absorb(&y, block, core) || gen_absorb_front(&y, block, core) || gen_merge(&y, block, core);
+        }
+        break;
+      case RF_CONSTANT: { // a far number that another number is equal or near to
+        uint8_t used[GEN_CONSTS] = {0};
+        uint32_t unused = NONE;
+        for (uint32_t i = 0; i < y.n; i++)
+          for (int k = 0; k < 2; k++)
+            for (uint32_t t = 0; t < y.l[i].x[k].n; t++) {
+              const gen_expr *e = &y.l[i].x[k];
+              if (e->kind[t] == GT_CONST && e->v[t] < GEN_CONSTS) used[e->v[t]] = 1;
+              if (e->kind[t] == GT_NUM && (y.l[i].kind == GL_EMIT || y.l[i].kind == GL_CALL) && sh.live[i] && abs(signed_value(e->v[t], core)) > 16 &&
+                  an < 4 * GEN_LINES)
+                at[an++] = (i * 2 + (uint32_t)k) * 8 + t;
+            }
+        for (uint32_t k = GEN_CONSTS; k-- > 0;)
+          if (!used[k]) unused = k;
+        for (uint32_t tries = unused == NONE ? 0 : an < 6 ? an : 6; tries && !done; tries--) {
+          const uint32_t p = at[rng_below(r, an)];
+          set(&y, &cand);
+          if (!gen_bind(&y, p / 16, (int)(p / 8 % 2), p % 8, unused, core)) continue;
+          uint32_t uses = 0; // alone it is no structure
+          for (uint32_t i = 0; i < y.n; i++)
+            for (int k = 0; k < 2; k++)
+              for (uint32_t t = 0; t < y.l[i].x[k].n; t++) uses += y.l[i].x[k].kind[t] == GT_CONST && y.l[i].x[k].v[t] == unused;
+          done = uses > 1;
+        }
+        if (!done) set(&y, &cand);
+        break;
+      }
+      case RF_SHARE: // two groups of 2 to 6 instructions that are alike
+        for (uint32_t lines = 6; lines >= 2 && an < 3 * GEN_LINES; lines--)
+          for (uint32_t i = 0; i + 2 * lines <= y.n && an < 3 * GEN_LINES; i++)
+            for (uint32_t j = i + lines; j + lines <= y.n && an < 3 * GEN_LINES; j++)
+              if (sh.live[i] && sh.live[j] && alike(&y, i, j, lines)) at[an++] = (i * GEN_LINES + j) * 8 + lines;
+        for (uint32_t tries = an < 4 ? an : 4; tries && !done; tries--) {
+          const uint32_t p = at[rng_below(r, an)];
+          done = gen_share(&y, p / 8 / GEN_LINES, p / 8 % GEN_LINES, p % 8, core);
+        }
+        break;
+      case RF_PARAMETER: // a number of a function with two calls or more: they can differ in it then
+      case RF_INLINE_ONE: // a function with one call does nothing a line does not
+      case RF_INLINE: {
+        for (uint32_t d = 0; d < y.n; d++) {
+          if (y.l[d].kind != GL_DEF || sh.match[d] >= y.n) continue;
+          uint32_t calls = 0, live = NONE;
+          int taken[2] = {0, 0};
+          for (uint32_t i = 0; i < y.n; i++)
+            if (y.l[i].kind == GL_CALL && y.l[i].callee == d) calls++, live = sh.live[i] ? i : live;
+          if (live == NONE) continue;
+          if (kind != RF_PARAMETER) {
+            if ((calls == 1) == (kind == RF_INLINE_ONE)) at[an++] = live;
+            continue;
+          }
+          for (uint32_t i = d + 1; i < sh.match[d]; i++)
+            for (int k = 0; k < 2; k++)
+              for (uint32_t t = 0; t < y.l[i].x[k].n; t++)
+                if (y.l[i].x[k].kind[t] == GT_ARG && y.l[i].x[k].v[t] < 2) taken[y.l[i].x[k].v[t]] = 1;
+          if (calls < 2 || (taken[0] && taken[1])) continue;
+          for (uint32_t i = d + 1; i < sh.match[d]; i++)
+            for (int k = 0; k < 2; k++)
+              for (uint32_t t = 0; t < y.l[i].x[k].n; t++)
+                if (y.l[i].x[k].kind[t] == GT_NUM && an < 4 * GEN_LINES) at[an++] = ((i * 2 + (uint32_t)k) * 8 + t) * 2 + (uint32_t)taken[0];
+        }
+        if (!an) break;
+        const uint32_t p = at[rng_below(r, an)];
+        done = kind == RF_PARAMETER ? gen_parameter(&y, p / 32, (int)(p / 16 % 2), p / 2 % 8, p % 2, core) : gen_inline(&y, p, core, 0, 0);
+        break;
+      }
+      default: // RF_UNWRAP: a block that repeats once; RF_UNROLL: one that repeats more often
+        for (uint32_t i = 0; i < y.n; i++)
+          if (sh.live[i] && unrollable(&y, sh.match, i) && (kind == RF_UNWRAP ? y.l[i].x[0].v[0] == 1 : y.l[i].x[0].v[0] > 1 && y.l[i].x[0].v[0] <= 4))
+            at[an++] = i; // a long block stays a block
+        if (an) done = gen_unroll(&y, at[rng_below(r, an)], core, 0, 0);
+        break;
+    }
+    if (!done || !keeps(&y, core, max_length)) continue;
+    set(x, &y);
+    if (how) *how = names[kind];
+    return 1;
+  }
+  if (!simpler) return 0;
+  set(x, &cand);
+  if (how) *how = "simplify";
+  return 1;
 }
 
 genome_mix gen_mix_default(void) {
