@@ -41,13 +41,16 @@ void gen_from_genome(gen *x, const genome *g);
 // (info_b: gen_compile_info() of b; may be 0 when b is a), and b's
 // constants become their numbers. The constants are a's. The slots must
 // keep blocks whole; the child is then well formed.
-// Two more kinds of slot: a `repeat 1` line and an `end` line.
-enum { SLOT_REPEAT = SLOT_NEW + 1, SLOT_END };
+// More kinds of slot: a `repeat 1` line, an `end` line, a `def` line, and a
+// call of no function yet.
+enum { SLOT_REPEAT = SLOT_NEW + 1, SLOT_END, SLOT_DEF, SLOT_CALL };
 void gen_rebuild(gen *child, const gen *a, const gen *b, const slot *s, uint32_t n, uint32_t core_size, rng *r,
                  const genome_style *style, const gen_info *info_b);
 
 // The rewrites of the kinds that make structure, alone: each leaves the
-// warrior as it is. 0, and x as it was, when the rewrite is not possible.
+// warrior as it is. 0, and x as it was, when the rewrite is not possible;
+// each compiles the generator before and after, and does not apply when the
+// warrior would differ.
 // gen_wrap(): the lines first .. end-1, whole units of one sequence and no
 // def, go into a `repeat 1`, which is line `first` then. Not with a call
 // among them while a line refers to a line of a function from outside it:
@@ -69,9 +72,28 @@ int gen_fold(gen *x, uint32_t line, uint32_t core_size);
 int gen_unroll(gen *x, uint32_t line, uint32_t core_size, uint32_t *copies, uint32_t *lines);
 int gen_bind(gen *x, uint32_t line, int k, uint32_t t, uint32_t c, uint32_t core_size);
 
+// The rewrites of the kinds that make and use functions.
+// gen_extract(): the lines first .. end-1, whole units of one sequence and
+// no def, become a function behind the last line (*def its line, may be 0)
+// and a call at `first`. What the lines use of a loop around them or of the
+// arguments of the function they are in becomes the new function's
+// arguments: at most 2 such values.
+// gen_parameter(): the number that is token t of operand k of `line`, a line
+// of a function, becomes its argument j (0, 1), and every call of the
+// function passes the number: so not when a line of the function uses that
+// argument for something else.
+// gen_inline(): the call at `line` becomes the lines of its function, the
+// arguments filled in; *at and *lines (may be 0): where they are and how
+// many. The function goes when this was its only call and nothing else
+// refers to its lines.
+int gen_extract(gen *x, uint32_t first, uint32_t end, uint32_t core_size, uint32_t *def);
+int gen_parameter(gen *x, uint32_t line, int k, uint32_t t, uint32_t j, uint32_t core_size);
+int gen_inline(gen *x, uint32_t line, uint32_t core_size, uint32_t *at, uint32_t *lines);
+
 // How often gen_breed() picks each kind without a mix of its own: the
 // weights of genome_mix_default(), and repeat 30, count 40, fold 30, unroll
-// 15, index 40, expression 40, constant 40 (a fifth of the changes).
+// 15, index 40, expression 40, constant 40, extract 20, parameter 20, call
+// 25, inline 10, transplant 15 (a quarter of the changes).
 genome_mix gen_mix_default(void);
 
 // One change of the given kind (CH_* of genome.h). Returns 0 and leaves x as
