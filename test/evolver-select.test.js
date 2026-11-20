@@ -67,7 +67,7 @@ test('--simple: a candidate plays the panel in checkpoints and stops when it can
   const BATCHES = 8, CHECKED = 16, F = 100, P = 10;
   // --simple sets the screen's members, the stage and the diversity itself
   // 2000 cycles (TINY): there the value bound stopped near twins of members that then stayed in their place (#162)
-  const args = [...without(TINY, '--screen-members', '--stage', '--diversity', '--panel-rounds'), '--simple', '--panel-rounds', String(F), '--list', '16'];
+  const args = [...without(TINY, '--screen-members', '--stage', '--diversity', '--panel-rounds', '--screen-stop'), '--simple', '--panel-rounds', String(F), '--list', '16'];
   // --screen-check: everyone plays the whole match, every row is logged, the rule replayed
   run(join(tmp, 'simple-check'), [...args, '--screen-check', '3', '--threads', '2', '--batches', String(CHECKED)]);
   const chk = events(join(tmp, 'simple-check'));

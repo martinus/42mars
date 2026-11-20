@@ -4255,6 +4255,7 @@ static const char *params_error(const params *p) {
     return p->difference == DIFF_SHAPE ? "--difference shape with --pushoff pareto-sd only, not pareto or pareto-age" : "--difference ahead with --pushoff pareto-sd only, not pareto or pareto-age";
   if (p->clear > 0 && !p->pareto) return "--clear with --pushoff pareto, pareto-age or pareto-sd only";
   if (p->screen_stop > 0 && p->screen_check > 0) return "--screen-stop or --screen-check, not both";
+  if (p->simple && !stops) return "--simple needs --screen-stop or --screen-check above 0";
   if (stops && (p->race || p->map_elites)) return "--screen-stop and --screen-check not with --race or --map-elites";
   if (p->tune_novel && p->map_elites) return "--tune-novel not with --map-elites";
   if (p->tune_novel && p->gen) return "--tune-novel not with --genome gen: it changes the operands of a list";
@@ -4426,8 +4427,9 @@ int main(int argc, char **argv) {
       p->noise = d;
     }
     else if (!strcmp(a, "--screen-stop") || !strcmp(a, "--screen-check")) {
-      if (!number || !(d > 0)) usage();
-      if (!strcmp(a, "--screen-stop")) p->screen_stop = new_stop = d;
+      const int stop = !strcmp(a, "--screen-stop");
+      if (!number || d < 0 || (!stop && !(d > 0))) usage(); // --screen-stop 0: off
+      if (stop) p->screen_stop = new_stop = d;
       else p->screen_check = new_check = d;
     }
     else if (!strcmp(a, "--sharing")) {
@@ -4469,7 +4471,7 @@ int main(int argc, char **argv) {
     char isl[1100];
     snprintf(isl, sizeof isl, "%s/islands.txt", dir);
     if (access(isl, F_OK) == 0) { // a run of islands that continues
-      if (new_options || islands_option || changes_given || new_stop > 0 || new_check > 0 || new_reintroduce >= 0 || new_list || new_tune >= 0 || new_ahead >= 0) {
+      if (new_options || islands_option || changes_given || new_stop >= 0 || new_check > 0 || new_reintroduce >= 0 || new_list || new_tune >= 0 || new_ahead >= 0) {
         fprintf(stderr, "42evolve: %s has islands; only --threads, --batches and --seconds go with it\n", dir);
         return 2;
       }
@@ -4505,7 +4507,7 @@ int main(int argc, char **argv) {
     if (p->simple) { // the value from the panel alone, no games among members; z 3 unless given
       p->average_panel = p->member_games_none = 1;
       if (!diversity_given) p->distance_panel = 1;
-      if (!(p->screen_stop > 0) && !(p->screen_check > 0)) p->screen_stop = 3;
+      if (new_stop < 0 && !(p->screen_check > 0)) p->screen_stop = 3;
     }
     if (!stage_given) p->stage = p->screen_rounds;
     // the defaults of the later options, for new runs only (a state before
@@ -4525,6 +4527,12 @@ int main(int argc, char **argv) {
     if (!pushoff_given) {
       p->pareto = 3;
       if (params_error(p)) p->pareto = 0;
+    }
+    // new runs: --screen-stop 3, not where it does not go (--race, --map-elites): it stopped 10,639 of 17,025
+    // children of kd1 in the screen, 22% of all rounds, and missed none of the 2,400 survivors (docs/evolver.md)
+    if (new_stop < 0 && !(p->screen_check > 0)) {
+      p->screen_stop = 3;
+      if (params_error(p)) p->screen_stop = 0;
     }
     if (!draw_seed_given) p->draw_seed = p->seed;
     if (p->simple) { // one length of match, the panel rounds; its first screen rounds are kept as the first stage
@@ -4590,9 +4598,14 @@ int main(int argc, char **argv) {
       compute_values(&r);
       event_values(&r);
     }
-    if (new_stop > 0 || new_check > 0) { // the screen from now on
-      if (new_stop > 0) r.p.screen_stop = new_stop, r.p.screen_check = 0;
+    if (new_stop >= 0 || new_check > 0) { // the screen from now on; --screen-stop 0 turns it off
+      if (new_stop >= 0) r.p.screen_stop = new_stop, r.p.screen_check = 0;
       if (new_check > 0) r.p.screen_check = new_check, r.p.screen_stop = 0;
+      const char *wrong = params_error(&r.p);
+      if (wrong) {
+        fprintf(stderr, "42evolve: %s\n", wrong);
+        return 2;
+      }
       fprintf(r.events, "{\"type\":\"screen-options\",\"batch\":%u,\"screenStop\":%.17g,\"screenCheck\":%.17g}\n", r.batch,
               r.p.screen_stop, r.p.screen_check);
     }

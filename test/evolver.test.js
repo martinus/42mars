@@ -533,7 +533,7 @@ test('--start: the first batch starts from the warriors of a folder', { skip }, 
   assert.equal(b0.filter((e) => e.type === 'leave').length, n - 8);
   assert.equal(checkValues(mv), 2);
   // --simple: nobody stops in the first batch, the list is empty; every start warrior enters
-  run(join(tmp, 'start-many-simple'), [...without(TINY, '--list', '--diversity'), '--list', '8', '--simple', '--start', many, '--threads', '2', '--batches', '1']);
+  run(join(tmp, 'start-many-simple'), [...without(TINY, '--list', '--diversity', '--screen-stop'), '--list', '8', '--simple', '--start', many, '--threads', '2', '--batches', '1']);
   const sv = events(join(tmp, 'start-many-simple'));
   assert.equal(sv.filter((e) => e.type === 'enter' && e.batch === 0 && e.ops === 'start').length, n);
 });
