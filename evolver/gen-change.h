@@ -12,6 +12,11 @@
 // insert, delete, duplicate, move and cross over take runs of units of one
 // block.
 //
+// The kinds that make structure (CH_REPEAT .. CH_CONSTANT, docs/evolver-gen.md)
+// are a rewrite that leaves the warrior as it is, and one variation of what
+// the rewrite made variable: 42evolve skips a child whose warrior it has
+// seen, so a rewrite alone would never enter the list.
+//
 // No change gives a generator that is not well formed, has more instruction
 // lines than max_length, writes nothing, or is truncated: such a change does
 // not apply (0), like an insert at the longest length.
@@ -36,15 +41,46 @@ void gen_from_genome(gen *x, const genome *g);
 // (info_b: gen_compile_info() of b; may be 0 when b is a), and b's
 // constants become their numbers. The constants are a's. The slots must
 // keep blocks whole; the child is then well formed.
+// Two more kinds of slot: a `repeat 1` line and an `end` line.
+enum { SLOT_REPEAT = SLOT_NEW + 1, SLOT_END };
 void gen_rebuild(gen *child, const gen *a, const gen *b, const slot *s, uint32_t n, uint32_t core_size, rng *r,
                  const genome_style *style, const gen_info *info_b);
+
+// The rewrites of the kinds that make structure, alone: each leaves the
+// warrior as it is. 0, and x as it was, when the rewrite is not possible.
+// gen_wrap(): the lines first .. end-1, whole units of one sequence and no
+// def, go into a `repeat 1`, which is line `first` then. Not with a call
+// among them while a line refers to a line of a function from outside it:
+// such a label means the nearest call's instance, and the block would
+// change which one that is (the same for gen_unroll()).
+// gen_fold(): the instructions at line and line + 1 become a `repeat 2` at
+// `line` around one instruction: the same opcode, modifier and modes, each
+// pair of operands two numbers (then a + i*d), the same expression, or each
+// its own label; nothing else may refer to the second.
+// gen_unroll(): the repeat at `line`, whose count is a number from 1 to 16,
+// becomes its repetitions, `i` their numbers; not when something uses the
+// block's length, or its end while no instruction, repeat or call follows. *copies and *lines (may be 0): how many, and the lines of each.
+// gen_bind(): the far number that is token t of operand k of `line` becomes
+// constant c, which must be unused; the other far numbers that are equal to
+// it, its negative, its double or within 16 of it follow as c, 0-c, c*2,
+// c+d, where their expressions have the room.
+int gen_wrap(gen *x, uint32_t first, uint32_t end, uint32_t core_size);
+int gen_fold(gen *x, uint32_t line, uint32_t core_size);
+int gen_unroll(gen *x, uint32_t line, uint32_t core_size, uint32_t *copies, uint32_t *lines);
+int gen_bind(gen *x, uint32_t line, int k, uint32_t t, uint32_t c, uint32_t core_size);
+
+// How often gen_breed() picks each kind without a mix of its own: the
+// weights of genome_mix_default(), and repeat 30, count 40, fold 30, unroll
+// 15, index 40, expression 40, constant 40 (a fifth of the changes).
+genome_mix gen_mix_default(void);
 
 // One change of the given kind (CH_* of genome.h). Returns 0 and leaves x as
 // it was when the kind does not apply.
 int gen_change(gen *x, const gen *p2, rng *r, uint32_t core_size, uint32_t max_length, const genome_style *style,
                int kind);
 
-// A child of p1 with 1 or more changes, as genome_breed().
+// A child of p1 with 1 or more changes, as genome_breed(); mix 0 is
+// genome_mix_default(), the changes of a list.
 void gen_breed(gen *child, const gen *p1, const gen *p2, rng *r, uint32_t core_size, uint32_t max_length,
                const genome_style *style, const genome_mix *mix, char *ops, size_t ops_n);
 

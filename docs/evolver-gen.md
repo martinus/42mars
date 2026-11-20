@@ -1,6 +1,6 @@
 # Generators: a genome that writes the warrior
 
-Design, 20th November 2026. Status: steps 1 and 2a are built. Step 1 is the language (`evolver/generator.c`, the program `42gen`). Step 2a is the changes of a list on generators (`evolver/gen-change.c`) and `42evolve --genome gen`, which so far is the run on lists, event for event. The changes that make structure (2b, 2c) and steps 3 and 4 are the plan.
+Design, 20th November 2026. Status: steps 1, 2a and 2b are built. Step 1 is the language (`evolver/generator.c`, the program `42gen`). Step 2a is the changes of a list on generators (`evolver/gen-change.c`) and `42evolve --genome gen`; with the changes of a list it is the run on lists, event for event. Step 2b is seven kinds of change that make and vary blocks, steps and constants, which `--genome gen` draws by default. Functions (2c) and steps 3 and 4 are the plan.
 
 ## The goal
 
@@ -79,7 +79,7 @@ build/42gen --from warriors/dwarf.red    # a warrior as a generator, one line pe
 | | value |
 |---|---|
 | `c0` .. `c15` | a constant |
-| `i`, `j`, `k` | the repetition (from 0) of the innermost `repeat` running, the next one out, the third; 0 without one. A function sees the loops of its caller |
+| `i`, `j`, `k` | the repetition (from 0) of the innermost `repeat` around the line, the next one out, the third; 0 without one. The lines of a function do not see the loops of its caller: `f(i)` passes one |
 | `x`, `y` | the arguments of the call running; 0 outside a function or without that argument. An argument is evaluated where it is used, so a label passed as an argument stays a place |
 | `label` | the distance from this instruction to the first instruction of that line (of an `end`: to the cell behind its block), as a label in Redcode |
 | `label.len` | how many instructions that line wrote (a `repeat`, a call, a `def`: its block) |
@@ -152,22 +152,36 @@ A list genome becomes a generator line by line: an operand that is a reference b
 - **A crossover** takes units of one sequence of the second parent, and the functions that they call. A label of a line that does not come along becomes its distance in the second parent's warrior, a constant its number. A `def` goes to the top level only.
 - **`shared-constant` and `tune`** take the far numbers in the operands of instructions and in the arguments of calls. A count is not one.
 
-**The new kinds.** Each rewrites and then varies (principle 5):
+**The new kinds.** Each rewrites and then varies (principle 5). The first seven are built (step 2b), the functions are step 2c:
 
 | kind | rewrite, which leaves the warrior as it is | variation |
 |---|---|---|
-| `repeat` | a run of units goes into `repeat 1` | the count becomes 2 to 8; or one operand gets `+ i*d` |
-| `count` | | a count ±1, doubled, halved, or new |
-| `fold` | two neighbouring instructions with the same opcode, modifier and modes become `repeat 2` with operands `a + i*d`, d their difference | the count grows: the two are continued as a row |
-| `unroll` | a `repeat` becomes its repetitions, `i` replaced by its numbers | one change in one of them: the copies may differ now |
-| `index` | | inside a `repeat`: an operand gets a term `i*d`, or its d changes |
-| `expression` | | an operand's expression: a leaf replaced, an operation with a new leaf added, a part removed |
-| `constant` | a number becomes `cN`; other operands with the same number, its negative, its double or within ±16 of it become `cN`, `0-cN`, `2*cN`, `cN+d` | the constant moves by a `tune` step: every use moves with it |
+| `repeat` | a run of units goes into `repeat 1` (`gen_wrap()`) | the count becomes 2 to 8, as far as the length allows; half of the time one operand of one of its instructions gets `+ i*d` |
+| `count` | | a number of a count: one more or less (half of the time), doubled, halved, or 0 to 8; a count without a number gets `+ 1` or `- 1` |
+| `fold` | two neighbouring instructions with the same opcode, modifier and modes become a `repeat 2` around one (`gen_fold()`): two numbers become `a + i*d`, d their difference; an expression that both have stays; each one's own label stays | the count becomes 3 to 9: the two are continued as a row |
+| `unroll` | a `repeat` whose count is a number up to 16 becomes its repetitions, `i` replaced by their numbers and what that leaves (`+ 0`, `2*5`) worked out (`gen_unroll()`) | one point change (opcode, modifier, a mode or an operand) in one of them: the copies may differ now |
+| `index` | | an operand inside a `repeat`: the d of its `i*d` changes, or it gets `+ i*d` (d 1 to 8 or a far value; a quarter of the time the `i` of a loop further out) |
+| `expression` | | an operand or an argument: a value replaced (40%), one more operation with a new value (40%), or the last operation removed and one of its sides kept (20%) |
+| `constant` | a far number becomes an unused `cN`; other far numbers that are the same, its negative, its double or within 16 of it become `cN`, `0-cN`, `cN*2`, `cN+d` (`gen_bind()`) | the constant moves by a `tune` step: every use moves with it. Half of the time (when a constant is in use) one of those moves instead |
 | `extract` | a run of units becomes a `def` and one call | a second call somewhere else |
 | `parameter` | a number in a function becomes `x` or `y`; every call passes that number | one call passes another |
 | `call` | | one more call of a function, with the arguments of an existing call, one of them changed |
 | `inline` | a call becomes the function's lines, arguments filled in | one change in them |
 | `transplant` | | a function of the second parent and a call of it |
+
+- **Live lines.** A change of a line takes a line that the warrior has. A line of a function nobody calls, or of a block that repeats 0 times, gives the same warrior whatever it becomes, and `42evolve` has seen that one. In a generator without structure every line is live.
+- **A constant that nothing uses any more is 0** after breeding, so that the text of a generator shows the ones that matter.
+- **Where a rewrite does not apply,** because it would not keep the warrior:
+  - a wrap or an unroll with a call among the lines, while some line refers to a line of a function from outside that function: such a label means the nearest call's instance, and the block changes which one that is;
+  - an unroll when something uses the block's length, or its end while no instruction, repeat or call follows it, or when a count inside the block uses a place of the block (a count sees the repetitions before its own);
+  - a fold when a third line refers to the second instruction;
+  - a constant's double or negative only as integers, not mod the core size: the number may be divided further on.
+- **How often a change leaves the warrior as it was,** on generators grown from lists by 200,000 changes that each gave another warrior (the default mix; such a child is skipped as seen):
+
+| | | | | | |
+|---|---|---|---|---|---|
+| `repeat` 0.0% | `count` 0.1% | `fold` 0.0% | `unroll` 9% | `index` 14% | `expression` 8% |
+| `constant` 1.5% | `opcode` 6% | `modifier` 14% | `a-mode`, `b-mode` 12% | `a-operand`, `b-operand` 5% | `move` 10% |
 
 Nobody writes a function: `extract` makes one from lines that evolved, `call` and `parameter` reuse and vary it, `transplant` and the crossovers carry it to other warriors, and a function nobody calls is removed.
 
@@ -179,7 +193,7 @@ Nobody writes a function: `extract` makes one from lines that evolved, `call` an
 - **The `genome` struct** has a `gen` next to its list (26 KB instead of 4). For a generator the list holds the compiled warrior, so `make_warrior()`, `genome_hash()`, `genome_text()`, the names, the style and the events' `length` need no change. `genome_breed()`, `genome_save()` and `genome_load()` branch on the kind; a random or a start warrior is made as a list and becomes a generator line for line (`genome_as_generator()`).
 - **Random starts** are generators without structure, drawn as today: structure has to pay to appear.
 - **Events** carry the generator's text next to the code (`"gen"`), `best.gen` is the generator of `best.red`, and the state file has the generator's numbers (`gen_save()`).
-- **`--changes`** takes the new names. The default mix with `--genome gen` gives the new kinds a share that step 2 sets by measurement.
+- **`--changes`** takes the new names, with `--genome gen` only. Without `--changes` a run on generators draws the weights of a list and `repeat` 30, `count` 40, `fold` 30, `unroll` 15, `index` 40, `expression` 40, `constant` 40: a fifth of the changes. A first guess; step 2 sets it by measurement.
 - **Refused with `--genome gen` at first:** `--tune-novel`, which writes into the list's operands. Later it tunes the numbers and constants of the generator. (`--optimize` takes a warrior file and stays a list.)
 - **The dashboard** shows the generator's text above the code (step 4). No parser in JavaScript: the text comes from the events.
 

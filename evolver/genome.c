@@ -20,7 +20,7 @@ static uint32_t wrap(int64_t v, uint32_t core) {
 // core (1/2, 1/3, 2/3, 1/4, 3/4) give or take 20, the distances bombers and
 // replicators use (an idea from YACE, which adds core/2, /3 or /4 to a small
 // value in half of its numbers). Draws nothing extra with fraction 0.
-static uint32_t far_value(rng *r, uint32_t core, const genome_style *st) {
+uint32_t genome_far_value(rng *r, uint32_t core, const genome_style *st) {
   const double fraction = st ? st->fraction : 0;
   if (fraction > 0 && rng_chance(r, fraction)) {
     const uint32_t n = 2 + rng_below(r, 3), j = 1 + rng_below(r, n - 1);
@@ -54,7 +54,7 @@ static void random_operand(rng *r, uint32_t core, uint32_t n, const genome_style
     *v = wrap(rng_range(r, -16, 16), core);
   } else {
     *ref = 0;
-    *v = far_value(r, core, st);
+    *v = genome_far_value(r, core, st);
   }
 }
 
@@ -226,7 +226,7 @@ void genome_mutate_operand(rng *r, uint32_t core, uint32_t n, int64_t offset, co
   }
   if (x < 35) *v = wrap((int64_t)*v + (rng_below(r, 2) ? 1 : -1) * rng_range(r, 1, 4), core);
   else if (x < 55) *v = wrap(rng_range(r, -16, 16), core);
-  else if (x < 75) *v = far_value(r, core, st);
+  else if (x < 75) *v = genome_far_value(r, core, st);
   else if (x < 85) *v = wrap(-(int64_t)*v, core);
   else if (x < 92) *v = rng_below(r, 2) ? wrap((int64_t)*v * 2, core) : *v / 2;
   else *ref = 1, *v = rng_below(r, n);
@@ -242,11 +242,11 @@ uint32_t genome_block(rng *r, uint32_t len) {
 // ---------------------------------------------------------------- one change
 
 const char *genome_change_name(int kind) {
-  static const char *const names[CH_COUNT] = {
+  static const char *const names[CH_ALL] = {
       "opcode", "modifier", "a-mode", "b-mode", "a-operand", "b-operand", "org", "replace", "insert", "delete",
       "duplicate", "move", "crossover-insert", "crossover-replace", "related-opcode", "related-mode", "shared-constant",
-      "tune"};
-  return kind >= 0 && kind < CH_COUNT ? names[kind] : "?";
+      "tune", "repeat", "count", "fold", "unroll", "index", "expression", "constant"};
+  return kind >= 0 && kind < CH_ALL ? names[kind] : "?";
 }
 
 // The family of an opcode: a number shared by related ones, -1 alone (MOV).
@@ -415,21 +415,21 @@ int genome_change(genome *x, const genome *p2, rng *r, uint32_t core, uint32_t m
 genome_mix genome_mix_default(void) {
   // per mille; the point changes are 540 of them
   static const uint32_t w[CH_COUNT] = {81, 81, 54, 54, 108, 108, 27, 27, 100, 100, 70, 70, 60, 60, 0, 0, 0, 0};
-  genome_mix m;
+  genome_mix m = {{0}};
   memcpy(m.w, w, sizeof w);
   return m;
 }
 
 int genome_mix_parse(genome_mix *m, const char *text) {
   genome_mix out = {{0}};
-  uint8_t named[CH_COUNT] = {0};
+  uint8_t named[CH_ALL] = {0};
   uint64_t total = 0;
   const char *p = text;
   for (;;) {
     const char *eq = strchr(p, '=');
     if (!eq) return -1;
     int kind = -1;
-    for (int k = 0; k < CH_COUNT; k++) {
+    for (int k = 0; k < CH_ALL; k++) {
       const char *name = genome_change_name(k);
       if (strlen(name) == (size_t)(eq - p) && !strncmp(p, name, (size_t)(eq - p))) kind = k;
     }
@@ -453,7 +453,7 @@ int genome_mix_parse(genome_mix *m, const char *text) {
 size_t genome_mix_text(const genome_mix *m, char *buf, size_t n) {
   size_t len = 0;
   if (n) buf[0] = 0;
-  for (int k = 0; k < CH_COUNT; k++) {
+  for (int k = 0; k < CH_ALL; k++) {
     if (!m->w[k]) continue;
     const int c = snprintf(len < n ? buf + len : 0, len < n ? n - len : 0, "%s%s=%u", len ? "," : "",
                            genome_change_name(k), m->w[k]);

@@ -41,7 +41,8 @@ enum {
 enum {
   GT_NUM,   // v: a value mod the core size; stands for the one between -core/2 and core/2
   GT_CONST, // constant v
-  GT_INDEX, // the repetition, from 0, of the innermost repeat running (v 0), the next one out (1), the third (2)
+  GT_INDEX, // the repetition, from 0, of the innermost repeat around the line (v 0), the next one out (1), the third (2); a function's
+            // lines do not see the loops of its caller
   GT_ARG,   // argument v (0, 1) of the call running
   GT_POS,   // the distance from this instruction to the first one of line v (of a GL_END: behind its block)
   GT_LEN,   // the number of instructions line v wrote
