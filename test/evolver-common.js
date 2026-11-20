@@ -36,7 +36,7 @@ export let unit = prebuilt ? program(prebuilt, 'evolver-test') : null;
 export let spectrum = prebuilt ? program(prebuilt, '42spectrum') : null;
 export const skip = noCc || (process.platform === 'win32' && 'POSIX only') || (prebuilt && !existsSync(evolve) && `no 42evolve in ${prebuilt}`) || false;
 
-const EVOLVER = ['evolver/evolve.c', 'evolver/genome.c', 'evolver/pushoff.c', 'evolver/names.c', 'evolver/style.c'];
+const EVOLVER = ['evolver/evolve.c', 'evolver/genome.c', 'evolver/generator.c', 'evolver/gen-change.c', 'evolver/pushoff.c', 'evolver/names.c', 'evolver/style.c'];
 
 // 2000 cycles, not the 8000 of the tiny hill: evolved warriors soon survive whole rounds, and the tests took
 // 2.4 times as long with them
@@ -85,8 +85,8 @@ export async function setup() {
   if (!prebuilt) {
     [evolve, unit, spectrum] = await Promise.all([
       builtProgram('42evolve', EVOLVER, ['-pthread', '-Ilib']),
-      builtProgram('evolver-test', ['test/c/evolver-test.c', 'evolver/genome.c', 'evolver/pushoff.c', 'evolver/names.c'], ['-Ilib', '-Ievolver']),
-      builtProgram('42spectrum', ['evolver/spectrum.c', 'evolver/genome.c'], ['-pthread', '-Ilib']),
+      builtProgram('evolver-test', ['test/c/evolver-test.c', 'evolver/genome.c', 'evolver/generator.c', 'evolver/gen-change.c', 'evolver/pushoff.c', 'evolver/names.c'], ['-Ilib', '-Ievolver']),
+      builtProgram('42spectrum', ['evolver/spectrum.c', 'evolver/genome.c', 'evolver/generator.c', 'evolver/gen-change.c'], ['-pthread', '-Ilib']),
     ]);
   }
   run(join(tmp, 'one'), [...TINY, '--threads', '1', '--batches', '6']);

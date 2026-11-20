@@ -90,6 +90,7 @@ typedef struct {
   double screen_check;      // --screen-check z: plays the whole screen, logs what --screen-stop z would have done
   uint32_t tune_novel;      // --tune-novel N: every N batches the constants of the most novel survivor that left, 0 never
   uint32_t pick_sample;     // --pick-sample: warriors of the round robin of pick_panel(), 0 PICK_SAMPLE
+  int gen;                  // --genome gen: a warrior's genome is a generator (generator.h), not the list of its instructions
 } params;
 
 enum { PARENTS_VALUE, PARENTS_DUEL };
@@ -914,6 +915,7 @@ static void load_starts(run *r) {
     }
     const uint32_t k = r->start_n++;
     genome_from_code(&r->starts[k], m42_warrior_code(w), wl, m42_warrior_start(w), r->p.rules.core_size);
+    if (r->p.gen) genome_as_generator(&r->starts[k]);
     m42_warrior_text(w, M42_NAME, r->start_name[k], sizeof r->start_name[k]);
     rng g = rng_seed(r->p.seed, 0x7374617274u, k); // "start"
     r->start_noun[k] = rng_below(&g, NAME_NOUNS);
@@ -929,10 +931,25 @@ static void load_starts(run *r) {
 
 // ---------------------------------------------------------------- events
 
+// The text of g's generator, to be freed; 0 when g is a list.
+static char *generator_text(const genome *g, uint32_t core) {
+  if (!g->generated) return 0;
+  const size_t n = gen_text(&g->p, core, 0, 0) + 1;
+  char *text = xmalloc(n);
+  gen_text(&g->p, core, text, n);
+  return text;
+}
+
+// The warrior's code, and behind it "gen": its generator (--genome gen).
 static void write_code(FILE *f, const genome *g, uint32_t core) {
   char text[GENOME_MAX * 48 + 64];
   genome_text(g, core, text, sizeof text);
   json_str(f, text, 0);
+  char *gen = generator_text(g, core);
+  if (!gen) return;
+  fputs(",\"gen\":", f);
+  json_str(f, gen, 0);
+  free(gen);
 }
 
 static void event_start(run *r) {
@@ -944,7 +961,7 @@ static void event_start(run *r) {
           "\"rounds\":%u,\"screenRounds\":%u,\"benchEvery\":%u,\"benchRounds\":%u,\"initLength\":%u,"
           "\"screenFactor\":%.17g,\"alpha\":%.17g,\"reintroduce\":%.17g,\"sd\":\"%s\",\"seed\":%" PRIu64
           ",\"select\":\"%s\",\"rotate\":%u,\"fractions\":%.17g,\"race\":%u,\"raceKeep\":%u,\"prior\":\"%s\","
-          "\"parents\":\"%s\",\"screenMembers\":%u,\"noise\":%.17g,\"stage\":%u,\"fill\":%s,\"panelRounds\":%u,\"diversity\":\"%s\",\"niche\":%u,\"panelChoice\":\"%s\",\"mapElites\":%s,\"crowding\":%s,\"specialists\":%s,\"sharing\":%.17g,\"screenStop\":%.17g,\"screenCheck\":%.17g,\"tuneNovel\":%u,\"average\":\"%s\",\"memberGames\":\"%s\",\"simple\":%s,\"drawSeed\":%" PRIu64 ",\"difference\":\"%s\",\"pushoff\":\"%s\",\"positions\":\"%s\",\"clear\":%.17g},"
+          "\"parents\":\"%s\",\"screenMembers\":%u,\"noise\":%.17g,\"stage\":%u,\"fill\":%s,\"panelRounds\":%u,\"diversity\":\"%s\",\"niche\":%u,\"panelChoice\":\"%s\",\"mapElites\":%s,\"crowding\":%s,\"specialists\":%s,\"sharing\":%.17g,\"screenStop\":%.17g,\"screenCheck\":%.17g,\"tuneNovel\":%u,\"average\":\"%s\",\"memberGames\":\"%s\",\"simple\":%s,\"drawSeed\":%" PRIu64 ",\"difference\":\"%s\",\"pushoff\":\"%s\",\"positions\":\"%s\",\"clear\":%.17g,\"genome\":\"%s\"},"
           "\"opponents\":",
           m42_version(), p->rules.core_size, p->rules.max_cycles, p->rules.max_processes, p->rules.max_length,
           p->rules.min_distance, r->panel_n, r->hold_n, p->list, p->batch, p->survivors, p->rounds, p->screen_rounds,
@@ -960,7 +977,7 @@ static void event_start(run *r) {
           p->map_elites ? "true" : "false", p->map_elites == ME_CROWDING ? "true" : "false",
           p->specialists ? "true" : "false", p->sharing, p->screen_stop, p->screen_check, p->tune_novel,
           p->average_panel ? "panel" : "all", p->member_games_none ? "none" : "all", p->simple ? "true" : "false", p->draw_seed,
-          difference_name(p->difference), p->pareto == 3 ? "pareto-sd" : p->pareto == 2 ? "pareto-age" : p->pareto ? "pareto" : "value", p->mirror ? "mirror" : "pmars", p->clear);
+          difference_name(p->difference), p->pareto == 3 ? "pareto-sd" : p->pareto == 2 ? "pareto-age" : p->pareto ? "pareto" : "value", p->mirror ? "mirror" : "pmars", p->clear, p->gen ? "gen" : "list");
   json_str(f, p->opponents, 0);
   fputs(",\"panelFiles\":", f);
   json_str(f, p->panel_files, 0);
@@ -1150,12 +1167,12 @@ static void save_state(run *r) {
   fprintf(f, "42evolve-state 1\n");
   fprintf(f, "rules %u %u %u %u %u\n", p->rules.core_size, p->rules.max_cycles, p->rules.max_processes,
           p->rules.max_length, p->rules.min_distance);
-  fprintf(f, "params %u %u %u %u %u %u %u %u %u %u %.17g %.17g %.17g %d %" PRIu64 " %d %u %.17g %u %u %d %d %u %.17g %u %d %u %d %u %d %d %.17g %.17g %.17g %u %d %d %d %" PRIu64 " %d %d %d %.17g\n",
+  fprintf(f, "params %u %u %u %u %u %u %u %u %u %u %.17g %.17g %.17g %d %" PRIu64 " %d %u %.17g %u %u %d %d %u %.17g %u %d %u %d %u %d %d %.17g %.17g %.17g %u %d %d %d %" PRIu64 " %d %d %d %.17g %d\n",
           p->panel, p->holdout, p->list, p->batch, p->survivors, p->rounds, p->screen_rounds, p->bench_every,
           p->bench_rounds, p->init_length, p->screen_factor, p->alpha, p->reintroduce, p->sd, p->seed, p->select,
           p->rotate, p->fractions, p->race, p->race_keep, p->prior, p->parents, p->screen_members, p->noise, p->stage, p->fill,
           p->panel_rounds, p->distance_panel, p->niche, p->map_elites, p->specialists, p->sharing, p->screen_stop, p->screen_check,
-          p->tune_novel, p->average_panel, p->member_games_none, p->simple, p->draw_seed, p->difference, p->pareto, p->mirror, p->clear);
+          p->tune_novel, p->average_panel, p->member_games_none, p->simple, p->draw_seed, p->difference, p->pareto, p->mirror, p->clear, p->gen);
   fprintf(f, "opponents %s\n", p->opponents);
   if (p->start[0]) fprintf(f, "start-dir %s\n", p->start);
   char mix[CH_COUNT * 32];
@@ -1167,7 +1184,7 @@ static void save_state(run *r) {
   fprintf(f, "reserve-next %u\nrotate-next %u\n", r->reserve_next, r->rotate_next);
   fprintf(f, "batch %u\nnext %" PRIu64 "\nbest %" PRIu64 " %.17g\nevents %ld\n", r->batch, r->next_id, r->best_id,
           r->best_holdout, events_size);
-  char text[GENOME_MAX * 40 + 64];
+  char text[GENOME_SAVE_MAX];
   // the members' slots: a later newcomer takes the lowest free one, so a
   // resumed run needs the holes where they were
   for (uint32_t i = 0; i < r->active_n; i++)
@@ -1295,12 +1312,12 @@ static int load_state(run *r, const char *path) {
       // --race-keep, --prior, --parents, --screen-members, --noise, --stage,
       // --fill; a state without them has none of them
       const int got = sscanf(line + 7,
-                             "%u %u %u %u %u %u %u %u %u %u %lg %lg %lg %d %" SCNu64 " %d %u %lg %u %u %d %d %u %lg %u %d %u %d %u %d %d %lg %lg %lg %u %d %d %d %" SCNu64 " %d %d %d %lg",
+                             "%u %u %u %u %u %u %u %u %u %u %lg %lg %lg %d %" SCNu64 " %d %u %lg %u %u %d %d %u %lg %u %d %u %d %u %d %d %lg %lg %lg %u %d %d %d %" SCNu64 " %d %d %d %lg %d",
                              &p->panel, &p->holdout, &p->list, &p->batch, &p->survivors, &p->rounds, &p->screen_rounds,
                              &p->bench_every, &p->bench_rounds, &p->init_length, &p->screen_factor, &p->alpha,
                              &p->reintroduce, &p->sd, &p->seed, &p->select, &p->rotate, &p->fractions, &p->race,
                              &p->race_keep, &p->prior, &p->parents, &p->screen_members, &p->noise, &p->stage, &p->fill, &p->panel_rounds,
-                             &p->distance_panel, &p->niche, &p->map_elites, &p->specialists, &p->sharing, &p->screen_stop, &p->screen_check, &p->tune_novel, &p->average_panel, &p->member_games_none, &p->simple, &p->draw_seed, &p->difference, &p->pareto, &p->mirror, &p->clear);
+                             &p->distance_panel, &p->niche, &p->map_elites, &p->specialists, &p->sharing, &p->screen_stop, &p->screen_check, &p->tune_novel, &p->average_panel, &p->member_games_none, &p->simple, &p->draw_seed, &p->difference, &p->pareto, &p->mirror, &p->clear, &p->gen);
       if (got < 15) goto bad; // the first version had 15; what a state lacks keeps its default
       if (got < 39) p->draw_seed = p->seed; // a state from before --draw-seed: the folder in the order of the seed
     } else if (!strncmp(line, "opponents ", 10)) {
@@ -1589,6 +1606,16 @@ static void bench(run *r, uint32_t slot) {
               r->p.rules.core_size == 8000 ? ";redcode-94nop" : ";redcode", w->name, w->id, r->p.seed, r->batch,
               w->holdout, r->hold_n, panel_avg(r, slot), text);
       fclose(b);
+    }
+    char *gen = generator_text(w->g, r->p.rules.core_size); // --genome gen: best.gen, the generator of best.red
+    if (gen) {
+      snprintf(path, sizeof path, "%s/best.gen", r->dir);
+      if ((b = fopen(path, "w")) != 0) {
+        fprintf(b, "; %s, warrior %" PRIu64 " of run seed %" PRIu64 ", batch %u: 42gen%s gives best.red's code\n%s", w->name, w->id,
+                r->p.seed, r->batch, r->p.rules.core_size == 8000 && r->p.rules.max_length == 100 ? "" : " --size and --length of the run", gen);
+        fclose(b);
+      }
+      free(gen);
     }
   }
 }
@@ -2305,6 +2332,7 @@ static void run_batch(run *r) {
       genome_random(&x->g, &g, core,
                     1 + rng_below(&g, p->init_length < p->rules.max_length ? p->init_length : p->rules.max_length),
                     &r->style);
+      if (p->gen) genome_as_generator(&x->g);
       strcpy(x->ops, "random");
       x->noun = rng_below(&g, NAME_NOUNS); // a new family
     } else if (r->archive_n && rng_chance(&g, p->reintroduce)) {
@@ -3014,6 +3042,7 @@ static void me_batch(run *r) {
       genome_random(&x->g, &g, core,
                     1 + rng_below(&g, p->init_length < p->rules.max_length ? p->init_length : p->rules.max_length),
                     &r->style);
+      if (p->gen) genome_as_generator(&x->g);
       strcpy(x->ops, "random");
       x->noun = rng_below(&g, NAME_NOUNS);
       pcell[i] = -1;
@@ -3684,6 +3713,7 @@ static void usage(void) {
           "         [--panel-files a.red,b.red,...] [--screen-members N] [--noise z] [--stage N (screen rounds; 0 none)] [--fill]\n"
           "         [--panel-rounds N] [--diversity all|panel] [--average all|panel] [--member-games all|none] [--simple]\n"
           "         [--difference abs|ahead|shape] [--pushoff value|pareto|pareto-age|pareto-sd] [--clear R] [--positions mirror|pmars]\n"
+          "         [--genome list|gen]\n"
           "         [--islands N [--select-after B [--keep K]] [--score-rounds R]] [--draw-seed S]\n"
           "         [--niche N]\n"
           "         [--panel-choice picked|random|kinds] [--pick-sample 300] [--no-fill] [--map-elites [cells|crowding]]\n"
@@ -4228,6 +4258,7 @@ static const char *params_error(const params *p) {
   if (p->simple && !stops) return "--simple needs --screen-stop or --screen-check above 0";
   if (stops && (p->race || p->map_elites)) return "--screen-stop and --screen-check not with --race or --map-elites";
   if (p->tune_novel && p->map_elites) return "--tune-novel not with --map-elites";
+  if (p->tune_novel && p->gen) return "--tune-novel not with --genome gen: it changes the operands of a list";
   return 0;
 }
 
@@ -4347,6 +4378,10 @@ int main(int argc, char **argv) {
       else if (!strcmp(v, "pareto-age")) p->pareto = 2;
       else if (!strcmp(v, "pareto-sd")) p->pareto = 3;
       else usage();
+    } else if (!strcmp(a, "--genome")) {
+      if (!strcmp(v, "gen")) p->gen = 1;
+      else if (!strcmp(v, "list")) p->gen = 0;
+      else usage();
     } else if (!strcmp(a, "--positions")) {
       positions_given = 1;
       if (!strcmp(v, "mirror")) p->mirror = 1;
@@ -4457,6 +4492,10 @@ int main(int argc, char **argv) {
     }
     r.list_grow = new_list;
     if (run_resume(&r) != 0) return 1;
+    if (r.p.gen && new_tune > 0) {
+      fprintf(stderr, "42evolve: --tune-novel not with --genome gen: it changes the operands of a list\n");
+      return 2;
+    }
   } else {
     params *p = &r.p;
     if (!p->opponents[0]) usage();

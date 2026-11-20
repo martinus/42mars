@@ -39,6 +39,7 @@ static int fail(char *err, size_t err_n, const char *format, ...) {
 // its opener), NONE for the other lines. An opener that is never closed
 // reaches to the end (n); an end without one is NONE.
 static void match_blocks(const gen *x, uint32_t n, uint32_t *match) {
+  if (n > GEN_LINES) n = GEN_LINES;
   uint32_t stack[GEN_LINES], depth = 0;
   for (uint32_t i = 0; i < n; i++) {
     match[i] = NONE;
@@ -308,8 +309,18 @@ static void write_lines(compiler *c, uint32_t from, uint32_t to, uint32_t f) {
   }
 }
 
+void gen_blocks(const gen *x, uint32_t *match) { match_blocks(x, x->n, match); }
+
 uint32_t gen_compile(const gen *x, uint32_t core, uint32_t max_length, m42_instruction *out, uint32_t *start,
                      int *truncated) {
+  gen_info info;
+  const uint32_t n = gen_compile_info(x, core, max_length, out, &info);
+  if (start) *start = info.start;
+  if (truncated) *truncated = info.truncated;
+  return n;
+}
+
+uint32_t gen_compile_info(const gen *x, uint32_t core, uint32_t max_length, m42_instruction *out, gen_info *info) {
   compiler c;
   c.x = x;
   c.lines = x->n < GEN_LINES ? x->n : GEN_LINES;
@@ -336,15 +347,17 @@ uint32_t gen_compile(const gen *x, uint32_t core, uint32_t max_length, m42_instr
     o->b = wrap(eval(&c, &l->x[1], c.at_frame[q], q), c.core);
     o->line = (int32_t)q + 1;
   }
-  if (truncated) *truncated = c.truncated;
-  if (!c.n) { // nothing written: what an empty cell holds
-    out[0] = (m42_instruction){12, 4, 1, 1, 0, 0, 1};
-    if (start) *start = 0;
-    return 1;
+  info->truncated = c.truncated;
+  info->written = c.n;
+  for (uint32_t i = 0; i < GEN_LINES; i++) {
+    const uint32_t k = c.first[i];
+    info->pos[i] = k == NONE ? GEN_NONE : c.in[k].pos;
+    info->len[i] = k == NONE ? GEN_NONE : c.in[k].len;
   }
   const uint32_t k = x->start < c.lines ? c.first[x->start] : NONE;
-  if (start) *start = k != NONE && c.in[k].pos < c.n ? c.in[k].pos : 0;
-  return c.n;
+  info->start = k != NONE && c.in[k].pos < c.n ? c.in[k].pos : 0;
+  if (!c.n) out[0] = (m42_instruction){12, 4, 1, 1, 0, 0, 1}; // nothing written: what an empty cell holds
+  return info->n = c.n ? c.n : 1;
 }
 
 void gen_from_code(gen *x, const m42_instruction *code, uint32_t len, uint32_t start, uint32_t core) {
