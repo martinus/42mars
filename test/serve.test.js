@@ -23,7 +23,9 @@ after(() => {
 });
 
 async function serve(args, env = {}) {
-  const port = 20000 + Math.floor(Math.random() * 20000);
+  // below 32768, where Linux takes the local ports of outgoing connections (36342 was taken in CI, 21st November
+  // 2026: the server said so on stderr, and the test waited for its first line until the timeout)
+  const port = 20000 + Math.floor(Math.random() * 12000);
   const p = spawn(process.execPath, [join(root, 'tools/serve.mjs'), String(port), ...args], { stdio: ['ignore', 'pipe', 'inherit'], env: { ...process.env, ...env } });
   servers.push(p);
   await new Promise((resolve) => p.stdout.on('data', resolve));
