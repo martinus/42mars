@@ -6,9 +6,9 @@ Each file is the `best.red` as the run wrote it, with one line added: `;strategy
 
 The tables are sorted by the score against the holdout: points per 100 rounds against the 100 warriors of the hill that run kept out of its panel. Each run drew its own holdout, so these scores compare only roughly. "Whole hill" is the score against every warrior of the hill, 100 rounds each, where the run measured it (folders of islands, `--islands`); that one compares across runs. "Batch" is when the warrior was found, as far as the run says.
 
-The runs of 14th to 19th November 2026 are in this first collection: the E5 comparisons and the push-off comparisons of `docs/evolver.md`. Fancy Falcon (21st November) is the first from a run on generators (`--genome gen`, #174): 16 islands, half of them screening against every member, each taking a member drawn from an island drawn every 5 batches; 117.0 against the whole hill, 6.7 above the best before it.
+The runs of 14th to 19th November 2026 are in this first collection: the E5 comparisons and the push-off comparisons of `docs/evolver.md`. Fancy Falcon (21st November) is the first from a run on generators (`--genome gen`, #174): 16 islands, half of them screening against every member, each taking a member drawn from an island drawn every 5 batches; 117.0 against the whole hill, 6.7 above the best before it. Lucky Minotaur II, island 13 of the same run at batch 200, is the same design tuned further: 122.1.
 
-## '94 hill without p-space: `94nop/`, 165 warriors
+## '94 hill without p-space: `94nop/`, 166 warriors
 
 Rules: pMARS's defaults: core 8000, 80,000 cycles, 8000 processes, length 100, distance 100; opponents `warriors/koenigstuhl/94nop`.
 
@@ -45,6 +45,7 @@ Rules: pMARS's defaults: core 8000, 80,000 cycles, 8000 processes, length 100, d
 | [Quirky Puffin](94nop/quirky-puffin.red) | 7 | 119.2 |  | `w1-ap23` | value | 9 | 17th November 2026 |
 | [Patient Wasp](94nop/patient-wasp.red) | 4 | 118.2 |  | `s1-ap23`, `s3-ap23` | value | 9 | 17th November 2026 |
 | [Undying Imp](94nop/undying-imp.red) | 3 | 117.8 |  | `pareto30` | pareto | 59 | 17th November 2026 |
+| [Lucky Minotaur II](94nop/lucky-minotaur-ii.red) | 3 | 117.0 | 122.1 | `gen-var16-rnd/island-13` | pareto-sd | 186 | 21st November 2026 |
 | [Shadowy Gecko](94nop/shadowy-gecko.red) | 7 | 116.3 |  | `w1-ap22` | value | 69 | 17th November 2026 |
 | [Lucky Ocelot III](94nop/lucky-ocelot-iii.red) | 4 | 116.0 |  | `al23` | value | 1649 | 16th November 2026 |
 | [Noble Imp](94nop/noble-imp.red) | 6 | 116.0 |  | `pdm80` | value | 559 | 15th November 2026 |
