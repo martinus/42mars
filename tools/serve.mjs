@@ -224,12 +224,13 @@ async function readTail(file, size, bytes) {
 }
 
 // Calls send(event, data) with the new complete lines of the run's
-// events.jsonl every 300 ms (event 'message'), first 'run' with its name, and
-// 'reset' when the file got shorter. Stops when the request closes.
+// events.jsonl every 300 ms (event 'message'), first 'run' with its name,
+// 'live' once the history so far is out (the dashboard draws it in one go),
+// and 'reset' when the file got shorter. Stops when the request closes.
 function follow(req, runDir, send) {
   const file = join(runDir, 'events.jsonl');
   send('run', JSON.stringify({ name: runName(runDir) }));
-  let offset = 0, partial = '', busy = false;
+  let offset = 0, partial = '', busy = false, live = false;
   const poll = async () => {
     if (busy) return;
     busy = true;
@@ -258,6 +259,7 @@ function follow(req, runDir, send) {
     } catch {
       // no events.jsonl yet
     }
+    if (!live) live = true, send('live', '{}'); // the history is out; from now on the lines as they come
     busy = false;
   };
   poll();

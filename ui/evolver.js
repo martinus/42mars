@@ -348,8 +348,8 @@ function drawGrid(now) {
     ctx.fillRect(x + 1, y + 1, cw - 2, ch - 2);
     if (m) {
       const age = Math.max(0, now - (m.enteredAt ?? 0));
-      if (age < 1500) {
-        ctx.fillStyle = `rgba(255,255,255,${0.55 * Math.exp(-age / 350)})`;
+      if (age < 900) { // softly: a list changes every few seconds
+        ctx.fillStyle = `rgba(255,255,255,${0.2 * Math.exp(-age / 300)})`;
         ctx.fillRect(x + 1, y + 1, cw - 2, ch - 2);
       }
       ctx.fillStyle = (m.panelAvg ?? 0) > 180 ? '#10131f' : '#e8ebf5';
@@ -547,8 +547,8 @@ function drawMatrix(now) {
       if (o.id === m.id) continue;
       // a fresh row and column glow
       const age = Math.max(0, Math.min(now - (m.enteredAt ?? 0), now - (o.enteredAt ?? 0)));
-      if (age < 1500) {
-        ctx.fillStyle = `rgba(255,255,255,${0.55 * Math.exp(-age / 350)})`;
+      if (age < 900) { // softly: a list changes every few seconds
+        ctx.fillStyle = `rgba(255,255,255,${0.2 * Math.exp(-age / 300)})`;
         ctx.fillRect(x, y, cw - cg, ch - rg);
       }
       matrix.cells.push({ x, y, w: cw, h: ch, a: m.id, b: o.id });
@@ -1356,7 +1356,7 @@ const EVERY = 1000 * Math.max(0, Number(new URLSearchParams(location.search).get
 let pending = [], lastApply = -1e9, lastChange = -1e9;
 let quiet = new Set(); // newcomers that enter and leave within one update: no ticker lines for them
 
-function applyPending(now) {
+function applyPending(now, history = false) {
   const evs = pending;
   pending = [];
   const entered = new Set(evs.filter((e) => e.type === 'enter').map((e) => e.id));
@@ -1364,7 +1364,11 @@ function applyPending(now) {
   for (const e of evs) handle(e);
   if (quiet.size) tick(`<span style="color:#6c7290">${quiet.size} more tried and pushed off at once</span>`);
   quiet = new Set();
-  lastApply = lastChange = now;
+  if (history) { // the run so far, drawn in one go: nothing flares, no row slides
+    for (const x of S.w.values()) x.enteredAt = -1e9, x.row = null;
+    S.ghosts = [];
+    lastApply = now;
+  } else lastApply = lastChange = now;
   S.version = (S.version ?? 0) + 1;
   if (autoPick) pickBest();
   if (selected !== null) renderCard();
@@ -1464,16 +1468,28 @@ function clearRun() {
   selected = null;
   pending = [];
   autoPick = true;
-  arenaPair = null; // the visualizer stays loaded: the next match goes into it in place
-  $('arena-head').innerHTML = '';
-  renderCard();
+  arenaPair = null; // the visualizer stays loaded with its heading: the next match goes into it in place
+  if (!catchingUp) renderCard(); // while a switch waits for the history, the card stays as it was
 }
 
 let connecting = 0; // the timer of a switch: stepping over runs with [ and ] asks only for the one it stops at
+// While a run's history comes in, the page keeps showing what it showed and
+// collects the events; on 'live' (tools/serve.mjs: the history is out), or
+// after a while from a server without it, it applies them in one go.
+let catchingUp = false, catchUpTimer = 0;
+function caughtUp() {
+  if (!catchingUp) return;
+  catchingUp = false;
+  clearTimeout(catchUpTimer);
+  applyPending(performance.now(), true);
+  chartsDirty = chipsDirty = tickerDirty = opsDirty = true;
+  renderCard();
+}
 function switchRun(i) {
   if (i === current && source) return;
   current = i;
   source?.close();
+  catchingUp = true; // from here the old picture stays until the new run's history is in
   clearRun();
   busyHistory.length = 0;
   chartsDirty = chipsDirty = tickerDirty = opsDirty = true;
@@ -1492,7 +1508,11 @@ function stepRun(d) {
 }
 
 function connect() {
+  catchingUp = true;
+  clearTimeout(catchUpTimer);
+  catchUpTimer = setTimeout(caughtUp, 6000);
   source = new EventSource(`/run/${current}/events`);
+  source.addEventListener('live', caughtUp);
   source.addEventListener('run', (e) => { document.title = `42evolve · ${JSON.parse(e.data).name}`; });
   source.addEventListener('reset', clearRun);
   source.onopen = () => $('live').classList.add('on');
@@ -1505,6 +1525,10 @@ function frame(now) {
   // eased by the time since the last drawing, so that 15 frames a second slide as far as 60
   ease = 1 - Math.exp(-Math.min(500, now - (lastDraw || now)) / 110);
   lastFrame = now;
+  if (catchingUp) { // the previous picture stays until the history is in
+    requestAnimationFrame(frame);
+    return;
+  }
   if (pending.length && now - lastApply >= EVERY) applyPending(performance.now());
   // the matrix and the map move for a while after an update (rows slide,
   // newcomers flare) and while the mouse is on them, at most 15 frames a

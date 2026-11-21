@@ -32,8 +32,9 @@ async function serve(args, env = {}) {
   return `http://127.0.0.1:${port}`;
 }
 
-// Reads server-sent events until `until` returns true for the list so far.
-async function read(reader, got, until) {
+// Reads server-sent events until `until` returns true for the list so far;
+// without the event 'live' (the history is out) unless asked for it.
+async function read(reader, got, until, { live = false } = {}) {
   const dec = new TextDecoder();
   let text = '';
   while (!until(got)) {
@@ -44,7 +45,7 @@ async function read(reader, got, until) {
     text = parts.pop();
     for (const part of parts) {
       const ev = /^event: (.*)$/m.exec(part)?.[1] ?? 'message';
-      got.push({ ev, data: /^data: (.*)$/m.exec(part)?.[1] });
+      if (ev !== 'live' || live) got.push({ ev, data: /^data: (.*)$/m.exec(part)?.[1] });
     }
   }
   return got;
@@ -76,6 +77,14 @@ test('the events of a run, as they are written', { timeout: 15000 }, async () =>
   assert.deepEqual(got.slice(5).map((e) => e.ev), ['reset', 'message', 'message']);
   assert.deepEqual(got.slice(6).map((e) => JSON.parse(e.data).n), [1, 5]);
   await reader.cancel();
+  // a page that comes now: its name, the history, then 'live': it can draw the history in one go, then the lines as they come
+  const again = (await fetch(`${url}/run/events`)).body.getReader();
+  const first = await read(again, [], (g) => g.some((e) => e.ev === 'live'), { live: true });
+  assert.deepEqual(first.map((e) => e.ev), ['run', 'message', 'message', 'live']);
+  appendFileSync(file, '{"type":"batch","n":6}\n');
+  const later = await read(again, [], (g) => g.length >= 1, { live: true });
+  assert.deepEqual(later.map((e) => [e.ev, JSON.parse(e.data).n]), [['message', 6]]);
+  await again.cancel();
 });
 
 test('a long history: without the warriors that left, the last values and speed, the last 20 screens; then the new lines; --full sends all', { timeout: 15000 }, async () => {
