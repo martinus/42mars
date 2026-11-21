@@ -3798,7 +3798,8 @@ static void usage(void) {
           "         [--panel-rounds N] [--diversity all|panel] [--average all|panel] [--member-games all|none] [--simple]\n"
           "         [--difference abs|ahead|shape] [--pushoff value|pareto|pareto-age|pareto-sd] [--clear R] [--positions mirror|pmars]\n"
           "         [--genome list|gen] [--refactor p] [--min-length N] [--tie-points t]\n"
-          "         [--islands N [--select-after B [--keep K]] [--score-rounds R] [--migrate M]] [--draw-seed S]\n"
+          "         [--islands N [--select-after B [--keep K]] [--score-rounds R] [--migrate M] [--island-variant \"options\" ...]]\n"
+          "         [--draw-seed S]\n"
           "         [--niche N]\n"
           "         [--panel-choice picked|random|kinds] [--pick-sample 300] [--no-fill] [--map-elites [cells|crowding]]\n"
           "         [--specialists] [--sharing c] [--screen-stop z | --screen-check z] [--tune-novel N]\n"
@@ -4239,8 +4240,9 @@ static void islands_close(islands *I) {
 }
 
 // A new run of islands: base has the parameters (defaults applied, checked).
-static int islands_new(const params *base, const char *dir, uint32_t n, uint32_t keep, uint32_t every, uint32_t rounds,
-                       uint32_t migrate, uint32_t threads, uint32_t batches, double seconds) {
+static int islands_new(const params *base, const params *variant, const char *const *variant_text, uint32_t variant_n,
+                       const char *dir, uint32_t n, uint32_t keep, uint32_t every, uint32_t rounds, uint32_t migrate,
+                       uint32_t threads, uint32_t batches, double seconds) {
   static islands I;
   snprintf(I.dir, sizeof I.dir, "%s", dir);
   I.n = n, I.keep = keep, I.every = every, I.next_score = every, I.seed = base->seed, I.best = -1, I.rounds = rounds;
@@ -4285,12 +4287,21 @@ static int islands_new(const params *base, const char *dir, uint32_t n, uint32_t
   json_str(root->events, base->opponents, 0);
   fputs(",\"panel\":", root->events);
   json_str(root->events, p.panel_files, 0);
-  fputs("}\n", root->events);
+  fputs(",\"variants\":[", root->events);
+  for (uint32_t k = 0; k < variant_n; k++) {
+    if (k) fputc(',', root->events);
+    json_str(root->events, variant_text[k], 0);
+  }
+  fputs("]}\n", root->events);
   event_pick(root);
   fflush(root->events);
   for (uint32_t i = 0; i < n; i++) {
     run *r = I.is[i] = xmalloc(sizeof *r);
     r->p = p;
+    if (variant_n) { // --island-variant: island i the variant i mod their number, with the panel picked here
+      r->p = variant[i % variant_n];
+      snprintf(r->p.panel_files, sizeof r->p.panel_files, "%s", p.panel_files);
+    }
     r->p.seed = base->seed + i;
     island_name(&I, i, r);
     r->pool = root->pool;
@@ -4398,53 +4409,66 @@ static const char *params_error(const params *p) {
   return 0;
 }
 
-int main(int argc, char **argv) {
-  static run r;
-  r.p = default_params();
-  const char *dir = 0;
-  uint32_t threads = 0, batches = 0;
-  double seconds = 0;
+// What the command line says: the parameters of a new run (before the
+// defaults of new_run_defaults()), and what else it asks for.
+typedef struct {
+  params p;
+  const char *dir;
+  uint32_t threads, batches;
+  double seconds;
   genome_mix new_changes; // --changes, also for a run that continues
-  int changes_given = 0;
-  double new_stop = -1, new_check = -1; // --screen-stop, --screen-check, also for a run that continues
-  double new_reintroduce = -1;          // --reintroduce, also for a run that continues
-  uint32_t new_list = 0;                // --list, also for a run that continues (it only grows)
-  int64_t new_tune = -1;                // --tune-novel, also for a run that continues
-  int new_ahead = -1;                   // --difference, also for a run that continues
-  int new_options = 0, stage_given = 0, screen_members_given = 0, diversity_given = 0, panel_rounds_given = 0, fill_given = 0;
-  int panel_given = 0, panel_choice_given = 0, draw_seed_given = 0, positions_given = 0, pushoff_given = 0;
-  uint32_t islands_n = 0, islands_keep = 0, islands_every = 0, islands_rounds = 100; // --islands, --keep, --select-after, --score-rounds
-  uint32_t islands_migrate_every = 0; // --migrate
-  int islands_option = 0;
-  const char *optimize_file = 0; // --optimize: no run, the constants of this warrior
+  int changes_given;
+  double new_stop, new_check; // --screen-stop, --screen-check, also for a run that continues
+  double new_reintroduce;     // --reintroduce, also for a run that continues
+  uint32_t new_list;          // --list, also for a run that continues (it only grows)
+  int64_t new_tune;           // --tune-novel, also for a run that continues
+  int new_ahead;              // --difference, also for a run that continues
+  int new_options, stage_given, screen_members_given, diversity_given, panel_rounds_given, fill_given;
+  int panel_given, panel_choice_given, draw_seed_given, positions_given, pushoff_given;
+  uint32_t islands_n, islands_keep, islands_every, islands_rounds; // --islands, --keep, --select-after, --score-rounds
+  uint32_t islands_migrate_every;                                   // --migrate
+  int islands_option;
+  const char *variant[ISLANDS_MAX]; // --island-variant, in their order
+  uint32_t variant_n;
+  const char *optimize_file; // --optimize: no run, the constants of this warrior
+} cli;
+
+// Reads the command line into c; 0, or the exit code after a message.
+static int parse_cli(int argc, char **argv, cli *c) {
+  memset(c, 0, sizeof *c);
+  c->p = default_params();
+  c->new_stop = c->new_check = c->new_reintroduce = -1;
+  c->new_tune = -1;
+  c->new_ahead = -1;
+  c->islands_rounds = 100;
   for (int i = 1; i < argc; i++) {
     const char *a = argv[i];
     if (a[0] != '-') {
-      if (dir) usage();
-      dir = a;
+      if (c->dir) usage();
+      c->dir = a;
       continue;
     }
     if (!strcmp(a, "--map-elites")) { // its value is optional: cells (the default) or crowding
-      r.p.map_elites = ME_BY_STYLE;
+      c->p.map_elites = ME_BY_STYLE;
       if (i + 1 < argc && (!strcmp(argv[i + 1], "cells") || !strcmp(argv[i + 1], "crowding")))
-        r.p.map_elites = !strcmp(argv[++i], "crowding") ? ME_CROWDING : ME_BY_STYLE;
-      new_options = 1;
+        c->p.map_elites = !strcmp(argv[++i], "crowding") ? ME_CROWDING : ME_BY_STYLE;
+      c->new_options = 1;
       continue;
     }
     if (!strcmp(a, "--simple")) { // an option without a value
-      r.p.simple = 1;
-      new_options = 1;
+      c->p.simple = 1;
+      c->new_options = 1;
       continue;
     }
     if (!strcmp(a, "--specialists")) { // an option without a value
-      r.p.specialists = 1;
-      new_options = 1;
+      c->p.specialists = 1;
+      c->new_options = 1;
       continue;
     }
     if (!strcmp(a, "--fill") || !strcmp(a, "--no-fill")) { // the options without a value
-      r.p.fill = !strcmp(a, "--fill");
-      fill_given = 1;
-      new_options = 1;
+      c->p.fill = !strcmp(a, "--fill");
+      c->fill_given = 1;
+      c->new_options = 1;
       continue;
     }
     if (i + 1 >= argc) usage();
@@ -4453,14 +4477,14 @@ int main(int argc, char **argv) {
     const double d = strtod(v, &end);
     const int number = *end == 0 && end != v;
     const uint32_t u = number && d >= 0 && d <= 4294967295.0 ? (uint32_t)d : 0;
-    params *p = &r.p;
+    params *p = &c->p;
     int run_option = 0;
-    if (!strcmp(a, "--threads")) threads = u, run_option = 1;
-    else if (!strcmp(a, "--batches")) batches = u, run_option = 1;
-    else if (!strcmp(a, "--seconds")) seconds = d, run_option = 1;
+    if (!strcmp(a, "--threads")) c->threads = u, run_option = 1;
+    else if (!strcmp(a, "--batches")) c->batches = u, run_option = 1;
+    else if (!strcmp(a, "--seconds")) c->seconds = d, run_option = 1;
     else if (!strcmp(a, "--opponents")) snprintf(p->opponents, sizeof p->opponents, "%s", v);
     else if (!strcmp(a, "--start")) snprintf(p->start, sizeof p->start, "%s", v);
-    else if (!strcmp(a, "--optimize")) optimize_file = v;
+    else if (!strcmp(a, "--optimize")) c->optimize_file = v;
     else if (!strcmp(a, "--panel-files")) {
       if (!*v || strlen(v) >= sizeof p->panel_files || strstr(v, ",,") || v[strlen(v) - 1] == ',') usage();
       snprintf(p->panel_files, sizeof p->panel_files, "%s", v);
@@ -4474,7 +4498,7 @@ int main(int argc, char **argv) {
         fprintf(stderr, "\n");
         return 2;
       }
-      new_changes = p->changes, changes_given = 1;
+      c->new_changes = p->changes, c->changes_given = 1;
     }
     else if (!strcmp(a, "--select")) {
       if (!strcmp(v, "screen")) p->select = SELECT_SCREEN;
@@ -4492,13 +4516,13 @@ int main(int argc, char **argv) {
       if (!number) usage();
       p->rotate = u;
     } else if (!strcmp(a, "--panel-choice")) {
-      panel_choice_given = 1;
+      c->panel_choice_given = 1;
       if (!strcmp(v, "picked")) p->panel_random = PANEL_PICKED;
       else if (!strcmp(v, "random")) p->panel_random = PANEL_RANDOM;
       else if (!strcmp(v, "kinds")) p->panel_random = PANEL_KINDS;
       else usage();
     } else if (!strcmp(a, "--diversity")) {
-      diversity_given = 1;
+      c->diversity_given = 1;
       if (!strcmp(v, "all")) p->distance_panel = 0;
       else if (!strcmp(v, "panel")) p->distance_panel = 1;
       else usage();
@@ -4511,12 +4535,16 @@ int main(int argc, char **argv) {
       else if (!strcmp(v, "panel")) p->average_panel = 1;
       else usage();
     } else if (!strcmp(a, "--pushoff")) {
-      pushoff_given = 1;
+      c->pushoff_given = 1;
       if (!strcmp(v, "value")) p->pareto = 0;
       else if (!strcmp(v, "pareto")) p->pareto = 1;
       else if (!strcmp(v, "pareto-age")) p->pareto = 2;
       else if (!strcmp(v, "pareto-sd")) p->pareto = 3;
       else usage();
+    } else if (!strcmp(a, "--island-variant")) {
+      if (c->variant_n >= ISLANDS_MAX) usage();
+      c->variant[c->variant_n++] = v;
+      c->islands_option = 1;
     } else if (!strcmp(a, "--refactor")) {
       p->refactor = d;
     } else if (!strcmp(a, "--tie-points")) {
@@ -4526,24 +4554,24 @@ int main(int argc, char **argv) {
       else if (!strcmp(v, "list")) p->gen = 0;
       else usage();
     } else if (!strcmp(a, "--positions")) {
-      positions_given = 1;
+      c->positions_given = 1;
       if (!strcmp(v, "mirror")) p->mirror = 1;
       else if (!strcmp(v, "pmars")) p->mirror = 0;
       else usage();
     } else if (!strcmp(a, "--difference")) {
-      if (!strcmp(v, "abs")) p->difference = new_ahead = DIFF_ABS;
-      else if (!strcmp(v, "ahead")) p->difference = new_ahead = DIFF_AHEAD;
-      else if (!strcmp(v, "shape")) p->difference = new_ahead = DIFF_SHAPE;
+      if (!strcmp(v, "abs")) p->difference = c->new_ahead = DIFF_ABS;
+      else if (!strcmp(v, "ahead")) p->difference = c->new_ahead = DIFF_AHEAD;
+      else if (!strcmp(v, "shape")) p->difference = c->new_ahead = DIFF_SHAPE;
       else usage();
     } else if (!strcmp(a, "--sd")) {
       if (!strcmp(v, "opponent")) p->sd = SD_OPPONENT;
       else if (!strcmp(v, "sum")) p->sd = SD_SUM;
       else usage();
     } else if (!number) usage();
-    else if (!strcmp(a, "--panel")) p->panel = u, panel_given = 1;
+    else if (!strcmp(a, "--panel")) p->panel = u, c->panel_given = 1;
     else if (!strcmp(a, "--holdout")) p->holdout = u;
-    else if (!strcmp(a, "--list")) p->list = new_list = u;
-    else if (!strcmp(a, "--tune-novel")) p->tune_novel = u, new_tune = u;
+    else if (!strcmp(a, "--list")) p->list = c->new_list = u;
+    else if (!strcmp(a, "--tune-novel")) p->tune_novel = u, c->new_tune = u;
     else if (!strcmp(a, "--batch")) p->batch = u;
     else if (!strcmp(a, "--survivors")) p->survivors = u;
     else if (!strcmp(a, "--rounds")) p->rounds = u;
@@ -4554,13 +4582,13 @@ int main(int argc, char **argv) {
     else if (!strcmp(a, "--alpha")) p->alpha = d;
     else if (!strcmp(a, "--reintroduce")) {
       if (!number || d < 0 || d > 1) usage();
-      p->reintroduce = new_reintroduce = d;
+      p->reintroduce = c->new_reintroduce = d;
     }
     else if (!strcmp(a, "--race")) p->race = u;
     else if (!strcmp(a, "--race-keep")) p->race_keep = u;
-    else if (!strcmp(a, "--screen-members")) p->screen_members = u, screen_members_given = 1;
-    else if (!strcmp(a, "--stage")) p->stage = u, stage_given = 1;
-    else if (!strcmp(a, "--panel-rounds")) p->panel_rounds = u, panel_rounds_given = 1;
+    else if (!strcmp(a, "--screen-members")) p->screen_members = u, c->screen_members_given = 1;
+    else if (!strcmp(a, "--stage")) p->stage = u, c->stage_given = 1;
+    else if (!strcmp(a, "--panel-rounds")) p->panel_rounds = u, c->panel_rounds_given = 1;
     else if (!strcmp(a, "--pick-sample")) p->pick_sample = u;
 
     else if (!strcmp(a, "--niche")) p->niche = u;
@@ -4572,8 +4600,8 @@ int main(int argc, char **argv) {
     else if (!strcmp(a, "--screen-stop") || !strcmp(a, "--screen-check")) {
       const int stop = !strcmp(a, "--screen-stop");
       if (!number || d < 0 || (!stop && !(d > 0))) usage(); // --screen-stop 0: off
-      if (stop) p->screen_stop = new_stop = d;
-      else p->screen_check = new_check = d;
+      if (stop) p->screen_stop = c->new_stop = d;
+      else p->screen_check = c->new_check = d;
     }
     else if (!strcmp(a, "--sharing")) {
       if (!number || !(d > 0)) usage();
@@ -4590,12 +4618,12 @@ int main(int argc, char **argv) {
     else if (!strcmp(a, "--init-length")) p->init_length = u;
     else if (!strcmp(a, "--min-length")) p->min_length = u;
     else if (!strcmp(a, "--seed")) p->seed = (uint64_t)d;
-    else if (!strcmp(a, "--draw-seed")) p->draw_seed = (uint64_t)d, draw_seed_given = 1;
-    else if (!strcmp(a, "--islands")) islands_n = u, islands_option = 1;
-    else if (!strcmp(a, "--keep")) islands_keep = u, islands_option = 1;
-    else if (!strcmp(a, "--select-after")) islands_every = u, islands_option = 1;
-    else if (!strcmp(a, "--score-rounds")) islands_rounds = u, islands_option = 1;
-    else if (!strcmp(a, "--migrate")) islands_migrate_every = u, islands_option = 1;
+    else if (!strcmp(a, "--draw-seed")) p->draw_seed = (uint64_t)d, c->draw_seed_given = 1;
+    else if (!strcmp(a, "--islands")) c->islands_n = u, c->islands_option = 1;
+    else if (!strcmp(a, "--keep")) c->islands_keep = u, c->islands_option = 1;
+    else if (!strcmp(a, "--select-after")) c->islands_every = u, c->islands_option = 1;
+    else if (!strcmp(a, "--score-rounds")) c->islands_rounds = u, c->islands_option = 1;
+    else if (!strcmp(a, "--migrate")) c->islands_migrate_every = u, c->islands_option = 1;
     else if (!strcmp(a, "--size")) p->rules.core_size = u;
     else if (!strcmp(a, "--cycles")) p->rules.max_cycles = u;
     else if (!strcmp(a, "--processes")) p->rules.max_processes = u;
@@ -4604,8 +4632,140 @@ int main(int argc, char **argv) {
     else usage();
     if (!run_option && strcmp(a, "--changes") && strcmp(a, "--screen-stop") && strcmp(a, "--screen-check") &&
         strcmp(a, "--reintroduce") && strcmp(a, "--list") && strcmp(a, "--tune-novel") && strcmp(a, "--difference"))
-      new_options = 1; // these go with a run that continues
+      c->new_options = 1; // these go with a run that continues
   }
+  return 0;
+}
+
+// The defaults of a new run that depend on what was given, then what is
+// wrong with its parameters (params_error()), 0 nothing.
+static const char *new_run_defaults(cli *c) {
+  params *p = &c->p;
+  if (!p->opponents[0]) usage();
+  if (p->gen && !c->changes_given) p->changes = gen_mix_default(); // the kinds that make structure too
+  if (!p->batch) p->batch = 4 * c->threads;
+  if (!p->survivors) p->survivors = p->batch / 8 ? p->batch / 8 : 1;
+  if (!p->race_keep) p->race_keep = p->batch / 4 ? p->batch / 4 : 1;
+  // --stage by default at the screen rounds (--stage 0: none); a state keeps
+  // the value, and states from before --stage have none
+  if (p->simple) { // the value from the panel alone, no games among members; z 3 unless given
+    p->average_panel = p->member_games_none = 1;
+    if (!c->diversity_given) p->distance_panel = 1;
+    if (c->new_stop < 0 && !(p->screen_check > 0)) p->screen_stop = 3;
+  }
+  if (!c->stage_given) p->stage = p->screen_rounds;
+  // the defaults of the later options, for new runs only (a state before
+  // them has none of them): the best run of E5
+  if (!c->screen_members_given) p->screen_members = p->member_games_none ? 0 : 10;
+  if (!c->diversity_given) p->distance_panel = 1;
+  if (!c->panel_rounds_given) p->panel_rounds = p->rounds > 500 ? p->rounds : 500;
+  if (p->map_elites) { // the cells give the diversity: many random opponents rather than a few picked ones
+    if (!c->panel_given) p->panel = 80;
+    if (!c->panel_choice_given) p->panel_random = PANEL_RANDOM;
+    if (!c->panel_rounds_given) p->panel_rounds = p->rounds > 125 ? p->rounds : 125;
+  }
+  if (!c->fill_given) p->fill = 1;
+  if (!c->positions_given) p->mirror = 1; // new runs: every position from both sides
+  // new runs: pareto-sd, first or tied first on the '94 and the tiny hill (docs/evolver.md); value where
+  // pareto does not go (params_error() says where)
+  if (!c->pushoff_given) {
+    p->pareto = 3;
+    if (params_error(p)) p->pareto = 0;
+  }
+  // new runs: --screen-stop 3, not where it does not go (--race, --map-elites): it stopped 10,639 of 17,025
+  // children of kd1 in the screen, 22% of all rounds, and missed none of the 2,400 survivors (docs/evolver.md)
+  if (c->new_stop < 0 && !(p->screen_check > 0)) {
+    p->screen_stop = 3;
+    if (params_error(p)) p->screen_stop = 0;
+  }
+  if (!c->draw_seed_given) p->draw_seed = p->seed;
+  if (p->simple) { // one length of match, the panel rounds; its first screen rounds are kept as the first stage
+    p->rounds = p->panel_rounds;
+    p->stage = p->screen_rounds;
+  }
+  return params_error(p);
+}
+
+// --island-variant: what every island must have alike, so that their
+// scores and migrants mean the same; 0 when a and b agree, else the option.
+static const char *variant_differs(const params *a, const params *b) {
+  const m42_rules *x = &a->rules, *y = &b->rules;
+  if (x->core_size != y->core_size || x->max_cycles != y->max_cycles || x->max_processes != y->max_processes ||
+      x->max_length != y->max_length || x->min_distance != y->min_distance)
+    return "--size, --cycles, --processes, --length or --distance";
+  if (strcmp(a->opponents, b->opponents) || strcmp(a->start, b->start)) return "--opponents or --start";
+  if (a->panel != b->panel || a->holdout != b->holdout || a->panel_random != b->panel_random || a->pick_sample != b->pick_sample ||
+      strcmp(a->panel_files, b->panel_files))
+    return "--panel, --holdout, --panel-choice, --pick-sample or --panel-files";
+  if (a->seed != b->seed || a->draw_seed != b->draw_seed) return "--seed or --draw-seed";
+  if (a->gen != b->gen) return "--genome";
+  if (a->map_elites != b->map_elites) return "--map-elites";
+  return 0;
+}
+
+// The parameters of each --island-variant: the command line with the
+// variant's options after it, so that they win; 0, or the exit code after
+// a message.
+static int island_variants(int argc, char **argv, const cli *c, params *out) {
+  enum { TOKENS = 64 };
+  char **v = xmalloc(((size_t)argc + TOKENS) * sizeof *v);
+  static char text[4096];
+  int rc = 0;
+  for (uint32_t k = 0; k < c->variant_n && !rc; k++) {
+    snprintf(text, sizeof text, "%s", c->variant[k]);
+    int n = 0;
+    for (int i = 0; i < argc; i++) v[n++] = argv[i];
+    for (char *save = 0, *t = strtok_r(text, " \t", &save); t; t = strtok_r(0, " \t", &save)) {
+      if (n >= argc + TOKENS) {
+        fprintf(stderr, "42evolve: --island-variant '%s' has more than %d words\n", c->variant[k], TOKENS);
+        rc = 2;
+        break;
+      }
+      v[n++] = t;
+    }
+    if (rc) break;
+    static cli w;
+    if ((rc = parse_cli(n, v, &w)) != 0) break;
+    w.threads = c->threads;
+    const char *wrong = new_run_defaults(&w);
+    const char *differs = wrong ? 0 : variant_differs(&c->p, &w.p);
+    if (!wrong && (w.batches != c->batches || w.seconds != c->seconds || w.variant_n != c->variant_n || w.islands_n != c->islands_n ||
+                   w.islands_keep != c->islands_keep || w.islands_every != c->islands_every ||
+                   w.islands_rounds != c->islands_rounds || w.islands_migrate_every != c->islands_migrate_every ||
+                   w.optimize_file != c->optimize_file))
+      differs = "--batches, --seconds, --optimize or an option of the islands";
+    if (wrong || differs) {
+      fprintf(stderr, "42evolve: --island-variant '%s': %s%s\n", c->variant[k], wrong ? wrong : differs,
+              wrong ? "" : " the same for every island");
+      rc = 2;
+      break;
+    }
+    out[k] = w.p;
+  }
+  free(v);
+  return rc;
+}
+
+int main(int argc, char **argv) {
+  static run r;
+  static cli c;
+  {
+    const int rc = parse_cli(argc, argv, &c);
+    if (rc) return rc;
+  }
+  r.p = c.p;
+  const char *dir = c.dir, *optimize_file = c.optimize_file;
+  uint32_t threads = c.threads;
+  const uint32_t batches = c.batches;
+  const double seconds = c.seconds;
+  const genome_mix new_changes = c.new_changes;
+  const int changes_given = c.changes_given, new_options = c.new_options, new_ahead = c.new_ahead;
+  const double new_stop = c.new_stop, new_check = c.new_check, new_reintroduce = c.new_reintroduce;
+  const uint32_t new_list = c.new_list;
+  const int64_t new_tune = c.new_tune;
+  const uint32_t islands_n = c.islands_n, islands_keep = c.islands_keep, islands_every = c.islands_every;
+  const uint32_t islands_rounds = c.islands_rounds, islands_migrate_every = c.islands_migrate_every;
+  const int islands_option = c.islands_option;
   if (!dir) usage();
   if (!threads) threads = hardware_threads();
   snprintf(r.dir, sizeof r.dir, "%s", dir);
@@ -4646,54 +4806,15 @@ int main(int argc, char **argv) {
       return 2;
     }
   } else {
-    params *p = &r.p;
-    if (!p->opponents[0]) usage();
-    if (p->gen && !changes_given) p->changes = gen_mix_default(); // the kinds that make structure too
-    if (!p->batch) p->batch = 4 * threads;
-    if (!p->survivors) p->survivors = p->batch / 8 ? p->batch / 8 : 1;
-    if (!p->race_keep) p->race_keep = p->batch / 4 ? p->batch / 4 : 1;
-    // --stage by default at the screen rounds (--stage 0: none); a state keeps
-    // the value, and states from before --stage have none
-    if (p->simple) { // the value from the panel alone, no games among members; z 3 unless given
-      p->average_panel = p->member_games_none = 1;
-      if (!diversity_given) p->distance_panel = 1;
-      if (new_stop < 0 && !(p->screen_check > 0)) p->screen_stop = 3;
-    }
-    if (!stage_given) p->stage = p->screen_rounds;
-    // the defaults of the later options, for new runs only (a state before
-    // them has none of them): the best run of E5
-    if (!screen_members_given) p->screen_members = p->member_games_none ? 0 : 10;
-    if (!diversity_given) p->distance_panel = 1;
-    if (!panel_rounds_given) p->panel_rounds = p->rounds > 500 ? p->rounds : 500;
-    if (p->map_elites) { // the cells give the diversity: many random opponents rather than a few picked ones
-      if (!panel_given) p->panel = 80;
-      if (!panel_choice_given) p->panel_random = PANEL_RANDOM;
-      if (!panel_rounds_given) p->panel_rounds = p->rounds > 125 ? p->rounds : 125;
-    }
-    if (!fill_given) p->fill = 1;
-    if (!positions_given) p->mirror = 1; // new runs: every position from both sides
-    // new runs: pareto-sd, first or tied first on the '94 and the tiny hill (docs/evolver.md); value where
-    // pareto does not go (params_error() says where)
-    if (!pushoff_given) {
-      p->pareto = 3;
-      if (params_error(p)) p->pareto = 0;
-    }
-    // new runs: --screen-stop 3, not where it does not go (--race, --map-elites): it stopped 10,639 of 17,025
-    // children of kd1 in the screen, 22% of all rounds, and missed none of the 2,400 survivors (docs/evolver.md)
-    if (new_stop < 0 && !(p->screen_check > 0)) {
-      p->screen_stop = 3;
-      if (params_error(p)) p->screen_stop = 0;
-    }
-    if (!draw_seed_given) p->draw_seed = p->seed;
-    if (p->simple) { // one length of match, the panel rounds; its first screen rounds are kept as the first stage
-      p->rounds = p->panel_rounds;
-      p->stage = p->screen_rounds;
-    }
-    const char *wrong = params_error(p);
+    if (!threads) threads = hardware_threads(); // the default --batch
+    c.threads = threads;
+    const char *wrong = new_run_defaults(&c);
     if (wrong) {
       fprintf(stderr, "42evolve: %s\n", wrong);
       return 2;
     }
+    r.p = c.p;
+    params *p = &r.p;
     if (islands_n) {
       if (islands_n > ISLANDS_MAX || islands_keep >= islands_n || (islands_keep && !islands_every) || !islands_rounds || optimize_file ||
           p->map_elites) {
@@ -4704,10 +4825,24 @@ int main(int argc, char **argv) {
         fprintf(stderr, "42evolve: --migrate with 2 islands or more, and not with --tune-novel\n");
         return 2;
       }
+      static params variants[ISLANDS_MAX];
+      if (c.variant_n > islands_n) {
+        fprintf(stderr, "42evolve: --island-variant at most once per island\n");
+        return 2;
+      }
+      {
+        const int rc = island_variants(argc, argv, &c, variants);
+        if (rc) return rc;
+      }
+      for (uint32_t k = 0; k < c.variant_n; k++)
+        if (islands_migrate_every && variants[k].tune_novel) {
+          fprintf(stderr, "42evolve: --migrate with 2 islands or more, and not with --tune-novel\n");
+          return 2;
+        }
       signal(SIGINT, on_signal);
       signal(SIGTERM, on_signal);
-      return islands_new(p, dir, islands_n, islands_keep, islands_every, islands_rounds, islands_migrate_every, threads, batches,
-                         seconds);
+      return islands_new(p, variants, c.variant, c.variant_n, dir, islands_n, islands_keep, islands_every, islands_rounds,
+                         islands_migrate_every, threads, batches, seconds);
     }
     if (run_new(&r, threads, optimize_file != 0) != 0) return 1;
   }
