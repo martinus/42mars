@@ -53,11 +53,12 @@ a { color: inherit; }
 
 main {
   display: grid;
-  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr) minmax(0, 0.95fr);
-  grid-template-rows: minmax(0, 1.25fr) minmax(0, 1fr);
-  grid-template-areas: "matrix map ticker" "matrix lineage progress";
-  gap: 12px;
-  padding: 12px;
+  /* the matrix, the selected warrior (always there) and the arena on top; progress and the tabs below them */
+  grid-template-columns: minmax(0, 1.12fr) minmax(400px, 0.86fr) minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1.32fr) minmax(0, 0.68fr);
+  grid-template-areas: "matrix card arena" "progress card ticker";
+  gap: 10px;
+  padding: 10px;
   min-height: 0;
 }
 .panel { background: linear-gradient(180deg, #0d1019ee, #090b12ee); border: 1px solid var(--line); border-radius: 12px; display: flex; flex-direction: column; min-height: 0; min-width: 0; overflow: hidden; }
@@ -71,8 +72,6 @@ main {
 .canvas-wrap { flex: 1; min-height: 0; position: relative; }
 .canvas-wrap canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
 .matrix-panel { grid-area: matrix; }
-.map-panel { grid-area: map; }
-.lineage-panel { grid-area: lineage; }
 .progress-panel { grid-area: progress; }
 .ticker-panel { grid-area: ticker; }
 .scale { display: flex; align-items: center; gap: 8px; padding: 6px 13px 10px; color: var(--muted); font: 11px var(--mono); }
@@ -108,17 +107,31 @@ main {
 #ticker li a { cursor: pointer; text-decoration: none; border-bottom: 1px dotted #555b78; }
 @keyframes slide { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: none; } }
 
-.card {
-  position: fixed; top: 64px; right: 12px; bottom: 12px; width: min(560px, 46vw);
-  background: linear-gradient(180deg, #11141fef, #0a0c13f4); border: 1px solid #2a2f48; border-radius: 14px;
-  box-shadow: 0 20px 60px #000a, 0 0 0 1px #ffffff08 inset; overflow: auto; padding: 16px 18px 20px; backdrop-filter: blur(8px);
-  animation: cardin 0.25s ease-out;
-}
-@keyframes cardin { from { opacity: 0; transform: translateX(24px); } to { opacity: 1; transform: none; } }
-.card .close { position: absolute; top: 10px; right: 12px; font-size: 18px; line-height: 1; padding: 2px 8px; }
+.card { grid-area: card; overflow: auto; padding: 12px 14px 14px; }
+.card .empty { color: var(--muted); margin: 6px 0; }
+.card .members { display: flex; align-items: flex-end; gap: 1px; height: 22px; }
+.card .members i { flex: 1; min-width: 1px; border-radius: 1px 1px 0 0; }
+.card td .play { padding: 0 6px; line-height: 16px; font-size: 11px; color: #5fd7ff; background: #162033; border-color: #2b3a5c; }
+.card tr.playing td { background: #16213a; }
+.card .line { font: 11px/1.5 var(--mono); color: var(--muted); }
+.arena-panel { grid-area: arena; }
+.arena-head { display: flex; justify-content: space-between; gap: 8px; padding: 0 13px 6px; font: 600 12px var(--mono); }
+.arena-head span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.arena-head .mid { color: var(--muted); font-weight: 400; flex: none; }
+.card h4 small { text-transform: none; letter-spacing: 0; font-weight: 400; color: var(--muted); }
+.arena-wrap { flex: 1; min-height: 0; position: relative; margin: 0 8px; border-radius: 8px; overflow: hidden; background: #05060a; }
+.arena-wrap iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
+.arena-empty { position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted); }
+.arena-foot { display: flex; justify-content: flex-end; padding: 5px 10px 8px; }
+.arena-foot button { padding: 1px 9px; font-size: 11px; }
+body.arena-big .arena-panel { position: fixed; z-index: 20; inset: 64px 12px 12px 12px; box-shadow: 0 20px 60px #000c; }
+.tab-kinds, .tab-lineage { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.tab-kinds[hidden], .tab-lineage[hidden] { display: none; }
+.kinds-legend { display: flex; flex-wrap: wrap; gap: 4px 12px; padding: 4px 13px 8px; color: var(--muted); font: 10px var(--sans); }
+.kinds-legend i { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 4px; vertical-align: -1px; }
 .card h3 { margin: 0 0 2px; font: 700 22px/1.2 var(--mono); }
 .card .sub { color: var(--muted); margin-bottom: 12px; }
-.card .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 14px; }
+.card .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 14px; }
 .card .stat { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 6px 9px; }
 .card .stat .k { color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: 0.1em; }
 .card .stat .v { font: 600 15px var(--mono); }

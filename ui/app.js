@@ -896,6 +896,8 @@ window.addEventListener('error', (e) => toast(`<span>error: ${esc(e.message)}</s
 window.addEventListener('unhandledrejection', (e) => toast(`<span>error: ${esc(e.reason?.message ?? e.reason)}</span>`, '#ff7b7b'));
 
 async function main() {
+  // ?embed: the battle view inside the evolver's dashboard (ui/evolver.js, its arena): the core and a short transport
+  if (new URLSearchParams(location.search).has('embed')) document.body.classList.add('embed');
   wire();
   setSpeed(state.speedIdx);
   await loadSamples();

@@ -3,8 +3,8 @@
 //
 // What the evolver's dashboard shows of a run without its whole history, in
 // one place for the page (ui/evolver.js) and the server (tools/serve.mjs):
-// the point of the progress chart of a batch, and what the head of a run's
-// best.red says.
+// the point of the progress chart of a batch, the members by kind of style,
+// and what the head of a run's best.red says.
 
 // The progress of a batch: the best and the mean of the members' averages
 // against the panel (0 without members), and the best against the holdout
@@ -12,6 +12,14 @@
 export function progressPoint(panelAverages, holdout) {
   const n = panelAverages.length;
   return { best: n ? Math.max(...panelAverages) : 0, mean: n ? panelAverages.reduce((a, b) => a + b, 0) / n : 0, holdout };
+}
+
+// The members after a batch by kind of style (the dashboard's tab Kinds):
+// kind -> count, '' for a member without a style.
+export function kindCounts(kinds) {
+  const counts = {};
+  for (const k of kinds) counts[k ?? ''] = (counts[k ?? ''] ?? 0) + 1;
+  return counts;
 }
 
 // From a best.red as 42evolve writes it: its score against the holdout and

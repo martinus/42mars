@@ -60,7 +60,8 @@ if (typeof WebSocket === 'undefined') { // Node 20 has none built in
 }
 const port = 9300 + Math.floor(Math.random() * 600);
 const profile = mkdtempSync(join(tmpdir(), 'ui-page-'));
-const chrome = spawn('google-chrome', ['--headless=new', '--no-sandbox', '--disable-gpu', `--user-data-dir=${profile}`,
+// WebGL2 in software, as compare.mjs: the dashboard's arena embeds the visualizer
+const chrome = spawn('google-chrome', ['--headless=new', '--no-sandbox', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', `--user-data-dir=${profile}`,
   `--remote-debugging-port=${port}`, 'about:blank'], { stdio: 'ignore' });
 // google-chrome is a wrapper script and the browser outlives a kill of it
 // (compare.mjs): close the browser over the protocol, wait for its port to go
