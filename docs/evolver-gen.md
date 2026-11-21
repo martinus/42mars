@@ -220,9 +220,9 @@ Nobody writes a function: `extract` makes one from lines that evolved, `call` an
 | 1, done | The language: `gen_compile()`, text form both ways, `42gen` | The hand-written decoy and boot of 20th November as a generator gives the same warrior. 2,000 random list genomes as generators compile to `genome_code()`, and the 282 warriors of `warriors/evolved` write themselves. 20,000 random generators, 3,000 with random bytes and 5,000 changed texts stay within the limits under ASan and UBSan. 38 mutants of `generator.c`: 37 fail a test, one is equivalent (an eighth token is refused one push later) |
 | 2a, done | The old kinds on generators, `--genome gen` | For generators without structure: the same child, the same answer and the same random numbers as `genome_change()` in 60,000 changes of all 18 kinds, and as `genome_breed()` in 20,000 children. A run with `--genome gen` writes the events of `--genome list`, the generator texts aside: 40 batches on the tiny hill with the default mix and with all 18 kinds, 3 islands, and both equal the build before this step. 40,000 changes of random generators with structure give well-formed children within the limits. 44 mutants: all fail a test |
 | 2b, done | `repeat`, `count`, `fold`, `unroll`, `index`, `expression`, `constant` | Tiny hill, the setting of the thirteenth comparison, 48 pairs of islands with the same seeds: the mean at batch 100 not below the list's by more than 1 point. It is 3.2 above ("Step 2b on the tiny hill" below) |
-| 2c, built | Functions: `extract`, `parameter`, `call`, `inline`, `transplant` | The same comparison: not run yet. Built and tested: 6,000 random generators under every rewrite (37,000 extracts, 1,800 inlines, 7,100 parameters) write the same warrior; 90,000 changes of all 30 kinds give well-formed children within the limits; 26 mutants, 25 fail a test and one check was redundant and is gone |
-| 3 | '94nop: 8 islands against 8, the setting of the twelfth comparison, then the long runs | The top three against the 1,107: above the list's. And by looking: decoys, tables, a second stage? |
-| 4 | The dashboard shows the generator; `--optimize` and `--tune-novel` on generators | |
+| 2c, done | Functions: `extract`, `parameter`, `call`, `inline`, `transplant` | The same comparison: 2.8 below step 2b on the tiny hill (t −1.0) and 0.7 above it on '94 (t 0.45), so no gain ("After step 2b" below). Built and tested: 6,000 random generators under every rewrite (37,000 extracts, 1,800 inlines, 7,100 parameters) write the same warrior; 90,000 changes of all 30 kinds give well-formed children within the limits; 26 mutants, 25 fail a test and one check was redundant and is gone |
+| 3, open | '94nop: 8 islands against 8, the setting of the twelfth comparison, then the long runs | The top three against the 1,107: above the list's. At batch 100: 101.1 and 101.8 against the list's 104.0, not above. The long runs stop rising at about 107 ("After step 2b") |
+| 4, part | The dashboard shows the generator; `--optimize` and `--tune-novel` on generators | The card shows the generator and its refactorings (21st November); `--optimize` and `--tune-novel` not yet |
 
 The reference for "rivals" is to be measured once before step 3: the scores of the hill's own warriors on the same bench (median 145; the top is not recorded yet).
 
@@ -262,6 +262,44 @@ L9:       MOV.I   @L9+i*L4+5, <c1+-3+i*-12
 ```
 
 - **What this hill cannot show:** its warriors have 20 instructions at most, and both arms fill them (17.9 and 18.7 on average, 57% and 56% at 20). There is no room for a decoy or a second stage. That is the '94 hill, step 3.
+
+## After step 2b: functions, refactoring and selection
+
+20th and 21st November 2026. Each arm against its control from the same seeds, scored at batch 100 (each island's best of four warriors against the whole hill), paired island by island. '94nop: the setting of the twelfth comparison of `docs/evolver.md`, 8 islands of seed 101, the list arm of that comparison 104.0 (sd 2.9). Tiny: the setting of step 2b, 48 islands.
+
+| change | hill | arm against control | difference | t | ahead |
+|---|---|---|---|---|---|
+| functions (step 2c), no refactoring | tiny | 90.3 against step 2b's 93.1 | −2.8 | −1.00 | 18 of 48 |
+| the same | '94 | 101.8 against step 2b's 101.1 | +0.7 | 0.45 | 4 of 8 |
+| `--refactor 0.2` | tiny | 87.7 against 90.3 | −2.6 | −1.25 | 25 of 48 |
+| `--screen-members 80 --screen-rounds 8`: the screen against every member, not 10 | '94 | 94.4 against 101.1 | −6.7 | | |
+| `--tie-points 0.5` | '94 | 94.5 against 101.8 | −7.3 | −1.92 | 3 of 8 |
+| `--tie-points 0` | '94 | 88.1 against 101.8 | −13.7 | −3.79 | 1 of 8 |
+
+- **On '94 the lists fill with SPL/JMP loops** of 2 to 12 instructions: a third of the members at batch 93, and eight islands out of eight. They lose most rounds against the panel and tie every round against each other. A loop that beats them needs a clear, several instructions that pay only together.
+- **The screen against every member breaks that up**, and so do ties worth less: at batch 93, 6% loops instead of 31%, 68% of the members with a `MOV` instead of 30%, a median length of 24 instead of 6, and scanners (54%), stones (8%) and papers (5%) where the default screen had 79% of one kind ("writes fields"). The variety does not turn into strength: the members average 45 to 55 against the panel. The panel is 27% of such a screen, and a child better against the hill but not against the list does not pass.
+- **Ties are no obstacle.** A warrior that survives strong opponents has learned something; without those points the steps are gone.
+- **Long runs stop rising.** `gen3-94-gen`'s two best islands: 106.9 and 105.8 at batch 100, 107.1 and 105.1 at 200, 107.1 and 104.7 at 300. `gen3-94-all`'s: 104.1 and 105.2 at batch 100 and at every look up to 2,000; their best member against the panel has not changed since batch 40.
+- **Starting from what other runs found:** 3 islands on the tiny hill from the `best.gen` of the 48 islands of step 2b, scored at batch 1,000: 142.2, 138.1, 151.3. One long run from the best island alone reached 146.4 at batch 1,210 and stayed in one family.
+- **Not measured yet:** whether the structure pays later than batch 100.
+
+**Why the long runs stop rising.** From the events of `gen3-94-gen`'s island 5 (batches 200 to 370, default screen) and `gen3-94-all`'s island 7 (200 to 2,000), against batches 20 to 100 of the same islands; panel averages from the full matches of the `complete` events (an `enter` event has the screen's 20 rounds only):
+
+| | island 5, 20–100 | island 5, 200–370 | island 7, 200–2,000 |
+|---|---|---|---|
+| children of the 5 members best against the panel | 7.7% | 6.3% | 8.5% |
+| of them past the screen (of those evaluated) | 18% | 2.5% | 1.6% |
+| of the members' other children past the screen | 12% | 13% | 12% |
+| children that completed | 1,083 | 1,821 | 23,552 |
+| within 0.25 points of their parent against the panel | | 51% | 72% |
+| 1 point or more above their parent | | 2% | 1% |
+| above the best member then | 21 | 3 | 0 |
+
+- **The strong lines sit on a peak that small changes do not climb:** almost every child of the best is worse and stops in the screen, and of the children that complete, half or more are their parent again (a change in code that never runs) and 1% to 2% gain a point.
+- **Parent choice ignores strength:** the 5 best of 80 have 6% to 8% of the children, their share of the list. Of the 20 members with the highest push-off value, 1.4 (island 5) and 4.5 (island 7) are among the 10 best against the panel.
+- **The list is a plateau:** at batch 360 its members ranked 1, 5, 10 and 20 against the panel have 88.8, 88.1, 86.0 and 84.2. What enters is mostly neutral variants of the lines that hold it.
+- So more children of the same lines change little. What the risks below call "no gradient" is here: the next step up needs several changes at once, or parts from another line that found something else (the mixed start above).
+
 
 ## Risks
 
