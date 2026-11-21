@@ -6,9 +6,9 @@ Each file is the `best.red` as the run wrote it, with one line added: `;strategy
 
 The tables are sorted by the score against the holdout: points per 100 rounds against the 100 warriors of the hill that run kept out of its panel. Each run drew its own holdout, so these scores compare only roughly. "Whole hill" is the score against every warrior of the hill, 100 rounds each, where the run measured it (folders of islands, `--islands`); that one compares across runs. "Batch" is when the warrior was found, as far as the run says.
 
-The runs of 14th to 19th November 2026 are in this first collection: the E5 comparisons and the push-off comparisons of `docs/evolver.md`.
+The runs of 14th to 19th November 2026 are in this first collection: the E5 comparisons and the push-off comparisons of `docs/evolver.md`. Fancy Falcon (21st November) is the first from a run on generators (`--genome gen`, #174): 16 islands, half of them screening against every member, each taking a member drawn from an island drawn every 5 batches; 117.0 against the whole hill, 6.7 above the best before it.
 
-## '94 hill without p-space: `94nop/`, 164 warriors
+## '94 hill without p-space: `94nop/`, 165 warriors
 
 Rules: pMARS's defaults: core 8000, 80,000 cycles, 8000 processes, length 100, distance 100; opponents `warriors/koenigstuhl/94nop`.
 
@@ -51,6 +51,7 @@ Rules: pMARS's defaults: core 8000, 80,000 cycles, 8000 processes, length 100, d
 | [Feral Yeti II](94nop/feral-yeti-ii.red) | 10 | 115.1 |  | `r-ap22` | value | 869 | 17th November 2026 |
 | [Lazy Sloth](94nop/lazy-sloth.red) | 3 | 114.3 |  | `isl13` | value | 239 | 16th November 2026 |
 | [Patient Gargoyle](94nop/patient-gargoyle.red) | 3 | 114.0 |  | `i55-51` | value | 329 | 17th November 2026 |
+| [Fancy Falcon](94nop/fancy-falcon.red) | 3 | 112.8 | 117.0 | `gen-var16-rnd/island-15` | pareto-sd | 98 | 21st November 2026 |
 | [Cunning Pelican XII](94nop/cunning-pelican-xii.red) | 2 | 112.3 |  | `i55-55` | value | 129 | 17th November 2026 |
 | [Quiet Otter](94nop/quiet-otter.red) | 4 | 111.8 |  | `isl15` | value | 239 | 16th November 2026 |
 | [Wobbly Zombie](94nop/wobbly-zombie.red) | 6 | 111.2 |  | `i20-55` | value | 219 | 17th November 2026 |
