@@ -47,16 +47,6 @@
       <div class="scale"><span>0</span><i></i><span>300</span></div>
     </section>
 
-    <section class="panel map-panel">
-      <h2>Novelty map <small>warriors placed by how they score against the panel: two warriors are close when they win and lose against the same panel warriors (the SD-score of the push-off) · the axes are the two directions in which the scores differ most, each end names the panel warriors the warriors there do better against · large dots: in the list, small: left · grey: hill warriors</small></h2>
-      <div class="canvas-wrap"><canvas id="map"></canvas></div>
-    </section>
-
-    <section class="panel lineage-panel">
-      <h2>Lineage <small>every warrior that stayed past its batch, by birth (x) and average against the panel (y) · large: in the list · ring: it started a new family, its scores were more than 30 points per 100 rounds from its first parent's · click one for its lines: <span style="color:#ffc53d">first parents</span>, <span style="color:#5fd7ff">- - crossover parents</span>, <span style="color:#fff">its descendants</span></small></h2>
-      <div class="canvas-wrap"><canvas id="lineage"></canvas></div>
-    </section>
-
     <section class="panel progress-panel">
       <h2>Progress <small>points per 100 rounds</small></h2>
       <div class="canvas-wrap"><canvas id="progress"></canvas></div>
@@ -64,20 +54,30 @@
 
     <section class="panel ticker-panel">
       <div class="tabs" id="tabs">
-        <button data-tab="tab-events" class="on">Events</button>
+        <button data-tab="tab-kinds" class="on">Kinds</button>
+        <button data-tab="tab-lineage">Lineage</button>
+        <button data-tab="tab-events">Events</button>
         <button data-tab="tab-ops">Operators</button>
         <button data-tab="tab-about">How it works</button>
       </div>
-      <ol id="ticker" class="tab tab-events"></ol>
+      <div class="tab tab-kinds"><h2>Kinds of warrior in the list <small>the share of each kind of style among the members, batch by batch</small></h2><div class="canvas-wrap"><canvas id="kinds"></canvas></div><div class="kinds-legend" id="kinds-legend"></div></div>
+      <div class="tab tab-lineage" hidden><h2>Lineage <small>every warrior that stayed past its batch, by birth (x) and average against the panel (y) · large: in the list · ring: it started a new family · click one for its lines: <span style="color:#ffc53d">first parents</span>, <span style="color:#5fd7ff">- - crossover parents</span>, <span style="color:#fff">its descendants</span></small></h2><div class="canvas-wrap"><canvas id="lineage"></canvas></div></div>
+      <ol id="ticker" class="tab tab-events" hidden></ol>
       <div id="ops" class="tab tab-ops" hidden></div>
       <div id="about" class="tab tab-about" hidden></div>
     </section>
-  </main>
 
-  <aside class="card" id="card" hidden>
-    <button class="close" id="card-close" title="close (Esc)">×</button>
-    <div id="card-body"></div>
-  </aside>
+    <section class="panel card" id="card">
+      <div id="card-body"></div>
+    </section>
+
+    <section class="panel arena-panel">
+      <h2>Arena <small id="arena-sub">a click on a match (▶) or a matrix cell plays it here, in the visualizer's core view</small></h2>
+      <div class="arena-head" id="arena-head"></div>
+      <div class="arena-wrap"><iframe id="arena" title="the selected match" hidden></iframe><div class="arena-empty" id="arena-empty">no match yet</div></div>
+      <div class="arena-foot"><button id="arena-big" title="the arena over the whole page (Esc: back)">⤢ larger</button></div>
+    </section>
+  </main>
 
   <div class="tooltip" id="tip" hidden></div>
   <div class="drop" id="drop" hidden>drop an events.jsonl</div>

@@ -38,7 +38,7 @@ import { createInterface } from 'node:readline';
 import { createServer } from 'node:http';
 import { open, readFile, stat } from 'node:fs/promises';
 import { basename, extname, join, normalize, resolve } from 'node:path';
-import { bestRedInfo, progressPoint } from './progress.js';
+import { bestRedInfo, kindCounts, progressPoint } from './progress.js';
 
 const root = resolve(new URL('..', import.meta.url).pathname);
 const usage = (why) => {
@@ -142,6 +142,9 @@ async function readHistory(file, end) {
   // (the values event before it), best against the holdout so far (-1 none)];
   // the dashboard cannot draw it from a history without the warriors that left
   const panel = new Set(), history = [];
+  // the members by kind of style after each batch (the values event), as the
+  // dashboard counts them from the whole history: [batch, kind -> count]
+  const styleOf = new Map(), kinds = [];
   const batches = []; // the line numbers of the batch events
   let values = null;
   let n = 0, sent = 0, record = -Infinity;
@@ -157,7 +160,11 @@ async function readHistory(file, end) {
       panel.delete(e.out);
       panel.add(e.panel.id);
     }
-    if (t === 'values') values = line;
+    if (t === 'values') {
+      values = line;
+      kinds.push([Number(/"batch":(\d+)/.exec(line)?.[1] ?? -1), kindCounts(styleOf.values())]);
+    }
+    if (t === 'enter' || t === 'elite') styleOf.set(idOf(line), /"style":\{"kind":"([^"]*)"/.exec(line)?.[1]);
     if (t === 'batch' && values) {
       const members = JSON.parse(values).values?.filter((v) => !panel.has(v[0]));
       if (members) {
@@ -165,10 +172,10 @@ async function readHistory(file, end) {
         history.push([Number(/"batch":(\d+)/.exec(line)[1]), p.best, p.mean, p.holdout]);
       }
     }
-    if (t === 'leave') gone.add(idOf(line));
+    if (t === 'leave') gone.add(idOf(line)), styleOf.delete(idOf(line));
     if (t === 'elite') {
       const r = /"replaced":\{"id":(\d+)/.exec(line);
-      if (r) gone.add(r[1]);
+      if (r) gone.add(r[1]), styleOf.delete(r[1]);
     }
     if (t === 'screen') screens.push(n);
     if (t === 'batch') batches.push(n);
@@ -201,7 +208,7 @@ async function readHistory(file, end) {
     lines.push(line);
     sent++;
   }
-  lines.push(JSON.stringify({ type: 'compacted', lines: n, dropped: n - sent, gone: gone.size, history: history.length ? history : undefined }));
+  lines.push(JSON.stringify({ type: 'compacted', lines: n, dropped: n - sent, gone: gone.size, history: history.length ? history : undefined, kinds: kinds.length ? kinds : undefined }));
   const known = { end, lines };
   histories.set(file, known);
   return known;

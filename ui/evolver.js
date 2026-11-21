@@ -11,7 +11,7 @@
 
 import { assemble, compileMars, createMarsSync } from '../wasm/42mars.js';
 import { describe, measureStyle } from '../tools/style.js';
-import { progressPoint } from '../tools/progress.js';
+import { kindCounts, progressPoint } from '../tools/progress.js';
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
@@ -50,11 +50,9 @@ function fresh() {
     bestId: null, // the best against the holdout warriors so far
     ticker: [],
     ghosts: [], // members that left, fading out of the matrix
-    mapDirty: true,
     opTotals: new Map(), // change -> [children, evaluated, past the screen, still in after the batch]
     opBatches: [], // per batch: { batch, ops }
-    mapIds: [],
-    view: null,
+    kinds: [], // per batch: { batch, counts }: the members by kind of style
   };
 }
 let S = fresh();
@@ -138,6 +136,7 @@ function handle(e) {
     case 'enter': {
       const x = { id: e.id, kind: 'member', name: e.name ?? `e${e.id}`, code: e.code, gen: e.gen ?? null, refactors: [], parents: e.parents, ops: e.ops, length: e.length, screen: e.screen, estimate: e.estimate, born: e.batch, died: null, alive: true, enteredAt: now, value: null, newFamily: !!e.newFamily, parentDifference: e.parentDifference };
       x.hue = hueFor(e.id, e.parents, x.newFamily);
+      x.styleKind = e.style?.kind;
       S.w.set(e.id, x);
       let s = S.slots.indexOf(null, S.panel.length);
       if (s < 0) s = S.slots.push(null) - 1;
@@ -146,13 +145,13 @@ function handle(e) {
       x.opponents = e.scores.map((s) => s[0]);
       x.panelAvg = panelAvg(e.id);
       x.row = null;
-      S.mapDirty = true;
       if (!quiet.has(e.id)) tick(`<span class="in">+</span> ${link(e.id)} <b>${f1(x.panelAvg)}</b> vs panel <span style="color:#6c7290">${esc(e.ops)}</span>${x.newFamily ? ` <span class="new-family">new family: ${f1(e.parentDifference)} points from ${link(e.parents[0])}</span>` : ''}`);
       break;
     }
     case 'elite': { // --map-elites: a warrior takes a cell, the one there leaves
       const x = { id: e.id, kind: 'member', name: e.name, code: e.code, parents: e.parents, ops: e.ops, length: e.length, screen: e.screen, born: e.batch, died: null, alive: true, enteredAt: now, value: null, newFamily: !!e.newFamily, cell: e.index, cellXyz: e.cell, style: e.style };
       x.hue = hueFor(e.id, e.parents, x.newFamily);
+      x.styleKind = e.style?.kind;
       S.w.set(e.id, x);
       const old = e.replaced ? S.w.get(e.replaced.id) : null;
       if (old) {
@@ -164,7 +163,6 @@ function handle(e) {
       x.panelAvg = panelAvg(e.id);
       S.cells ??= new Map();
       S.cells.set(e.index, e.id);
-      S.mapDirty = true;
       const how = !e.rule ? `takes cell ${e.cell.join('·')}${old ? ` from ${link(old.id)} (${f1(e.replaced.avg)})` : ', a new cell'}`
         : e.rule === 'near' ? `beats its nearest ${link(old.id)} (${f1(e.replaced.avg)})`
         : e.rule === 'far' ? `<span class="new-family">unlike all</span>, replaces ${link(old.id)} (${f1(e.replaced.avg)}) of the closest pair`
@@ -181,7 +179,6 @@ function handle(e) {
       S.slots[S.slots.indexOf(e.out)] = p.id;
       for (const [o, w, l, t, seed] of e.scores) setRes(p.id, o, w, l, t, seed, p.id);
       for (const x of alive()) x.panelAvg = panelAvg(x.id);
-      S.mapDirty = true;
       tick(`<span class="best">⟳</span> panel: ${link(p.id)} replaces ${esc(old?.name ?? `#${e.out}`)}`);
       break;
     }
@@ -189,7 +186,6 @@ function handle(e) {
       for (const [o, w, l, t, seed] of e.scores) setRes(e.id, o, w, l, t, seed, e.id);
       const x = S.w.get(e.id);
       if (x) x.panelAvg = panelAvg(e.id);
-      S.mapDirty = true;
       break;
     }
     case 'refactor': { // --refactor: a member's generator rewritten in place, its warrior the same
@@ -211,7 +207,6 @@ function handle(e) {
       x.nearest = e.nearest;
       S.slots[S.slots.indexOf(e.id)] = null;
       if (x.row !== null && x.row !== undefined) S.ghosts.push(x);
-      S.mapDirty = true;
       if (x.born === e.batch) { // did not last its own batch: its matches are not kept (most newcomers; a long run has millions)
         x.rejected = true;
         for (const o of x.opponents ?? []) S.res.delete(`${x.id}:${o}`), S.res.delete(`${o}:${x.id}`);
@@ -241,7 +236,11 @@ function handle(e) {
         if (!x) continue;
         Object.assign(x, { avg, distance, nearest, value, panelAvg: pAvg });
       }
-      S.mapDirty = true;
+      { // the members by kind of style after the batch (tab Kinds)
+        const counts = kindCounts(alive().map((m) => m.styleKind));
+        if (S.kinds.at(-1)?.batch === e.batch) S.kinds.at(-1).counts = counts;
+        else S.kinds.push({ batch: e.batch, counts });
+      }
       break;
     case 'bench': {
       const x = member(e.id);
@@ -288,6 +287,7 @@ function handle(e) {
       // the progress of every batch, computed by the server from the whole
       // history: the points drawn from the compacted one miss the warriors that left
       if (e.history) S.history = e.history.map(([batch, best, mean, holdout]) => ({ batch, best, mean, holdout }));
+      if (e.kinds) S.kinds = e.kinds.map(([batch, counts]) => ({ batch, counts })); // the same for the tab Kinds
       break;
     default:
   }
@@ -606,241 +606,7 @@ function warriorTip(id) {
   return `<b style="color:${hsl(x.hue)}">${esc(x.name)}</b> #${x.id} · batch ${x.born}${x.alive ? '' : ` to ${x.died}`}<br>${f1(x.panelAvg)} vs panel · value ${f1(x.value)}<br>nearest ${esc(nameOf(x.nearest))} at ${x.distance?.toFixed(2) ?? '–'}${x.holdout >= 0 ? `<br>holdout ${f1(x.holdout)}` : ''}${sp}`;
 }
 
-// ---------------- the novelty map: classical MDS of the rows against the panel
-
-function computeMap() {
-  S.mapDirty = false;
-  const panel = S.panel;
-  const dead = [...S.w.values()].filter((x) => x.kind === 'member' && !x.alive && !x.rejected).slice(-160);
-  const ids = [...panel, ...alive().map((x) => x.id), ...dead.map((x) => x.id)];
-  const n = ids.length, P = panel.length;
-  if (n < 3 || P < 2) return;
-  // fingerprints: points against each panel warrior; the own column of a
-  // panel warrior is the column mean of the others
-  const F = new Float64Array(n * P);
-  for (let i = 0; i < n; i++) for (let k = 0; k < P; k++) F[i * P + k] = ids[i] === panel[k] ? NaN : (points(resOf(ids[i], panel[k])) ?? NaN);
-  const sigma = new Float64Array(P);
-  for (let k = 0; k < P; k++) {
-    let s = 0, c = 0;
-    for (let i = 0; i < n; i++) if (!Number.isNaN(F[i * P + k])) s += F[i * P + k], c++;
-    const mean = c ? s / c : 0;
-    let v = 0;
-    for (let i = 0; i < n; i++) {
-      if (Number.isNaN(F[i * P + k])) F[i * P + k] = mean;
-      v += (F[i * P + k] - mean) ** 2;
-    }
-    sigma[k] = Math.sqrt(v / n) || 1;
-  }
-  // the SD-score of the push-off (each column by its standard deviation)
-  const D2 = new Float64Array(n * n);
-  for (let i = 0; i < n; i++) {
-    for (let j = 0; j < i; j++) {
-      let d = 0;
-      for (let k = 0; k < P; k++) d += Math.abs(F[i * P + k] - F[j * P + k]) / sigma[k];
-      D2[i * n + j] = D2[j * n + i] = d * d;
-    }
-  }
-  const rm = new Float64Array(n);
-  let tm = 0;
-  for (let i = 0; i < n; i++) {
-    for (let j = 0; j < n; j++) rm[i] += D2[i * n + j];
-    tm += rm[i];
-    rm[i] /= n;
-  }
-  tm /= n * n;
-  const B = new Float64Array(n * n);
-  for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) B[i * n + j] = -0.5 * (D2[i * n + j] - rm[i] - rm[j] + tm);
-  const vecs = [], vals = [];
-  for (let c = 0; c < 2; c++) {
-    let v = Float64Array.from({ length: n }, (_, i) => Math.sin(i * 12.9898 + c * 78.233));
-    let lambda = 0;
-    for (let it = 0; it < 80; it++) {
-      const u = new Float64Array(n);
-      for (let i = 0; i < n; i++) {
-        let s = 0;
-        for (let j = 0; j < n; j++) s += B[i * n + j] * v[j];
-        u[i] = s;
-      }
-      for (const q of vecs) {
-        let d = 0;
-        for (let i = 0; i < n; i++) d += q[i] * u[i];
-        for (let i = 0; i < n; i++) u[i] -= d * q[i];
-      }
-      let norm = 0;
-      for (let i = 0; i < n; i++) norm += u[i] * u[i];
-      norm = Math.sqrt(norm) || 1;
-      lambda = norm;
-      for (let i = 0; i < n; i++) u[i] /= norm;
-      v = u;
-    }
-    vecs.push(v);
-    vals.push(Math.sqrt(Math.max(lambda, 0)));
-  }
-  const pos = ids.map((_, i) => [vecs[0][i] * vals[0], vecs[1][i] * vals[1]]);
-  // turn and mirror onto the last map so that the picture stays put
-  let best = null;
-  for (const flip of [1, -1]) {
-    let a = 0, b = 0;
-    ids.forEach((id, i) => {
-      const old = S.w.get(id).mapTarget;
-      if (!old) return;
-      const x = pos[i][0], y = pos[i][1] * flip;
-      a += x * old[0] + y * old[1];
-      b += x * old[1] - y * old[0];
-    });
-    const score = Math.hypot(a, b);
-    if (!best || score > best.score) best = { flip, theta: Math.atan2(b, a), score };
-  }
-  const cos = Math.cos(best.theta), sin = Math.sin(best.theta);
-  ids.forEach((id, i) => {
-    const x = pos[i][0], y = pos[i][1] * best.flip;
-    const t = [x * cos - y * sin, x * sin + y * cos];
-    const w = S.w.get(id);
-    w.mapTarget = t;
-    if (!w.mapPos) w.mapPos = w.kind === 'member' && w.parents.length && S.w.get(w.parents[0])?.mapPos ? [...S.w.get(w.parents[0]).mapPos] : [...t];
-  });
-  S.mapIds = ids;
-  // the labels of the axes: for each direction on screen, the 2 panel
-  // warriors whose scores (of the members) go most with it, up and down
-  const mem = ids.map((id, i) => i).filter((i) => S.w.get(ids[i]).kind === 'member');
-  const axis = (d) => {
-    if (mem.length < 3) return null;
-    const c = (k) => {
-      const xs = mem.map((i) => S.w.get(ids[i]).mapTarget[d]), ys = mem.map((i) => F[i * P + k]);
-      const mx = xs.reduce((a, b) => a + b, 0) / xs.length, my = ys.reduce((a, b) => a + b, 0) / ys.length;
-      let sxy = 0, sxx = 0, syy = 0;
-      xs.forEach((x, j) => { sxy += (x - mx) * (ys[j] - my), sxx += (x - mx) ** 2, syy += (ys[j] - my) ** 2; });
-      return sxx && syy ? sxy / Math.sqrt(sxx * syy) : 0;
-    };
-    const short = (n) => (n.length > 16 ? `${n.slice(0, 15)}…` : n);
-    const r = panel.map((p, k) => [short(nameOf(p)), c(k)]).sort((a, b) => b[1] - a[1]);
-    return { plus: r.slice(0, 2).map((x) => x[0]).join(', '), minus: r.slice(-2).reverse().map((x) => x[0]).join(', ') };
-  };
-  const ax = axis(0), ay = axis(1);
-  S.mapAxes = ax && ay ? [ax, ay] : null;
-}
-
-function drawMap(now) {
-  const canvas = $('map');
-  const { ctx, w, h } = fit(canvas);
-  if (!S.mapIds.length) return;
-  const pts = S.mapIds.map((id) => S.w.get(id));
-  for (const p of pts) {
-    p.mapPos[0] += (p.mapTarget[0] - p.mapPos[0]) * ease * 0.6;
-    p.mapPos[1] += (p.mapTarget[1] - p.mapPos[1]) * ease * 0.6;
-  }
-  // a view box that follows the points slowly
-  let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
-  for (const p of pts) {
-    x0 = Math.min(x0, p.mapTarget[0]); x1 = Math.max(x1, p.mapTarget[0]);
-    y0 = Math.min(y0, p.mapTarget[1]); y1 = Math.max(y1, p.mapTarget[1]);
-  }
-  const target = [x0, x1, y0, y1];
-  if (!S.view) S.view = target;
-  S.view = S.view.map((v, i) => v + (target[i] - v) * ease * 0.4);
-  const [vx0, vx1, vy0, vy1] = S.view;
-  const pad = 28, sx = (w - 2 * pad) / Math.max(1e-9, vx1 - vx0), sy = (h - 2 * pad) / Math.max(1e-9, vy1 - vy0), s = Math.min(sx, sy);
-  const cx = (vx0 + vx1) / 2, cy = (vy0 + vy1) / 2;
-  const X = (p) => w / 2 + (p.mapPos[0] - cx) * s, Y = (p) => h / 2 + (p.mapPos[1] - cy) * s;
-  // the axes: the two directions in which the warriors' scores differ most;
-  // each end names the panel warriors the members toward it score more against
-  ctx.strokeStyle = '#1c2033';
-  ctx.setLineDash([2, 4]);
-  ctx.beginPath();
-  ctx.moveTo(pad / 2, h / 2), ctx.lineTo(w - pad / 2, h / 2);
-  ctx.moveTo(w / 2, pad / 2), ctx.lineTo(w / 2, h - pad / 2);
-  ctx.stroke();
-  ctx.setLineDash([]);
-  if (S.mapAxes) {
-    ctx.font = '10px ui-monospace, monospace';
-    ctx.fillStyle = '#7f86a0';
-    const [ax, ay] = S.mapAxes;
-    ctx.textBaseline = 'top';
-    ctx.textAlign = 'right';
-    ctx.fillText(`better against ${ax.plus} →`, w - 6, h / 2 + 4);
-    ctx.textAlign = 'left';
-    ctx.textBaseline = 'bottom';
-    ctx.fillText(`← better against ${ax.minus}`, 6, h / 2 - 4);
-    ctx.textBaseline = 'top';
-    ctx.fillText(`↑ better against ${ay.minus}`, w / 2 + 5, 4);
-    ctx.textBaseline = 'bottom';
-    ctx.fillText(`↓ better against ${ay.plus}`, w / 2 + 5, h - 4);
-    ctx.textAlign = 'left';
-    ctx.textBaseline = 'middle';
-  }
-  const hv = mouseOf(canvas);
-  let near = null, nearD = 14;
-  const consider = (p, x, y) => {
-    if (!hv) return;
-    const d = Math.hypot(hv.x - x, hv.y - y);
-    if (d < nearD) nearD = d, near = p;
-  };
-  // the selected warrior's family
-  const fam = selected !== null ? ancestry(selected) : new Set();
-  for (const p of pts) {
-    const x = X(p), y = Y(p);
-    if (p.kind === 'panel') {
-      ctx.fillStyle = '#9aa1bb';
-      ctx.globalAlpha = 0.5;
-      ctx.beginPath();
-      ctx.arc(x, y, 3.2, 0, 7);
-      ctx.fill();
-      ctx.globalAlpha = 1;
-    } else if (!p.alive) {
-      ctx.fillStyle = hsl(p.hue, 60, 50, fam.has(p.id) ? 0.9 : 0.28);
-      ctx.beginPath();
-      ctx.arc(x, y, fam.has(p.id) ? 3 : 2, 0, 7);
-      ctx.fill();
-    }
-    consider(p, x, y);
-  }
-  for (const p of pts) {
-    if (p.kind !== 'member' || !p.alive) continue;
-    const x = X(p), y = Y(p);
-    const r = 5 + Math.min(6, (p.value ?? 0) / 150);
-    const g = ctx.createRadialGradient(x, y, 0, x, y, r * 3.2);
-    g.addColorStop(0, hsl(p.hue, 95, 70, 0.55));
-    g.addColorStop(1, hsl(p.hue, 95, 50, 0));
-    ctx.fillStyle = g;
-    ctx.beginPath();
-    ctx.arc(x, y, r * 3.2, 0, 7);
-    ctx.fill();
-    ctx.fillStyle = hsl(p.hue, 90, 66);
-    ctx.beginPath();
-    ctx.arc(x, y, r, 0, 7);
-    ctx.fill();
-    // a frame's time can be before the time its events were read (Firefox):
-    // without the 0 the radius below went negative and arc() threw
-    const age = Math.max(0, now - p.enteredAt);
-    if (age < 1800) { // a newcomer flares up
-      ctx.strokeStyle = hsl(p.hue, 100, 75, 1 - age / 1800);
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.arc(x, y, r + age / 25, 0, 7);
-      ctx.stroke();
-    }
-    if (p.id === S.bestId) { // the best against the holdout: a gold star
-      ctx.fillStyle = '#ffc53d';
-      ctx.font = 'bold 13px ui-monospace, monospace';
-      ctx.fillText('★', x + r + 3, y - r - 2);
-    }
-    if (p.id === selected) {
-      ctx.strokeStyle = '#ffc53d';
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.arc(x, y, r + 4, 0, 7);
-      ctx.stroke();
-    }
-    consider(p, x, y);
-  }
-  if (hv) {
-    hv.target = near ? { select: near.id } : null;
-    if (near) showTip(hv, warriorTip(near.id));
-    else hideTip();
-  }
-}
-
-// ---------------- lineage: birth batch against score, lines to the parents
+// ---------------- the lineage
 
 function ancestry(id) {
   const out = new Set();
@@ -1023,6 +789,57 @@ function drawProgress() {
     ctx.fillText(t, lx + 14, 10);
     lx += ctx.measureText(t).width + 30;
   }
+}
+
+// The kinds of style of the members, batch by batch (tab Kinds), as shares
+// stacked from the bottom: what the list is made of, and when it changes.
+const KINDS = [
+  ['writes fields', 'writes fields (clears, loops)', '#ffb347'],
+  ['reads far cells', 'scanners', '#5fd7ff'],
+  ['throws copies', 'stones, clears', '#b98cff'],
+  ['copies itself', 'papers', '#8be3a8'],
+  ['runs copies', 'imps, moving stones', '#ff9ab8'],
+  ['damages by increments', 'damage by increments', '#ffd166'],
+  ['writes little', 'write little', '#6c7290'],
+  ['', 'not measured', '#3a3f58'],
+];
+function kindOf(k) { // the index in KINDS, the last when the style is not known
+  const i = KINDS.findIndex(([p]) => p && (k ?? '').startsWith(p));
+  return i < 0 ? KINDS.length - 1 : i;
+}
+
+function drawKinds() {
+  const canvas = $('kinds');
+  const { ctx, w, h } = fit(canvas);
+  const ks = S.kinds;
+  $('kinds-legend').innerHTML = KINDS.map(([, label, c]) => `<span><i style="background:${c}"></i>${label}</span>`).join('');
+  if (ks.length < 2) return;
+  const left = 30, right = 8, top = 6, bottom = 16;
+  const shares = ks.map(({ counts }) => {
+    const v = new Array(KINDS.length).fill(0);
+    let n = 0;
+    for (const [k, c] of Object.entries(counts)) v[kindOf(k)] += c, n += c;
+    return v.map((c) => (n ? c / n : 0));
+  });
+  const X = (i) => left + (i / (ks.length - 1)) * (w - left - right);
+  const Y = (f) => top + (1 - f) * (h - top - bottom);
+  const base = new Array(ks.length).fill(0);
+  for (let k = 0; k < KINDS.length; k++) {
+    ctx.fillStyle = KINDS[k][2];
+    ctx.globalAlpha = 0.85;
+    ctx.beginPath();
+    ks.forEach((_, i) => (i ? ctx.lineTo(X(i), Y(base[i] + shares[i][k])) : ctx.moveTo(X(i), Y(base[i] + shares[i][k]))));
+    for (let i = ks.length - 1; i >= 0; i--) ctx.lineTo(X(i), Y(base[i]));
+    ctx.fill();
+    ks.forEach((_, i) => { base[i] += shares[i][k]; });
+  }
+  ctx.globalAlpha = 1;
+  ctx.fillStyle = '#7f86a0';
+  ctx.font = '10px ui-monospace, monospace';
+  for (const f of [0, 0.5, 1]) ctx.fillText(`${f * 100}%`, 2, Y(f) + 3);
+  ctx.fillText(`batch ${ks[0].batch}`, left, h - 3);
+  const last = `batch ${ks.at(-1).batch}`;
+  ctx.fillText(last, w - right - ctx.measureText(last).width, h - 3);
 }
 
 // ---------------- the header
@@ -1240,14 +1057,15 @@ function generatorBlock(x) {
   return `<h4>Generator <small>(${esc(parts.join(' · '))})</small></h4><pre class="gen">${genListing(x.gen)}</pre>`;
 }
 
+// The selected warrior, always shown: its scores, its results against the
+// panel and the members, generator and code, its matches (▶ plays one in the
+// arena) and its line.
 function renderCard() {
-  const card = $('card');
   if (selected === null || !S.w.has(selected)) {
-    card.hidden = true;
+    $('card-body').innerHTML = '<div class="empty">No warrior selected: a switch to a run selects its best member against the panel; a click on a row of the matrix, a name or a dot selects that one.</div>';
     return;
   }
   const x = S.w.get(selected);
-  card.hidden = false;
   const color = x.kind === 'member' ? hsl(x.hue) : '#c8cde0';
   const stat = (k, v) => `<div class="stat"><div class="k">${k}</div><div class="v">${v}</div></div>`;
   const fpBars = S.panel.map((p) => {
@@ -1257,16 +1075,31 @@ function renderCard() {
   const others = [...alive().filter((m) => m.id !== x.id), ...S.panel.filter((p) => p !== x.id).map(member)];
   if (x.benched) others.push(...x.benched.map(member));
   const rows = others.map((o) => ({ o, r: resOf(x.id, o.id) })).filter((e) => e.r)
-    .sort((a, b) => points(b.r) - points(a.r))
-    .map(({ o, r }) => `<tr><td><a data-id="${o.id}" style="color:${o.kind === 'member' ? hsl(o.hue) : o.kind === 'holdout' ? '#ff9ab8' : '#aab0c8'}">${esc(o.name)}</a>${o.kind === 'holdout' ? ' <small>holdout</small>' : ''}</td><td class="n">${r.w}/${r.l}/${r.t}</td><td class="n" style="color:${scoreColor(Math.max(120, points(r)))}">${points(r).toFixed(0)}</td><td><button data-battle="${x.id},${o.id}">watch</button></td></tr>`).join('');
+    .sort((a, b) => points(a.r) - points(b.r)) // worst first: what beats it
+    .map(({ o, r }) => `<tr class="${arenaPair?.[0] === x.id && arenaPair?.[1] === o.id ? 'playing' : ''}"><td><a data-id="${o.id}" style="color:${o.kind === 'member' ? hsl(o.hue) : o.kind === 'holdout' ? '#ff9ab8' : '#aab0c8'}">${esc(o.name)}</a> <small>${o.kind === 'member' ? `${o.length} instr` : o.kind}</small></td><td class="n">${r.w}/${r.l}/${r.t}</td><td class="n" style="color:${scoreColor(Math.max(120, points(r)))}">${points(r).toFixed(0)}</td><td><button class="play" data-battle="${x.id},${o.id}" title="play it in the arena">▶</button></td></tr>`).join('');
+  // against the other members: the share it loses, and a bar for each, red where the member wins more rounds
+  const vsMembers = alive().filter((m) => m.id !== x.id).map((m) => resOf(x.id, m.id)).filter(Boolean);
+  const beatenBy = vsMembers.filter((r) => r.l > r.w).length;
+  const membersAvg = vsMembers.length ? vsMembers.reduce((a, r) => a + points(r), 0) / vsMembers.length : -1;
+  const memberBars = [...vsMembers].sort((a, b) => points(a) - points(b))
+    .map((r) => `<i style="height:${Math.max(8, (points(r) / 300) * 100)}%;background:${r.l > r.w ? '#ff5a7a' : '#5dff9a'}"></i>`).join('');
+  // its line: first parents back to where the family came from
+  const line = [];
+  for (let y = x, n = 0; y && n < 12; n++) {
+    line.push(link(y.id));
+    const p = y.parents?.[0];
+    if (p === undefined) { line.push(y.ops === 'migrant' ? '<i>from another island</i>' : y.ops === 'random' ? '<i>random</i>' : `<i>${esc(y.ops)}</i>`); break; }
+    y = S.w.get(p);
+    if (!y) { line.push('…'); break; }
+  }
   let head;
   if (x.kind === 'member') {
     const parents = x.parents.map(link).join(' ') || (x.ops === 'migrant' ? 'none here: the best of another island (--migrate)' : 'none (random)');
     head = `<h3 style="color:${color}">${esc(x.name)} <small style="color:#6c7290;font-size:13px">#${x.id}</small></h3>
       ${x.id === S.bestId ? '<div class="sub" style="color:#ffc53d">★ the best against the holdout warriors so far</div>' : ''}
       <div class="sub">born in batch ${x.born}${x.alive ? ', in the list' : `, pushed off in batch ${x.died}`} · ${x.length} instructions · ${esc(x.ops)}</div>
-      <div class="stats">${stat('vs panel', f1(x.panelAvg))}${stat('vs holdout', f1(x.holdout))}${stat('push-off value', f1(x.value))}
-      ${stat('distance', x.distance?.toFixed(2) ?? '–')}${stat('nearest', x.nearest !== undefined && x.nearest !== null && S.w.has(x.nearest) ? link(x.nearest) : '–')}${stat('screen', `${f1(x.screen)}${x.estimate !== undefined ? ` <small style="color:#7f86a0">est. ${x.estimate.toFixed(0)}</small>` : ''}`)}</div>
+      <div class="stats">${stat('vs panel', f1(x.panelAvg))}${stat('vs holdout', f1(x.holdout))}${stat('vs members', f1(membersAvg))}${stat('beaten by', vsMembers.length ? `${beatenBy}/${vsMembers.length}` : '–')}
+      ${stat('push-off value', f1(x.value))}${stat('distance', x.distance?.toFixed(2) ?? '–')}${stat('nearest', x.nearest !== undefined && x.nearest !== null && S.w.has(x.nearest) ? link(x.nearest) : '–')}${stat('screen', `${f1(x.screen)}${x.estimate !== undefined ? ` <small style="color:#7f86a0">est. ${x.estimate.toFixed(0)}</small>` : ''}`)}</div>
       <div class="links">parents: ${parents}</div>
       <div class="sub style" id="card-style">style: measuring…</div>
       ${x.gen ? generatorBlock(x) : ''}
@@ -1277,8 +1110,10 @@ function renderCard() {
       <div class="sub style" id="card-style">style: measuring…</div>
       <h4>Source</h4><pre>${esc(x.source)}</pre>`;
   }
-  $('card-body').innerHTML = `${head}<h4>Against the panel, warrior by warrior</h4><div class="fp">${fpBars}</div>
-    <h4>Matches <small>(wins/losses/ties, points per 100 rounds)</small></h4><table>${rows}</table>`;
+  const members = x.kind === 'member' && vsMembers.length ? `<h4>Against the other members <small>red: the member wins more rounds</small></h4><div class="members">${memberBars}</div>` : '';
+  const lineHtml = x.kind === 'member' ? `<h4>Line <small>first parents back to its family's start</small></h4><div class="line">${line.join(' ← ')}</div>` : '';
+  $('card-body').innerHTML = `${head}<h4>Against the panel, warrior by warrior</h4><div class="fp">${fpBars}</div>${members}
+    <h4>Matches <small>wins/losses/ties, points per 100 rounds, worst first · ▶ plays it in the arena</small></h4><table>${rows}</table>${lineHtml}`;
   showStyle(x);
 }
 
@@ -1342,9 +1177,40 @@ function battleUrl(a, b) {
   return `index.html#battle=${btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')}`;
 }
 
-function openBattle(a, b) {
+// The arena: a match in the visualizer's core view, in this page
+// (index.html?embed, the battle view without its title, cast and legend).
+let arenaPair = null; // [a, b] of the match it shows
+function playArena(a, b) {
   const url = battleUrl(a, b);
-  if (url) window.open(url, '_blank');
+  if (!url) return;
+  arenaPair = [a, b];
+  const [page, hash] = url.split('#');
+  $('arena').src = `${page}?embed&noguide&speed=13#${hash}`; // fast: 100,000 instructions a second
+  $('arena').hidden = false;
+  $('arena-empty').hidden = true;
+  const r = resOf(a, b);
+  const color = (id) => (S.w.get(id)?.kind === 'member' ? hsl(S.w.get(id).hue) : '#aab0c8');
+  $('arena-head').innerHTML = `<span style="color:${color(a)}">● ${esc(nameOf(a))}</span>`
+    + `<span class="mid">${r.w}/${r.l}/${r.t} in ${r.rounds} rounds · ${points(r).toFixed(0)} points</span>`
+    + `<span style="color:${color(b)}">${esc(nameOf(b))} ●</span>`;
+  renderCard();
+}
+
+// A run that the page switches to: its best member against the panel, and
+// in the arena the member that beats it most clearly (else the panel warrior
+// it does worst against). While the history comes in, the pick follows it,
+// until the user selects something.
+let autoPick = true;
+function pickBest() {
+  const ms = alive();
+  if (!ms.length) return;
+  const best = ms.reduce((a, b) => ((b.panelAvg ?? -1) > (a.panelAvg ?? -1) ? b : a));
+  if (selected !== best.id) select(best.id, true);
+  const score = (o) => points(resOf(best.id, o.id));
+  const worst = (xs) => xs.filter((o) => resOf(best.id, o.id)).sort((x, y) => score(x) - score(y))[0] ?? null;
+  const beaters = ms.filter((m) => m.id !== best.id && resOf(best.id, m.id) && resOf(best.id, m.id).l > resOf(best.id, m.id).w);
+  const foe = worst(beaters) ?? worst(S.panel.map(member));
+  if (foe && (arenaPair?.[0] !== best.id || arenaPair?.[1] !== foe.id)) playArena(best.id, foe.id);
 }
 
 // ------------------------------------------------------------------ tooltips and input
@@ -1359,14 +1225,15 @@ function showTip(hv, html) {
 }
 const hideTip = () => { $('tip').hidden = true; };
 
-function select(id) {
+function select(id, auto = false) {
+  if (!auto) autoPick = false; // the user chose: the page does not pick for them any more
   selected = id;
   chartsDirty = true;
   renderCard();
 }
 
 function wire() {
-  for (const id of ['matrix', 'map', 'lineage', 'progress']) {
+  for (const id of ['matrix', 'lineage', 'progress']) {
     const c = $(id);
     c.addEventListener('mousemove', (e) => {
       const r = c.getBoundingClientRect();
@@ -1377,7 +1244,7 @@ function wire() {
     c.addEventListener('click', () => {
       const t = hover?.target;
       if (!t) return;
-      if (t.battle) openBattle(...t.battle);
+      if (t.battle) autoPick = false, playArena(...t.battle);
       else if (t.select !== undefined) select(t.select);
     });
   }
@@ -1385,14 +1252,15 @@ function wire() {
     const a = e.target.closest('a[data-id]');
     if (a) select(Number(a.dataset.id));
     const b = e.target.closest('button[data-battle]');
-    if (b) openBattle(...b.dataset.battle.split(',').map(Number));
+    if (b) autoPick = false, playArena(...b.dataset.battle.split(',').map(Number));
   });
-  $('card-close').addEventListener('click', () => select(null));
+  $('arena-big').addEventListener('click', () => document.body.classList.toggle('arena-big'));
   $('tabs').addEventListener('click', (e) => {
     const b = e.target.closest('button[data-tab]');
     if (!b) return;
     for (const x of $('tabs').querySelectorAll('button')) x.classList.toggle('on', x === b);
     for (const t of document.querySelectorAll('.ticker-panel .tab')) t.hidden = !t.classList.contains(b.dataset.tab);
+    chartsDirty = true; // a chart that was hidden has its size only now
     if (b.dataset.tab === 'tab-ops') renderOps();
     if (b.dataset.tab === 'tab-about') renderAbout();
   });
@@ -1402,7 +1270,7 @@ function wire() {
   });
   $('c-best').addEventListener('click', () => { if (S.bestId !== null) select(S.bestId); });
   $('c-top').addEventListener('click', () => { const t = strongest(); if (t) select(t.id); });
-  window.addEventListener('keydown', (e) => { if (e.key === 'Escape') select(null); });
+  window.addEventListener('keydown', (e) => { if (e.key === 'Escape') document.body.classList.remove('arena-big'); });
   renderMatrixSorts();
   $('matrix-sorts').addEventListener('click', (e) => {
     const b = e.target.closest('button');
@@ -1443,6 +1311,8 @@ function load(text) {
   for (const x of S.w.values()) x.enteredAt = -1e9;
   lastChange = performance.now(); // let the rows slide into place
   S.version = (S.version ?? 0) + 1;
+  autoPick = true;
+  pickBest();
   renderCard();
 }
 
@@ -1463,6 +1333,7 @@ function applyPending(now) {
   quiet = new Set();
   lastApply = lastChange = now;
   S.version = (S.version ?? 0) + 1;
+  if (autoPick) pickBest();
   if (selected !== null) renderCard();
 }
 
@@ -1559,6 +1430,12 @@ function clearRun() {
   S = fresh();
   selected = null;
   pending = [];
+  autoPick = true;
+  arenaPair = null;
+  $('arena').hidden = true;
+  $('arena').removeAttribute('src');
+  $('arena-empty').hidden = false;
+  $('arena-head').innerHTML = '';
   renderCard();
 }
 
@@ -1593,25 +1470,24 @@ function connect() {
   source.onmessage = (e) => { pending.push(JSON.parse(e.data)); };
 }
 
-let lastMap = 0, lastFrame = 0, lastOps = 0, lastDraw = 0;
+let lastFrame = 0, lastOps = 0, lastDraw = 0;
 function frame(now) {
   // eased by the time since the last drawing, so that 15 frames a second slide as far as 60
   ease = 1 - Math.exp(-Math.min(500, now - (lastDraw || now)) / 110);
   lastFrame = now;
   if (pending.length && now - lastApply >= EVERY) applyPending(performance.now());
-  if (S.mapDirty && now - lastMap > 400) lastMap = now, computeMap();
   // the matrix and the map move for a while after an update (rows slide,
   // newcomers flare) and while the mouse is on them, at most 15 frames a
   // second; else they stand still (10,000 cells a frame cost a core)
-  const moving = now - lastChange < 1200 || hover?.canvas === $('matrix') || hover?.canvas === $('map');
+  const moving = now - lastChange < 1200 || hover?.canvas === $('matrix');
   if ((moving && now - lastDraw >= 66) || chartsDirty) {
     lastDraw = now;
     drawMatrix(now);
-    drawMap(now);
   }
   if (chartsDirty) { // the two charts that do not move on their own
     chartsDirty = false;
-    drawLineage();
+    if (!$('lineage').closest('.tab').hidden) drawLineage();
+    if (!$('kinds').closest('.tab').hidden) drawKinds();
     drawProgress();
   }
   if (chipsDirty) drawChips();

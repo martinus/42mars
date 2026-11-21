@@ -83,12 +83,12 @@ test('a long history: without the warriors that left, the last values and speed,
   mkdirSync(run, { recursive: true });
   const file = join(run, 'events.jsonl');
   const ev = [{ type: 'start', panel: [{ id: 100 }] }, { type: 'panel' }];
-  for (let id = 1; id <= 6; id++) ev.push({ type: 'enter', batch: 0, id });
+  for (let id = 1; id <= 6; id++) ev.push({ type: 'enter', batch: 0, id, style: { kind: id >= 5 ? 'scanner' : 'paper' } });
   ev.push({ type: 'complete', batch: 0, id: 1 }, { type: 'complete', batch: 0, id: 5 });
   for (let id = 1; id <= 4; id++) ev.push({ type: 'leave', batch: 1, id });
   // the values after each batch: [id, avg, distance, nearest, value, average against the panel]
   for (let n = 1; n <= 3; n++) {
-    ev.push({ type: 'values', n, values: [[100, 0, 0, 0, 0, 40], [5, 0, 0, 0, 0, 100 + n], [6, 0, 0, 0, 0, 60]] }, { type: 'speed', n }, { type: 'batch', n, batch: n });
+    ev.push({ type: 'values', n, batch: n, values: [[100, 0, 0, 0, 0, 40], [5, 0, 0, 0, 0, 100 + n], [6, 0, 0, 0, 0, 60]] }, { type: 'speed', n }, { type: 'batch', n, batch: n });
     // 2 was the best against the holdout and left: it stays, so that the
     // dashboard can name the run's best
     if (n === 2) ev.push({ type: 'bench', batch: 2, id: 2, avg: 95.2 });
@@ -116,7 +116,9 @@ test('a long history: without the warriors that left, the last values and speed,
   // the progress chart as the whole history gives it, for every batch: best
   // and mean of the members against the panel, the best against the holdout so far
   const progress = [[1, 101, 80.5, -1], [2, 102, 81, -1], [3, 103, 81.5, 95.2]];
-  assert.deepEqual(got.at(-1), { type: 'compacted', lines: ev.length, dropped: ev.length - got.length + 1, gone: 4, history: progress });
+  // and the members by kind of style after each batch: 5 and 6 are left of the six, two scanners
+  const kinds = [1, 2, 3].map((b) => [b, { scanner: 2 }]);
+  assert.deepEqual(got.at(-1), { type: 'compacted', lines: ev.length, dropped: ev.length - got.length + 1, gone: 4, history: progress, kinds });
   // then the new lines as they come, also of warriors that leave later
   appendFileSync(file, '{"type":"enter","batch":5,"id":7}\n{"type":"leave","batch":5,"id":5}\n');
   const more = await read(reader, [], (g) => g.length >= 2);

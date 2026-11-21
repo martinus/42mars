@@ -340,3 +340,12 @@ dialog::backdrop { background: rgba(0, 0, 0, 0.6); backdrop-filter: blur(2px); }
 .guide .keys { color: var(--muted); font-size: 12px; }
 kbd { font: 11px var(--mono); border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px; padding: 0 4px; background: var(--panel-2); }
 dialog#guide { width: min(720px, 94vw); }
+
+/* ?embed: the battle view inside the evolver's dashboard (its arena): the core and a short transport, nothing else */
+body.embed { grid-template-rows: minmax(0, 1fr) auto; background: #05060a; }
+body.embed .marquee, body.embed .cast, body.embed .legend, body.embed .explainer { display: none !important; }
+body.embed main { grid-template-columns: minmax(0, 1fr); }
+body.embed .transport { padding: 4px 8px 3px; }
+body.embed .controls { gap: 6px; flex-wrap: nowrap; overflow: hidden; }
+body.embed .controls > label, body.embed .controls > .seg[aria-label="layout"], body.embed #btn-step { display: none; }
+body.embed #timeline { height: 18px; }
