@@ -478,6 +478,9 @@ typedef struct {
   genome tuned;               // --tune-novel: a tuned warrior, the first candidate of the next batch when tuned_ready
   int tuned_ready;
   uint64_t tuned_from;        // the survivor it was tuned from
+  genome *migr;               // --migrate: the best members of the other islands, played first in the next batch
+  uint64_t *migr_id;
+  uint32_t *migr_noun, migr_n;
   uint32_t tuned_noun;
   double *sigma;
   pushoff_value *values;
@@ -2383,7 +2386,16 @@ static void run_batch(run *r) {
     x->parents[0] = x->parents[1] = x->rival = NO_ID;
     x->origin = r->batch; // a new line, unless it has parents in the list (below)
     int reintro = 0, copy = 0;
-    if (i == 0 && r->tuned_ready && members(r)) { // --tune-novel: the warrior tuned after the last batch
+    if (i < r->migr_n) { // --migrate: another island's best member; it enters like a start warrior when it passes
+      x->g = r->migr[i];
+      x->noun = r->migr_noun[i];
+      strcpy(x->ops, "migrant");
+      reintro = 1;
+      x->keep = 1;
+      const uint64_t h = genome_hash(&x->g, core);
+      for (uint32_t j = 0; j < in_n && !copy; j++) copy = in_list[j] == h;
+      if (!copy) in_list[in_n++] = h;
+    } else if (i == 0 && r->tuned_ready && members(r)) { // --tune-novel: the warrior tuned after the last batch
       x->g = r->tuned;
       x->parents[0] = r->tuned_from;
       x->noun = r->tuned_noun;
@@ -2439,6 +2451,7 @@ static void run_batch(run *r) {
       evaluated++;
     }
   }
+  r->migr_n = 0;
 
   // the screen's opponents: the panel, and with --screen-members that many
   // members (all if fewer), drawn with the batch's seed; so[k] is the slot
@@ -3785,7 +3798,7 @@ static void usage(void) {
           "         [--panel-rounds N] [--diversity all|panel] [--average all|panel] [--member-games all|none] [--simple]\n"
           "         [--difference abs|ahead|shape] [--pushoff value|pareto|pareto-age|pareto-sd] [--clear R] [--positions mirror|pmars]\n"
           "         [--genome list|gen] [--refactor p] [--min-length N] [--tie-points t]\n"
-          "         [--islands N [--select-after B [--keep K]] [--score-rounds R]] [--draw-seed S]\n"
+          "         [--islands N [--select-after B [--keep K]] [--score-rounds R] [--migrate M]] [--draw-seed S]\n"
           "         [--niche N]\n"
           "         [--panel-choice picked|random|kinds] [--pick-sample 300] [--no-fill] [--map-elites [cells|crowding]]\n"
           "         [--specialists] [--sharing c] [--screen-stop z | --screen-check z] [--tune-novel N]\n"
@@ -3968,6 +3981,7 @@ typedef struct {
   char dir[1000]; // shorter than a run's, for /island-NN
   uint32_t n, keep, every, selected, next_score;
   uint32_t rounds;     // --score-rounds: of each match of a score
+  uint32_t migrate;    // --migrate M: every M batches each island plays the best member of every other one, 0 never
   uint64_t seed;
   uint8_t live[ISLANDS_MAX];
   run *is[ISLANDS_MAX];
@@ -3989,7 +4003,7 @@ static void islands_save(const islands *I) {
   fprintf(f, "42evolve-islands 1\nislands %u %u %u %u %u %" PRIu64 " %.17g %u\nlive", I->n, I->keep, I->every, I->selected,
           I->next_score, I->seed, I->best, I->rounds);
   for (uint32_t i = 0; i < I->n; i++) fprintf(f, " %u", I->live[i]);
-  fputc('\n', f);
+  fprintf(f, "\nmigrate %u\n", I->migrate);
   fclose(f);
   if (rename(tmp, path) != 0) {
     fprintf(stderr, "42evolve: cannot write %s\n", path);
@@ -4009,6 +4023,7 @@ static int islands_load(islands *I) {
     ok = fscanf(f, "%u", &v) == 1 && v <= 1;
     I->live[i] = (uint8_t)v;
   }
+  if (ok && fscanf(f, " migrate %u", &I->migrate) != 1) I->migrate = 0; // a state from before --migrate
   fclose(f);
   if (!ok) fprintf(stderr, "42evolve: %s is not a state of islands\n", path);
   return ok ? 0 : -1;
@@ -4159,8 +4174,41 @@ static void islands_score(islands *I) {
   free(w), free(g), free(id), free(as), free(u), free(sc), free(isl);
 }
 
+// --migrate: before island k's batch, the member best against the panel of
+// every other live island (the first on a tie) becomes a candidate of it,
+// which plays first and enters whatever its screen once it is above the
+// threshold, as a start warrior; one that is already in is not played again.
+// The other islands are as far as the turns took them, so a run is the same
+// on any thread count and after a resume. Event `migrate`: [island, id].
+static void islands_migrate(islands *I, uint32_t k) {
+  run *r = I->is[k];
+  if (!r->migr) {
+    r->migr = xmalloc(I->n * sizeof *r->migr);
+    r->migr_id = xmalloc(I->n * sizeof *r->migr_id);
+    r->migr_noun = xmalloc(I->n * sizeof *r->migr_noun);
+  }
+  r->migr_n = 0;
+  fprintf(r->events, "{\"type\":\"migrate\",\"batch\":%u,\"from\":[", r->batch);
+  for (uint32_t j = 0; j < I->n; j++) {
+    const run *o = I->is[j];
+    if (j == k || !I->live[j]) continue;
+    uint32_t best = UINT32_MAX;
+    for (uint32_t a = o->panel_n; a < o->active_n; a++)
+      if (best == UINT32_MAX || panel_avg(o, o->active[a]) > panel_avg(o, best)) best = o->active[a];
+    if (best == UINT32_MAX || r->migr_n >= r->p.batch) continue;
+    const warrior *w = o->slot[best];
+    r->migr[r->migr_n] = *w->g;
+    r->migr_id[r->migr_n] = w->id;
+    r->migr_noun[r->migr_n] = w->noun;
+    fprintf(r->events, "%s[%u,%" PRIu64 "]", r->migr_n ? "," : "", j + 1, w->id);
+    r->migr_n++;
+  }
+  fputs("]}\n", r->events);
+}
+
 // Batches in turns until the limits: the live island with the fewest
-// batches next; every `every` batches of each, the scores.
+// batches next; every `every` batches of each, the scores; every `migrate`
+// batches the migrants.
 static void islands_loop(islands *I, uint32_t batches, double seconds) {
   const double t0 = now();
   uint32_t lo = UINT32_MAX;
@@ -4178,6 +4226,7 @@ static void islands_loop(islands *I, uint32_t batches, double seconds) {
       islands_save(I);
       continue;
     }
+    if (I->migrate && I->is[k]->batch && I->is[k]->batch % I->migrate == 0) islands_migrate(I, k);
     run_step(I->is[k]);
   }
 }
@@ -4191,10 +4240,11 @@ static void islands_close(islands *I) {
 
 // A new run of islands: base has the parameters (defaults applied, checked).
 static int islands_new(const params *base, const char *dir, uint32_t n, uint32_t keep, uint32_t every, uint32_t rounds,
-                       uint32_t threads, uint32_t batches, double seconds) {
+                       uint32_t migrate, uint32_t threads, uint32_t batches, double seconds) {
   static islands I;
   snprintf(I.dir, sizeof I.dir, "%s", dir);
   I.n = n, I.keep = keep, I.every = every, I.next_score = every, I.seed = base->seed, I.best = -1, I.rounds = rounds;
+  I.migrate = migrate;
   if (mkdir(dir, 0777) != 0 && errno != EEXIST) {
     fprintf(stderr, "42evolve: cannot make %s\n", dir);
     return 1;
@@ -4229,9 +4279,9 @@ static int islands_new(const params *base, const char *dir, uint32_t n, uint32_t
     for (uint32_t i = 0; i < count; i++) free(names[i]);
     free(names);
   }
-  fprintf(root->events, "{\"type\":\"islands\",\"islands\":%u,\"keep\":%u,\"selectAfter\":%u,\"seed\":%" PRIu64
+  fprintf(root->events, "{\"type\":\"islands\",\"islands\":%u,\"keep\":%u,\"selectAfter\":%u,\"migrate\":%u,\"seed\":%" PRIu64
                         ",\"drawSeed\":%" PRIu64 ",\"threads\":%u,\"opponents\":",
-          n, keep, every, base->seed, base->draw_seed, threads);
+          n, keep, every, migrate, base->seed, base->draw_seed, threads);
   json_str(root->events, base->opponents, 0);
   fputs(",\"panel\":", root->events);
   json_str(root->events, p.panel_files, 0);
@@ -4364,6 +4414,7 @@ int main(int argc, char **argv) {
   int new_options = 0, stage_given = 0, screen_members_given = 0, diversity_given = 0, panel_rounds_given = 0, fill_given = 0;
   int panel_given = 0, panel_choice_given = 0, draw_seed_given = 0, positions_given = 0, pushoff_given = 0;
   uint32_t islands_n = 0, islands_keep = 0, islands_every = 0, islands_rounds = 100; // --islands, --keep, --select-after, --score-rounds
+  uint32_t islands_migrate_every = 0; // --migrate
   int islands_option = 0;
   const char *optimize_file = 0; // --optimize: no run, the constants of this warrior
   for (int i = 1; i < argc; i++) {
@@ -4544,6 +4595,7 @@ int main(int argc, char **argv) {
     else if (!strcmp(a, "--keep")) islands_keep = u, islands_option = 1;
     else if (!strcmp(a, "--select-after")) islands_every = u, islands_option = 1;
     else if (!strcmp(a, "--score-rounds")) islands_rounds = u, islands_option = 1;
+    else if (!strcmp(a, "--migrate")) islands_migrate_every = u, islands_option = 1;
     else if (!strcmp(a, "--size")) p->rules.core_size = u;
     else if (!strcmp(a, "--cycles")) p->rules.max_cycles = u;
     else if (!strcmp(a, "--processes")) p->rules.max_processes = u;
@@ -4648,9 +4700,14 @@ int main(int argc, char **argv) {
         fprintf(stderr, "42evolve: --islands 1..%d, --keep fewer than the islands and with --select-after, not with --optimize or --map-elites\n", ISLANDS_MAX);
         return 2;
       }
+      if (islands_migrate_every && (islands_n < 2 || p->tune_novel)) {
+        fprintf(stderr, "42evolve: --migrate with 2 islands or more, and not with --tune-novel\n");
+        return 2;
+      }
       signal(SIGINT, on_signal);
       signal(SIGTERM, on_signal);
-      return islands_new(p, dir, islands_n, islands_keep, islands_every, islands_rounds, threads, batches, seconds);
+      return islands_new(p, dir, islands_n, islands_keep, islands_every, islands_rounds, islands_migrate_every, threads, batches,
+                         seconds);
     }
     if (run_new(&r, threads, optimize_file != 0) != 0) return 1;
   }
