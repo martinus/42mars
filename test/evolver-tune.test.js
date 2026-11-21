@@ -159,6 +159,87 @@ test('--islands: runs in one process with the same panel and holdout, in turns; 
   }
 });
 
+test('--migrate: every M batches each island plays the best member of every other one first; the same on any thread count and after a resume', { skip }, () => {
+  const N = 3, M = 2, BATCHES = 7;
+  const isl = ['--islands', String(N), '--migrate', String(M)];
+  const args = (list) => [...TINY, '--genome', 'gen', '--list', String(list), '--survivors', '8'];
+  // a list of 40 is not full before batch 6 (the threshold is open), one of 12 pushes migrants off again
+  const check = (list) => {
+  const dir = join(tmp, `mig-${list}`);
+  run(dir, [...args(list), ...isl, '--threads', '2', '--batches', String(BATCHES)]);
+  const re = events(dir, 'islands.jsonl');
+  assert.equal(re[0].migrate, M);
+  const all = [1, 2, 3].map((i) => events(join(dir, `island-0${i}`)));
+  const panel = new Set(all[0][0].panel.map((w) => w.id));
+  let moved = 0, entered = 0, open = 0, again = 0;
+  all.forEach((ev, k) => {
+    const migrations = ev.filter((e) => e.type === 'migrate');
+    assert.deepEqual(migrations.map((e) => e.batch), [2, 4, 6], `island ${k + 1}`);
+    for (const m of migrations) {
+      assert.deepEqual(m.from.map(([j]) => j), [1, 2, 3].filter((j) => j !== k + 1));
+      for (const [j, id] of m.from) {
+        // the islands take turns: one before this one has played its batch m.batch already, one after it not yet
+        const src = all[j - 1], upTo = j < k + 1 ? m.batch : m.batch - 1;
+        const vals = src.filter((e) => e.type === 'values' && e.batch <= upTo).at(-1).values.filter((v) => !panel.has(v[0]));
+        const best = vals.reduce((a, b) => (b[5] > a[5] ? b : a));
+        assert.equal(id, best[0], `island ${k + 1}, batch ${m.batch}: the best of island ${j}`);
+        const from = src.find((e) => e.type === 'enter' && e.id === id);
+        const came = ev.find((e) => e.type === 'enter' && e.batch === m.batch && e.ops === 'migrant' && e.code === from.code);
+        if (came) {
+          assert.equal(came.gen, from.gen, 'a migrant keeps its generator');
+          assert.deepEqual(came.parents, []);
+          entered++;
+        }
+        moved++;
+      }
+      // every one is bred; played unless its code is in the list (also one sent twice), whatever this island saw before;
+      // past the screen whatever its rank while the threshold is open (as a start warrior)
+      const b = ev.find((e) => e.type === 'batch' && e.batch === m.batch), [bred, played, passed] = b.ops.migrant;
+      const inList = new Map(), before = new Set();
+      for (const e of ev) {
+        if (e.batch >= m.batch) break;
+        if (e.type === 'enter') inList.set(e.id, e.code), before.add(e.code);
+        if (e.type === 'leave') inList.delete(e.id);
+      }
+      const codes = new Set(inList.values());
+      let fresh = 0;
+      for (const [j, id] of m.from) {
+        const code = all[j - 1].find((e) => e.type === 'enter' && e.id === id).code;
+        if (!codes.has(code)) fresh++, codes.add(code), again += before.has(code);
+      }
+      assert.deepEqual([bred, played], [m.from.length, fresh], `island ${k + 1}, batch ${m.batch}`);
+      if (b.threshold < 0) assert.equal(passed, played, `island ${k + 1}, batch ${m.batch}: an open threshold`), open++;
+    }
+    assert.equal(ev.filter((e) => e.type === 'batch' && e.ops.migrant).length, migrations.length, 'migrants in those batches only');
+    // a migrant whose code is in the list already is not played again: never two members with one code
+    const alive = new Map();
+    for (const e of ev) {
+      if (e.type === 'enter') {
+        assert.ok(![...alive.values()].includes(e.code) || e.ops !== 'migrant', `island ${k + 1}, batch ${e.batch}: ${e.id} is a copy`);
+        alive.set(e.id, e.code);
+      }
+      if (e.type === 'leave') alive.delete(e.id);
+    }
+  });
+  assert.ok(moved === 18 && entered >= 3, `${moved} sent, ${entered} entered`);
+  return { all, open, again };
+  };
+  const big = check(40), small = check(12);
+  assert.ok(big.open >= 1, 'no migration with an open threshold');
+  assert.ok(small.again >= 1, 'no migrant that had left the island before'); // played again: the island may have changed
+  // the same stopped and continued on other thread counts, across a migration
+  const resumed = join(tmp, 'mig-resumed');
+  run(resumed, [...args(40), ...isl, '--threads', '3', '--batches', '3']);
+  run(resumed, ['--threads', '1', '--batches', '4']);
+  [1, 2, 3].forEach((i) => assert.deepEqual(stable(events(join(resumed, `island-0${i}`))), stable(big.all[i - 1]), `island ${i}`));
+  // without islands, with one, or with --tune-novel: refused
+  for (const extra of [['--migrate', '2'], ['--islands', '1', '--migrate', '2'], [...isl, '--tune-novel', '1']]) {
+    const r = spawnSync(evolve, [join(tmp, 'mig-no'), ...(extra.includes('--tune-novel') ? TINY : args(40)), ...extra, '--batches', '1'], { encoding: 'utf8', timeout: 60000 });
+    assert.equal(r.status, 2, extra.join(' '));
+  }
+  assert.ok(!existsSync(join(tmp, 'mig-no')));
+});
+
 test('--optimize: the constants of a warrior, steps confirmed with other seeds, the same on any thread count', { skip }, () => {
   // a stone whose step of 100 bombs 8 cells of a core of 800
   const file = join(tmp, 'badstep.red');
