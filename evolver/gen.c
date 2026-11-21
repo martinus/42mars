@@ -83,9 +83,11 @@ int main(int argc, char **argv) {
   if (from) {
     int status;
     m42_warrior *w = m42_assemble_new(src, len, &rules, 0, 0, &status);
+    free(src);
     if (!w || !m42_warrior_ok(w) || m42_warrior_length(w) < 1 || m42_warrior_length(w) > GEN_LINES ||
         m42_warrior_uses_pspace(w)) {
       fprintf(stderr, "42gen: %s is no warrior of 1 to %d instructions without p-space\n", file, GEN_LINES);
+      m42_warrior_free(w);
       return 1;
     }
     gen_from_code(&x, m42_warrior_code(w), m42_warrior_length(w), m42_warrior_start(w), core);
@@ -93,16 +95,13 @@ int main(int argc, char **argv) {
     print_gen(&x, core);
     return 0;
   }
-  if (strlen(src) != len) {
-    fprintf(stderr, "42gen: %s: a 0 byte\n", file);
-    return 1;
-  }
   char err[160];
-  if (gen_parse(&x, src, core, err, sizeof err)) {
+  const int bad = strlen(src) != len ? (snprintf(err, sizeof err, "a 0 byte"), 1) : gen_parse(&x, src, core, err, sizeof err) != 0;
+  free(src);
+  if (bad) {
     fprintf(stderr, "42gen: %s: %s\n", file, err);
     return 1;
   }
-  free(src);
   if (text) {
     print_gen(&x, core);
     return 0;
