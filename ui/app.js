@@ -32,8 +32,8 @@ const PRESETS = {
 // of { title, rules, seed, rounds, round, warriors: [{ name, source }] }, the
 // match as 42evolve played it. The rules become the preset 'battle'; the
 // match starts at `round` (1-based), the rounds before it run unseen.
-const BATTLE = (() => {
-  const m = /^#battle=([A-Za-z0-9_-]+)/.exec(location.hash);
+function parseBattle(hash) {
+  const m = /^#battle=([A-Za-z0-9_-]+)/.exec(hash);
   if (!m) return null;
   try {
     const bytes = Uint8Array.from(atob(m[1].replace(/-/g, '+').replace(/_/g, '/')), (c) => c.charCodeAt(0));
@@ -43,12 +43,31 @@ const BATTLE = (() => {
   } catch {
     return null;
   }
-})();
+}
+parseBattle(location.hash); // the preset 'battle' before wire() lists the presets
+let ready = false; // main() has loaded the first match: a battle that comes before waits for it
+
+// ?embed: the battle view inside the evolver's dashboard (its arena)
+const EMBED = new URLSearchParams(location.search).has('embed');
 
 // A battle link opened in a tab that shows the visualizer already changes only
-// the hash, and the page stays as it was: load the new battle.
+// the hash, and the page stays as it was: load the new battle. In the
+// dashboard's arena the new battle loads in place, paused, at the speed set:
+// a reload would flash the core and forget it.
 window.addEventListener('hashchange', () => {
-  if (location.hash.startsWith('#battle=')) location.reload();
+  if (!location.hash.startsWith('#battle=')) return;
+  if (!EMBED) return location.reload();
+  if (!ready) return; // main() reads the hash as it is then
+  const b = parseBattle(location.hash);
+  if (!b) return;
+  setRunning(false);
+  state.slots.length = 0;
+  b.warriors.forEach((w, i) => setSlot(i, addToLibrary(w.name, w.source)));
+  state.rounds = b.rounds;
+  $('rounds').value = state.rounds;
+  state.seed = b.seed;
+  state.skipRounds = Math.max(0, (b.round || 1) - 1);
+  restartMatch();
 });
 
 // instructions per second; Infinity runs as much as fits into the frame budget
@@ -747,6 +766,12 @@ function setRunning(on) {
   $('btn-play').textContent = on ? '❚❚' : '▶';
 }
 
+// A speed the user sets: also kept for the next time in the dashboard's arena.
+function chooseSpeed(idx) {
+  setSpeed(idx);
+  if (EMBED) try { localStorage.setItem('theater-embed-speed', String(state.speedIdx)); } catch { /* no storage */ }
+}
+
 function setSpeed(idx) {
   state.speedIdx = Math.max(0, Math.min(SPEEDS.length - 1, idx));
   $('speed').value = state.speedIdx;
@@ -812,7 +837,7 @@ function wire() {
   });
   $('btn-restart').addEventListener('click', restartMatch);
   document.querySelectorAll('#speed-presets button').forEach((b) => b.addEventListener('click', () => {
-    setSpeed(Number(b.dataset.speed));
+    chooseSpeed(Number(b.dataset.speed));
     if (!state.running && !state.matchOver) setRunning(true);
   }));
   $('btn-guide').addEventListener('click', () => $('guide').showModal());
@@ -820,7 +845,7 @@ function wire() {
     const li = e.target.closest('li[data-addr]');
     if (li) state.focus = { addr: Number(li.dataset.addr), born: performance.now() };
   });
-  $('speed').addEventListener('input', (e) => setSpeed(Number(e.target.value)));
+  $('speed').addEventListener('input', (e) => chooseSpeed(Number(e.target.value)));
   $('lay-ring').addEventListener('click', () => { state.layoutKind = LAYOUT_RING; relayout(); });
   $('lay-grid').addEventListener('click', () => { state.layoutKind = LAYOUT_GRID; relayout(); });
   const preset = $('preset');
@@ -870,8 +895,8 @@ function wire() {
     else if (e.key === 'n' || e.key === 'N') $('btn-next').click();
     else if (e.key === 'r' || e.key === 'R') restartMatch();
     else if (e.key === 'l' || e.key === 'L') { state.layoutKind = 1 - state.layoutKind; relayout(); }
-    else if (e.key === ']' || e.key === '+') setSpeed(state.speedIdx + 1);
-    else if (e.key === '[' || e.key === '-') setSpeed(state.speedIdx - 1);
+    else if (e.key === ']' || e.key === '+') chooseSpeed(state.speedIdx + 1);
+    else if (e.key === '[' || e.key === '-') chooseSpeed(state.speedIdx - 1);
     else if (e.key === 'f' || e.key === 'F') state.footprints = !state.footprints;
     else if (e.key === '?') $('guide').showModal();
   });
@@ -896,13 +921,14 @@ window.addEventListener('error', (e) => toast(`<span>error: ${esc(e.message)}</s
 window.addEventListener('unhandledrejection', (e) => toast(`<span>error: ${esc(e.reason?.message ?? e.reason)}</span>`, '#ff7b7b'));
 
 async function main() {
-  // ?embed: the battle view inside the evolver's dashboard (ui/evolver.js, its arena): the core and a short transport
-  if (new URLSearchParams(location.search).has('embed')) document.body.classList.add('embed');
+  // ?embed: the battle view inside the evolver's dashboard (ui/evolver.js, its arena): the core, a clock and a short transport
+  if (EMBED) document.body.classList.add('embed');
   wire();
   setSpeed(state.speedIdx);
   await loadSamples();
   const params = new URLSearchParams(location.search);
   const cast = (params.get('cast') || DEFAULT_CAST.join(',')).split(',').filter((k) => state.library.has(k));
+  const BATTLE = parseBattle(location.hash); // the hash now: in the arena a later battle can come while the page loads
   if (BATTLE) {
     BATTLE.warriors.forEach((w, i) => setSlot(i, addToLibrary(w.name, w.source)));
     state.preset = 'battle';
@@ -921,9 +947,15 @@ async function main() {
   if (params.get('layout') === 'ring') state.layoutKind = LAYOUT_RING;
   if (params.get('footprints') === '0') state.footprints = false;
   if (params.has('speed')) setSpeed(Number(params.get('speed')));
+  if (EMBED) { // the arena keeps the speed last set in it, also after a reload of the dashboard
+    let kept = null;
+    try { kept = localStorage.getItem('theater-embed-speed'); } catch { /* no storage */ }
+    if (kept !== null && Number.isFinite(Number(kept))) setSpeed(Number(kept));
+  }
   if (params.has('rounds')) { state.rounds = Number(params.get('rounds')) || 10; $('rounds').value = state.rounds; }
   if (params.get('preset') in PRESETS) { state.preset = params.get('preset'); $('preset').value = state.preset; }
   restartMatch();
+  ready = true;
   if (BATTLE && state.mars) story(`<b>${esc(BATTLE.title || 'Evolver battle')}.</b> The match as 42evolve played it: seed ${BATTLE.seed}, ${BATTLE.rounds} rounds, starting at round ${state.skipRounds + 1}.`, -1, -1);
   if (params.has('steps') && state.mars) {
     state.mars.run(Number(params.get('steps')) || 0);

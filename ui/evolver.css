@@ -53,10 +53,11 @@ a { color: inherit; }
 
 main {
   display: grid;
-  /* the matrix, the selected warrior (always there) and the arena on top; progress and the tabs below them */
-  grid-template-columns: minmax(0, 1.12fr) minmax(400px, 0.86fr) minmax(0, 1fr);
-  grid-template-rows: minmax(0, 1.32fr) minmax(0, 0.68fr);
-  grid-template-areas: "matrix card arena" "progress card ticker";
+  /* the matrix the whole height (its rows high enough for names), the selected warrior (always there), and on the
+     right the arena, progress and the tabs */
+  grid-template-columns: minmax(0, 1.3fr) minmax(330px, 0.62fr) minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1.15fr) minmax(0, 0.45fr) minmax(0, 0.6fr);
+  grid-template-areas: "matrix card arena" "matrix card progress" "matrix card ticker";
   gap: 10px;
   padding: 10px;
   min-height: 0;
@@ -107,13 +108,20 @@ main {
 #ticker li a { cursor: pointer; text-decoration: none; border-bottom: 1px dotted #555b78; }
 @keyframes slide { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: none; } }
 
-.card { grid-area: card; overflow: auto; padding: 12px 14px 14px; }
+.card { grid-area: card; overflow: auto; padding: 12px 14px 14px; position: relative; }
+.card .close { position: absolute; top: 8px; right: 10px; font-size: 16px; line-height: 1; padding: 1px 7px; }
 .card .empty { color: var(--muted); margin: 6px 0; }
 .card .members { display: flex; align-items: flex-end; gap: 1px; height: 22px; }
 .card .members i { flex: 1; min-width: 1px; border-radius: 1px 1px 0 0; }
 .card td .play { padding: 0 6px; line-height: 16px; font-size: 11px; color: #5fd7ff; background: #162033; border-color: #2b3a5c; }
 .card tr.playing td { background: #16213a; }
 .card .line { font: 11px/1.5 var(--mono); color: var(--muted); }
+.card .gen-code { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 8px; }
+.card .gen-code pre { font-size: 10.5px; padding: 7px 8px; }
+.card .stats { gap: 6px; grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.card .stat { padding: 4px 5px; min-width: 0; overflow: hidden; }
+.card .stat .k { font-size: 9px; letter-spacing: 0; }
+.card .stat .v { font-size: 14px; }
 .arena-panel { grid-area: arena; }
 .arena-head { display: flex; justify-content: space-between; gap: 8px; padding: 0 13px 6px; font: 600 12px var(--mono); }
 .arena-head span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }

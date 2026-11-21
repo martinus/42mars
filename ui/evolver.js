@@ -490,7 +490,7 @@ function drawMatrix(now) {
   const top = 26, gap = 10;
   // a list of 100 (--list) still fits: thin cells without gaps, names only while rows are high enough
   const ch = Math.max(1, Math.min(36, (h - top - 10) / Math.max(8, ms.length)));
-  const names = ch >= 12;
+  const names = ch >= 9; // a list of 80 on a screen 1080 high: rows of about 10, names in a smaller font
   const labelW = names ? Math.min(230, Math.max(74, ...[...ms, ...S.ghosts].map((m) => ctx.measureText(`★ ${m.name}`).width + (S.start.params.specialists ? 42 : 28)))) : 22;
   const cols = ms.length + panel.length;
   const cw = Math.max(1, (w - labelW - gap - 10) / Math.max(1, cols));
@@ -520,7 +520,7 @@ function drawMatrix(now) {
       ctx.arc(10, y + ch / 2, 4, 0, 7);
       ctx.fill();
       ctx.fillStyle = sel ? '#ffc53d' : '#dfe3f0';
-      ctx.font = `${sel ? 'bold ' : ''}11px ui-monospace, monospace`;
+      ctx.font = `${sel ? 'bold ' : ''}${Math.min(11, Math.max(8, Math.floor(ch)))}px ui-monospace, monospace`; // smaller in low rows
       ctx.fillText(m.id === S.bestId ? `★ ${m.name}` : m.name, 20, y + ch / 2);
       if (S.spec.has(m.id)) { // --specialists: a protected member
         ctx.fillStyle = '#ffc53d';
@@ -1011,7 +1011,7 @@ function listing(code, start) {
     const m = /^(\s*)([A-Z]{3})(\.[A-Z]+)?(.*)$/.exec(l);
     if (!m) return `<span class="cmt">${esc(l)}</span>`;
     const body = esc(m[4]).replace(/-?\d+/g, (d) => `<span class="num">${d}</span>`);
-    return `${m[1]}<span class="op">${m[2]}</span><span class="mod">${m[3] ?? ''}</span>${body}`;
+    return `<span class="op">${m[2]}</span><span class="mod">${m[3] ?? ''}</span>${body}`; // without the indent: the column is narrow
   }).map((l, i) => (start !== null && i === start + 1 ? `<span class="start">${l}</span>` : l)).join('\n');
 }
 
@@ -1034,7 +1034,10 @@ function genListing(text) {
   return text.split('\n').filter((l) => l.trim()).map((l) => {
     const m = /^(\w+:)?(\s*)(.*)$/.exec(l);
     const label = m[1] ? `<span class="lbl">${esc(m[1])}</span>` : '';
-    const rest = m[3];
+    // compact for the narrow column: a label column of 4 instead of 8, the nesting kept, one space after a word
+    const column = (m[1]?.length ?? 0) + m[2].length, nest = Math.max(0, column - 8);
+    const pad = column ? ' '.repeat(Math.max(1, 4 - (m[1]?.length ?? 0)) + nest) : '';
+    const rest = m[3].replace(/^([A-Z]{3}(?:\.[A-Z]+)?|repeat|org)\s+/, '$1 ');
     let body;
     let w;
     if ((w = /^(repeat|def|end|org)\b(.*)$/.exec(rest))) body = `<span class="kw">${w[1]}</span>${expr(w[2])}`;
@@ -1042,7 +1045,7 @@ function genListing(text) {
     else if ((w = /^([A-Z]{3})(\.[A-Z]+)?(.*)$/.exec(rest))) body = `<span class="op">${w[1]}</span><span class="mod">${w[2] ?? ''}</span>${expr(w[3])}`;
     else if ((w = /^(\w+)(\(.*)$/.exec(rest))) body = `<span class="call">${esc(w[1])}</span>${expr(w[2])}`;
     else body = expr(rest);
-    return `${label}${m[2]}${body}`;
+    return `${label}${pad}${body}`;
   }).join('\n');
 }
 
@@ -1067,6 +1070,7 @@ function renderCard() {
   }
   const x = S.w.get(selected);
   const color = x.kind === 'member' ? hsl(x.hue) : '#c8cde0';
+  const close = '<button class="close" id="card-close" title="no warrior selected (Esc)">×</button>';
   const stat = (k, v) => `<div class="stat"><div class="k">${k}</div><div class="v">${v}</div></div>`;
   const fpBars = S.panel.map((p) => {
     const v = points(resOf(x.id, p));
@@ -1102,8 +1106,8 @@ function renderCard() {
       ${stat('push-off value', f1(x.value))}${stat('distance', x.distance?.toFixed(2) ?? '–')}${stat('nearest', x.nearest !== undefined && x.nearest !== null && S.w.has(x.nearest) ? link(x.nearest) : '–')}${stat('screen', `${f1(x.screen)}${x.estimate !== undefined ? ` <small style="color:#7f86a0">est. ${x.estimate.toFixed(0)}</small>` : ''}`)}</div>
       <div class="links">parents: ${parents}</div>
       <div class="sub style" id="card-style">style: measuring…</div>
-      ${x.gen ? generatorBlock(x) : ''}
-      <h4>Code</h4><pre>${listing(x.code, Number(/ORG\s+(\d+)/.exec(x.code)?.[1] ?? 0))}</pre>`;
+      <div class="${x.gen ? 'gen-code' : ''}"><div>${x.gen ? generatorBlock(x) : ''}</div>
+      <div><h4>Code</h4><pre>${listing(x.code, Number(/ORG\s+(\d+)/.exec(x.code)?.[1] ?? 0))}</pre></div></div>`;
   } else {
     head = `<h3 style="color:${color}">${esc(x.name)}</h3><div class="sub">${esc(x.author)} · ${esc(x.file)} · ${{ panel: 'panel', holdout: 'holdout', retired: 'former panel' }[x.kind]} warrior from the hill</div>
       <div class="stats">${stat('vs panel', f1(x.panelAvg))}${stat('push-off value', f1(x.value))}${stat('nearest', x.nearest !== undefined && S.w.has(x.nearest) ? link(x.nearest) : '–')}</div>
@@ -1112,7 +1116,7 @@ function renderCard() {
   }
   const members = x.kind === 'member' && vsMembers.length ? `<h4>Against the other members <small>red: the member wins more rounds</small></h4><div class="members">${memberBars}</div>` : '';
   const lineHtml = x.kind === 'member' ? `<h4>Line <small>first parents back to its family's start</small></h4><div class="line">${line.join(' ← ')}</div>` : '';
-  $('card-body').innerHTML = `${head}<h4>Against the panel, warrior by warrior</h4><div class="fp">${fpBars}</div>${members}
+  $('card-body').innerHTML = `${close}${head}<h4>Against the panel, warrior by warrior</h4><div class="fp">${fpBars}</div>${members}
     <h4>Matches <small>wins/losses/ties, points per 100 rounds, worst first · ▶ plays it in the arena</small></h4><table>${rows}</table>${lineHtml}`;
   showStyle(x);
 }
@@ -1185,8 +1189,13 @@ function playArena(a, b) {
   if (!url) return;
   arenaPair = [a, b];
   const [page, hash] = url.split('#');
-  $('arena').src = `${page}?embed&noguide&speed=13#${hash}`; // fast: 100,000 instructions a second
-  $('arena').hidden = false;
+  const frame = $('arena');
+  let loaded = false;
+  try { loaded = !!frame.contentWindow?.__theater && frame.contentWindow.location.search.includes('embed'); } catch { /* not yet */ }
+  // once loaded, a new match only changes the hash: the visualizer loads it in place, without a flash, at the speed set
+  if (loaded) frame.contentWindow.location.hash = hash;
+  else frame.src = `${page}?embed&noguide&paused&speed=9#${hash}`; // paused until play; watch: 2,500 instructions a second
+  frame.hidden = false;
   $('arena-empty').hidden = true;
   const r = resOf(a, b);
   const color = (id) => (S.w.get(id)?.kind === 'member' ? hsl(S.w.get(id).hue) : '#aab0c8');
@@ -1206,11 +1215,26 @@ function pickBest() {
   if (!ms.length) return;
   const best = ms.reduce((a, b) => ((b.panelAvg ?? -1) > (a.panelAvg ?? -1) ? b : a));
   if (selected !== best.id) select(best.id, true);
-  const score = (o) => points(resOf(best.id, o.id));
-  const worst = (xs) => xs.filter((o) => resOf(best.id, o.id)).sort((x, y) => score(x) - score(y))[0] ?? null;
-  const beaters = ms.filter((m) => m.id !== best.id && resOf(best.id, m.id) && resOf(best.id, m.id).l > resOf(best.id, m.id).w);
-  const foe = worst(beaters) ?? worst(S.panel.map(member));
-  if (foe && (arenaPair?.[0] !== best.id || arenaPair?.[1] !== foe.id)) playArena(best.id, foe.id);
+  const foe = worstOpponent(best.id);
+  if (foe !== null && (arenaPair?.[0] !== best.id || arenaPair?.[1] !== foe)) playArena(best.id, foe);
+}
+
+// The opponent of warrior id for the arena: the member that beats it most
+// clearly, else the panel warrior it does worst against, else the member it
+// does worst against (a holdout warrior played only the benched members).
+function worstOpponent(id) {
+  const score = (o) => points(resOf(id, o.id));
+  const worst = (xs) => xs.filter((o) => o && o.id !== id && resOf(id, o.id)).sort((x, y) => score(x) - score(y))[0] ?? null;
+  const beaters = alive().filter((m) => m.id !== id && resOf(id, m.id)?.l > resOf(id, m.id)?.w);
+  return (worst(beaters) ?? worst(S.panel.map(member)) ?? worst(alive()))?.id ?? null;
+}
+
+// A warrior the user picks goes into the arena as its first (red) warrior,
+// against the opponent there if they have a match, else its worst opponent.
+function arenaFor(id) {
+  let b = arenaPair?.[1];
+  if (b === undefined || b === id || !resOf(id, b)) b = worstOpponent(id);
+  if (b !== null && b !== undefined) playArena(id, b);
 }
 
 // ------------------------------------------------------------------ tooltips and input
@@ -1230,6 +1254,7 @@ function select(id, auto = false) {
   selected = id;
   chartsDirty = true;
   renderCard();
+  if (!auto && id !== null && S.w.has(id)) arenaFor(id);
 }
 
 function wire() {
@@ -1243,7 +1268,10 @@ function wire() {
     c.addEventListener('mouseleave', () => { hover = null; hideTip(); chartsDirty = true; });
     c.addEventListener('click', () => {
       const t = hover?.target;
-      if (!t) return;
+      if (!t) {
+        if (id === 'lineage') select(null); // a click beside the warriors: no lines
+        return;
+      }
       if (t.battle) autoPick = false, playArena(...t.battle);
       else if (t.select !== undefined) select(t.select);
     });
@@ -1255,6 +1283,7 @@ function wire() {
     if (b) autoPick = false, playArena(...b.dataset.battle.split(',').map(Number));
   });
   $('arena-big').addEventListener('click', () => document.body.classList.toggle('arena-big'));
+  $('card').addEventListener('click', (e) => { if (e.target.closest('#card-close')) select(null); });
   $('tabs').addEventListener('click', (e) => {
     const b = e.target.closest('button[data-tab]');
     if (!b) return;
@@ -1270,7 +1299,11 @@ function wire() {
   });
   $('c-best').addEventListener('click', () => { if (S.bestId !== null) select(S.bestId); });
   $('c-top').addEventListener('click', () => { const t = strongest(); if (t) select(t.id); });
-  window.addEventListener('keydown', (e) => { if (e.key === 'Escape') document.body.classList.remove('arena-big'); });
+  window.addEventListener('keydown', (e) => { // Esc: the arena back to its place, else no warrior selected
+    if (e.key !== 'Escape') return;
+    if (document.body.classList.contains('arena-big')) document.body.classList.remove('arena-big');
+    else select(null);
+  });
   renderMatrixSorts();
   $('matrix-sorts').addEventListener('click', (e) => {
     const b = e.target.closest('button');
@@ -1431,10 +1464,7 @@ function clearRun() {
   selected = null;
   pending = [];
   autoPick = true;
-  arenaPair = null;
-  $('arena').hidden = true;
-  $('arena').removeAttribute('src');
-  $('arena-empty').hidden = false;
+  arenaPair = null; // the visualizer stays loaded: the next match goes into it in place
   $('arena-head').innerHTML = '';
   renderCard();
 }
