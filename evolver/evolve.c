@@ -3798,7 +3798,8 @@ static void usage(void) {
           "         [--panel-rounds N] [--diversity all|panel] [--average all|panel] [--member-games all|none] [--simple]\n"
           "         [--difference abs|ahead|shape] [--pushoff value|pareto|pareto-age|pareto-sd] [--clear R] [--positions mirror|pmars]\n"
           "         [--genome list|gen] [--refactor p] [--min-length N] [--tie-points t]\n"
-          "         [--islands N [--select-after B [--keep K]] [--score-rounds R] [--migrate M] [--island-variant \"options\" ...]]\n"
+          "         [--islands N [--select-after B [--keep K]] [--score-rounds R] [--migrate M [--migrate-pick best|random] [--migrate-to all|next|random]]\n"
+          "         [--island-variant \"options\" ...]]\n"
           "         [--draw-seed S]\n"
           "         [--niche N]\n"
           "         [--panel-choice picked|random|kinds] [--pick-sample 300] [--no-fill] [--map-elites [cells|crowding]]\n"
@@ -3983,6 +3984,8 @@ typedef struct {
   uint32_t n, keep, every, selected, next_score;
   uint32_t rounds;     // --score-rounds: of each match of a score
   uint32_t migrate;    // --migrate M: every M batches each island plays the best member of every other one, 0 never
+  uint32_t migrate_random, migrate_next; // --migrate-pick random: a member drawn, not the best; --migrate-to next (1): from the
+                                         // island before only, random (2): from one other live island drawn
   uint64_t seed;
   uint8_t live[ISLANDS_MAX];
   run *is[ISLANDS_MAX];
@@ -4004,7 +4007,7 @@ static void islands_save(const islands *I) {
   fprintf(f, "42evolve-islands 1\nislands %u %u %u %u %u %" PRIu64 " %.17g %u\nlive", I->n, I->keep, I->every, I->selected,
           I->next_score, I->seed, I->best, I->rounds);
   for (uint32_t i = 0; i < I->n; i++) fprintf(f, " %u", I->live[i]);
-  fprintf(f, "\nmigrate %u\n", I->migrate);
+  fprintf(f, "\nmigrate %u %u %u\n", I->migrate, I->migrate_random, I->migrate_next);
   fclose(f);
   if (rename(tmp, path) != 0) {
     fprintf(stderr, "42evolve: cannot write %s\n", path);
@@ -4025,6 +4028,7 @@ static int islands_load(islands *I) {
     I->live[i] = (uint8_t)v;
   }
   if (ok && fscanf(f, " migrate %u", &I->migrate) != 1) I->migrate = 0; // a state from before --migrate
+  if (ok && fscanf(f, "%u %u", &I->migrate_random, &I->migrate_next) != 2) I->migrate_random = I->migrate_next = 0; // or its picks
   fclose(f);
   if (!ok) fprintf(stderr, "42evolve: %s is not a state of islands\n", path);
   return ok ? 0 : -1;
@@ -4179,8 +4183,12 @@ static void islands_score(islands *I) {
 // every other live island (the first on a tie) becomes a candidate of it,
 // which plays first and enters whatever its screen once it is above the
 // threshold, as a start warrior; one that is already in is not played again.
-// The other islands are as far as the turns took them, so a run is the same
-// on any thread count and after a resume. Event `migrate`: [island, id].
+// --migrate-pick random: a member drawn from the seed, the batch and the two
+// islands instead of the best; --migrate-to next: from the live island
+// before k only (a ring, the last sends to the first); --migrate-to random:
+// from one other live island drawn from the seed and the batch. The other islands are
+// as far as the turns took them, so a run is the same on any thread count
+// and after a resume. Event `migrate`: [island, id].
 static void islands_migrate(islands *I, uint32_t k) {
   run *r = I->is[k];
   if (!r->migr) {
@@ -4190,11 +4198,27 @@ static void islands_migrate(islands *I, uint32_t k) {
   }
   r->migr_n = 0;
   fprintf(r->events, "{\"type\":\"migrate\",\"batch\":%u,\"from\":[", r->batch);
+  uint32_t before = k; // --migrate-to next: the live island before k
+  do before = (before + I->n - 1) % I->n;
+  while (before != k && !I->live[before]);
+  if (I->migrate_next == 2) { // --migrate-to random: one of the other live islands
+    uint32_t others = 0;
+    for (uint32_t j = 0; j < I->n; j++) others += j != k && I->live[j];
+    rng g = rng_seed(I->seed, 0x6d69677274u + r->batch, k); // "migrt"
+    uint32_t pick = others ? rng_below(&g, others) : 0;
+    before = k;
+    for (uint32_t j = 0; j < I->n && before == k; j++)
+      if (j != k && I->live[j] && pick-- == 0) before = j;
+  }
   for (uint32_t j = 0; j < I->n; j++) {
     const run *o = I->is[j];
-    if (j == k || !I->live[j]) continue;
+    if (j == k || !I->live[j] || (I->migrate_next && j != before)) continue;
     uint32_t best = UINT32_MAX;
-    for (uint32_t a = o->panel_n; a < o->active_n; a++)
+    if (I->migrate_random && o->active_n > o->panel_n) {
+      rng g = rng_seed(I->seed, 0x6d69677261u + r->batch, (uint64_t)k * ISLANDS_MAX + j); // "migra"
+      best = o->active[o->panel_n + rng_below(&g, o->active_n - o->panel_n)];
+    }
+    for (uint32_t a = o->panel_n; a < o->active_n && !I->migrate_random; a++)
       if (best == UINT32_MAX || panel_avg(o, o->active[a]) > panel_avg(o, best)) best = o->active[a];
     if (best == UINT32_MAX || r->migr_n >= r->p.batch) continue;
     const warrior *w = o->slot[best];
@@ -4242,11 +4266,11 @@ static void islands_close(islands *I) {
 // A new run of islands: base has the parameters (defaults applied, checked).
 static int islands_new(const params *base, const params *variant, const char *const *variant_text, uint32_t variant_n,
                        const char *dir, uint32_t n, uint32_t keep, uint32_t every, uint32_t rounds, uint32_t migrate,
-                       uint32_t threads, uint32_t batches, double seconds) {
+                       uint32_t migrate_random, uint32_t migrate_next, uint32_t threads, uint32_t batches, double seconds) {
   static islands I;
   snprintf(I.dir, sizeof I.dir, "%s", dir);
   I.n = n, I.keep = keep, I.every = every, I.next_score = every, I.seed = base->seed, I.best = -1, I.rounds = rounds;
-  I.migrate = migrate;
+  I.migrate = migrate, I.migrate_random = migrate_random, I.migrate_next = migrate_next;
   if (mkdir(dir, 0777) != 0 && errno != EEXIST) {
     fprintf(stderr, "42evolve: cannot make %s\n", dir);
     return 1;
@@ -4281,9 +4305,10 @@ static int islands_new(const params *base, const params *variant, const char *co
     for (uint32_t i = 0; i < count; i++) free(names[i]);
     free(names);
   }
-  fprintf(root->events, "{\"type\":\"islands\",\"islands\":%u,\"keep\":%u,\"selectAfter\":%u,\"migrate\":%u,\"seed\":%" PRIu64
-                        ",\"drawSeed\":%" PRIu64 ",\"threads\":%u,\"opponents\":",
-          n, keep, every, migrate, base->seed, base->draw_seed, threads);
+  fprintf(root->events, "{\"type\":\"islands\",\"islands\":%u,\"keep\":%u,\"selectAfter\":%u,\"migrate\":%u,\"migratePick\":\"%s\","
+                        "\"migrateTo\":\"%s\",\"seed\":%" PRIu64 ",\"drawSeed\":%" PRIu64 ",\"threads\":%u,\"opponents\":",
+          n, keep, every, migrate, migrate_random ? "random" : "best", migrate_next == 2 ? "random" : migrate_next ? "next" : "all", base->seed, base->draw_seed,
+          threads);
   json_str(root->events, base->opponents, 0);
   fputs(",\"panel\":", root->events);
   json_str(root->events, p.panel_files, 0);
@@ -4427,6 +4452,7 @@ typedef struct {
   int panel_given, panel_choice_given, draw_seed_given, positions_given, pushoff_given;
   uint32_t islands_n, islands_keep, islands_every, islands_rounds; // --islands, --keep, --select-after, --score-rounds
   uint32_t islands_migrate_every;                                   // --migrate
+  uint32_t migrate_random, migrate_next, migrate_how_given;         // --migrate-pick, --migrate-to
   int islands_option;
   const char *variant[ISLANDS_MAX]; // --island-variant, in their order
   uint32_t variant_n;
@@ -4541,6 +4567,17 @@ static int parse_cli(int argc, char **argv, cli *c) {
       else if (!strcmp(v, "pareto-age")) p->pareto = 2;
       else if (!strcmp(v, "pareto-sd")) p->pareto = 3;
       else usage();
+    } else if (!strcmp(a, "--migrate-pick")) {
+      if (!strcmp(v, "best")) c->migrate_random = 0;
+      else if (!strcmp(v, "random")) c->migrate_random = 1;
+      else usage();
+      c->migrate_how_given = c->islands_option = 1;
+    } else if (!strcmp(a, "--migrate-to")) {
+      if (!strcmp(v, "all")) c->migrate_next = 0;
+      else if (!strcmp(v, "next")) c->migrate_next = 1;
+      else if (!strcmp(v, "random")) c->migrate_next = 2;
+      else usage();
+      c->migrate_how_given = c->islands_option = 1;
     } else if (!strcmp(a, "--island-variant")) {
       if (c->variant_n >= ISLANDS_MAX) usage();
       c->variant[c->variant_n++] = v;
@@ -4732,6 +4769,7 @@ static int island_variants(int argc, char **argv, const cli *c, params *out) {
     if (!wrong && (w.batches != c->batches || w.seconds != c->seconds || w.variant_n != c->variant_n || w.islands_n != c->islands_n ||
                    w.islands_keep != c->islands_keep || w.islands_every != c->islands_every ||
                    w.islands_rounds != c->islands_rounds || w.islands_migrate_every != c->islands_migrate_every ||
+                   w.migrate_random != c->migrate_random || w.migrate_next != c->migrate_next ||
                    w.optimize_file != c->optimize_file))
       differs = "--batches, --seconds, --optimize or an option of the islands";
     if (wrong || differs) {
@@ -4825,6 +4863,10 @@ int main(int argc, char **argv) {
         fprintf(stderr, "42evolve: --migrate with 2 islands or more, and not with --tune-novel\n");
         return 2;
       }
+      if (c.migrate_how_given && !islands_migrate_every) {
+        fprintf(stderr, "42evolve: --migrate-pick and --migrate-to with --migrate\n");
+        return 2;
+      }
       static params variants[ISLANDS_MAX];
       if (c.variant_n > islands_n) {
         fprintf(stderr, "42evolve: --island-variant at most once per island\n");
@@ -4842,7 +4884,7 @@ int main(int argc, char **argv) {
       signal(SIGINT, on_signal);
       signal(SIGTERM, on_signal);
       return islands_new(p, variants, c.variant, c.variant_n, dir, islands_n, islands_keep, islands_every, islands_rounds,
-                         islands_migrate_every, threads, batches, seconds);
+                         islands_migrate_every, c.migrate_random, c.migrate_next, threads, batches, seconds);
     }
     if (run_new(&r, threads, optimize_file != 0) != 0) return 1;
   }

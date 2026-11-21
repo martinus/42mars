@@ -240,6 +240,73 @@ test('--migrate: every M batches each island plays the best member of every othe
   assert.ok(!existsSync(join(tmp, 'mig-no')));
 });
 
+test('--migrate-pick random --migrate-to next: a member drawn, from the island before only; the same on any thread count and after a resume', { skip }, () => {
+  const args = [...TINY, '--genome', 'gen', '--list', '16', '--survivors', '8'];
+  const isl = ['--islands', '3', '--migrate', '2', '--migrate-pick', 'random', '--migrate-to', 'next'];
+  const dir = join(tmp, 'ring');
+  run(dir, [...args, ...isl, '--threads', '2', '--batches', '7']);
+  const re = events(dir, 'islands.jsonl');
+  assert.deepEqual([re[0].migrate, re[0].migratePick, re[0].migrateTo], [2, 'random', 'next']);
+  const all = [1, 2, 3].map((i) => events(join(dir, `island-0${i}`)));
+  const panel = new Set(all[0][0].panel.map((w) => w.id));
+  let notBest = 0, notFirst = 0;
+  all.forEach((ev, k) => {
+    const migrations = ev.filter((e) => e.type === 'migrate');
+    assert.deepEqual(migrations.map((e) => e.batch), [2, 4, 6]);
+    for (const m of migrations) {
+      // one migrant, from the island before (the first takes from the last)
+      const j = k === 0 ? 3 : k;
+      assert.deepEqual(m.from.map(([i]) => i), [j], `island ${k + 1}, batch ${m.batch}`);
+      const [, id] = m.from[0];
+      // a member of that island then, as the turns took it
+      const src = all[j - 1], upTo = j < k + 1 ? m.batch : m.batch - 1;
+      const vals = src.filter((e) => e.type === 'values' && e.batch <= upTo).at(-1).values.filter((v) => !panel.has(v[0]));
+      assert.ok(vals.some((v) => v[0] === id), `island ${k + 1}, batch ${m.batch}: ${id} is no member of island ${j}`);
+      if (id !== vals.reduce((a, b) => (b[5] > a[5] ? b : a))[0]) notBest++;
+      if (id !== vals[0][0]) notFirst++; // drawn from the whole list, not one place of it
+    }
+  });
+  assert.ok(notBest >= 4 && notFirst >= 4, `of 9 migrants ${notBest} not the best of their island, ${notFirst} not its first member`);
+  // the same stopped and continued on other thread counts
+  const again = join(tmp, 'ring-resumed');
+  run(again, [...args, ...isl, '--threads', '3', '--batches', '3']);
+  run(again, ['--threads', '1', '--batches', '4']);
+  [1, 2, 3].forEach((i) => assert.deepEqual(stable(events(join(again, `island-0${i}`))), stable(all[i - 1]), `island ${i}`));
+  // without --migrate, or another value: refused
+  for (const extra of [['--islands', '3', '--migrate-pick', 'random'], ['--islands', '3', '--migrate-to', 'next'], ['--islands', '3', '--migrate', '2', '--migrate-pick', 'worst']]) {
+    const r = spawnSync(evolve, [join(tmp, 'ring-no'), ...args, ...extra, '--batches', '1'], { encoding: 'utf8', timeout: 60000 });
+    assert.equal(r.status, 2, extra.join(' '));
+  }
+  assert.ok(!existsSync(join(tmp, 'ring-no')));
+});
+
+test('--migrate 1 --migrate-to random: every batch one member from one other island drawn; the same on any thread count and after a resume', { skip }, () => {
+  const args = [...TINY, '--genome', 'gen', '--list', '16', '--survivors', '8'];
+  const isl = ['--islands', '4', '--migrate', '1', '--migrate-pick', 'random', '--migrate-to', 'random'];
+  const dir = join(tmp, 'anywhere');
+  run(dir, [...args, ...isl, '--threads', '2', '--batches', '7']);
+  assert.equal(events(dir, 'islands.jsonl')[0].migrateTo, 'random');
+  const all = [1, 2, 3, 4].map((i) => events(join(dir, `island-0${i}`)));
+  const from = new Map(); // island -> the islands it took from
+  all.forEach((ev, k) => {
+    const migrations = ev.filter((e) => e.type === 'migrate');
+    assert.deepEqual(migrations.map((e) => e.batch), [1, 2, 3, 4, 5, 6], `island ${k + 1}: every batch after the first`);
+    for (const m of migrations) {
+      assert.equal(m.from.length, 1);
+      assert.notEqual(m.from[0][0], k + 1, 'not from itself');
+      from.set(k + 1, [...(from.get(k + 1) ?? []), m.from[0][0]]);
+    }
+  });
+  // drawn: each island takes from more than one other, and not always from the one before it
+  for (const [k, js] of from) assert.ok(new Set(js).size >= 2, `island ${k} took only from ${js}`);
+  const ring = [...from].every(([k, js]) => js.every((j) => j === (k === 1 ? 4 : k - 1)));
+  assert.ok(!ring);
+  const again = join(tmp, 'anywhere-resumed');
+  run(again, [...args, ...isl, '--threads', '3', '--batches', '3']);
+  run(again, ['--threads', '1', '--batches', '4']);
+  [1, 2, 3, 4].forEach((i) => assert.deepEqual(stable(events(join(again, `island-0${i}`))), stable(all[i - 1]), `island ${i}`));
+});
+
 test('--island-variant: islands with their own settings, each the run alone with them; the same on any thread count and after a resume', { skip }, () => {
   // a picked panel: picked once, every island has it
   const args = [...without(TINY, '--panel-choice'), '--panel-choice', 'picked', '--pick-sample', '40', '--list', '16', '--survivors', '8'];
