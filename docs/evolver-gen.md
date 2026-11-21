@@ -203,7 +203,7 @@ Nobody writes a function: `extract` makes one from lines that evolved, `call` an
 
 ## In `42evolve` (step 2)
 
-- **`--genome list|gen`,** `list` the default. A run folder keeps its kind.
+- **`--genome list|gen`,** `gen` the default since 21st November 2026 (`list` with `--map-elites` and `--optimize`). A run folder keeps its kind.
 - **The `genome` struct** has a `gen` next to its list (26 KB instead of 4). For a generator the list holds the compiled warrior, so `make_warrior()`, `genome_hash()`, `genome_text()`, the names, the style and the events' `length` need no change. `genome_breed()`, `genome_save()` and `genome_load()` branch on the kind; a random or a start warrior is made as a list and becomes a generator line for line (`genome_as_generator()`).
 - **Random starts** are generators without structure, drawn as today: structure has to pay to appear.
 - **`--refactor p`** (0 to 1, 0 unless given): the refactoring in place of "Changes". An event `refactor` has the member's id, what was done and its generator as it is then.

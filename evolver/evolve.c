@@ -111,7 +111,7 @@ static params default_params(void) {
   params p;
   memset(&p, 0, sizeof p);
   p.rules = m42_rules_94();
-  p.panel = 20;   // picked (--panel-choice); the defaults are the best run of E5 (docs/evolver.md, eighth comparison)
+  p.panel = 30;   // by kinds (--panel-choice); the defaults of a new run are those of gen-var16-rnd (docs/evolver-gen.md)
   p.holdout = 100;
   p.list = 80;
   p.batch = 0; // 4 per thread
@@ -3788,8 +3788,8 @@ static int optimize(run *r, const char *file) {
 
 static void usage(void) {
   fprintf(stderr,
-          "usage: 42evolve <run folder> --opponents <dir> [--panel 20] [--holdout 100] [--list 80]\n"
-          "         [--batch N] [--survivors N] [--rounds 100] [--screen-rounds 20] [--screen-factor 0.8]\n"
+          "usage: 42evolve <run folder> --opponents <dir> [--panel 30] [--holdout 100] [--list 80]\n"
+          "         [--batch 128] [--survivors N] [--rounds 100] [--screen-rounds 20] [--screen-factor 0.8]\n"
           "         [--bench-every 10] [--bench-rounds 100] [--alpha 1] [--sd opponent|sum]\n"
           "         [--reintroduce 0.02] [--init-length 10] [--seed 1] [--select screen|value] [--rotate N]\n"
           "         [--fractions p] [--race N] [--race-keep N] [--prior uniform|hill]\n"
@@ -4449,10 +4449,11 @@ typedef struct {
   int64_t new_tune;           // --tune-novel, also for a run that continues
   int new_ahead;              // --difference, also for a run that continues
   int new_options, stage_given, screen_members_given, diversity_given, panel_rounds_given, fill_given;
-  int panel_given, panel_choice_given, draw_seed_given, positions_given, pushoff_given;
+  int panel_given, panel_choice_given, draw_seed_given, positions_given, pushoff_given, genome_given, migrate_given;
+  int variant_default; // the variants of new_island_defaults(), not given
   uint32_t islands_n, islands_keep, islands_every, islands_rounds; // --islands, --keep, --select-after, --score-rounds
   uint32_t islands_migrate_every;                                   // --migrate
-  uint32_t migrate_random, migrate_next, migrate_how_given;         // --migrate-pick, --migrate-to
+  uint32_t migrate_random, migrate_next, pick_given, to_given;      // --migrate-pick, --migrate-to
   int islands_option;
   const char *variant[ISLANDS_MAX]; // --island-variant, in their order
   uint32_t variant_n;
@@ -4571,13 +4572,13 @@ static int parse_cli(int argc, char **argv, cli *c) {
       if (!strcmp(v, "best")) c->migrate_random = 0;
       else if (!strcmp(v, "random")) c->migrate_random = 1;
       else usage();
-      c->migrate_how_given = c->islands_option = 1;
+      c->pick_given = c->islands_option = 1;
     } else if (!strcmp(a, "--migrate-to")) {
       if (!strcmp(v, "all")) c->migrate_next = 0;
       else if (!strcmp(v, "next")) c->migrate_next = 1;
       else if (!strcmp(v, "random")) c->migrate_next = 2;
       else usage();
-      c->migrate_how_given = c->islands_option = 1;
+      c->to_given = c->islands_option = 1;
     } else if (!strcmp(a, "--island-variant")) {
       if (c->variant_n >= ISLANDS_MAX) usage();
       c->variant[c->variant_n++] = v;
@@ -4587,6 +4588,7 @@ static int parse_cli(int argc, char **argv, cli *c) {
     } else if (!strcmp(a, "--tie-points")) {
       p->tie = d;
     } else if (!strcmp(a, "--genome")) {
+      c->genome_given = 1;
       if (!strcmp(v, "gen")) p->gen = 1;
       else if (!strcmp(v, "list")) p->gen = 0;
       else usage();
@@ -4660,7 +4662,7 @@ static int parse_cli(int argc, char **argv, cli *c) {
     else if (!strcmp(a, "--keep")) c->islands_keep = u, c->islands_option = 1;
     else if (!strcmp(a, "--select-after")) c->islands_every = u, c->islands_option = 1;
     else if (!strcmp(a, "--score-rounds")) c->islands_rounds = u, c->islands_option = 1;
-    else if (!strcmp(a, "--migrate")) c->islands_migrate_every = u, c->islands_option = 1;
+    else if (!strcmp(a, "--migrate")) c->islands_migrate_every = u, c->islands_option = c->migrate_given = 1;
     else if (!strcmp(a, "--size")) p->rules.core_size = u;
     else if (!strcmp(a, "--cycles")) p->rules.max_cycles = u;
     else if (!strcmp(a, "--processes")) p->rules.max_processes = u;
@@ -4679,8 +4681,10 @@ static int parse_cli(int argc, char **argv, cli *c) {
 static const char *new_run_defaults(cli *c) {
   params *p = &c->p;
   if (!p->opponents[0]) usage();
+  // new runs: generators (docs/evolver-gen.md), not for --map-elites and --optimize, which keep lists
+  if (!c->genome_given && !p->map_elites && !c->optimize_file) p->gen = 1;
   if (p->gen && !c->changes_given) p->changes = gen_mix_default(); // the kinds that make structure too
-  if (!p->batch) p->batch = 4 * c->threads;
+  if (!p->batch) p->batch = 128;
   if (!p->survivors) p->survivors = p->batch / 8 ? p->batch / 8 : 1;
   if (!p->race_keep) p->race_keep = p->batch / 4 ? p->batch / 4 : 1;
   // --stage by default at the screen rounds (--stage 0: none); a state keeps
@@ -4696,6 +4700,7 @@ static const char *new_run_defaults(cli *c) {
   if (!c->screen_members_given) p->screen_members = p->member_games_none ? 0 : 10;
   if (!c->diversity_given) p->distance_panel = 1;
   if (!c->panel_rounds_given) p->panel_rounds = p->rounds > 500 ? p->rounds : 500;
+  if (!c->panel_choice_given) p->panel_random = PANEL_KINDS; // new runs: a panel of every kind
   if (p->map_elites) { // the cells give the diversity: many random opponents rather than a few picked ones
     if (!c->panel_given) p->panel = 80;
     if (!c->panel_choice_given) p->panel_random = PANEL_RANDOM;
@@ -4766,7 +4771,8 @@ static int island_variants(int argc, char **argv, const cli *c, params *out) {
     w.threads = c->threads;
     const char *wrong = new_run_defaults(&w);
     const char *differs = wrong ? 0 : variant_differs(&c->p, &w.p);
-    if (!wrong && (w.batches != c->batches || w.seconds != c->seconds || w.variant_n != c->variant_n || w.islands_n != c->islands_n ||
+    if (!wrong && (w.batches != c->batches || w.seconds != c->seconds || w.variant_n != (c->variant_default ? 0 : c->variant_n) ||
+                   w.islands_n != c->islands_n ||
                    w.islands_keep != c->islands_keep || w.islands_every != c->islands_every ||
                    w.islands_rounds != c->islands_rounds || w.islands_migrate_every != c->islands_migrate_every ||
                    w.migrate_random != c->migrate_random || w.migrate_next != c->migrate_next ||
@@ -4802,7 +4808,8 @@ int main(int argc, char **argv) {
   const uint32_t new_list = c.new_list;
   const int64_t new_tune = c.new_tune;
   const uint32_t islands_n = c.islands_n, islands_keep = c.islands_keep, islands_every = c.islands_every;
-  const uint32_t islands_rounds = c.islands_rounds, islands_migrate_every = c.islands_migrate_every;
+  const uint32_t islands_rounds = c.islands_rounds;
+  uint32_t islands_migrate_every = c.islands_migrate_every;
   const int islands_option = c.islands_option;
   if (!dir) usage();
   if (!threads) threads = hardware_threads();
@@ -4863,11 +4870,17 @@ int main(int argc, char **argv) {
         fprintf(stderr, "42evolve: --migrate with 2 islands or more, and not with --tune-novel\n");
         return 2;
       }
-      if (c.migrate_how_given && !islands_migrate_every) {
-        fprintf(stderr, "42evolve: --migrate-pick and --migrate-to with --migrate\n");
+      if ((c.pick_given || c.to_given) && c.migrate_given && !islands_migrate_every) {
+        fprintf(stderr, "42evolve: --migrate-pick and --migrate-to not with --migrate 0\n");
         return 2;
       }
       static params variants[ISLANDS_MAX];
+      if (!c.variant_n && islands_n >= 2) { // new runs of islands: half exploit, half explore (gen-var16-rnd)
+        c.variant[0] = "";
+        c.variant[1] = "--screen-members 80 --screen-rounds 8";
+        c.variant_n = 2;
+        c.variant_default = 1;
+      }
       if (c.variant_n > islands_n) {
         fprintf(stderr, "42evolve: --island-variant at most once per island\n");
         return 2;
@@ -4881,6 +4894,12 @@ int main(int argc, char **argv) {
           fprintf(stderr, "42evolve: --migrate with 2 islands or more, and not with --tune-novel\n");
           return 2;
         }
+      // new runs of islands: every 5 batches a member drawn from an island drawn (gen-var16-rnd); --migrate 0: none
+      int tune = p->tune_novel != 0;
+      for (uint32_t k = 0; k < c.variant_n; k++) tune |= variants[k].tune_novel != 0;
+      if (!c.migrate_given && islands_n >= 2 && !tune) islands_migrate_every = 5;
+      if (!c.pick_given) c.migrate_random = 1;
+      if (!c.to_given) c.migrate_next = 2;
       signal(SIGINT, on_signal);
       signal(SIGTERM, on_signal);
       return islands_new(p, variants, c.variant, c.variant_n, dir, islands_n, islands_keep, islands_every, islands_rounds,

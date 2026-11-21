@@ -30,7 +30,7 @@ test('--tune-novel 1: the most novel survivor that left is tuned, and comes back
   writeFileSync(join(seeds, 'badstep.red'), ';redcode\n;name bad step\nstep equ 100\nloop add.ab #step, bomb\nmov.i bomb, @bomb\njmp loop\nbomb dat #0, #step\n');
   const args = [...TINY.slice(0, TINY.indexOf('--panel')), '--panel', '12', '--holdout', '8', '--batch', '24', '--rounds', '60', '--screen-rounds', '10',
     '--panel-rounds', '60', '--list', '6', '--survivors', '6', '--seed', '3', '--start', seeds, '--tune-novel', '1', '--changes', 'insert=1,delete=1,a-operand=1',
-    '--screen-members', '0', '--diversity', 'all', '--no-fill', '--panel-choice', 'random', '--stage', '0', '--positions', 'pmars'];
+    '--screen-members', '0', '--diversity', 'all', '--no-fill', '--panel-choice', 'random', '--stage', '0', '--positions', 'pmars', '--genome', 'list'];
   run(join(tmp, 'tn1'), [...args, '--threads', '1', '--batches', '8']);
   const evs = events(join(tmp, 'tn1'));
   assert.equal(evs[0].params.tuneNovel, 1);
@@ -71,7 +71,8 @@ test('--islands: runs in one process with the same panel and holdout, in turns; 
   // a picked panel, to see it picked once
   const args = [...without(TINY, '--panel-choice'), '--panel-choice', 'picked', '--pick-sample', '40',
     '--average', 'panel', '--list', '16', '--survivors', '8'];
-  const isl = ['--islands', String(N), '--select-after', String(EVERY), '--keep', String(KEEP), '--score-rounds', String(SCORE)];
+  // islands alike and without migration, so that an island is the run alone
+  const isl = ['--islands', String(N), '--select-after', String(EVERY), '--keep', String(KEEP), '--score-rounds', String(SCORE), '--migrate', '0', '--island-variant', ''];
   const rdir = join(tmp, 'isl');
   run(rdir, [...args, ...isl, '--threads', '2', '--batches', String(BATCHES)]);
   const rootEvents = (dir) => events(dir, 'islands.jsonl');
@@ -161,7 +162,7 @@ test('--islands: runs in one process with the same panel and holdout, in turns; 
 
 test('--migrate: every M batches each island plays the best member of every other one first; the same on any thread count and after a resume', { skip }, () => {
   const N = 3, M = 2, BATCHES = 7;
-  const isl = ['--islands', String(N), '--migrate', String(M)];
+  const isl = ['--islands', String(N), '--migrate', String(M), '--migrate-pick', 'best', '--migrate-to', 'all', '--island-variant', ''];
   const args = (list) => [...TINY, '--genome', 'gen', '--list', String(list), '--survivors', '8'];
   // a list of 40 is not full before batch 6 (the threshold is open), one of 12 pushes migrants off again
   const check = (list) => {
@@ -272,8 +273,8 @@ test('--migrate-pick random --migrate-to next: a member drawn, from the island b
   run(again, [...args, ...isl, '--threads', '3', '--batches', '3']);
   run(again, ['--threads', '1', '--batches', '4']);
   [1, 2, 3].forEach((i) => assert.deepEqual(stable(events(join(again, `island-0${i}`))), stable(all[i - 1]), `island ${i}`));
-  // without --migrate, or another value: refused
-  for (const extra of [['--islands', '3', '--migrate-pick', 'random'], ['--islands', '3', '--migrate-to', 'next'], ['--islands', '3', '--migrate', '2', '--migrate-pick', 'worst']]) {
+  // with --migrate 0, or another value: refused
+  for (const extra of [['--islands', '3', '--migrate', '0', '--migrate-pick', 'random'], ['--islands', '3', '--migrate', '0', '--migrate-to', 'next'], ['--islands', '3', '--migrate', '2', '--migrate-pick', 'worst']]) {
     const r = spawnSync(evolve, [join(tmp, 'ring-no'), ...args, ...extra, '--batches', '1'], { encoding: 'utf8', timeout: 60000 });
     assert.equal(r.status, 2, extra.join(' '));
   }
@@ -311,7 +312,7 @@ test('--island-variant: islands with their own settings, each the run alone with
   // a picked panel: picked once, every island has it
   const args = [...without(TINY, '--panel-choice'), '--panel-choice', 'picked', '--pick-sample', '40', '--list', '16', '--survivors', '8'];
   const variant = '--screen-rounds 5  --list 12 --tie-points 0.5';
-  const isl = ['--islands', '3', '--island-variant', '', '--island-variant', variant];
+  const isl = ['--islands', '3', '--island-variant', '', '--island-variant', variant, '--migrate', '0'];
   const dir = join(tmp, 'var');
   run(dir, [...args, ...isl, '--threads', '2', '--batches', '6']);
   const re = events(dir, 'islands.jsonl');
