@@ -49,6 +49,7 @@ export const TINY = ['--opponents', join(root, 'warriors/koenigstuhl/tiny'), '--
   '--positions', 'pmars', // the matches replayed with the seed alone; the mirror has its own test
   '--pushoff', 'value', // the push-off replayed by tools/diversity.js; pareto has its own tests
   '--screen-stop', '0', // every child plays its whole screen; the tests of --screen-stop set it
+  '--genome', 'list', // lists, as before generators became the default; the tests of --genome gen set it
   '--stage', '0']; // the tests of --stage set it
 
 export function run(dir, args) {

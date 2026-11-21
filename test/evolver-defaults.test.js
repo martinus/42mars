@@ -128,9 +128,25 @@ test('--member-games none: members never play each other, a screen of the panel 
   }
 });
 
-test('the defaults: the best run of E5, with a panel picked from a round robin; the same on any thread count', { skip }, () => {
+test('the defaults: the settings of gen-var16-rnd; a panel picked from a round robin; the same on any thread count', { skip }, () => {
   const rules = TINY.slice(0, TINY.indexOf('--panel'));
-  const args = [...rules, '--seed', '5', '--pick-sample', '40', '--batch', '16', '--batches', '1'];
+  // a new run: generators, a panel of 30 by kinds, batches of 128 (docs/evolver-gen.md)
+  run(join(tmp, 'def-new'), [...rules, '--seed', '5', '--threads', '4', '--batches', '1']);
+  const fresh = events(join(tmp, 'def-new'))[0];
+  const q = fresh.params;
+  assert.deepEqual([q.genome, q.panel, q.panelChoice, q.batch, q.survivors, fresh.panel.length], ['gen', 30, 'kinds', 128, 16, 30]);
+  // --map-elites keeps lists
+  run(join(tmp, 'def-me'), [...rules, '--seed', '5', '--map-elites', '--batch', '8', '--threads', '4', '--batches', '1']);
+  assert.equal(events(join(tmp, 'def-me'))[0].params.genome, 'list');
+  // islands: half exploit, half explore, every 5 batches a member drawn from an island drawn; --migrate 0 none
+  run(join(tmp, 'def-isl'), [...rules, '--seed', '5', '--panel-choice', 'random', '--batch', '16', '--islands', '2', '--threads', '4', '--batches', '1']);
+  const isl = events(join(tmp, 'def-isl'), 'islands.jsonl')[0];
+  assert.deepEqual([isl.migrate, isl.migratePick, isl.migrateTo, isl.variants], [5, 'random', 'random', ['', '--screen-members 80 --screen-rounds 8']]);
+  assert.deepEqual([1, 2].map((i) => events(join(tmp, 'def-isl', `island-0${i}`))[0].params.screenMembers), [10, 80]);
+  run(join(tmp, 'def-isl0'), [...rules, '--seed', '5', '--panel-choice', 'random', '--batch', '16', '--islands', '2', '--migrate', '0', '--threads', '4', '--batches', '1']);
+  assert.equal(events(join(tmp, 'def-isl0'), 'islands.jsonl')[0].migrate, 0);
+  // the defaults before them, with a panel picked from a round robin
+  const args = [...rules, '--seed', '5', '--panel-choice', 'picked', '--panel', '20', '--pick-sample', '40', '--batch', '16', '--batches', '1'];
   run(join(tmp, 'def4'), [...args, '--threads', '4']);
   const one = events(join(tmp, 'def4'));
   const p = one[0].params;
