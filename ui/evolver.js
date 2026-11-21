@@ -1261,7 +1261,7 @@ function renderCard() {
     .map(({ o, r }) => `<tr><td><a data-id="${o.id}" style="color:${o.kind === 'member' ? hsl(o.hue) : o.kind === 'holdout' ? '#ff9ab8' : '#aab0c8'}">${esc(o.name)}</a>${o.kind === 'holdout' ? ' <small>holdout</small>' : ''}</td><td class="n">${r.w}/${r.l}/${r.t}</td><td class="n" style="color:${scoreColor(Math.max(120, points(r)))}">${points(r).toFixed(0)}</td><td><button data-battle="${x.id},${o.id}">watch</button></td></tr>`).join('');
   let head;
   if (x.kind === 'member') {
-    const parents = x.parents.map(link).join(' ') || 'none (random)';
+    const parents = x.parents.map(link).join(' ') || (x.ops === 'migrant' ? 'none here: the best of another island (--migrate)' : 'none (random)');
     head = `<h3 style="color:${color}">${esc(x.name)} <small style="color:#6c7290;font-size:13px">#${x.id}</small></h3>
       ${x.id === S.bestId ? '<div class="sub" style="color:#ffc53d">★ the best against the holdout warriors so far</div>' : ''}
       <div class="sub">born in batch ${x.born}${x.alive ? ', in the list' : `, pushed off in batch ${x.died}`} · ${x.length} instructions · ${esc(x.ops)}</div>
