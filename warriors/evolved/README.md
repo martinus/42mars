@@ -6,9 +6,9 @@ Each file is the `best.red` as the run wrote it, with one line added: `;strategy
 
 The tables are sorted by the score against the holdout: points per 100 rounds against the 100 warriors of the hill that run kept out of its panel. Each run drew its own holdout, so these scores compare only roughly. "Whole hill" is the score against every warrior of the hill, 100 rounds each, where the run measured it (folders of islands, `--islands`); that one compares across runs. "Batch" is when the warrior was found, as far as the run says.
 
-The runs of 14th to 19th November 2026 are in this first collection: the E5 comparisons and the push-off comparisons of `docs/evolver.md`. Fancy Falcon (21st November) is the first from a run on generators (`--genome gen`, #174): 16 islands, half of them screening against every member, each taking a member drawn from an island drawn every 5 batches; 117.0 against the whole hill, 6.7 above the best before it. Lucky Minotaur II, island 13 of the same run at batch 200, is the same design tuned further: 122.1.
+The runs of 14th to 19th November 2026 are in this first collection: the E5 comparisons and the push-off comparisons of `docs/evolver.md`. Fancy Falcon (21st November) is the first from a run on generators (`--genome gen`, #174): 16 islands, half of them screening against every member, each taking a member drawn from an island drawn every 5 batches; 117.0 against the whole hill, 6.7 above the best before it. Lucky Minotaur II, island 13 of the same run at batch 200, is the same design tuned further: 122.1. The islands then stayed at 122 to 123 for 800 batches, all with such a clear on top, while the other warriors of their lists kept rising against the panel; at batch 1100 Zesty Coyote, island 8, a clear with a second write stream and a second SPL, scored 131.4, and five islands were above 127.
 
-## '94 hill without p-space: `94nop/`, 166 warriors
+## '94 hill without p-space: `94nop/`, 167 warriors
 
 Rules: pMARS's defaults: core 8000, 80,000 cycles, 8000 processes, length 100, distance 100; opponents `warriors/koenigstuhl/94nop`.
 
@@ -24,6 +24,7 @@ Rules: pMARS's defaults: core 8000, 80,000 cycles, 8000 processes, length 100, d
 | [Haunted Locust XLIII](94nop/haunted-locust-xliii.red) | 27 | 135.4 |  | `s-seeded-prior` | value | 249 | 14th November 2026 |
 | [Humble Sloth V](94nop/humble-sloth-v.red) | 7 | 134.8 |  | `kd1b`, `kd1b-ctl`, `kd1b-l200`, `kd1b-tn` | value | 8249 | 16th November 2026 |
 | [Restless Wombat XVI](94nop/restless-wombat-xvi.red) | 10 | 134.0 |  | `ss2` | value | 109 | 16th November 2026 |
+| [Zesty Coyote](94nop/zesty-coyote.red) | 5 | 133.4 | 131.4 | `gen-var16-rnd/island-08` | pareto-sd | 1093 | 22nd November 2026 |
 | [Patient Locust IX](94nop/patient-locust-ix.red) | 12 | 133.1 |  | `m-seed` | value | 49 | 15th November 2026 |
 | [Polite Wombat VII](94nop/polite-wombat-vii.red) | 9 | 133.1 |  | `sk2` | value | 59 | 16th November 2026 |
 | [Jagged Glitch](94nop/jagged-glitch.red) | 4 | 132.7 |  | `w1-ap24` | value | 9 | 17th November 2026 |
