@@ -6,9 +6,9 @@ Each file is the `best.red` as the run wrote it, with one line added: `;strategy
 
 The tables are sorted by the score against the holdout: points per 100 rounds against the 100 warriors of the hill that run kept out of its panel. Each run drew its own holdout, so these scores compare only roughly. "Whole hill" is the score against every warrior of the hill, 100 rounds each, where the run measured it (folders of islands, `--islands`); that one compares across runs. "Batch" is when the warrior was found, as far as the run says.
 
-The runs of 14th to 19th November 2026 are in this first collection: the E5 comparisons and the push-off comparisons of `docs/evolver.md`. Fancy Falcon (21st November) is the first from a run on generators (`--genome gen`, #174): 16 islands, half of them screening against every member, each taking a member drawn from an island drawn every 5 batches; 117.0 against the whole hill, 6.7 above the best before it. Lucky Minotaur II, island 13 of the same run at batch 200, is the same design tuned further: 122.1. The islands then stayed at 122 to 123 for 800 batches, all with such a clear on top, while the other warriors of their lists kept rising against the panel; at batch 1100 Zesty Coyote, island 8, a clear with a second write stream and a second SPL, scored 131.4, and five islands were above 127.
+The runs of 14th to 19th November 2026 are in this first collection: the E5 comparisons and the push-off comparisons of `docs/evolver.md`. Fancy Falcon (21st November) is the first from a run on generators (`--genome gen`, #174): 16 islands, half of them screening against every member, each taking a member drawn from an island drawn every 5 batches; 117.0 against the whole hill, 6.7 above the best before it. Lucky Minotaur II, island 13 of the same run at batch 200, is the same design tuned further: 122.1. The islands then stayed at 122 to 123 for 800 batches, all with such a clear on top, while the other warriors of their lists kept rising against the panel; at batch 1100 Zesty Coyote, island 8, a clear with a second write stream and a second SPL, scored 131.4, and five islands were above 127. Rowdy Stingray, island 10 at batch 1200, is that design in four instructions: 135.3. From then to batch 1700 the run stayed at 135 to 136 with this clear on top of every island; Eager Ferret II, island 14, is the best of that time, 135.6.
 
-## '94 hill without p-space: `94nop/`, 167 warriors
+## '94 hill without p-space: `94nop/`, 169 warriors
 
 Rules: pMARS's defaults: core 8000, 80,000 cycles, 8000 processes, length 100, distance 100; opponents `warriors/koenigstuhl/94nop`.
 
@@ -18,7 +18,9 @@ Rules: pMARS's defaults: core 8000, 80,000 cycles, 8000 processes, length 100, d
 | [Spiky Mongoose XVI](94nop/spiky-mongoose-xvi.red) | 4 | 142.2 |  | `mrg2` | value | 129 | 16th November 2026 |
 | [Cranky Mongoose VI](94nop/cranky-mongoose-vi.red) | 4 | 141.5 |  | `mrg1` | value | 109 | 16th November 2026 |
 | [Giddy Locust XX](94nop/giddy-locust-xx.red) | 27 | 140.2 |  | `s-seeded` | value | 169 | 14th November 2026 |
+| [Rowdy Stingray](94nop/rowdy-stingray.red) | 4 | 140.2 | 135.3 | `gen-var16-rnd/island-10` | pareto-sd | 1199 | 22nd November 2026 |
 | [Toxic Locust V](94nop/toxic-locust-v.red) | 13 | 138.5 |  | `m-seed-mix` | value | 109 | 15th November 2026 |
+| [Eager Ferret II](94nop/eager-ferret-ii.red) | 4 | 138.1 | 135.6 | `gen-var16-rnd/island-14` | pareto-sd | 1689 | 22nd November 2026 |
 | [Hyper Wombat XXVI](94nop/hyper-wombat-xxvi.red) | 15 | 136.4 |  | `sps2` | value | 179 | 16th November 2026 |
 | [Humble Locust VII](94nop/humble-locust-vii.red) | 10 | 135.7 |  | `n1-seed` | value | 59 | 15th November 2026 |
 | [Haunted Locust XLIII](94nop/haunted-locust-xliii.red) | 27 | 135.4 |  | `s-seeded-prior` | value | 249 | 14th November 2026 |
