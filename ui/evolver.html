@@ -31,18 +31,7 @@
 
   <main>
     <section class="panel matrix-panel">
-      <h2>Score matrix <small>rows: the evolved warriors of the list, best push-off value on top (value = <span id="matrix-average">average score against everyone in, panel and evolved,</span> × distance to the nearest other warrior) · columns: the same warriors, then the panel · cell: points per 100 rounds of the row against the column (3 a win, 1 a tie) · click a cell to watch the match</small></h2>
-      <div class="sorts" id="matrix-sorts">
-        <span>evolved by</span>
-        <button data-axis="rows" data-sort="value" title="rows and their columns by push-off value (average × SD-score to the nearest); click again to turn the order around">value</button>
-        <button data-axis="rows" data-sort="average" title="rows and their columns by the average the push-off uses; click again to turn the order around">score</button>
-        <button data-axis="rows" data-sort="row" title="rows and their columns by the mean of every cell of the row, the evolved warriors and the panel: the brightest rows on top; click again to turn the order around">row</button>
-        <button data-axis="rows" data-sort="distance" title="rows and their columns by the SD-score to the nearest other warrior; click again to turn the order around">SD</button>
-        <span>panel by</span>
-        <button data-axis="cols" data-sort="strength" title="panel columns by the panel warrior's own average against the rest of the panel; click again to turn the order around">strength</button>
-        <button data-axis="cols" data-sort="score" title="panel columns by the evolved warriors' average score against that panel warrior; click again to turn the order around">score</button>
-        <button data-axis="cols" data-sort="spread" title="panel columns by the standard deviation of the evolved warriors' scores against that panel warrior: what the SD-score divides the column by; click again to turn the order around">SD</button>
-      </div>
+      <h2>Score matrix <small>rows: the evolved warriors of the list · columns: the same warriors, then the panel · cell: points per 100 rounds of the row against the column (3 a win, 1 a tie); click it to watch the match · hover a heading for what its number means, click it to sort by it</small></h2>
       <div class="canvas-wrap"><canvas id="matrix"></canvas></div>
       <div class="scale"><span>0</span><i></i><span>300</span></div>
     </section>

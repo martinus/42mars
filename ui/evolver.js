@@ -14,6 +14,8 @@ import { describe, measureStyle } from '../tools/style.js';
 import { kindCounts, progressPoint } from '../tools/progress.js';
 
 const $ = (id) => document.getElementById(id);
+// The font of everything drawn but code: proportional, as the page's (evolver.css --sans).
+const SANS = 'system-ui, -apple-system, "Segoe UI", Roboto, sans-serif';
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
 const fmtInt = (n) => Math.round(n).toLocaleString('en-US');
 const fmtBig = (n) => (n >= 1e9 ? `${(n / 1e9).toFixed(2)}G` : n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${(n / 1e3).toFixed(1)}k` : n.toFixed(0));
@@ -49,7 +51,6 @@ function fresh() {
     bestHoldout: -1,
     bestId: null, // the best against the holdout warriors so far
     ticker: [],
-    ghosts: [], // members that left, fading out of the matrix
     opTotals: new Map(), // change -> [children, evaluated, past the screen, still in after the batch]
     opBatches: [], // per batch: { batch, ops }
     kinds: [], // per batch: { batch, counts }: the members by kind of style
@@ -58,10 +59,10 @@ function fresh() {
 let S = fresh();
 let matrixHeading = null; // the matrix heading of the page, before a run changed it
 let selected = null;
-let ease = 0.1; // the share of the way to a target that this frame moves (time-based, see frame())
 let hover = null; // { kind, ... } of the canvas under the mouse
 
 const member = (id) => S.w.get(id);
+const ageOfMember = (m) => Math.max(0, S.batch - (m.born ?? S.batch)); // batches since it entered
 const alive = () => S.slots.filter((id) => id !== null && S.w.get(id).kind === 'member').map(member);
 const nameOf = (id) => S.w.get(id)?.name ?? `#${id}`;
 
@@ -100,7 +101,6 @@ const link = (id) => (!S.w.has(id) ? '–' : `<a data-id="${id}" style="color:${
 // ------------------------------------------------------------------ events
 
 function handle(e) {
-  const now = performance.now();
   chartsDirty = chipsDirty = true;
   switch (e.type) {
     case 'start': {
@@ -108,13 +108,8 @@ function handle(e) {
       S.start = e;
       S.rounds = e.params.rounds;
       // the heading as the page has it, then what this run changes in it: one page shows several runs
-      $('matrix-sorts').hidden = !!e.params.mapElites; // an archive has no such order
       matrixHeading ??= document.querySelector('.matrix-panel h2').innerHTML;
       document.querySelector('.matrix-panel h2').innerHTML = matrixHeading;
-      if (e.params.average === 'panel') $('matrix-average').textContent = 'average score against the panel (--average panel)';
-      // the push-off's average: over the panel only with --average panel, which the button then says
-      document.querySelector('#matrix-sorts [data-sort="average"]').dataset.label = e.params.average === 'panel' ? 'panel' : 'score';
-      renderMatrixSorts();
       if (e.params.crowding) { // the matrix panel shows the archive, no cells
         document.querySelector('.matrix-panel h2').innerHTML = 'Crowding archive <small>a warrior competes with its nearest by SD-score against the panel; one unlike all takes the place of the weaker of the closest pair · rows the archive, best first, columns the panel warriors · click a cell to watch the match</small>';
       } else if (e.params.specialists) {
@@ -134,7 +129,7 @@ function handle(e) {
       for (const [a, b, w, l, t, seed] of e.scores) setRes(a, b, w, l, t, seed, a);
       break;
     case 'enter': {
-      const x = { id: e.id, kind: 'member', name: e.name ?? `e${e.id}`, code: e.code, gen: e.gen ?? null, refactors: [], parents: e.parents, ops: e.ops, length: e.length, screen: e.screen, estimate: e.estimate, born: e.batch, died: null, alive: true, enteredAt: now, value: null, newFamily: !!e.newFamily, parentDifference: e.parentDifference };
+      const x = { id: e.id, kind: 'member', name: e.name ?? `e${e.id}`, code: e.code, gen: e.gen ?? null, refactors: [], parents: e.parents, ops: e.ops, length: e.length, screen: e.screen, estimate: e.estimate, born: e.batch, died: null, alive: true, value: null, newFamily: !!e.newFamily, parentDifference: e.parentDifference };
       x.hue = hueFor(e.id, e.parents, x.newFamily);
       x.styleKind = e.style?.kind;
       S.w.set(e.id, x);
@@ -149,7 +144,7 @@ function handle(e) {
       break;
     }
     case 'elite': { // --map-elites: a warrior takes a cell, the one there leaves
-      const x = { id: e.id, kind: 'member', name: e.name, code: e.code, parents: e.parents, ops: e.ops, length: e.length, screen: e.screen, born: e.batch, died: null, alive: true, enteredAt: now, value: null, newFamily: !!e.newFamily, cell: e.index, cellXyz: e.cell, style: e.style };
+      const x = { id: e.id, kind: 'member', name: e.name, code: e.code, parents: e.parents, ops: e.ops, length: e.length, screen: e.screen, born: e.batch, died: null, alive: true, value: null, newFamily: !!e.newFamily, cell: e.index, cellXyz: e.cell, style: e.style };
       x.hue = hueFor(e.id, e.parents, x.newFamily);
       x.styleKind = e.style?.kind;
       S.w.set(e.id, x);
@@ -201,12 +196,10 @@ function handle(e) {
       if (!x) break;
       x.alive = false;
       x.died = e.batch;
-      x.leftAt = now;
       x.value = e.value;
       x.distance = e.distance;
       x.nearest = e.nearest;
       S.slots[S.slots.indexOf(e.id)] = null;
-      if (x.row !== null && x.row !== undefined) S.ghosts.push(x);
       if (x.born === e.batch) { // did not last its own batch: its matches are not kept (most newcomers; a long run has millions)
         x.rejected = true;
         for (const o of x.opponents ?? []) S.res.delete(`${x.id}:${o}`), S.res.delete(`${o}:${x.id}`);
@@ -327,7 +320,7 @@ function drawGrid(now) {
   const { ctx, w, h } = fit(canvas);
   const crowd = !!S.start.params.crowding; // no cells: only the matrix of the archive
   const left = 92, top = crowd ? -12 : 44, cw = (w - left - 10) / 12, ch = crowd ? 0 : Math.min(56, (h * 0.42 - top) / 4);
-  ctx.font = '10px ui-monospace, monospace';
+  ctx.font = `10px ${SANS}`;
   ctx.textBaseline = 'middle';
   ctx.fillStyle = '#7f86a0';
   if (!crowd) {
@@ -347,15 +340,10 @@ function drawGrid(now) {
     ctx.fillStyle = m ? scoreColor(m.panelAvg ?? 0) : '#0d1020';
     ctx.fillRect(x + 1, y + 1, cw - 2, ch - 2);
     if (m) {
-      const age = Math.max(0, now - (m.enteredAt ?? 0));
-      if (age < 900) { // softly: a list changes every few seconds
-        ctx.fillStyle = `rgba(255,255,255,${0.2 * Math.exp(-age / 300)})`;
-        ctx.fillRect(x + 1, y + 1, cw - 2, ch - 2);
-      }
       ctx.fillStyle = (m.panelAvg ?? 0) > 180 ? '#10131f' : '#e8ebf5';
-      ctx.font = `bold ${cw < 46 ? 11 : 12}px ui-monospace, monospace`;
+      ctx.font = `bold ${cw < 46 ? 11 : 12}px ${SANS}`;
       ctx.fillText(cw < 46 ? String(Math.round(m.panelAvg ?? 0)) : f1(m.panelAvg), x + 4, y + ch / 2 - 7); // narrow cells: no decimal
-      ctx.font = '9px ui-monospace, monospace';
+      ctx.font = `9px ${SANS}`;
       ctx.fillText(m.name.slice(0, Math.max(4, Math.floor(cw / 6))), x + 5, y + ch / 2 + 8);
       if (selected === m.id || m.id === S.bestId) {
         ctx.strokeStyle = selected === m.id ? '#ffc53d' : '#ffffff';
@@ -364,7 +352,7 @@ function drawGrid(now) {
       }
       if (hv && hv.x >= x && hv.x < x + cw && hv.y >= y && hv.y < y + ch) target = m;
     }
-    ctx.font = '10px ui-monospace, monospace';
+    ctx.font = `10px ${SANS}`;
   }
   // below the grid: the cells' warriors (best first) against each panel
   // warrior, a cell per match, as the matrix of the list; a click watches it
@@ -372,7 +360,7 @@ function drawGrid(now) {
   const panel = S.panel.map(member).sort((a, b) => (b.panelAvg ?? 0) - (a.panelAvg ?? 0));
   const mTop = top + 4 * ch + 34, rowH = Math.max(1, Math.min(14, (h - mTop - 8) / Math.max(1, ms.length)));
   const names = rowH >= 9, mLeft = names ? 150 : 22, colW = Math.max(1, (w - mLeft - 10) / Math.max(1, panel.length));
-  ctx.font = '10px ui-monospace, monospace';
+  ctx.font = `10px ${SANS}`;
   ctx.fillStyle = '#7f86a0';
   ctx.fillText(`the warriors of the ${crowd ? 'archive' : 'cells'}, best first, against the ${panel.length} panel warriors · click a cell to watch the match`, 6, mTop - 14);
   const key = `${S.version}:${panel.length}`;
@@ -382,7 +370,7 @@ function drawGrid(now) {
     if (m.cellKey !== key) m.cellKey = key, m.cellColors = panel.map((o) => (resOf(m.id, o.id) ? scoreColor(points(resOf(m.id, o.id))) : null));
     ctx.fillStyle = selected === m.id ? '#ffc53d' : hsl(m.hue);
     if (names) {
-      ctx.font = `${selected === m.id ? 'bold ' : ''}10px ui-monospace, monospace`;
+      ctx.font = `${selected === m.id ? 'bold ' : ''}10px ${SANS}`;
       ctx.fillText(`${f1(m.panelAvg)} ${m.name}`.slice(0, 22), 6, y + rowH / 2);
     } else ctx.fillRect(4, y, 12, Math.max(1, rowH - (rowH >= 4 ? 1 : 0)));
     panel.forEach((o, j) => {
@@ -419,21 +407,67 @@ function drawGrid(now) {
 // value, by its average, by the SD-score to the nearest. The panel columns:
 // by the panel warrior's own strength, by the evolved warriors' average
 // against it, by the standard deviation of their scores against it.
-const MATRIX_SORTS = { rows: ['value', 'average', 'row', 'distance'], cols: ['strength', 'score', 'spread'] };
+const MATRIX_SORTS = { rows: ['value', 'average', 'distance', 'age', 'length'], cols: ['strength', 'score', 'spread'] };
 let matrixSort = { rows: 'value', rowsDir: -1, cols: 'strength', colsDir: -1 };
+// The numbers after a member's name in the matrix: [sort key, heading, text]; a click on a heading sorts the rows.
+const MATRIX_NUMBERS = [ // [sort key, heading, text, value for its color]
+  ['length', 'len', (m) => String(m.length ?? ''), (m) => m.length],
+  ['age', 'age', (m) => String(ageOfMember(m)), ageOfMember],
+  ['average', 'score', (m) => f1(m.avg), (m) => m.avg],
+  ['distance', 'sd', (m) => (m.distance === undefined || m.distance === null ? '–' : m.distance.toFixed(2)), (m) => m.distance],
+  ['value', 'value', (m) => f1(m.value), (m) => m.value],
+];
+// The colors of numbers by where they are between the lowest and the highest
+// of their column: blue, light grey in the middle, amber; 21 steps made once.
+const NUM_RAMP = (() => {
+  const low = [111, 134, 201], mid = [201, 206, 221], high = [255, 179, 71];
+  return Array.from({ length: 21 }, (_, i) => {
+    const t = i / 20, [a, b, u] = t < 0.5 ? [low, mid, t * 2] : [mid, high, t * 2 - 1];
+    return `rgb(${a.map((x, k) => Math.round(x + (b[k] - x) * u)).join(',')})`;
+  });
+})();
+const rampColor = (v, lo, hi) => (v === undefined || v === null || !Number.isFinite(v) ? '#aab1c9' : NUM_RAMP[hi > lo ? Math.round((20 * (v - lo)) / (hi - lo)) : 10]);
+// What a heading of the matrix means, for its tooltip: what the number is,
+// how to read it, and what a click does. The push-off's settings change some.
+function sortTip(axis, key) {
+  const p = S.start?.params ?? {};
+  const overPanel = p.diversity === 'panel' ? 'the panel columns' : 'all columns, evolved and panel';
+  const pareto = { pareto: 'its score against the panel and its score against the other members',
+    'pareto-age': 'its score against the panel, its score against the other members and the age of its line',
+    'pareto-sd': 'its score against the panel, its score against the other members and its sd' }[p.pushoff];
+  const text = {
+    length: ['Length', 'How many instructions the warrior has. A short warrior is a small target: the opponent\'s bombs and scans find it less often. A long one has room for more than one trick.'],
+    age: ['Age', 'For how many batches it has kept its place in the list. Each batch, newcomers try to push members out: an old warrior has outlasted all of them, a young one has just won its place.'],
+    average: ['Score', `Its average points per 100 rounds: 3 for a win, 1 for a tie, 0 for a loss, so 300 means it won every round. The average is over ${p.average === 'panel' ? 'the panel only (<code>--average panel</code>)' : 'its whole row: the other evolved warriors and the panel'}. This is how strong it is.`],
+    distance: ['SD-score to its nearest', `How differently it plays from the most similar other warrior in the list. Its row of scores is compared with every other row on ${overPanel}, each difference scaled by that column's standard deviation, so the columns where the warriors differ most do not drown out the others. Near 0: almost a copy of another member. Large: it beats, or loses to, other opponents than the rest do.`],
+    value: ['Push-off value', pareto
+      ? `Decides who leaves when the list is full: the lowest value goes. The warriors are sorted into fronts on ${pareto}: a warrior is on the first front when no other one is at least as good in all of them and better in one. The value is 10 for each front above the last, plus up to 5 the more room it has on its front, so that among near-equals the one most unlike its neighbours stays.`
+      : `Decides who leaves when the list is full: the lowest value goes. The value is the score times the sd${p.alpha !== undefined && p.alpha !== 1 ? `<sup>${p.alpha}</sup>` : ''}, so a warrior stays by being strong, by playing unlike the others, or both: a weak but unusual one can stay, a strong near-copy is pushed out.`],
+    strength: ['Strength of the panel warrior', 'The panel is a fixed set of human-written hill warriors that every evolved warrior has to play. This is the panel warrior\'s own average points per 100 rounds against the rest of the panel: the higher, the tougher an opponent.'],
+    score: ['The list\'s score against it', 'The average points per 100 rounds the evolved warriors of the list get against this panel warrior. Low: an opponent the list has not learned to beat yet, its weak spot. High: one it has mastered.'],
+    spread: ['Spread of the list against it', 'The standard deviation of the evolved warriors\' scores against this panel warrior. Large: some members beat it and others lose to it, so this column tells the members apart. Small: they all do about the same against it. The SD-score of the rows divides each column by this.'],
+  }[key];
+  const on = matrixSort[axis] === key, dir = matrixSort[`${axis}Dir`];
+  const what = axis === 'rows' ? 'the warriors' : 'the panel columns';
+  const click = on ? `Sorted by this, ${dir > 0 ? 'lowest' : 'highest'} first. Click to turn it around.` : `Click to sort ${what} by this, highest first; click again for lowest first.`;
+  return `<b>${text[0]}</b><div style="margin:3px 0 5px">${text[1]}</div><span style="color:#7f86a0">${click}</span>`;
+}
+// The panel's numbers over its columns: [sort key, heading, value].
+const PANEL_NUMBERS = [
+  ['strength', 'strength', (p) => p.panelAvg ?? 0],
+  ['score', 'score', (p, columns) => columns.get(p.id).score],
+  ['spread', 'sd', (p, columns) => columns.get(p.id).spread],
+];
+function sortMatrix(axis, key) { // a key again turns the order around
+  if (matrixSort[axis] === key) matrixSort[`${axis}Dir`] *= -1;
+  else matrixSort[axis] = key, matrixSort[`${axis}Dir`] = -1;
+  try { localStorage.setItem('evolver-matrix-sort', JSON.stringify(matrixSort)); } catch {}
+  chartsDirty = true;
+}
 try {
   const m = JSON.parse(localStorage.getItem('evolver-matrix-sort') ?? 'null');
   if (m && MATRIX_SORTS.rows.includes(m.rows) && MATRIX_SORTS.cols.includes(m.cols)) matrixSort = { rows: m.rows, rowsDir: m.rowsDir > 0 ? 1 : -1, cols: m.cols, colsDir: m.colsDir > 0 ? 1 : -1 };
 } catch {}
-
-function renderMatrixSorts() {
-  for (const b of document.querySelectorAll('#matrix-sorts button')) {
-    const on = matrixSort[b.dataset.axis] === b.dataset.sort;
-    b.classList.toggle('on', on);
-    b.dataset.label ??= b.textContent;
-    b.textContent = `${b.dataset.label}${on ? (matrixSort[`${b.dataset.axis}Dir`] > 0 ? ' ↑' : ' ↓') : ''}`;
-  }
-}
 
 // Of each panel warrior's column: the mean and the standard deviation of the
 // evolved warriors' points against it; once per update.
@@ -450,24 +484,25 @@ function panelColumns() {
   return S.columns;
 }
 
-// Of each evolved warrior: its mean points over every cell of its row, the
-// other evolved warriors and the panel, what the colors of the row show
-// (with --average panel the push-off's average is over the panel only); once
-// per update.
-function rowMeans() {
-  if (S.rowsOf !== S.version) {
-    S.rowsOf = S.version;
-    const ms = alive(), others = [...ms.map((m) => m.id), ...S.panel];
-    S.rowMeans = new Map(ms.map((m) => {
-      let sum = 0, n = 0;
-      for (const o of others) {
-        const x = o === m.id ? null : points(resOf(m.id, o));
-        if (x !== null) sum += x, n++;
-      }
-      return [m.id, n ? sum / n : -1];
-    }));
+const rowFont = (ch) => Math.min(11, Math.max(8, Math.floor(ch))); // the names' size in rows ch high
+const numFont = (ch) => Math.max(10, rowFont(ch)); // their numbers: digits are lower than names, 10px fit rows of 9
+
+// The matrix's description in the empty corner above the names, left of the
+// panel's band headings, when it fits in a width of 260 px or more; else in
+// the heading. The matrix starts below it: matrix.noteH, from the last draw.
+function placeNote(canvas, width) {
+  const note = document.querySelector('.matrix-panel h2 small');
+  if (!note) return;
+  const wrap = canvas.parentElement, inside = width >= 260;
+  note.classList.toggle('inside', inside);
+  if (inside) {
+    const left = `${wrap.offsetLeft + 4}px`, top = `${wrap.offsetTop + 2}px`, w = `${Math.floor(width)}px`;
+    if (note.style.left !== left) note.style.left = left;
+    if (note.style.top !== top) note.style.top = top;
+    if (note.style.width !== w) note.style.width = w;
   }
-  return S.rowMeans;
+  const h = inside ? note.offsetHeight : 0;
+  if (Math.abs(h - (matrix.noteH ?? 0)) > 1) matrix.noteH = h, chartsDirty = true;
 }
 
 function drawMatrix(now) {
@@ -475,33 +510,99 @@ function drawMatrix(now) {
   const canvas = $('matrix');
   const { ctx, w, h } = fit(canvas);
   if (!S.start) return;
-  const rows = matrixSort.rows === 'row' ? rowMeans() : null;
-  const rowKey = { value: (m) => m.value ?? -1, average: (m) => m.avg ?? -1, row: (m) => rows.get(m.id) ?? -1, distance: (m) => m.distance ?? -1 }[matrixSort.rows];
+  const rowKey = { value: (m) => m.value ?? -1, average: (m) => m.avg ?? -1, distance: (m) => m.distance ?? -1, age: (m) => ageOfMember(m), length: (m) => m.length ?? 0 }[matrixSort.rows];
   const ms = alive().sort((a, b) => matrixSort.rowsDir * (rowKey(a) - rowKey(b)) || a.id - b.id);
-  const columns = matrixSort.cols === 'strength' ? null : panelColumns();
-  const colKey = columns ? (p) => columns.get(p.id)[matrixSort.cols] : (p) => p.panelAvg ?? 0;
+  const columns = panelColumns();
+  const pnums = PANEL_NUMBERS.map(([key, head, value]) => ({ key, head, value: (p) => value(p, columns) }));
+  const colKey = pnums.find((c) => c.key === matrixSort.cols).value;
   const panel = S.panel.map(member).sort((a, b) => matrixSort.colsDir * (colKey(a) - colKey(b)) || a.id - b.id);
+  matrix.order = ms.map((m) => m.id); // for the arrow keys
   ms.forEach((m, i) => {
-    if (m.row === null || m.row === undefined) m.row = now - m.enteredAt < 2000 ? ms.length : i; // a newcomer slides in from below
-    m.row += (i - m.row) * ease;
+    m.row = i; // at its place at once: no sliding
   });
-  S.ghosts = S.ghosts.filter((g) => now - g.leftAt < 900);
-  ctx.font = 'bold 11px ui-monospace, monospace';
-  const top = 26, gap = 10;
-  // a list of 100 (--list) still fits: thin cells without gaps, names only while rows are high enough
-  const ch = Math.max(1, Math.min(36, (h - top - 10) / Math.max(8, ms.length)));
-  const names = ch >= 9; // a list of 80 on a screen 1080 high: rows of about 10, names in a smaller font
-  const labelW = names ? Math.min(230, Math.max(74, ...[...ms, ...S.ghosts].map((m) => ctx.measureText(`★ ${m.name}`).width + (S.start.params.specialists ? 42 : 28)))) : 22;
-  const cols = ms.length + panel.length;
-  const cw = Math.max(1, (w - labelW - gap - 10) / Math.max(1, cols));
+  // From the top: a line of headings, the panel's numbers in a band each over
+  // its columns, the headings of the rows' numbers, the rows. The panel's
+  // numbers are text turned upright where the columns are wide enough, else
+  // strips from dark (lowest) to bright (highest).
+  const gap = 10, cols = ms.length + panel.length, bands = 18;
+  let top, bh, ch, names, nums, numsW, labelW, cw;
+  for (bh of [21, 12]) {
+    top = Math.max(bands + pnums.length * bh + 14, matrix.noteH ? matrix.noteH + 26 : 0); // below the note, placeNote()
+    // a list of 100 (--list) still fits: thin cells without gaps, names only while rows are high enough
+    ch = Math.max(1, Math.min(36, (h - top - 10) / Math.max(8, ms.length)));
+    names = ch >= 9; // a list of 80 on a screen 1080 high: rows of about 10, names in a smaller font
+    // the name, then its numbers, right-aligned, each a column whose heading sorts the rows (and ◆ with --specialists)
+    // measured in the fonts they are drawn in: the headings 10px, names in the rows' font, numbers in it
+    // but at least 10px (bold where selected)
+    const wide = (m, text, size = rowFont(ch)) => {
+      ctx.font = `${m.id === selected ? 'bold ' : ''}${size}px ${SANS}`;
+      return ctx.measureText(text).width;
+    };
+    nums = [];
+    if (names) for (const [key, head, text, value] of MATRIX_NUMBERS) {
+      ctx.font = `10px ${SANS}`;
+      const vs = ms.map(value).filter((v) => Number.isFinite(v));
+      nums.push({ key, head, text, value, lo: Math.min(...vs), hi: Math.max(...vs), w: Math.max(ctx.measureText(`${head} ↓`).width, ...ms.map((m) => wide(m, text(m), numFont(ch)))) + 8 });
+    }
+    numsW = nums.reduce((a, c) => a + c.w, 0);
+    labelW = names ? Math.min(420, Math.max(74, ...ms.map((m) => 20 + wide(m, m.id === S.bestId ? `★ ${m.name}` : m.name) + numsW + (S.start.params.specialists ? 20 : 6)))) : 22;
+    cw = Math.max(1, (w - labelW - gap - 10) / Math.max(1, cols));
+    if (cw >= 9) break;
+  }
+  const upright = bh === 21;
+  for (let k = nums.length - 1, x = labelW - (S.start.params.specialists ? 20 : 6); k >= 0; x -= nums[k].w, k--) nums[k].x = x;
   const cg = cw >= 4 ? 1 : 0, rg = ch >= 4 ? 1 : 0;
   const colX = (i) => labelW + (i < ms.length ? i * cw : ms.length * cw + gap + (i - ms.length) * cw);
-  ctx.font = '10px ui-monospace, monospace';
+  ctx.font = `10px ${SANS}`;
   ctx.fillStyle = '#7f86a0';
   ctx.textBaseline = 'middle';
-  ctx.fillText('evolved', labelW, 10);
+  matrix.heads = [];
+  if (names) { // the headings of the numbers after the names: a click sorts by it, again the other way round
+    ctx.textAlign = 'right';
+    for (const c of nums) {
+      const on = matrixSort.rows === c.key;
+      ctx.fillStyle = on ? '#ffc53d' : '#7f86a0';
+      ctx.fillText(on ? `${c.head} ${matrixSort.rowsDir > 0 ? '↑' : '↓'}` : c.head, c.x, top - 10);
+      matrix.heads.push({ axis: 'rows', key: c.key, x0: c.x - c.w + 4, x1: c.x + 2, y0: top - 18, y1: top - 3 });
+    }
+    ctx.textAlign = 'left';
+  }
   const px = labelW + ms.length * cw + gap, ptext = `panel (${panel.length} hill warriors)`;
+  ctx.font = `10px ${SANS}`;
+  placeNote(canvas, px - 22 - Math.max(...pnums.map((c) => ctx.measureText(`${c.head} ↓`).width)));
+  ctx.fillStyle = '#7f86a0';
   ctx.fillText(ctx.measureText(ptext).width < w - px ? ptext : 'panel', px, 10);
+  // the panel's numbers: the heading left of its band sorts the columns by it
+  matrix.pcells = [];
+  pnums.forEach((c, k) => {
+    const y = bands + k * bh, on = matrixSort.cols === c.key;
+    ctx.font = `10px ${SANS}`;
+    ctx.textAlign = 'right';
+    ctx.fillStyle = on ? '#ffc53d' : '#7f86a0';
+    const head = on ? `${c.head} ${matrixSort.colsDir > 0 ? '↑' : '↓'}` : c.head;
+    ctx.fillText(head, px - 6, y + bh / 2);
+    matrix.heads.push({ axis: 'cols', key: c.key, x0: px - 10 - ctx.measureText(head).width, x1: px - 2, y0: y, y1: y + bh });
+    const vs = panel.map(c.value), lo = Math.min(...vs), hi = Math.max(...vs);
+    ctx.font = `10px ${SANS}`;
+    ctx.textAlign = 'left';
+    panel.forEach((p, j) => {
+      const x = colX(ms.length + j);
+      if (upright) {
+        ctx.fillStyle = rampColor(vs[j], lo, hi);
+        ctx.save();
+        ctx.translate(x + (cw - cg) / 2, y + bh - 2);
+        ctx.rotate(-Math.PI / 2);
+        ctx.fillText(String(Math.round(vs[j])), 0, 0);
+        ctx.restore();
+      } else {
+        const t = hi > lo ? (vs[j] - lo) / (hi - lo) : 1;
+        ctx.fillStyle = on ? `rgba(255,197,61,${0.12 + 0.88 * t})` : `rgba(160,168,196,${0.08 + 0.72 * t})`;
+        ctx.fillRect(x, y + 1, Math.max(1, cw - cg), bh - 2);
+      }
+      matrix.pcells.push({ x, y, w: cw, h: bh, id: p.id });
+    });
+  });
+  ctx.textAlign = 'left';
   // column marks in the warriors' colors
   ms.forEach((m, i) => {
     ctx.fillStyle = hsl(m.hue);
@@ -520,8 +621,16 @@ function drawMatrix(now) {
       ctx.arc(10, y + ch / 2, 4, 0, 7);
       ctx.fill();
       ctx.fillStyle = sel ? '#ffc53d' : '#dfe3f0';
-      ctx.font = `${sel ? 'bold ' : ''}${Math.min(11, Math.max(8, Math.floor(ch)))}px ui-monospace, monospace`; // smaller in low rows
+      ctx.font = `${sel ? 'bold ' : ''}${rowFont(ch)}px ${SANS}`; // smaller in low rows
       ctx.fillText(m.id === S.bestId ? `★ ${m.name}` : m.name, 20, y + ch / 2);
+      ctx.fillStyle = sel ? '#ffc53d' : '#aab1c9'; // its numbers
+      ctx.font = `${sel ? 'bold ' : ''}${numFont(ch)}px ${SANS}`;
+      ctx.textAlign = 'right';
+      for (const c of nums) {
+        if (!sel) ctx.fillStyle = rampColor(c.value(m), c.lo, c.hi);
+        ctx.fillText(c.text(m), c.x, y + ch / 2);
+      }
+      ctx.textAlign = 'left';
       if (S.spec.has(m.id)) { // --specialists: a protected member
         ctx.fillStyle = '#ffc53d';
         ctx.fillText('◆', labelW - 14, y + ch / 2);
@@ -545,12 +654,6 @@ function drawMatrix(now) {
       ctx.fillStyle = color;
       ctx.fillRect(x, y, cw - cg, ch - rg);
       if (o.id === m.id) continue;
-      // a fresh row and column glow
-      const age = Math.max(0, Math.min(now - (m.enteredAt ?? 0), now - (o.enteredAt ?? 0)));
-      if (age < 900) { // softly: a list changes every few seconds
-        ctx.fillStyle = `rgba(255,255,255,${0.2 * Math.exp(-age / 300)})`;
-        ctx.fillRect(x, y, cw - cg, ch - rg);
-      }
       matrix.cells.push({ x, y, w: cw, h: ch, a: m.id, b: o.id });
     }
     for (const { panel: o } of S.spec.get(m.id) ?? []) { // the cell it is protected for
@@ -562,7 +665,6 @@ function drawMatrix(now) {
     }
     ctx.globalAlpha = 1;
   };
-  for (const g of S.ghosts) drawRow(g, top + g.row * ch, Math.max(0, 1 - (now - g.leftAt) / 900));
   for (const m of ms) drawRow(m, top + m.row * ch, 1);
   // the selected warrior: its row (its matches) and its column (the matches
   // of the others against it) framed
@@ -576,7 +678,19 @@ function drawMatrix(now) {
     ctx.strokeRect(cx - 1, top - 9, cw - cg + 2, bottom - top + 10);
   }
   const hv = mouseOf(canvas);
-  if (hv) {
+  canvas.style.cursor = '';
+  const head = hv ? matrix.heads.find((h) => hv.x >= h.x0 && hv.x <= h.x1 && hv.y >= h.y0 && hv.y < h.y1) : null;
+  const pcell = hv && !head ? matrix.pcells.find((c) => hv.x >= c.x && hv.x < c.x + c.w && hv.y >= c.y && hv.y < c.y + c.h) : null;
+  if (head) {
+    canvas.style.cursor = 'pointer';
+    hv.target = { sort: head.key, axis: head.axis };
+    showTip(hv, sortTip(head.axis, head.key));
+  } else if (pcell) { // a panel warrior's numbers
+    canvas.style.cursor = 'pointer';
+    hv.target = { select: pcell.id };
+    const p = member(pcell.id);
+    showTip(hv, `${warriorTip(pcell.id)}<br>${pnums.map((c) => `${c.head} ${f1(c.value(p))}`).join(' · ')}<br><span style="color:#7f86a0">strength: its average against the rest of the panel · score: the evolved warriors' average against it · sd: the spread of their scores · click to select</span>`);
+  } else if (hv) {
     const c = matrix.cells.find((c) => hv.x >= c.x && hv.x < c.x + c.w && hv.y >= c.y && hv.y < c.y + c.h);
     if (c) {
       ctx.strokeStyle = '#ffffff';
@@ -713,7 +827,7 @@ function drawLineage() {
     ctx.beginPath();
     ctx.arc(px, py, 8, 0, 7);
     ctx.stroke();
-    ctx.font = 'bold 11px ui-monospace, monospace';
+    ctx.font = `bold 11px ${SANS}`;
     ctx.textBaseline = 'middle';
     const label = x.name, tw = ctx.measureText(label).width;
     const lx = px + 12 + tw < w - right ? px + 12 : px - 12 - tw;
@@ -731,7 +845,7 @@ function drawLineage() {
 }
 
 function axes(ctx, w, h, left, right, top, bottom, maxY, maxX, xLabel) {
-  ctx.font = '10px ui-monospace, monospace';
+  ctx.font = `10px ${SANS}`;
   ctx.textBaseline = 'middle';
   ctx.strokeStyle = '#1c2033';
   ctx.setLineDash([2, 3]);
@@ -781,7 +895,7 @@ function drawProgress() {
   line('holdout', '#ff5a8a', true);
   const legend = [['best vs panel', '#ffc53d'], ['mean vs panel', '#36d6ff'], ['best vs holdout', '#ff5a8a']];
   let lx = left;
-  ctx.font = '10px ui-monospace, monospace';
+  ctx.font = `10px ${SANS}`;
   for (const [t, c] of legend) {
     ctx.fillStyle = c;
     ctx.fillRect(lx, 8, 10, 3);
@@ -835,7 +949,7 @@ function drawKinds() {
   }
   ctx.globalAlpha = 1;
   ctx.fillStyle = '#7f86a0';
-  ctx.font = '10px ui-monospace, monospace';
+  ctx.font = `10px ${SANS}`;
   for (const f of [0, 0.5, 1]) ctx.fillText(`${f * 100}%`, 2, Y(f) + 3);
   ctx.fillText(`batch ${ks[0].batch}`, left, h - 3);
   const last = `batch ${ks.at(-1).batch}`;
@@ -1116,8 +1230,13 @@ function renderCard() {
   }
   const members = x.kind === 'member' && vsMembers.length ? `<h4>Against the other members <small>red: the member wins more rounds</small></h4><div class="members">${memberBars}</div>` : '';
   const lineHtml = x.kind === 'member' ? `<h4>Line <small>first parents back to its family's start</small></h4><div class="line">${line.join(' ← ')}</div>` : '';
-  $('card-body').innerHTML = `${close}${head}<h4>Against the panel, warrior by warrior</h4><div class="fp">${fpBars}</div>${members}
-    <h4>Matches <small>wins/losses/ties, points per 100 rounds, worst first · ▶ plays it in the arena</small></h4><table>${rows}</table>${lineHtml}`;
+  // the warrior on top, always in view; its results against the others below, in a box of their own that
+  // scrolls and keeps its place while the warrior is redrawn
+  const rest = $('card-rest'), keep = rest && renderCard.shown === x.id ? rest.scrollTop : 0;
+  renderCard.shown = x.id;
+  $('card-body').innerHTML = `${close}<div class="card-top">${head}<h4>Against the panel, warrior by warrior</h4><div class="fp">${fpBars}</div></div>
+    <div class="card-rest" id="card-rest">${members}<h4>Matches <small>wins/losses/ties, points per 100 rounds, worst first · ▶ plays it in the arena</small></h4><table>${rows}</table>${lineHtml}</div>`;
+  $('card-rest').scrollTop = keep;
   showStyle(x);
 }
 
@@ -1272,7 +1391,8 @@ function wire() {
         if (id === 'lineage') select(null); // a click beside the warriors: no lines
         return;
       }
-      if (t.battle) autoPick = false, playArena(...t.battle);
+      if (t.sort) sortMatrix(t.axis, t.sort);
+      else if (t.battle) autoPick = false, playArena(...t.battle);
       else if (t.select !== undefined) select(t.select);
     });
   }
@@ -1299,21 +1419,19 @@ function wire() {
   });
   $('c-best').addEventListener('click', () => { if (S.bestId !== null) select(S.bestId); });
   $('c-top').addEventListener('click', () => { const t = strongest(); if (t) select(t.id); });
+  window.addEventListener('keydown', (e) => { // ↑ ↓: the warrior above or below in the matrix
+    if ((e.key !== 'ArrowUp' && e.key !== 'ArrowDown') || e.ctrlKey || e.metaKey || e.altKey || e.target.closest?.('input, textarea, select')) return;
+    const order = matrix.order ?? [];
+    if (!order.length) return;
+    e.preventDefault();
+    const at = order.indexOf(selected);
+    const next = at < 0 ? (e.key === 'ArrowDown' ? 0 : order.length - 1) : Math.max(0, Math.min(order.length - 1, at + (e.key === 'ArrowDown' ? 1 : -1)));
+    if (order[next] !== selected) select(order[next]);
+  });
   window.addEventListener('keydown', (e) => { // Esc: the arena back to its place, else no warrior selected
     if (e.key !== 'Escape') return;
     if (document.body.classList.contains('arena-big')) document.body.classList.remove('arena-big');
     else select(null);
-  });
-  renderMatrixSorts();
-  $('matrix-sorts').addEventListener('click', (e) => {
-    const b = e.target.closest('button');
-    if (!b) return;
-    const axis = b.dataset.axis;
-    if (matrixSort[axis] === b.dataset.sort) matrixSort[`${axis}Dir`] *= -1;
-    else matrixSort[axis] = b.dataset.sort, matrixSort[`${axis}Dir`] = -1;
-    try { localStorage.setItem('evolver-matrix-sort', JSON.stringify(matrixSort)); } catch {}
-    renderMatrixSorts();
-    lastChange = performance.now(); // let the rows slide into place
   });
   let depth = 0;
   window.addEventListener('dragenter', (e) => { e.preventDefault(); depth++; $('drop').hidden = false; });
@@ -1340,9 +1458,6 @@ function load(text) {
   S = fresh();
   selected = null;
   for (const line of text.split('\n')) if (line.trim()) handle(JSON.parse(line));
-  // a replayed log does not flare everywhere at once
-  for (const x of S.w.values()) x.enteredAt = -1e9;
-  lastChange = performance.now(); // let the rows slide into place
   S.version = (S.version ?? 0) + 1;
   autoPick = true;
   pickBest();
@@ -1353,10 +1468,10 @@ function load(text) {
 // default, 0 at once): a fast run sends many per second, and a dashboard that
 // changes at that rate is noise, and costs CPU the run could use.
 const EVERY = 1000 * Math.max(0, Number(new URLSearchParams(location.search).get('every') ?? 2) || 0);
-let pending = [], lastApply = -1e9, lastChange = -1e9;
+let pending = [], lastApply = -1e9;
 let quiet = new Set(); // newcomers that enter and leave within one update: no ticker lines for them
 
-function applyPending(now, history = false) {
+function applyPending(now) {
   const evs = pending;
   pending = [];
   const entered = new Set(evs.filter((e) => e.type === 'enter').map((e) => e.id));
@@ -1364,11 +1479,7 @@ function applyPending(now, history = false) {
   for (const e of evs) handle(e);
   if (quiet.size) tick(`<span style="color:#6c7290">${quiet.size} more tried and pushed off at once</span>`);
   quiet = new Set();
-  if (history) { // the run so far, drawn in one go: nothing flares, no row slides
-    for (const x of S.w.values()) x.enteredAt = -1e9, x.row = null;
-    S.ghosts = [];
-    lastApply = now;
-  } else lastApply = lastChange = now;
+  lastApply = now;
   S.version = (S.version ?? 0) + 1;
   if (autoPick) pickBest();
   if (selected !== null) renderCard();
@@ -1445,6 +1556,25 @@ function renderRuns() {
       + `<i class="dot${x.running ? ' on' : ''}"></i><span class="nm">${esc(shortName(x.name))}</span><span class="sb">${batch}</span>`
       + `<span class="ag">${age === null ? '' : fmtInt(age)}</span><span class="sc" style="color:${runColor(x.holdout, lo, hi)}">${score}</span></button></li>`;
   }).join('');
+  sideWidth(runs.map((x) => shortName(x.name)));
+}
+
+// The list as wide as its longest name needs, of all runs (a filter does not
+// make it jump), from 220 to 330 px; measured once per set of names.
+let sideNames = null;
+function sideWidth(names) {
+  const key = names.join('\n');
+  const nm = document.querySelector('#side-list .nm');
+  if (key === sideNames || !nm) return;
+  sideNames = key;
+  const probe = document.createElement('span');
+  probe.className = 'nm nm-probe';
+  $('side').append(probe);
+  let longest = 0;
+  for (const n of new Set(names)) probe.textContent = n, longest = Math.max(longest, probe.getBoundingClientRect().width);
+  probe.remove();
+  const rest = $('side').getBoundingClientRect().width - nm.getBoundingClientRect().width; // dot, numbers, gaps, scroll bar
+  document.body.style.setProperty('--side-w', `${Math.round(Math.min(330, Math.max(220, rest + longest + 4)))}px`);
 }
 
 async function refreshRuns() {
@@ -1481,7 +1611,7 @@ function caughtUp() {
   if (!catchingUp) return;
   catchingUp = false;
   clearTimeout(catchUpTimer);
-  applyPending(performance.now(), true);
+  applyPending(performance.now());
   chartsDirty = chipsDirty = tickerDirty = opsDirty = true;
   renderCard();
 }
@@ -1522,18 +1652,15 @@ function connect() {
 
 let lastFrame = 0, lastOps = 0, lastDraw = 0;
 function frame(now) {
-  // eased by the time since the last drawing, so that 15 frames a second slide as far as 60
-  ease = 1 - Math.exp(-Math.min(500, now - (lastDraw || now)) / 110);
   lastFrame = now;
   if (catchingUp) { // the previous picture stays until the history is in
     requestAnimationFrame(frame);
     return;
   }
   if (pending.length && now - lastApply >= EVERY) applyPending(performance.now());
-  // the matrix and the map move for a while after an update (rows slide,
-  // newcomers flare) and while the mouse is on them, at most 15 frames a
-  // second; else they stand still (10,000 cells a frame cost a core)
-  const moving = now - lastChange < 1200 || hover?.canvas === $('matrix');
+  // the matrix stands still: drawn again after an update, and at most 15 times a
+  // second while the mouse is on it (10,000 cells a frame cost a core)
+  const moving = hover?.canvas === $('matrix');
   if ((moving && now - lastDraw >= 66) || chartsDirty) {
     lastDraw = now;
     drawMatrix(now);
@@ -1586,5 +1713,5 @@ async function main() {
   requestAnimationFrame(frame);
 }
 
-window.__evolver = { state: () => S, select, battleUrl }; // for debugging and screenshots
+window.__evolver = { state: () => S, select, battleUrl, matrix: () => matrix, drawMatrix: () => drawMatrix(performance.now()) }; // for debugging and screenshots
 main();
