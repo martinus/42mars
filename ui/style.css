@@ -351,6 +351,6 @@ body.embed .clock { flex: 1; }
 body.embed .clock .budget { display: block; flex: 1; }
 body.embed main { grid-template-columns: minmax(0, 1fr); }
 body.embed .transport { padding: 4px 8px 3px; overflow: hidden; }
-body.embed .controls { gap: 6px; flex-wrap: nowrap; overflow: hidden; }
+body.embed .controls { gap: 4px 6px; flex-wrap: wrap; } /* a narrow arena: the speed buttons on a second line */
 body.embed .controls > label:not(.speed), body.embed .controls > .seg[aria-label="layout"], body.embed #btn-step { display: none; }
 body.embed .controls .speed input { width: 90px; }
