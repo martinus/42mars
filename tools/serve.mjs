@@ -242,11 +242,13 @@ function follow(req, runDir, send) {
         send('reset', '{}');
       }
       if (size > offset && offset === 0 && size > COMPACT_FROM && !full) {
-        // up to the last complete line; the rest comes with the next poll
+        // up to the last complete line. A kept history can end earlier: the lines after it follow below, in
+        // this poll, before 'live' (else the page drew the kept history's batch first, then the current one)
         const tail = await readTail(file, size, 1 << 20);
         const end = size - (tail.length - 1 - tail.lastIndexOf(10));
         offset = await compacted(file, end, send);
-      } else if (size > offset) {
+      }
+      if (size > offset) {
         const fh = await open(file, 'r');
         const buf = Buffer.alloc(size - offset);
         await fh.read(buf, 0, buf.length, offset);
