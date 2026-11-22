@@ -128,7 +128,10 @@ main {
 .arena-wrap { flex: 1; min-height: 0; position: relative; margin: 0 8px; border-radius: 8px; overflow: hidden; background: #05060a; }
 .arena-wrap iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
 .arena-empty { position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted); }
-.arena-foot { display: flex; justify-content: flex-end; padding: 5px 10px 8px; }
+.arena-foot { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 5px 10px 8px; }
+.arena-foot .foes { display: flex; flex-wrap: wrap; align-items: center; gap: 3px; color: var(--muted); font-size: 11px; }
+.arena-foot .foes button { padding: 1px 7px; font-size: 11px; color: var(--muted); }
+.arena-foot .foes button.on { color: var(--text); border-color: #7a5d1c; background: #1d1708; }
 .arena-foot button { padding: 1px 9px; font-size: 11px; }
 body.arena-big .arena-panel { position: fixed; z-index: 20; inset: 64px 12px 12px 12px; box-shadow: 0 20px 60px #000c; }
 .tab-kinds, .tab-lineage { flex: 1; min-height: 0; display: flex; flex-direction: column; }
