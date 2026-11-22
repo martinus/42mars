@@ -1271,7 +1271,87 @@ async function showStyle(x) {
 
 // ------------------------------------------------------------------ battles
 
+// The visualizer's page for a battle: index.html#battle= and its JSON, base64url.
+function battleLink(battle) {
+  const bytes = new TextEncoder().encode(JSON.stringify(battle));
+  let bin = '';
+  for (const b of bytes) bin += String.fromCharCode(b);
+  return `index.html#battle=${btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')}`;
+}
+const battleRules = () => {
+  const ru = S.start.rules;
+  return { coreSize: ru.size, maxCycles: ru.cycles, maxProcesses: ru.processes, maxLength: ru.length, minDistance: ru.distance };
+};
+const sourceOf = (id) => {
+  const x = S.w.get(id);
+  return x.kind === 'member' ? `;redcode\n;name ${x.name}\n;author 42evolve\n${x.code}` : x.source;
+};
+
+// Standard opponents for the arena, not of the run: to watch what a warrior
+// does on its own (the dummy sits still) and against the classic kinds. The
+// dummy is the default; 'match' is a match of the run (worstOpponent()). The
+// stone, paper and scanner are warriors/lantern.red, origami.red and
+// seeker.red with their constants from the core size: those assert a core of
+// 8000 and do not assemble on the tiny hill. Paper and scanner are the same
+// code as the samples in a core of 8000; the stone has a step of 2/5 of the
+// core plus 1, which does not hit itself in a core of 800 or 8000 (the
+// sample's 3359 scaled to 800 did: it lost 88 of 100 rounds to the dummy).
+const STANDARD = [
+  { key: 'dummy', name: 'Dummy', title: 'sits still: one process that jumps to itself, so the warrior is seen on its own until it hits it', source: ';redcode-94\n;name Dummy\n;strategy sits still: one process jumps to itself\n        JMP     $0\n' },
+  { key: 'imp', name: 'Imp', title: 'Imp (Dewdney): copies itself one cell ahead, forever', file: '../warriors/imp.red' },
+  { key: 'dwarf', name: 'Dwarf', title: 'Dwarf (Dewdney): a DAT bomb on every fourth cell', file: '../warriors/dwarf.red' },
+  { key: 'stone', name: 'Lantern', title: 'a stone: Lantern drops DAT bombs with a step, then wipes the core', source: ";redcode-94\n;name Lantern\n;author 42mars sample\n;strategy Stone: drops DAT bombs with a step, then wipes the rest of the core\n;strategy with a forward DAT clear that stops before itself. As\n;strategy warriors/lantern.red, with a step from the core size (2/5 of it, plus 1)\n;strategy that does not hit itself in a core of 800 or 8000.\nstep    equ     (CORESIZE/5*2 + 1)\nbombs   equ     (CORESIZE/10)\n\n        org     start\nstart   add.ab  #step,  target\n        mov.i   bomb,   @target\n        djn.b   start,  #bombs\n        mov.ab  #1,     target\nclear   mov.i   bomb,   >target\n        djn.b   clear,  #CORESIZE-9\n        jmp     0\nbomb    dat     #0,     #0\ntarget  dat     #0,     #0\n        end\n" },
+  { key: 'paper', name: 'Origami', title: 'a paper: Origami copies itself to new places with many processes', source: ";redcode-94\n;name Origami\n;author 42mars sample\n;strategy Paper: eight processes copy the two-line body to a new place, split\n;strategy into the copy and start over there. Each copy bombs while it works.\n;strategy warriors/origami.red with its constants from the core size (the same\n;strategy in a core of 8000).\ndist    equ     (CORESIZE/4 + 341)\n\n        spl     1\n        spl     1\n        spl     1\nsilk    spl     @0,     }dist\n        mov.i   }silk,  >silk\n        mov.i   bomb,   >(CORESIZE/5 + 173)\n        mov.i   bomb,   }(CORESIZE/8 + 213)\n        jmp     silk,   {silk\nbomb    dat     >((CORESIZE+1)/3), >(CORESIZE*2/3 + 1)\n        end\n" },
+  { key: 'scanner', name: 'Seeker', title: 'a scanner: Seeker compares two cells half a core apart and bombs where they differ', source: ";redcode-94\n;name Seeker\n;author 42mars sample\n;strategy Scanner: compares two cells half a core apart, stepping by 12. Where the\n;strategy core is not empty it bombs both cells, then keeps looking. After a\n;strategy full lap it clears the core, stopping short of itself.\n;strategy warriors/seeker.red with its constants from the core size (the same\n;strategy in a core of 8000).\nstep    equ     12\nlaps    equ     (CORESIZE/2/step - 4)\n\n        org     scan\ninc     dat     #step,  #step\nscan    add.f   inc,    ptr\nptr     seq.i   bomb+step, bomb+step+CORESIZE/2\n        jmp     found\n        djn.b   scan,   #laps\n        jmp     clear\nfound   mov.i   bomb,   *ptr\n        mov.i   bomb,   @ptr\n        jmp     scan\nclear   mov.i   bomb,   >gate\n        djn.b   clear,  #CORESIZE-16\n        jmp     0\ngate    dat     #0,     #2\nbomb    dat     #0,     #0\n        end\n" },
+];
+const standard = (key) => STANDARD.find((s) => s.key === key);
+let arenaFoe = 'dummy'; // what the arena plays a warrior against: a key of STANDARD or 'match'; kept in localStorage
+try {
+  const f = localStorage.getItem('evolver-arena-foe');
+  if (f === 'match' || standard(f)) arenaFoe = f;
+} catch {}
+// A standard warrior that does not assemble under the run's rules is not
+// offered: a run with a length limit below its code. Before the engine is
+// compiled (loadStandard() does it) it counts as fitting.
+const fitsCache = new Map();
+function fits(s) {
+  if (!s?.source) return false;
+  if (!S.start) return true;
+  const key = `${s.key} ${JSON.stringify(S.start.rules)}`;
+  if (!fitsCache.has(key)) {
+    try {
+      fitsCache.set(key, assemble(s.source, battleRules()).errors.length === 0);
+    } catch {
+      return true;
+    }
+  }
+  return fitsCache.get(key);
+}
+// The opponent the arena plays: a standard one that fits, else the dummy.
+const foeFor = (key) => (key === 'match' || fits(standard(key)) ? key : 'dummy');
+async function loadStandard() {
+  try { styleModule ??= await compileMars(); } catch { /* fits() then offers all */ }
+  await Promise.all(STANDARD.filter((s) => s.file && !s.source).map(async (s) => {
+    try {
+      const res = await fetch(s.file);
+      if (res.ok) s.source = new TextDecoder('latin1').decode(await res.arrayBuffer());
+    } catch { /* that one is not offered */ }
+  }));
+  renderFoes();
+  if (selected !== null && standard(arenaPair?.[1] ?? arenaFoe)) arenaFor(selected); // the first match waited for its sources and the engine
+}
+function renderFoes() {
+  const shown = arenaPair ? (standard(arenaPair[1]) ? arenaPair[1] : 'match') : arenaFoe;
+  $('arena-foes').innerHTML = 'vs ' + [...STANDARD.filter(fits), { key: 'match', name: 'its match', title: 'a match of the run: the member that beats it most clearly, else the panel warrior it does worst against' }]
+    .map((s) => `<button data-foe="${s.key}" class="${s.key === shown ? 'on' : ''}" title="${esc(s.title)}">${s.key === 'match' ? s.name : s.key}</button>`).join('');
+}
+
 function battleUrl(a, b) {
+  if (standard(b)) { // a warrior against a standard opponent: not a match of the run, its rounds from seed 1
+    const s = standard(b);
+    return battleLink({ title: `${nameOf(a)} vs ${s.name}`, rules: battleRules(), seed: 1, rounds: S.start.params.rounds, round: 1,
+      warriors: [{ name: nameOf(a), source: sourceOf(a) }, { name: s.name, source: s.source }] });
+  }
   const r = resOf(a, b);
   if (!r) return null;
   // --positions mirror: game g of the match is round g / 2 + 1 of the seed with the warriors swapped when g is
@@ -1281,23 +1361,14 @@ function battleUrl(a, b) {
   const first = mirror ? a : r.first, second = first === a ? b : a;
   const rounds = mirror ? (first === r.first ? Math.ceil(r.rounds / 2) : Math.floor(r.rounds / 2)) : r.rounds;
   if (!rounds) return null;
-  const src = (id) => {
-    const x = S.w.get(id);
-    return x.kind === 'member' ? `;redcode\n;name ${x.name}\n;author 42evolve\n${x.code}` : x.source;
-  };
-  const ru = S.start.rules;
-  const battle = {
+  return battleLink({
     title: `${nameOf(first)} vs ${nameOf(second)}${mirror ? ', the games with ' + nameOf(first) + ' first' : ''}`,
-    rules: { coreSize: ru.size, maxCycles: ru.cycles, maxProcesses: ru.processes, maxLength: ru.length, minDistance: ru.distance },
+    rules: battleRules(),
     seed: r.seed,
     rounds,
     round: 1,
-    warriors: [first, second].map((id) => ({ name: nameOf(id), source: src(id) })),
-  };
-  const bytes = new TextEncoder().encode(JSON.stringify(battle));
-  let bin = '';
-  for (const b of bytes) bin += String.fromCharCode(b);
-  return `index.html#battle=${btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')}`;
+    warriors: [first, second].map((id) => ({ name: nameOf(id), source: sourceOf(id) })),
+  });
 }
 
 // The arena: a match in the visualizer's core view, in this page
@@ -1316,11 +1387,12 @@ function playArena(a, b) {
   else frame.src = `${page}?embed&noguide&paused&speed=9#${hash}`; // paused until play; watch: 2,500 instructions a second
   frame.hidden = false;
   $('arena-empty').hidden = true;
-  const r = resOf(a, b);
+  const r = resOf(a, b), s = standard(b);
   const color = (id) => (S.w.get(id)?.kind === 'member' ? hsl(S.w.get(id).hue) : '#aab0c8');
   $('arena-head').innerHTML = `<span style="color:${color(a)}">● ${esc(nameOf(a))}</span>`
-    + `<span class="mid">${r.w}/${r.l}/${r.t} in ${r.rounds} rounds · ${points(r).toFixed(0)} points</span>`
-    + `<span style="color:${color(b)}">${esc(nameOf(b))} ●</span>`;
+    + (s ? '<span class="mid">not a match of the run</span>' : `<span class="mid">${r.w}/${r.l}/${r.t} in ${r.rounds} rounds · ${points(r).toFixed(0)} points</span>`)
+    + `<span style="color:${color(b)}">${esc(s ? s.name : nameOf(b))} ●</span>`;
+  renderFoes();
   renderCard();
 }
 
@@ -1334,7 +1406,7 @@ function pickBest() {
   if (!ms.length) return;
   const best = ms.reduce((a, b) => ((b.panelAvg ?? -1) > (a.panelAvg ?? -1) ? b : a));
   if (selected !== best.id) select(best.id, true);
-  const foe = worstOpponent(best.id);
+  const foe = foeFor(arenaFoe) === 'match' ? worstOpponent(best.id) : foeFor(arenaFoe);
   if (foe !== null && (arenaPair?.[0] !== best.id || arenaPair?.[1] !== foe)) playArena(best.id, foe);
 }
 
@@ -1351,8 +1423,9 @@ function worstOpponent(id) {
 // A warrior the user picks goes into the arena as its first (red) warrior,
 // against the opponent there if they have a match, else its worst opponent.
 function arenaFor(id) {
-  let b = arenaPair?.[1];
-  if (b === undefined || b === id || !resOf(id, b)) b = worstOpponent(id);
+  let b = arenaPair?.[1] ?? arenaFoe;
+  if (standard(b)) return playArena(id, foeFor(b)); // a standard opponent stays
+  if (b === 'match' || b === id || !resOf(id, b)) b = worstOpponent(id);
   if (b !== null && b !== undefined) playArena(id, b);
 }
 
@@ -1403,6 +1476,20 @@ function wire() {
     if (b) autoPick = false, playArena(...b.dataset.battle.split(',').map(Number));
   });
   $('arena-big').addEventListener('click', () => document.body.classList.toggle('arena-big'));
+  $('arena-foes').addEventListener('click', (e) => { // the opponent: a standard one, or the run's match
+    const k = e.target.closest('button[data-foe]')?.dataset.foe;
+    if (!k) return;
+    arenaFoe = k;
+    try { localStorage.setItem('evolver-arena-foe', k); } catch {}
+    if (selected === null) return renderFoes();
+    autoPick = false;
+    if (k === 'match') {
+      const b = worstOpponent(selected);
+      if (b !== null) playArena(selected, b);
+    } else playArena(selected, foeFor(k));
+  });
+  renderFoes();
+  loadStandard();
   $('card').addEventListener('click', (e) => { if (e.target.closest('#card-close')) select(null); });
   $('tabs').addEventListener('click', (e) => {
     const b = e.target.closest('button[data-tab]');
