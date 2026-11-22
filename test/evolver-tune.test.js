@@ -362,6 +362,61 @@ test('--island-variant: islands with their own settings, each the run alone with
   assert.equal(spawnSync(evolve, [join(tmp, 'var-no'), ...args, '--island-variant', '--list 12', '--batches', '1'], { encoding: 'utf8', timeout: 60000 }).status, 2);
 });
 
+test('--island-panels own: each island its own panel from one round robin, one holdout for all in no panel; the same on any thread count and after a resume', { skip }, () => {
+  // a picked panel of 6 from the strongest quarter of 80: 20 candidates, each island chooses from 10 of them
+  const args = [...without(without(TINY, '--panel-choice'), '--panel'), '--panel-choice', 'picked', '--pick-sample', '80', '--panel', '6',
+    '--list', '16', '--survivors', '8'];
+  const isl = ['--islands', '4', '--island-panels', 'own', '--migrate', '0', '--island-variant', ''];
+  const dir = join(tmp, 'own');
+  run(dir, [...args, ...isl, '--threads', '2', '--batches', '4']);
+  const re = events(dir, 'islands.jsonl');
+  assert.equal(re[0].islandPanels, 'own');
+  assert.ok(!re.some((e) => e.type === 'pick'), 'no panel for all');
+  const all = [1, 2, 3, 4].map((i) => events(join(dir, `island-0${i}`)));
+  const files = (ws) => ws.map((w) => w.file);
+  const panels = all.map((ev) => files(ev[0].panel));
+  all.forEach((ev, k) => {
+    // its panel is what its event pick names: 6 of the strongest quarter of the one round robin
+    const pick = ev.find((e) => e.type === 'pick');
+    assert.ok(pick, `island ${k + 1}: its pick`);
+    assert.deepEqual(files(pick.picked), panels[k]);
+    assert.equal(panels[k].length, 6);
+    assert.ok(pick.picked.every((p) => p.rank < 20), `island ${k + 1}: ranks ${pick.picked.map((p) => p.rank)}`);
+    assert.equal(pick.cut, all[0].find((e) => e.type === 'pick').cut);
+    // the holdout: the same for every island, 8 warriors in no island's panel
+    assert.deepEqual(files(ev[0].holdout), files(all[0][0].holdout));
+    assert.equal(ev[0].holdout.length, 8);
+    for (const p of panels) assert.ok(!files(ev[0].holdout).some((f) => p.includes(f)), 'a holdout warrior in a panel');
+  });
+  // the panels differ: no two islands have the same
+  assert.equal(new Set(panels.map((p) => [...p].sort().join())).size, 4, panels.join(' | '));
+  // shared: one panel, picked once
+  const shared = join(tmp, 'own-shared');
+  run(shared, [...args, ...isl.map((x) => (x === 'own' ? 'shared' : x)), '--threads', '2', '--batches', '1']);
+  assert.equal(events(shared, 'islands.jsonl')[0].islandPanels, 'shared');
+  assert.equal(new Set([1, 2, 3, 4].map((i) => files(events(join(shared, `island-0${i}`))[0].panel).join())).size, 1);
+  // the same stopped and continued on other thread counts
+  const again = join(tmp, 'own-resumed');
+  run(again, [...args, ...isl, '--threads', '3', '--batches', '1']);
+  run(again, ['--threads', '1', '--batches', '3']);
+  [1, 2, 3, 4].forEach((i) => assert.deepEqual(stable(events(join(again, `island-0${i}`))), stable(all[i - 1]), `island ${i}`));
+  // a panel drawn or given, one island, or in a variant: refused
+  const refused = [
+    [['--islands', '3', '--island-panels', 'own', '--panel-choice', 'random'], /--island-panels own with 2 islands or more, a panel that is picked/],
+    [['--islands', '3', '--island-panels', 'own', '--panel-files', 'imp.red,dwarf.red'], /--island-panels own with 2 islands or more/],
+    [['--islands', '1', '--island-panels', 'own'], /--island-panels own with 2 islands or more/],
+    [['--islands', '3', '--island-variant', '--island-panels own'], /an option of the islands the same/],
+    [['--island-panels', 'own'], /usage/],
+    [['--islands', '3', '--island-panels', 'mine'], /usage/],
+  ];
+  for (const [extra, message] of refused) {
+    const r = spawnSync(evolve, [join(tmp, 'own-no'), ...args, ...extra, '--batches', '1'], { encoding: 'utf8', timeout: 60000 });
+    assert.equal(r.status, 2, extra.join(' '));
+    assert.match(r.stderr, message, extra.join(' '));
+  }
+  assert.ok(!existsSync(join(tmp, 'own-no')));
+});
+
 test('--optimize: the constants of a warrior, steps confirmed with other seeds, the same on any thread count', { skip }, () => {
   // a stone whose step of 100 bombs 8 cells of a core of 800
   const file = join(tmp, 'badstep.red');

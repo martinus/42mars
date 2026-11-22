@@ -71,6 +71,7 @@ typedef struct {
   double noise;             // --noise z: the push-off's distance counts differences only beyond z standard errors
   uint32_t stage;           // --stage N: survivors play N rounds, those still in after the batch the rest; 0 all at once
   char panel_files[2048];   // --panel-files: the panel, file names in the folder, comma separated; "" drawn
+  char holdout_files[4096]; // --island-panels own: the holdout all islands share, as panel_files; "" the next after the panel
   int fill;                 // --fill: random warriors until the list is full, not only in the first batch
   uint32_t panel_rounds;    // --panel-rounds: rounds of a match against a panel warrior, 0 as --rounds
   int distance_panel;       // --diversity panel: the push-off's SD-score over the panel's columns only
@@ -901,17 +902,19 @@ static char **opponent_files(run *r, uint32_t *count) {
     names[i - 1] = names[j];
     names[j] = t;
   }
-  // --panel-files: those first, in their order; the rest stays shuffled
-  if (r->p.panel_files[0]) {
-    uint32_t front = 0;
-    for (const char *q = r->p.panel_files; *q;) {
+  // --panel-files: those first, in their order; the rest stays shuffled. The
+  // holdout of --island-panels own after them.
+  uint32_t front = 0;
+  for (int list = 0; list < 2; list++) {
+    const char *files = list ? r->p.holdout_files : r->p.panel_files;
+    for (const char *q = files; *q;) {
       const char *e = strchr(q, ',');
       const size_t len = e ? (size_t)(e - q) : strlen(q);
       uint32_t i = front;
       while (i < k && !(strlen(names[i]) == len && !strncmp(names[i], q, len))) i++;
       if (i == k) {
-        fprintf(stderr, "42evolve: --panel-files: %.*s is not a warrior of %s that fits the rules (or named twice)\n",
-                (int)len, q, r->p.opponents);
+        fprintf(stderr, "42evolve: %s: %.*s is not a warrior of %s that fits the rules (or named twice)\n",
+                list ? "the holdout of --island-panels own" : "--panel-files", (int)len, q, r->p.opponents);
         exit(2);
       }
       char *t = names[front];
@@ -919,7 +922,7 @@ static char **opponent_files(run *r, uint32_t *count) {
       names[i] = t;
       q += len + (e ? 1 : 0);
     }
-    r->p.panel = front;
+    if (!list && r->p.panel_files[0]) r->p.panel = front;
   }
   *count = k;
   return names;
@@ -3351,7 +3354,18 @@ static int pick_style(run *r, m42_ctx *m, const m42_watch *wa, warrior **w, uint
   return style_kind(&st);
 }
 
-static void pick_panel(run *r, char **names, uint32_t count) {
+// The round robin of a panel pick: the sample's points against each other,
+// each one's average, the strongest first, the candidates and (kinds) their
+// kind of style. Played once; pick_choose() chooses panels from it.
+typedef struct {
+  uint32_t n, want, nc;
+  int kinds;
+  double *pts, *sigma, *avg;
+  uint32_t *order;
+  int *kind;
+} pick_table;
+
+static void pick_play(run *r, char **names, uint32_t count, pick_table *t) {
   const uint32_t sample = r->p.pick_sample ? r->p.pick_sample : PICK_SAMPLE;
   const uint32_t n = count < sample ? count : sample, want = r->p.panel < n ? r->p.panel : n;
   warrior **w = xmalloc(n * sizeof *w);
@@ -3391,30 +3405,47 @@ static void pick_panel(run *r, char **names, uint32_t count) {
   for (uint32_t i = 0; i < n; i++) order[i] = i;
   for (uint32_t i = 1; i < n; i++)
     for (uint32_t j = i; j > 0 && (avg[order[j]] > avg[order[j - 1]] || (avg[order[j]] == avg[order[j - 1]] && order[j] < order[j - 1])); j--) {
-      const uint32_t t = order[j];
-      order[j] = order[j - 1], order[j - 1] = t;
+      const uint32_t s = order[j];
+      order[j] = order[j - 1], order[j - 1] = s;
     }
   const int kinds = r->p.panel_random == PANEL_KINDS;
   uint32_t nc = kinds ? (n + 1) / 2 : (n + 3) / 4;
   if (nc < want) nc = want;
   int *kind = xmalloc(n * sizeof *kind);
-  uint32_t kcount[KIND_COUNT] = {0};
   for (uint32_t i = 0; i < n; i++) kind[i] = -1;
   if (kinds) {
     int st;
-    m42_ctx *m = m42_new(&r->p.rules, &st);
-    const size_t wsize = m ? m42_watch_size(&r->p.rules) : 0;
+    m42_ctx *mc = m42_new(&r->p.rules, &st);
+    const size_t wsize = mc ? m42_watch_size(&r->p.rules) : 0;
     void *mem = wsize ? xmalloc(wsize) : 0;
-    const m42_watch *wa = mem ? m42_watch_attach(m, mem, wsize, &st) : 0;
+    const m42_watch *wa = mem ? m42_watch_attach(mc, mem, wsize, &st) : 0;
     if (!wa) {
       fprintf(stderr, "42evolve: no engine with a watch for the style: %s\n", m42_status_text(st));
       exit(1);
     }
-    for (uint32_t i = 0; i < nc; i++) kind[order[i]] = pick_style(r, m, wa, w, n, order[i]);
-    m42_free(m);
+    for (uint32_t i = 0; i < nc; i++) kind[order[i]] = pick_style(r, mc, wa, w, n, order[i]);
+    m42_free(mc);
     free(mem);
   }
-  uint32_t *picked = xmalloc((want ? want : 1) * sizeof *picked);
+  for (uint32_t i = 0; i < n; i++) free_warrior(w[i]);
+  free(w), free(u);
+  *t = (pick_table){n, want, nc, kinds, pts, sigma, avg, order, kind};
+}
+
+static void pick_free(pick_table *t) { free(t->pts), free(t->sigma), free(t->avg), free(t->order), free(t->kind); }
+
+// A panel from the round robin into picked (indexes of names), and what the
+// event `pick` of r says about it: by kinds the strongest of each kind in
+// turn, else (and within a kind) the farthest by SD-score from those picked.
+// allowed: the candidates it may take (--island-panels own), 0 all. Returns
+// how many it picked.
+static uint32_t pick_choose(run *r, const pick_table *t, char **names, const uint8_t *allowed, uint32_t *picked) {
+  const uint32_t n = t->n, want = t->want, nc = t->nc;
+  const int kinds = t->kinds;
+  const double *pts = t->pts, *sigma = t->sigma, *avg = t->avg;
+  const uint32_t *order = t->order;
+  const int *kind = t->kind;
+  uint32_t kcount[KIND_COUNT] = {0};
   uint8_t *taken = calloc(n, 1);
   double *near = xmalloc(n * sizeof *near);
   for (uint32_t i = 0; i < n; i++) near[i] = INFINITY;
@@ -3424,29 +3455,30 @@ static void pick_panel(run *r, char **names, uint32_t count) {
     if (kinds) {
       for (uint32_t i = 0; i < nc; i++) {
         const uint32_t c = order[i];
-        if (taken[c] || kind[c] == KIND_DIES) continue;
+        if (taken[c] || (allowed && !allowed[c]) || kind[c] == KIND_DIES) continue;
         if (target < 0 || kcount[kind[c]] < kcount[target]) target = kind[c];
       }
       if (target < 0) break;
     }
-    uint32_t best = order[0];
+    int best = -1;
     double bd = -1;
     for (uint32_t i = 0; i < nc; i++) {
       const uint32_t c = order[i];
-      if (taken[c] || (kinds && kind[c] != target)) continue;
+      if (taken[c] || (allowed && !allowed[c]) || (kinds && kind[c] != target)) continue;
       if (kinds && !kcount[target]) { // the strongest of a kind not picked yet
-        best = c, bd = near[c];
+        best = (int)c, bd = near[c];
         break;
       }
-      if (near[c] > bd) bd = near[c], best = c; // the first: all are infinitely far, the strongest
+      if (near[c] > bd) bd = near[c], best = (int)c; // the first: all are infinitely far, the strongest
     }
+    if (best < 0) break; // allowed has fewer candidates than the panel wants
     if (kinds) kcount[target]++;
     r->pick_kind[np] = kind[best];
-    picked[np] = best;
+    picked[np] = (uint32_t)best;
     r->pick_avg[np] = avg[best];
     r->pick_file[np] = xstrdup(names[best]);
     for (uint32_t i = 0; i < n; i++)
-      if (order[i] == best) r->pick_rank[np] = i;
+      if (order[i] == (uint32_t)best) r->pick_rank[np] = i;
     r->pick_dist[np] = np ? bd : 0; // the first one's distance is infinite
     np++;
     taken[best] = 1;
@@ -3454,23 +3486,33 @@ static void pick_panel(run *r, char **names, uint32_t count) {
       const uint32_t c = order[i];
       double d = 0;
       for (uint32_t k = 0; k < n; k++)
-        if (k != c && k != best && sigma[k] > 0) d += fabs(pts[c * n + k] - pts[best * n + k]) / sigma[k];
+        if (k != c && k != (uint32_t)best && sigma[k] > 0) d += fabs(pts[c * n + k] - pts[best * n + k]) / sigma[k];
       if (d < near[c]) near[c] = d;
     }
   }
   r->pick_sample = n;
   r->pick_n = np;
   r->pick_cut = avg[order[nc - 1]];
+  free(taken), free(near);
+  return np;
+}
+
+static void pick_panel(run *r, char **names, uint32_t count) {
+  pick_table t;
+  pick_play(r, names, count, &t);
+  uint32_t *picked = xmalloc((t.want ? t.want : 1) * sizeof *picked);
+  const uint32_t np = pick_choose(r, &t, names, 0, picked);
   // the picked first, then the rest in its order
+  uint8_t *taken = calloc(t.n, 1);
+  for (uint32_t i = 0; i < np; i++) taken[picked[i]] = 1;
   char **re = xmalloc(count * sizeof *re);
   uint32_t k = 0;
   for (uint32_t i = 0; i < np; i++) re[k++] = names[picked[i]];
   for (uint32_t i = 0; i < count; i++)
-    if (i >= n || !taken[i]) re[k++] = names[i];
+    if (i >= t.n || !taken[i]) re[k++] = names[i];
   memcpy(names, re, count * sizeof *names);
-  free(re);
-  for (uint32_t i = 0; i < n; i++) free_warrior(w[i]);
-  free(w), free(u), free(pts), free(sigma), free(avg), free(order), free(picked), free(taken), free(near), free(kind);
+  free(re), free(taken), free(picked);
+  pick_free(&t);
 }
 
 static void event_pick(run *r) {
@@ -3799,7 +3841,7 @@ static void usage(void) {
           "         [--difference abs|ahead|shape] [--pushoff value|pareto|pareto-age|pareto-sd] [--clear R] [--positions mirror|pmars]\n"
           "         [--genome list|gen] [--refactor p] [--min-length N] [--tie-points t]\n"
           "         [--islands N [--select-after B [--keep K]] [--score-rounds R] [--migrate M [--migrate-pick best|random] [--migrate-to all|next|random]]\n"
-          "         [--island-variant \"options\" ...]]\n"
+          "         [--island-variant \"options\" ...] [--island-panels shared|own]]\n"
           "         [--draw-seed S]\n"
           "         [--niche N]\n"
           "         [--panel-choice picked|random|kinds] [--pick-sample 300] [--no-fill] [--map-elites [cells|crowding]]\n"
@@ -4263,10 +4305,74 @@ static void islands_close(islands *I) {
   fclose(I->root.events);
 }
 
+// names[from .. to) into out, comma separated; 1 if they do not fit.
+static int join_files(char *out, size_t size, char *const *names, uint32_t from, uint32_t to) {
+  size_t len = 0;
+  out[0] = 0;
+  for (uint32_t i = from; i < to; i++) {
+    const size_t l = strlen(names[i]);
+    if (len + l + 2 > size) return 1;
+    len += (size_t)snprintf(out + len, size - len, "%s%s", i > from ? "," : "", names[i]);
+  }
+  return 0;
+}
+
+// --island-panels own: one round robin of the sample, then each island its
+// own panel from a random half of the candidates (drawn with the draw seed
+// and the island), chosen as pick_panel() chooses; its event `pick` says
+// which. The holdout is the same for all: the first warriors of the shuffled
+// folder in no island's panel, so that the islands' holdout scores compare.
+static int island_panels(islands *I, run *root, const params *base) {
+  uint32_t count;
+  char **names = opponent_files(root, &count);
+  pick_table t;
+  pick_play(root, names, count, &t);
+  uint8_t *in_panel = calloc(count, 1), *allowed = xmalloc(t.n);
+  uint32_t *cand = xmalloc(t.nc * sizeof *cand), *picked = xmalloc((t.want ? t.want : 1) * sizeof *picked);
+  char **chosen = xmalloc((t.want ? t.want : 1) * sizeof *chosen);
+  const uint32_t half = t.nc / 2 > t.want ? t.nc / 2 : t.want;
+  int rc = 0;
+  for (uint32_t i = 0; i < I->n && !rc; i++) {
+    run *r = I->is[i];
+    memcpy(cand, t.order, t.nc * sizeof *cand);
+    rng g = rng_seed(base->draw_seed, 0x69736c70616e656cu, i); // "islpanel"
+    for (uint32_t j = t.nc; j > 1; j--) {
+      const uint32_t k = rng_below(&g, j), x = cand[j - 1];
+      cand[j - 1] = cand[k], cand[k] = x;
+    }
+    memset(allowed, 0, t.n);
+    for (uint32_t j = 0; j < half; j++) allowed[cand[j]] = 1;
+    const uint32_t np = pick_choose(r, &t, names, allowed, picked);
+    for (uint32_t j = 0; j < np; j++) chosen[j] = names[picked[j]], in_panel[picked[j]] = 1;
+    if (join_files(r->p.panel_files, sizeof r->p.panel_files, chosen, 0, np) != 0) {
+      fprintf(stderr, "42evolve: the names of the %u panel warriors of island %u are too long\n", np, i + 1);
+      rc = 1;
+    }
+  }
+  if (!rc) { // the holdout: in the shuffled order, the first in no panel
+    char **hold = xmalloc((base->holdout ? base->holdout : 1) * sizeof *hold);
+    uint32_t h = 0;
+    for (uint32_t i = 0; i < count && h < base->holdout; i++)
+      if (!in_panel[i]) hold[h++] = names[i];
+    static char files[sizeof base->holdout_files];
+    if (join_files(files, sizeof files, hold, 0, h) != 0) {
+      fprintf(stderr, "42evolve: the names of the %u holdout warriors are too long\n", h);
+      rc = 1;
+    }
+    for (uint32_t i = 0; i < I->n && !rc; i++) snprintf(I->is[i]->p.holdout_files, sizeof I->is[i]->p.holdout_files, "%s", files);
+    free(hold);
+  }
+  for (uint32_t i = 0; i < count; i++) free(names[i]);
+  free(names), free(in_panel), free(allowed), free(cand), free(picked), free(chosen);
+  pick_free(&t);
+  return rc;
+}
+
 // A new run of islands: base has the parameters (defaults applied, checked).
 static int islands_new(const params *base, const params *variant, const char *const *variant_text, uint32_t variant_n,
                        const char *dir, uint32_t n, uint32_t keep, uint32_t every, uint32_t rounds, uint32_t migrate,
-                       uint32_t migrate_random, uint32_t migrate_next, uint32_t threads, uint32_t batches, double seconds) {
+                       uint32_t migrate_random, uint32_t migrate_next, int own_panels, uint32_t threads, uint32_t batches,
+                       double seconds) {
   static islands I;
   snprintf(I.dir, sizeof I.dir, "%s", dir);
   I.n = n, I.keep = keep, I.every = every, I.next_score = every, I.seed = base->seed, I.best = -1, I.rounds = rounds;
@@ -4288,19 +4394,14 @@ static int islands_new(const params *base, const params *variant, const char *co
     return 1;
   }
   params p = *base;
-  if (!p.panel_files[0] && p.panel_random != PANEL_RANDOM) { // the panel, picked once for all
+  if (!own_panels && !p.panel_files[0] && p.panel_random != PANEL_RANDOM) { // the panel, picked once for all
     uint32_t count;
     char **names = opponent_files(root, &count);
     pick_panel(root, names, count);
     const uint32_t pn = count < p.panel ? count : p.panel;
-    size_t len = 0;
-    for (uint32_t i = 0; i < pn; i++) {
-      const size_t l = strlen(names[i]);
-      if (len + l + 2 > sizeof p.panel_files) {
-        fprintf(stderr, "42evolve: the names of the %u panel warriors are too long for --panel-files\n", pn);
-        return 1;
-      }
-      len += (size_t)snprintf(p.panel_files + len, sizeof p.panel_files - len, "%s%s", i ? "," : "", names[i]);
+    if (join_files(p.panel_files, sizeof p.panel_files, names, 0, pn) != 0) {
+      fprintf(stderr, "42evolve: the names of the %u panel warriors are too long for --panel-files\n", pn);
+      return 1;
     }
     for (uint32_t i = 0; i < count; i++) free(names[i]);
     free(names);
@@ -4312,6 +4413,7 @@ static int islands_new(const params *base, const params *variant, const char *co
   json_str(root->events, base->opponents, 0);
   fputs(",\"panel\":", root->events);
   json_str(root->events, p.panel_files, 0);
+  fprintf(root->events, ",\"islandPanels\":\"%s\"", own_panels ? "own" : "shared");
   fputs(",\"variants\":[", root->events);
   for (uint32_t k = 0; k < variant_n; k++) {
     if (k) fputc(',', root->events);
@@ -4327,6 +4429,10 @@ static int islands_new(const params *base, const params *variant, const char *co
       r->p = variant[i % variant_n];
       snprintf(r->p.panel_files, sizeof r->p.panel_files, "%s", p.panel_files);
     }
+  }
+  if (own_panels && island_panels(&I, root, base) != 0) return 1;
+  for (uint32_t i = 0; i < n; i++) {
+    run *r = I.is[i];
     r->p.seed = base->seed + i;
     island_name(&I, i, r);
     r->pool = root->pool;
@@ -4454,6 +4560,7 @@ typedef struct {
   uint32_t islands_n, islands_keep, islands_every, islands_rounds; // --islands, --keep, --select-after, --score-rounds
   uint32_t islands_migrate_every;                                   // --migrate
   uint32_t migrate_random, migrate_next, pick_given, to_given;      // --migrate-pick, --migrate-to
+  int own_panels;                                                   // --island-panels own
   int islands_option;
   const char *variant[ISLANDS_MAX]; // --island-variant, in their order
   uint32_t variant_n;
@@ -4579,6 +4686,11 @@ static int parse_cli(int argc, char **argv, cli *c) {
       else if (!strcmp(v, "random")) c->migrate_next = 2;
       else usage();
       c->to_given = c->islands_option = 1;
+    } else if (!strcmp(a, "--island-panels")) {
+      if (!strcmp(v, "shared")) c->own_panels = 0;
+      else if (!strcmp(v, "own")) c->own_panels = 1;
+      else usage();
+      c->islands_option = 1;
     } else if (!strcmp(a, "--island-variant")) {
       if (c->variant_n >= ISLANDS_MAX) usage();
       c->variant[c->variant_n++] = v;
@@ -4775,7 +4887,7 @@ static int island_variants(int argc, char **argv, const cli *c, params *out) {
                    w.islands_n != c->islands_n ||
                    w.islands_keep != c->islands_keep || w.islands_every != c->islands_every ||
                    w.islands_rounds != c->islands_rounds || w.islands_migrate_every != c->islands_migrate_every ||
-                   w.migrate_random != c->migrate_random || w.migrate_next != c->migrate_next ||
+                   w.migrate_random != c->migrate_random || w.migrate_next != c->migrate_next || w.own_panels != c->own_panels ||
                    w.optimize_file != c->optimize_file))
       differs = "--batches, --seconds, --optimize or an option of the islands";
     if (wrong || differs) {
@@ -4870,6 +4982,10 @@ int main(int argc, char **argv) {
         fprintf(stderr, "42evolve: --migrate with 2 islands or more, and not with --tune-novel\n");
         return 2;
       }
+      if (c.own_panels && (islands_n < 2 || p->panel_files[0] || p->panel_random == PANEL_RANDOM)) {
+        fprintf(stderr, "42evolve: --island-panels own with 2 islands or more, a panel that is picked (--panel-choice picked or kinds), not --panel-files\n");
+        return 2;
+      }
       if ((c.pick_given || c.to_given) && c.migrate_given && !islands_migrate_every) {
         fprintf(stderr, "42evolve: --migrate-pick and --migrate-to not with --migrate 0\n");
         return 2;
@@ -4903,7 +5019,7 @@ int main(int argc, char **argv) {
       signal(SIGINT, on_signal);
       signal(SIGTERM, on_signal);
       return islands_new(p, variants, c.variant, c.variant_n, dir, islands_n, islands_keep, islands_every, islands_rounds,
-                         islands_migrate_every, c.migrate_random, c.migrate_next, threads, batches, seconds);
+                         islands_migrate_every, c.migrate_random, c.migrate_next, c.own_panels, threads, batches, seconds);
     }
     if (run_new(&r, threads, optimize_file != 0) != 0) return 1;
   }
