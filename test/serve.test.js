@@ -133,12 +133,16 @@ test('a long history: without the warriors that left, the last values and speed,
   const more = await read(reader, [], (g) => g.length >= 2);
   assert.deepEqual(more.map((e) => JSON.parse(e.data).id), [7, 5]);
   await reader.cancel();
-  // the next page: the same history (kept), then the lines after it as they are
-  const second = await history();
-  assert.deepEqual(second.got, got);
-  const rest = await read(second.reader, [], (g) => g.length >= 2);
-  assert.deepEqual(rest.map((e) => JSON.parse(e.data).id), [7, 5]);
-  await second.reader.cancel();
+  // the next page: the same history (kept), then the lines after it as they are, all before 'live': the
+  // page draws what it has at 'live', and with the newer lines after it a click on a run drew the batch of
+  // the kept history first, then the current one
+  const second = (await fetch(`${url}/run/events`)).body.getReader();
+  const page = await read(second, [], (g) => g.some((e) => e.ev === 'live'), { live: true });
+  await second.cancel();
+  assert.deepEqual(page.map((e) => e.ev), ['run', ...Array(got.length + 2).fill('message'), 'live']);
+  const lines = page.slice(1, -1).map((e) => JSON.parse(e.data));
+  assert.deepEqual(lines.slice(0, got.length), got);
+  assert.deepEqual(lines.slice(got.length).map((e) => e.id), [7, 5]);
   // --full: every line
   const fullUrl = await serve(['--full', '--run', run], { SERVE_COMPACT_FROM: '100' });
   const res = await fetch(`${fullUrl}/run/events`);
