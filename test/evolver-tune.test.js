@@ -417,6 +417,79 @@ test('--island-panels own: each island its own panel from one round robin, one h
   assert.ok(!existsSync(join(tmp, 'own-no')));
 });
 
+test('--migrate-to tree --leaf-restart: each island takes the best of its children, the leaves start over from random warriors in turns; the same on any thread count and after a resume', { skip }, () => {
+  // warriors come back often (--reintroduce 0.3), to see that a leaf that started over has none of its old ones
+  const args = [...TINY, '--list', '16', '--survivors', '8', '--reintroduce', '0.3'];
+  const isl = ['--islands', '7', '--migrate', '2', '--migrate-to', 'tree', '--leaf-restart', '4', '--island-variant', ''];
+  const dir = join(tmp, 'tree');
+  run(dir, [...args, ...isl, '--threads', '2', '--batches', '9']);
+  const re = events(dir, 'islands.jsonl');
+  assert.deepEqual([re[0].migrateTo, re[0].migratePick, re[0].leafRestart], ['tree', 'best', 4], 'a tree sends the best by default');
+  const all = [1, 2, 3, 4, 5, 6, 7].map((i) => events(join(dir, `island-0${i}`)));
+  const members = (ev, e) => e.values.map((v) => v[0]).filter((id) => !ev[0].panel.some((p) => p.id === id));
+  // island i takes from 2i and 2i + 1, every 2 batches, the member best against the panel (the first on a tie)
+  // after their batch before; the leaves 4 to 7 take from none
+  const children = { 1: [2, 3], 2: [4, 5], 3: [6, 7] };
+  all.forEach((ev, k) => {
+    const mig = ev.filter((e) => e.type === 'migrate');
+    if (!children[k + 1]) return assert.equal(mig.length, 0, `island ${k + 1} is a leaf`);
+    assert.deepEqual(mig.map((e) => e.batch), [2, 4, 6, 8], `island ${k + 1}`);
+    for (const m of mig) {
+      assert.deepEqual(m.from.map((f) => f[0]), children[k + 1], `island ${k + 1} at batch ${m.batch}`);
+      for (const [j, id] of m.from) {
+        const cev = all[j - 1], vals = cev.filter((e) => e.type === 'values' && e.batch === m.batch - 1).at(-1);
+        const ms = members(cev, vals), avg = new Map(vals.values.map((v) => [v[0], v[5]]));
+        const best = ms.reduce((a, b) => (avg.get(b) > avg.get(a) ? b : a));
+        assert.equal(id, best, `island ${k + 1} at batch ${m.batch}: the best of island ${j}`);
+      }
+    }
+  });
+  // leaf j of the 4 (islands 4 to 7) restarts at the batches b > 0 with b mod 4 = j
+  const turns = { 4: [4, 8], 5: [1, 5], 6: [2, 6], 7: [3, 7] };
+  all.forEach((ev, k) => {
+    const rs = ev.filter((e) => e.type === 'restart');
+    assert.deepEqual(rs.map((e) => e.batch), turns[k + 1] ?? [], `island ${k + 1}`);
+    for (const r of rs) {
+      // every member of the list leaves, then the batch fills the list with random warriors only
+      const at = ev.indexOf(r), before = members(ev, ev.slice(0, at).filter((e) => e.type === 'values').at(-1));
+      assert.equal(r.members, before.length);
+      assert.deepEqual(ev.slice(at + 1, at + 1 + before.length).map((e) => [e.type, e.id]), before.map((id) => ['leave', id]));
+      const entered = ev.filter((e) => e.type === 'enter' && e.batch === r.batch);
+      assert.ok(entered.length > 0 && entered.every((e) => e.ops === 'random' && !e.parents.length), `island ${k + 1} at batch ${r.batch}`);
+    }
+    // the archive is forgotten too: a warrior that comes back (--reintroduce) was born after the leaf's last restart
+    const born = new Map(ev.filter((e) => e.type === 'enter').map((e) => [e.id, e.batch]));
+    for (const e of ev.filter((x) => x.type === 'enter' && x.ops === 'reintroduce')) {
+      const last = rs.filter((x) => x.batch <= e.batch).at(-1);
+      if (last) assert.ok(born.get(e.parents[0]) >= last.batch, `island ${k + 1}: ${e.id} at batch ${e.batch} brings back ${e.parents[0]}`);
+    }
+  });
+  const back = all.slice(3).flatMap((ev) => {
+    const first = ev.find((e) => e.type === 'restart')?.batch;
+    return ev.filter((e) => e.type === 'enter' && e.ops === 'reintroduce' && e.batch > first);
+  });
+  assert.ok(back.length >= 3, `warriors that came back to a leaf after a restart: ${back.length}`);
+  // the same stopped and continued on other thread counts
+  const again = join(tmp, 'tree-resumed');
+  run(again, [...args, ...isl, '--threads', '3', '--batches', '5']);
+  run(again, ['--threads', '1', '--batches', '4']);
+  all.forEach((ev, k) => assert.deepEqual(stable(events(join(again, `island-0${k + 1}`))), stable(ev), `island ${k + 1}`));
+  // restarts without a tree, a tree of 2, or in a variant: refused
+  const refused = [
+    [['--islands', '7', '--leaf-restart', '4'], /--leaf-restart with --migrate-to tree/],
+    [['--islands', '7', '--migrate-to', 'next', '--leaf-restart', '4'], /--leaf-restart with --migrate-to tree/],
+    [['--islands', '2', '--migrate-to', 'tree'], /--migrate-to tree with 3 islands or more/],
+    [['--islands', '7', '--migrate-to', 'tree', '--island-variant', '--leaf-restart 4'], /an option of the islands the same/],
+    [['--leaf-restart', '4'], /usage/],
+  ];
+  for (const [extra, message] of refused) {
+    const r = spawnSync(evolve, [join(tmp, 'tree-no'), ...args, ...extra, '--batches', '1'], { encoding: 'utf8', timeout: 60000 });
+    assert.equal(r.status, 2, extra.join(' '));
+    assert.match(r.stderr, message, extra.join(' '));
+  }
+  assert.ok(!existsSync(join(tmp, 'tree-no')));
+});
+
 test('--optimize: the constants of a warrior, steps confirmed with other seeds, the same on any thread count', { skip }, () => {
   // a stone whose step of 100 bombs 8 cells of a core of 800
   const file = join(tmp, 'badstep.red');
