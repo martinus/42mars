@@ -3840,8 +3840,8 @@ static void usage(void) {
           "         [--panel-rounds N] [--diversity all|panel] [--average all|panel] [--member-games all|none] [--simple]\n"
           "         [--difference abs|ahead|shape] [--pushoff value|pareto|pareto-age|pareto-sd] [--clear R] [--positions mirror|pmars]\n"
           "         [--genome list|gen] [--refactor p] [--min-length N] [--tie-points t]\n"
-          "         [--islands N [--select-after B [--keep K]] [--score-rounds R] [--migrate M [--migrate-pick best|random] [--migrate-to all|next|random]]\n"
-          "         [--island-variant \"options\" ...] [--island-panels shared|own]]\n"
+          "         [--islands N [--select-after B [--keep K]] [--score-rounds R] [--migrate M [--migrate-pick best|random] [--migrate-to all|next|random|tree]]\n"
+          "         [--island-variant \"options\" ...] [--island-panels shared|own] [--leaf-restart N]]\n"
           "         [--draw-seed S]\n"
           "         [--niche N]\n"
           "         [--panel-choice picked|random|kinds] [--pick-sample 300] [--no-fill] [--map-elites [cells|crowding]]\n"
@@ -4027,7 +4027,9 @@ typedef struct {
   uint32_t rounds;     // --score-rounds: of each match of a score
   uint32_t migrate;    // --migrate M: every M batches each island plays the best member of every other one, 0 never
   uint32_t migrate_random, migrate_next; // --migrate-pick random: a member drawn, not the best; --migrate-to next (1): from the
-                                         // island before only, random (2): from one other live island drawn
+                                         // island before only, random (2): from one other live island drawn, tree (3): from
+                                         // its children in the tree (island_child())
+  uint32_t leaf_restart; // --leaf-restart N: every N batches each leaf of the tree starts over from random warriors, 0 never
   uint64_t seed;
   uint8_t live[ISLANDS_MAX];
   run *is[ISLANDS_MAX];
@@ -4049,7 +4051,7 @@ static void islands_save(const islands *I) {
   fprintf(f, "42evolve-islands 1\nislands %u %u %u %u %u %" PRIu64 " %.17g %u\nlive", I->n, I->keep, I->every, I->selected,
           I->next_score, I->seed, I->best, I->rounds);
   for (uint32_t i = 0; i < I->n; i++) fprintf(f, " %u", I->live[i]);
-  fprintf(f, "\nmigrate %u %u %u\n", I->migrate, I->migrate_random, I->migrate_next);
+  fprintf(f, "\nmigrate %u %u %u %u\n", I->migrate, I->migrate_random, I->migrate_next, I->leaf_restart);
   fclose(f);
   if (rename(tmp, path) != 0) {
     fprintf(stderr, "42evolve: cannot write %s\n", path);
@@ -4071,6 +4073,7 @@ static int islands_load(islands *I) {
   }
   if (ok && fscanf(f, " migrate %u", &I->migrate) != 1) I->migrate = 0; // a state from before --migrate
   if (ok && fscanf(f, "%u %u", &I->migrate_random, &I->migrate_next) != 2) I->migrate_random = I->migrate_next = 0; // or its picks
+  if (ok && fscanf(f, "%u", &I->leaf_restart) != 1) I->leaf_restart = 0; // or --leaf-restart
   fclose(f);
   if (!ok) fprintf(stderr, "42evolve: %s is not a state of islands\n", path);
   return ok ? 0 : -1;
@@ -4228,9 +4231,20 @@ static void islands_score(islands *I) {
 // --migrate-pick random: a member drawn from the seed, the batch and the two
 // islands instead of the best; --migrate-to next: from the live island
 // before k only (a ring, the last sends to the first); --migrate-to random:
-// from one other live island drawn from the seed and the batch. The other islands are
+// from one other live island drawn from the seed and the batch; --migrate-to
+// tree: from its children only, so that warriors only climb toward island 1
+// (Hierarchical Fair Competition, Hu and Goodman 2002). The other islands are
 // as far as the turns took them, so a run is the same on any thread count
 // and after a resume. Event `migrate`: [island, id].
+// --migrate-to tree: the islands as a binary tree, island 1 its root, the
+// children of island i (from 1) are 2i and 2i + 1; c is 0 or 1 for the
+// first or second child, UINT32_MAX none (indexes from 0).
+static uint32_t island_child(const islands *I, uint32_t k, uint32_t c) {
+  const uint32_t j = 2 * k + 1 + c;
+  return j < I->n ? j : UINT32_MAX;
+}
+static int island_leaf(const islands *I, uint32_t k) { return island_child(I, k, 0) == UINT32_MAX; }
+
 static void islands_migrate(islands *I, uint32_t k) {
   run *r = I->is[k];
   if (!r->migr) {
@@ -4254,7 +4268,8 @@ static void islands_migrate(islands *I, uint32_t k) {
   }
   for (uint32_t j = 0; j < I->n; j++) {
     const run *o = I->is[j];
-    if (j == k || !I->live[j] || (I->migrate_next && j != before)) continue;
+    if (j == k || !I->live[j]) continue;
+    if (I->migrate_next == 3 ? j != island_child(I, k, 0) && j != island_child(I, k, 1) : I->migrate_next && j != before) continue;
     uint32_t best = UINT32_MAX;
     if (I->migrate_random && o->active_n > o->panel_n) {
       rng g = rng_seed(I->seed, 0x6d69677261u + r->batch, (uint64_t)k * ISLANDS_MAX + j); // "migra"
@@ -4273,9 +4288,36 @@ static void islands_migrate(islands *I, uint32_t k) {
   fputs("]}\n", r->events);
 }
 
+// --leaf-restart N: a leaf of the tree starts over: every member leaves (the
+// events leave, after an event restart), the archive is forgotten, and the
+// next batch fills the list with random warriors as the first one did. The
+// leaves take turns: leaf j of L restarts at the batches b > 0 with b mod N =
+// j N / L, so that there are always young lists of every age (the bottom
+// layer of ALPS, Hornby 2006, that starts again from random). Its best.red,
+// names and scores stay.
+static void island_restart(islands *I, uint32_t k) {
+  run *r = I->is[k];
+  fprintf(r->events, "{\"type\":\"restart\",\"batch\":%u,\"members\":%u}\n", r->batch, members(r));
+  compute_values(r);
+  for (uint32_t i = r->panel_n; i < r->active_n; i++) event_leave(r, &r->values[i], 0);
+  for (uint32_t i = r->panel_n; i < r->active_n; i++) {
+    const uint32_t s = r->active[i];
+    free_warrior(r->slot[s]);
+    r->slot[s] = 0;
+  }
+  r->archive_n = r->archive_next = 0;
+  r->tuned_ready = 0;
+  rebuild_active(r);
+  compute_values(r);
+}
+static int island_restarts(const islands *I, uint32_t k) {
+  const uint32_t first = I->n / 2, leaves = I->n - first, b = I->is[k]->batch;
+  return I->leaf_restart && island_leaf(I, k) && b && b % I->leaf_restart == (uint64_t)(k - first) * I->leaf_restart / leaves;
+}
+
 // Batches in turns until the limits: the live island with the fewest
 // batches next; every `every` batches of each, the scores; every `migrate`
-// batches the migrants.
+// batches the migrants; every `leaf_restart` batches a leaf starts over.
 static void islands_loop(islands *I, uint32_t batches, double seconds) {
   const double t0 = now();
   uint32_t lo = UINT32_MAX;
@@ -4293,7 +4335,9 @@ static void islands_loop(islands *I, uint32_t batches, double seconds) {
       islands_save(I);
       continue;
     }
-    if (I->migrate && I->is[k]->batch && I->is[k]->batch % I->migrate == 0) islands_migrate(I, k);
+    if (island_restarts(I, k)) island_restart(I, k);
+    if (I->migrate && I->is[k]->batch && I->is[k]->batch % I->migrate == 0 && !(I->migrate_next == 3 && island_leaf(I, k)))
+      islands_migrate(I, k); // a leaf of the tree takes from no island
     run_step(I->is[k]);
   }
 }
@@ -4371,12 +4415,12 @@ static int island_panels(islands *I, run *root, const params *base) {
 // A new run of islands: base has the parameters (defaults applied, checked).
 static int islands_new(const params *base, const params *variant, const char *const *variant_text, uint32_t variant_n,
                        const char *dir, uint32_t n, uint32_t keep, uint32_t every, uint32_t rounds, uint32_t migrate,
-                       uint32_t migrate_random, uint32_t migrate_next, int own_panels, uint32_t threads, uint32_t batches,
-                       double seconds) {
+                       uint32_t migrate_random, uint32_t migrate_next, uint32_t leaf_restart, int own_panels, uint32_t threads,
+                       uint32_t batches, double seconds) {
   static islands I;
   snprintf(I.dir, sizeof I.dir, "%s", dir);
   I.n = n, I.keep = keep, I.every = every, I.next_score = every, I.seed = base->seed, I.best = -1, I.rounds = rounds;
-  I.migrate = migrate, I.migrate_random = migrate_random, I.migrate_next = migrate_next;
+  I.migrate = migrate, I.migrate_random = migrate_random, I.migrate_next = migrate_next, I.leaf_restart = leaf_restart;
   if (mkdir(dir, 0777) != 0 && errno != EEXIST) {
     fprintf(stderr, "42evolve: cannot make %s\n", dir);
     return 1;
@@ -4408,12 +4452,13 @@ static int islands_new(const params *base, const params *variant, const char *co
   }
   fprintf(root->events, "{\"type\":\"islands\",\"islands\":%u,\"keep\":%u,\"selectAfter\":%u,\"migrate\":%u,\"migratePick\":\"%s\","
                         "\"migrateTo\":\"%s\",\"seed\":%" PRIu64 ",\"drawSeed\":%" PRIu64 ",\"threads\":%u,\"opponents\":",
-          n, keep, every, migrate, migrate_random ? "random" : "best", migrate_next == 2 ? "random" : migrate_next ? "next" : "all", base->seed, base->draw_seed,
+          n, keep, every, migrate, migrate_random ? "random" : "best",
+          migrate_next == 3 ? "tree" : migrate_next == 2 ? "random" : migrate_next ? "next" : "all", base->seed, base->draw_seed,
           threads);
   json_str(root->events, base->opponents, 0);
   fputs(",\"panel\":", root->events);
   json_str(root->events, p.panel_files, 0);
-  fprintf(root->events, ",\"islandPanels\":\"%s\"", own_panels ? "own" : "shared");
+  fprintf(root->events, ",\"islandPanels\":\"%s\",\"leafRestart\":%u", own_panels ? "own" : "shared", leaf_restart);
   fputs(",\"variants\":[", root->events);
   for (uint32_t k = 0; k < variant_n; k++) {
     if (k) fputc(',', root->events);
@@ -4561,6 +4606,7 @@ typedef struct {
   uint32_t islands_migrate_every;                                   // --migrate
   uint32_t migrate_random, migrate_next, pick_given, to_given;      // --migrate-pick, --migrate-to
   int own_panels;                                                   // --island-panels own
+  uint32_t leaf_restart;                                            // --leaf-restart
   int islands_option;
   const char *variant[ISLANDS_MAX]; // --island-variant, in their order
   uint32_t variant_n;
@@ -4684,6 +4730,7 @@ static int parse_cli(int argc, char **argv, cli *c) {
       if (!strcmp(v, "all")) c->migrate_next = 0;
       else if (!strcmp(v, "next")) c->migrate_next = 1;
       else if (!strcmp(v, "random")) c->migrate_next = 2;
+      else if (!strcmp(v, "tree")) c->migrate_next = 3;
       else usage();
       c->to_given = c->islands_option = 1;
     } else if (!strcmp(a, "--island-panels")) {
@@ -4775,6 +4822,7 @@ static int parse_cli(int argc, char **argv, cli *c) {
     else if (!strcmp(a, "--select-after")) c->islands_every = u, c->islands_option = 1;
     else if (!strcmp(a, "--score-rounds")) c->islands_rounds = u, c->islands_option = 1;
     else if (!strcmp(a, "--migrate")) c->islands_migrate_every = u, c->islands_option = c->migrate_given = 1;
+    else if (!strcmp(a, "--leaf-restart")) c->leaf_restart = u, c->islands_option = 1;
     else if (!strcmp(a, "--size")) p->rules.core_size = u;
     else if (!strcmp(a, "--cycles")) p->rules.max_cycles = u;
     else if (!strcmp(a, "--processes")) p->rules.max_processes = u;
@@ -4887,7 +4935,7 @@ static int island_variants(int argc, char **argv, const cli *c, params *out) {
                    w.islands_n != c->islands_n ||
                    w.islands_keep != c->islands_keep || w.islands_every != c->islands_every ||
                    w.islands_rounds != c->islands_rounds || w.islands_migrate_every != c->islands_migrate_every ||
-                   w.migrate_random != c->migrate_random || w.migrate_next != c->migrate_next || w.own_panels != c->own_panels ||
+                   w.migrate_random != c->migrate_random || w.migrate_next != c->migrate_next || w.own_panels != c->own_panels || w.leaf_restart != c->leaf_restart ||
                    w.optimize_file != c->optimize_file))
       differs = "--batches, --seconds, --optimize or an option of the islands";
     if (wrong || differs) {
@@ -4986,6 +5034,14 @@ int main(int argc, char **argv) {
         fprintf(stderr, "42evolve: --island-panels own with 2 islands or more, a panel that is picked (--panel-choice picked or kinds), not --panel-files\n");
         return 2;
       }
+      if (c.leaf_restart && (c.migrate_next != 3 || !c.to_given)) {
+        fprintf(stderr, "42evolve: --leaf-restart with --migrate-to tree\n");
+        return 2;
+      }
+      if (c.to_given && c.migrate_next == 3 && islands_n < 3) {
+        fprintf(stderr, "42evolve: --migrate-to tree with 3 islands or more\n");
+        return 2;
+      }
       if ((c.pick_given || c.to_given) && c.migrate_given && !islands_migrate_every) {
         fprintf(stderr, "42evolve: --migrate-pick and --migrate-to not with --migrate 0\n");
         return 2;
@@ -5014,12 +5070,13 @@ int main(int argc, char **argv) {
       int tune = p->tune_novel != 0;
       for (uint32_t k = 0; k < c.variant_n; k++) tune |= variants[k].tune_novel != 0;
       if (!c.migrate_given && islands_n >= 2 && !tune) islands_migrate_every = 5;
-      if (!c.pick_given) c.migrate_random = 1;
+      if (!c.pick_given) c.migrate_random = c.migrate_next != 3; // a tree: the best climbs
       if (!c.to_given) c.migrate_next = 2;
       signal(SIGINT, on_signal);
       signal(SIGTERM, on_signal);
       return islands_new(p, variants, c.variant, c.variant_n, dir, islands_n, islands_keep, islands_every, islands_rounds,
-                         islands_migrate_every, c.migrate_random, c.migrate_next, c.own_panels, threads, batches, seconds);
+                         islands_migrate_every, c.migrate_random, c.migrate_next, c.leaf_restart, c.own_panels, threads, batches,
+                         seconds);
     }
     if (run_new(&r, threads, optimize_file != 0) != 0) return 1;
   }
