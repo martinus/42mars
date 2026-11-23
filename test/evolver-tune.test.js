@@ -490,6 +490,99 @@ test('--migrate-to tree --leaf-restart: each island takes the best of its childr
   assert.ok(!existsSync(join(tmp, 'tree-no')));
 });
 
+test('--nemesis-every: the weakest island makes way for one whose panel is what the champion does worst against; the same on any thread count and after a resume', { skip }, () => {
+  const N = 4, SCORE = 5, BATCHES = 17;
+  const args = [...TINY, '--list', '16', '--survivors', '8'];
+  const isl = ['--islands', '4', '--select-after', '2', '--score-rounds', String(SCORE), '--nemesis-every', String(N), '--migrate', '1', '--island-variant', ''];
+  const dir = join(tmp, 'nemesis');
+  run(dir, [...args, ...isl, '--threads', '2', '--batches', String(BATCHES)]);
+  const re = events(dir, 'islands.jsonl');
+  assert.equal(re[0].nemesisEvery, N);
+  const nem = re.filter((e) => e.type === 'nemesis'), scores = re.filter((e) => e.type === 'score');
+  assert.deepEqual(nem.map((e) => e.batch), [4, 8, 12, 16], 'at every N-th batch, at a score');
+  const island = (i) => events(join(dir, `island-${String(i).padStart(2, '0')}`));
+  const holdout = island(1)[0].holdout.map((w) => w.file);
+  const live = new Set([1, 2, 3, 4]), since = new Map();
+  let count = 4;
+  const m = createMarsSync(RULES);
+  for (const n of nem) {
+    const s = scores.find((x) => x.batch === n.batch);
+    // the champion: the best warrior of that score, the first on a tie
+    const ws = s.islands.flatMap((x) => x.warriors.map((w) => ({ ...w, island: x.island })));
+    const c = ws.reduce((a, b) => (b.score > a.score ? b : a));
+    assert.deepEqual(n.champion, { island: c.island, id: c.id, score: c.score }, `batch ${n.batch}`);
+    // the island that stops: the weakest by its score, not the champion's, not a nemesis island younger than 2 N
+    const can = s.islands.filter((x) => live.has(x.island) && x.island !== c.island && !(since.has(x.island) && n.batch < since.get(x.island) + 2 * N));
+    const weak = can.reduce((a, b) => (b.score < a.score ? b : a));
+    assert.equal(n.stopped, weak.island, `batch ${n.batch}`);
+    assert.equal(n.island, ++count, 'the next number');
+    live.delete(n.stopped), live.add(n.island), since.set(n.island, n.batch);
+    // its panel: the champion's matches against the folder replayed with the score's seeds, the worst first (the
+    // folder's order on a tie), none of the holdout, as many as the panel
+    const src = island(c.island).find((e) => e.type === 'enter' && e.id === c.id).code, me = assemble(`;redcode\n;name x\n${src}`, RULES);
+    const pts = s.files.map((file, o) => {
+      const r = m.runMatch([me, assemble(readFileSync(join(root, 'warriors/koenigstuhl/tiny', file), 'latin1'), RULES)], { seed: s.seeds[o], rounds: SCORE });
+      return { file, points: ((3 * r.warriors[0].wins + r.warriors[0].ties) * 100) / SCORE, o };
+    });
+    const want = pts.filter((x) => !holdout.includes(x.file)).sort((a, b) => a.points - b.points || a.o - b.o).slice(0, 10);
+    assert.deepEqual(n.panel.map((x) => x.file), want.map((x) => x.file), `batch ${n.batch}: the panel`);
+    assert.deepEqual(n.panel.map((x) => x.points), want.map((x) => x.points));
+    // the new island: that panel, the islands' holdout, the settings and seed of an island, from the batch of the others
+    const ev = island(n.island);
+    assert.deepEqual(ev[0].panel.map((w) => w.file), want.map((x) => x.file));
+    assert.deepEqual(ev[0].holdout.map((w) => w.file), holdout);
+    assert.equal(ev[0].params.seed, 7 + n.island - 1);
+    assert.equal(ev.find((e) => e.type === 'batch').batch, n.batch, 'its first batch is the batch of the others');
+    assert.ok(ev.filter((e) => e.type === 'enter' && e.batch === n.batch).every((e) => e.ops === 'random'), 'it starts from random warriors');
+    // no migrants for its first N batches, then as every island
+    const mig = ev.filter((e) => e.type === 'migrate').map((e) => e.batch);
+    assert.ok(mig.every((b) => b >= n.batch + N), `island ${n.island} took migrants at ${mig}`);
+    if (n.batch + N < BATCHES) assert.ok(mig.includes(n.batch + N), `island ${n.island} took no migrants at ${n.batch + N}`);
+  }
+  assert.ok([...since.keys()].some((i) => !live.has(i)), 'a nemesis island stopped too, once 2 N old');
+  // 2 islands, N = 2: at every score the rule; where the only island that could stop is the champion's (the other
+  // is a nemesis island younger than 2 N), none stops (here at batch 6)
+  const two = join(tmp, 'nemesis-two');
+  run(two, [...args, '--islands', '2', '--select-after', '2', '--score-rounds', String(SCORE), '--nemesis-every', '2', '--migrate', '1',
+    '--island-variant', '', '--threads', '2', '--batches', '11']);
+  const re2 = events(two, 'islands.jsonl'), live2 = new Set([1, 2]), since2 = new Map();
+  let none = 0, count2 = 2;
+  for (const s of re2.filter((e) => e.type === 'score')) {
+    const c = s.islands.flatMap((x) => x.warriors.map((w) => ({ ...w, island: x.island }))).reduce((a, b) => (b.score > a.score ? b : a));
+    const can = s.islands.filter((x) => live2.has(x.island) && x.island !== c.island && !(since2.has(x.island) && s.batch < since2.get(x.island) + 4));
+    const n = re2.find((e) => e.type === 'nemesis' && e.batch === s.batch);
+    if (!can.length) {
+      assert.equal(n, undefined, `batch ${s.batch}: only the champion's island could stop`);
+      none++;
+      continue;
+    }
+    assert.equal(n.stopped, can.reduce((a, b) => (b.score < a.score ? b : a)).island, `batch ${s.batch}`);
+    live2.delete(n.stopped), live2.add(++count2), since2.set(count2, s.batch);
+  }
+  assert.ok(none >= 1, 'a score where no island could stop');
+  // the same stopped and continued on other thread counts, also across a nemesis
+  const again = join(tmp, 'nemesis-resumed');
+  run(again, [...args, ...isl, '--threads', '3', '--batches', '6']);
+  run(again, ['--threads', '1', '--batches', String(BATCHES - 6)]);
+  for (let i = 1; i <= count; i++) assert.deepEqual(stable(events(join(again, `island-${String(i).padStart(2, '0')}`))), stable(island(i)), `island ${i}`);
+  assert.deepEqual(stable(events(again, 'islands.jsonl')).map((e) => ({ ...e, threads: 0 })), stable(re).map((e) => ({ ...e, threads: 0 })));
+  // not at a score, without scores, with --keep or a tree, in a variant, without --islands: refused
+  const refused = [
+    [['--islands', '4', '--select-after', '2', '--nemesis-every', '3'], /--nemesis-every with 2 islands or more, a multiple of --select-after/],
+    [['--islands', '4', '--nemesis-every', '4'], /--nemesis-every with 2 islands or more, a multiple of --select-after/],
+    [['--islands', '4', '--select-after', '2', '--keep', '2', '--nemesis-every', '4'], /not with --keep or --migrate-to tree/],
+    [['--islands', '4', '--select-after', '2', '--migrate-to', 'tree', '--nemesis-every', '4'], /not with --keep or --migrate-to tree/],
+    [['--islands', '4', '--select-after', '2', '--island-variant', '--nemesis-every 4'], /an option of the islands the same/],
+    [['--nemesis-every', '4'], /usage/],
+  ];
+  for (const [extra, message] of refused) {
+    const r = spawnSync(evolve, [join(tmp, 'nemesis-no'), ...args, ...extra, '--batches', '1'], { encoding: 'utf8', timeout: 60000 });
+    assert.equal(r.status, 2, extra.join(' '));
+    assert.match(r.stderr, message, extra.join(' '));
+  }
+  assert.ok(!existsSync(join(tmp, 'nemesis-no')));
+});
+
 test('--optimize: the constants of a warrior, steps confirmed with other seeds, the same on any thread count', { skip }, () => {
   // a stone whose step of 100 bombs 8 cells of a core of 800
   const file = join(tmp, 'badstep.red');
