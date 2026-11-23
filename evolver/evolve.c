@@ -3841,7 +3841,8 @@ static void usage(void) {
           "         [--difference abs|ahead|shape] [--pushoff value|pareto|pareto-age|pareto-sd] [--clear R] [--positions mirror|pmars]\n"
           "         [--genome list|gen] [--refactor p] [--min-length N] [--tie-points t]\n"
           "         [--islands N [--select-after B [--keep K]] [--score-rounds R] [--migrate M [--migrate-pick best|random] [--migrate-to all|next|random|tree]]\n"
-          "         [--island-variant \"options\" ...] [--island-panels shared|own] [--leaf-restart N]]\n"
+          "         [--island-variant \"options\" ...] [--island-panels shared|own] [--leaf-restart N]\n"
+          "         [--nemesis-every N]]\n"
           "         [--draw-seed S]\n"
           "         [--niche N]\n"
           "         [--panel-choice picked|random|kinds] [--pick-sample 300] [--no-fill] [--map-elites [cells|crowding]]\n"
@@ -4030,6 +4031,9 @@ typedef struct {
                                          // island before only, random (2): from one other live island drawn, tree (3): from
                                          // its children in the tree (island_child())
   uint32_t leaf_restart; // --leaf-restart N: every N batches each leaf of the tree starts over from random warriors, 0 never
+  uint32_t nemesis_every; // --nemesis-every N: every N batches the weakest island makes way for a nemesis island, 0 never
+  uint32_t threads;    // of the pool, for the islands that start during the run
+  uint32_t since[ISLANDS_MAX]; // the batch an island started at: 0, or a nemesis island's first
   uint64_t seed;
   uint8_t live[ISLANDS_MAX];
   run *is[ISLANDS_MAX];
@@ -4051,7 +4055,9 @@ static void islands_save(const islands *I) {
   fprintf(f, "42evolve-islands 1\nislands %u %u %u %u %u %" PRIu64 " %.17g %u\nlive", I->n, I->keep, I->every, I->selected,
           I->next_score, I->seed, I->best, I->rounds);
   for (uint32_t i = 0; i < I->n; i++) fprintf(f, " %u", I->live[i]);
-  fprintf(f, "\nmigrate %u %u %u %u\n", I->migrate, I->migrate_random, I->migrate_next, I->leaf_restart);
+  fprintf(f, "\nmigrate %u %u %u %u\nnemesis %u\nsince", I->migrate, I->migrate_random, I->migrate_next, I->leaf_restart, I->nemesis_every);
+  for (uint32_t i = 0; i < I->n; i++) fprintf(f, " %u", I->since[i]);
+  fputc('\n', f);
   fclose(f);
   if (rename(tmp, path) != 0) {
     fprintf(stderr, "42evolve: cannot write %s\n", path);
@@ -4074,6 +4080,11 @@ static int islands_load(islands *I) {
   if (ok && fscanf(f, " migrate %u", &I->migrate) != 1) I->migrate = 0; // a state from before --migrate
   if (ok && fscanf(f, "%u %u", &I->migrate_random, &I->migrate_next) != 2) I->migrate_random = I->migrate_next = 0; // or its picks
   if (ok && fscanf(f, "%u", &I->leaf_restart) != 1) I->leaf_restart = 0; // or --leaf-restart
+  if (ok && fscanf(f, " nemesis %u", &I->nemesis_every) != 1) I->nemesis_every = 0; // or --nemesis-every
+  int since = -1; // a state from before --nemesis-every has no line since: every island from batch 0
+  if (ok && fscanf(f, " since%n", &since) >= 0 && since > 0)
+    for (uint32_t i = 0; i < I->n; i++)
+      if (fscanf(f, "%u", &I->since[i]) != 1) I->since[i] = 0;
   fclose(f);
   if (!ok) fprintf(stderr, "42evolve: %s is not a state of islands\n", path);
   return ok ? 0 : -1;
@@ -4091,6 +4102,92 @@ static void islands_opponents(islands *I) {
   load_list(&I->root, &I->opp, &I->opp_n, names, count, HOLDOUT, 0);
   for (uint32_t i = 0; i < count; i++) free(names[i]);
   free(names);
+}
+
+// names[from .. to) into out, comma separated; 1 if they do not fit.
+static int join_files(char *out, size_t size, char *const *names, uint32_t from, uint32_t to) {
+  size_t len = 0;
+  out[0] = 0;
+  for (uint32_t i = from; i < to; i++) {
+    const size_t l = strlen(names[i]);
+    if (len + l + 2 > size) return 1;
+    len += (size_t)snprintf(out + len, size - len, "%s%s", i > from ? "," : "", names[i]);
+  }
+  return 0;
+}
+
+// --nemesis-every N: at a score every N batches, the live island with the
+// lowest score (not the champion's, not a nemesis island younger than 2 N
+// batches; the first on a tie) stops, its folder
+// stays, and a new island takes its place: the next number, the settings of
+// the one it replaces, the seed + its number - 1, the same holdout, and as
+// its panel the warriors of the folder the champion (the best warrior of the
+// score) does worst against, the first on a tie, none of the holdout. It
+// starts from random warriors at the batch of the others, so the turns go on
+// as before, and takes no migrants for its first N batches: a strong warrior
+// from another island would take over its list before anything new grows
+// (others take from it as from any island); then N batches with migrants
+// before it can be stopped, since a list from random warriors is weaker than
+// the others for long. Event `nemesis`. The pressure follows the champion's weak
+// spots: what beats it now.
+static void islands_nemesis(islands *I, uint32_t batch, uint32_t champ, uint64_t champ_id, double champ_score, const double *cp,
+                            const double *isl) {
+  uint32_t weak = UINT32_MAX;
+  for (uint32_t i = 0; i < I->n; i++)
+    if (I->live[i] && i != champ && !(I->since[i] && batch < I->since[i] + 2 * I->nemesis_every) &&
+        (weak == UINT32_MAX || isl[i] < isl[weak]))
+      weak = i;
+  if (weak == UINT32_MAX) return;
+  if (I->n >= ISLANDS_MAX) {
+    fprintf(stderr, "42evolve: no nemesis island: %d islands is the most\n", ISLANDS_MAX);
+    return;
+  }
+  const run *old = I->is[weak];
+  const uint32_t m = I->opp_n, want = old->panel_n;
+  uint32_t *order = xmalloc(m * sizeof *order), np = 0;
+  for (uint32_t o = 0; o < m; o++) {
+    int held = 0;
+    for (uint32_t h = 0; h < old->hold_n && !held; h++) held = !strcmp(old->hold[h].file, I->opp[o].file);
+    if (held) continue;
+    uint32_t j = np++; // by the champion's points, the worst first; the folder's order on a tie
+    while (j > 0 && cp[order[j - 1]] > cp[o]) order[j] = order[j - 1], j--;
+    order[j] = o;
+  }
+  if (np > want) np = want;
+  run *r = xmalloc(sizeof *r);
+  r->p = old->p;
+  char **names = xmalloc((np + old->hold_n + 1) * sizeof *names);
+  for (uint32_t k = 0; k < np; k++) names[k] = I->opp[order[k]].file;
+  for (uint32_t h = 0; h < old->hold_n; h++) names[np + h] = old->hold[h].file;
+  if (join_files(r->p.panel_files, sizeof r->p.panel_files, names, 0, np) != 0 ||
+      join_files(r->p.holdout_files, sizeof r->p.holdout_files, names, np, np + old->hold_n) != 0) {
+    fprintf(stderr, "42evolve: the names of a nemesis island's panel or holdout are too long\n");
+    exit(1);
+  }
+  const uint32_t i = I->n++;
+  I->is[i] = r;
+  r->p.seed = I->seed + i;
+  island_name(I, i, r);
+  r->pool = I->root.pool;
+  if (run_new(r, I->threads, 0) != 0 || run_open(r, 0, I->threads) != 0) exit(1);
+  r->batch = batch; // in turn with the others
+  run_first(r);
+  I->live[i] = 1;
+  I->live[weak] = 0;
+  I->since[i] = batch;
+  FILE *f = I->root.events;
+  fprintf(f, "{\"type\":\"nemesis\",\"batch\":%u,\"champion\":{\"island\":%u,\"id\":%" PRIu64 ",\"score\":%.4f},\"stopped\":%u,"
+             "\"stoppedScore\":%.4f,\"island\":%u,\"panel\":[", batch, champ + 1, champ_id, champ_score, weak + 1, isl[weak], i + 1);
+  for (uint32_t k = 0; k < np; k++) {
+    fprintf(f, "%s{\"file\":", k ? "," : "");
+    json_str(f, I->opp[order[k]].file, 0);
+    fprintf(f, ",\"points\":%.4f}", cp[order[k]]);
+  }
+  fputs("]}\n", f);
+  fflush(f);
+  fprintf(stderr, "island-%02u stops (%.1f against the folder); island-%02u starts with the %u warriors island-%02u's best does worst against\n",
+          weak + 1, isl[weak], i + 1, np, champ + 1);
+  free(order), free(names);
 }
 
 // The best.red of each live island and its three members best against the
@@ -4136,10 +4233,12 @@ static void islands_score(islands *I) {
       u[nu++] = (unit){w[k], I->opp[o].w, seed_for(&I->root, 0x73636f7265000000u + o), 0, I->rounds, {{0}}, 0, 0}; // "score"
   pool_run(I->root.pool, u, nu);
   double *sc = xmalloc((size_t)n * PER * sizeof *sc), *isl = xmalloc(n * sizeof *isl);
+  uint32_t *from = xmalloc((size_t)n * PER * sizeof *from); // where its matches are in u
   nu = 0;
   for (uint32_t k = 0; k < n * PER; k++) {
     sc[k] = -1;
     if (!w[k] || as[k] != k) continue;
+    from[k] = nu;
     double s = 0;
     for (uint32_t o = 0; o < m; o++, nu++) s += points(u[nu].s[0], I->rounds);
     sc[k] = s / m;
@@ -4220,8 +4319,14 @@ static void islands_score(islands *I) {
     I->selected = 1;
     free(kept);
   }
+  if (I->nemesis_every && batch % I->nemesis_every == 0 && best_k != UINT32_MAX) { // the champion's results, each opponent
+    double *cp = xmalloc(m * sizeof *cp);
+    for (uint32_t o = 0; o < m; o++) cp[o] = points(u[from[as[best_k]] + o].s[0], I->rounds);
+    islands_nemesis(I, batch, best_k / PER, id[best_k], sc[best_k], cp, isl);
+    free(cp);
+  }
   for (uint32_t i = 0; i < n; i++) free(w[i * PER]); // those of best.red were made here, the others are members
-  free(w), free(g), free(id), free(as), free(u), free(sc), free(isl);
+  free(w), free(g), free(id), free(as), free(u), free(sc), free(isl), free(from);
 }
 
 // --migrate: before island k's batch, the member best against the panel of
@@ -4336,8 +4441,9 @@ static void islands_loop(islands *I, uint32_t batches, double seconds) {
       continue;
     }
     if (island_restarts(I, k)) island_restart(I, k);
-    if (I->migrate && I->is[k]->batch && I->is[k]->batch % I->migrate == 0 && !(I->migrate_next == 3 && island_leaf(I, k)))
-      islands_migrate(I, k); // a leaf of the tree takes from no island
+    if (I->migrate && I->is[k]->batch && I->is[k]->batch % I->migrate == 0 && !(I->migrate_next == 3 && island_leaf(I, k)) &&
+        !(I->since[k] && I->is[k]->batch < I->since[k] + I->nemesis_every))
+      islands_migrate(I, k); // a leaf of the tree takes from no island, a young nemesis island neither
     run_step(I->is[k]);
   }
 }
@@ -4347,18 +4453,6 @@ static void islands_close(islands *I) {
     if (I->is[i] && I->is[i]->events) fclose(I->is[i]->events);
   pool_stop(I->root.pool);
   fclose(I->root.events);
-}
-
-// names[from .. to) into out, comma separated; 1 if they do not fit.
-static int join_files(char *out, size_t size, char *const *names, uint32_t from, uint32_t to) {
-  size_t len = 0;
-  out[0] = 0;
-  for (uint32_t i = from; i < to; i++) {
-    const size_t l = strlen(names[i]);
-    if (len + l + 2 > size) return 1;
-    len += (size_t)snprintf(out + len, size - len, "%s%s", i > from ? "," : "", names[i]);
-  }
-  return 0;
 }
 
 // --island-panels own: one round robin of the sample, then each island its
@@ -4415,12 +4509,13 @@ static int island_panels(islands *I, run *root, const params *base) {
 // A new run of islands: base has the parameters (defaults applied, checked).
 static int islands_new(const params *base, const params *variant, const char *const *variant_text, uint32_t variant_n,
                        const char *dir, uint32_t n, uint32_t keep, uint32_t every, uint32_t rounds, uint32_t migrate,
-                       uint32_t migrate_random, uint32_t migrate_next, uint32_t leaf_restart, int own_panels, uint32_t threads,
-                       uint32_t batches, double seconds) {
+                       uint32_t migrate_random, uint32_t migrate_next, uint32_t leaf_restart, uint32_t nemesis_every,
+                       int own_panels, uint32_t threads, uint32_t batches, double seconds) {
   static islands I;
   snprintf(I.dir, sizeof I.dir, "%s", dir);
   I.n = n, I.keep = keep, I.every = every, I.next_score = every, I.seed = base->seed, I.best = -1, I.rounds = rounds;
   I.migrate = migrate, I.migrate_random = migrate_random, I.migrate_next = migrate_next, I.leaf_restart = leaf_restart;
+  I.nemesis_every = nemesis_every, I.threads = threads;
   if (mkdir(dir, 0777) != 0 && errno != EEXIST) {
     fprintf(stderr, "42evolve: cannot make %s\n", dir);
     return 1;
@@ -4458,7 +4553,8 @@ static int islands_new(const params *base, const params *variant, const char *co
   json_str(root->events, base->opponents, 0);
   fputs(",\"panel\":", root->events);
   json_str(root->events, p.panel_files, 0);
-  fprintf(root->events, ",\"islandPanels\":\"%s\",\"leafRestart\":%u", own_panels ? "own" : "shared", leaf_restart);
+  fprintf(root->events, ",\"islandPanels\":\"%s\",\"leafRestart\":%u,\"nemesisEvery\":%u", own_panels ? "own" : "shared", leaf_restart,
+          nemesis_every);
   fputs(",\"variants\":[", root->events);
   for (uint32_t k = 0; k < variant_n; k++) {
     if (k) fputc(',', root->events);
@@ -4498,6 +4594,7 @@ static int islands_resume(const char *dir, uint32_t threads, uint32_t batches, d
   static islands I;
   snprintf(I.dir, sizeof I.dir, "%s", dir);
   if (islands_load(&I) != 0) return 1;
+  I.threads = threads;
   run *root = &I.root;
   for (uint32_t i = 0; i < I.n; i++) {
     if (!I.live[i]) continue;
@@ -4607,6 +4704,7 @@ typedef struct {
   uint32_t migrate_random, migrate_next, pick_given, to_given;      // --migrate-pick, --migrate-to
   int own_panels;                                                   // --island-panels own
   uint32_t leaf_restart;                                            // --leaf-restart
+  uint32_t nemesis_every;                                           // --nemesis-every
   int islands_option;
   const char *variant[ISLANDS_MAX]; // --island-variant, in their order
   uint32_t variant_n;
@@ -4823,6 +4921,7 @@ static int parse_cli(int argc, char **argv, cli *c) {
     else if (!strcmp(a, "--score-rounds")) c->islands_rounds = u, c->islands_option = 1;
     else if (!strcmp(a, "--migrate")) c->islands_migrate_every = u, c->islands_option = c->migrate_given = 1;
     else if (!strcmp(a, "--leaf-restart")) c->leaf_restart = u, c->islands_option = 1;
+    else if (!strcmp(a, "--nemesis-every")) c->nemesis_every = u, c->islands_option = 1;
     else if (!strcmp(a, "--size")) p->rules.core_size = u;
     else if (!strcmp(a, "--cycles")) p->rules.max_cycles = u;
     else if (!strcmp(a, "--processes")) p->rules.max_processes = u;
@@ -4935,7 +5034,7 @@ static int island_variants(int argc, char **argv, const cli *c, params *out) {
                    w.islands_n != c->islands_n ||
                    w.islands_keep != c->islands_keep || w.islands_every != c->islands_every ||
                    w.islands_rounds != c->islands_rounds || w.islands_migrate_every != c->islands_migrate_every ||
-                   w.migrate_random != c->migrate_random || w.migrate_next != c->migrate_next || w.own_panels != c->own_panels || w.leaf_restart != c->leaf_restart ||
+                   w.migrate_random != c->migrate_random || w.migrate_next != c->migrate_next || w.own_panels != c->own_panels || w.leaf_restart != c->leaf_restart || w.nemesis_every != c->nemesis_every ||
                    w.optimize_file != c->optimize_file))
       differs = "--batches, --seconds, --optimize or an option of the islands";
     if (wrong || differs) {
@@ -5038,6 +5137,10 @@ int main(int argc, char **argv) {
         fprintf(stderr, "42evolve: --leaf-restart with --migrate-to tree\n");
         return 2;
       }
+      if (c.nemesis_every && (islands_n < 2 || !islands_every || c.nemesis_every % islands_every || islands_keep || c.migrate_next == 3)) {
+        fprintf(stderr, "42evolve: --nemesis-every with 2 islands or more, a multiple of --select-after, not with --keep or --migrate-to tree\n");
+        return 2;
+      }
       if (c.to_given && c.migrate_next == 3 && islands_n < 3) {
         fprintf(stderr, "42evolve: --migrate-to tree with 3 islands or more\n");
         return 2;
@@ -5075,8 +5178,8 @@ int main(int argc, char **argv) {
       signal(SIGINT, on_signal);
       signal(SIGTERM, on_signal);
       return islands_new(p, variants, c.variant, c.variant_n, dir, islands_n, islands_keep, islands_every, islands_rounds,
-                         islands_migrate_every, c.migrate_random, c.migrate_next, c.leaf_restart, c.own_panels, threads, batches,
-                         seconds);
+                         islands_migrate_every, c.migrate_random, c.migrate_next, c.leaf_restart, c.nemesis_every, c.own_panels,
+                         threads, batches, seconds);
     }
     if (run_new(&r, threads, optimize_file != 0) != 0) return 1;
   }
