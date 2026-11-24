@@ -141,7 +141,7 @@ test('--parents duel: a parent beat its rival in their match, the same run on an
 
 test('--changes: only the changes named, as often as their weights, the same run on any thread count and after a resume', { skip }, () => {
   const def = { opcode: 81, modifier: 81, 'a-mode': 54, 'b-mode': 54, 'a-operand': 108, 'b-operand': 108, org: 27, replace: 27, insert: 100, delete: 100,
-    duplicate: 70, move: 70, 'crossover-insert': 60, 'crossover-replace': 60, 'related-opcode': 0, 'related-mode': 0, 'shared-constant': 0, tune: 0 };
+    duplicate: 70, move: 70, 'crossover-insert': 60, 'crossover-replace': 60, 'related-opcode': 0, 'related-mode': 0, 'shared-constant': 0, tune: 0, loop: 0 };
   assert.deepEqual(base[0].changes, def);
   const args = [...TINY, '--changes', 'shared-constant=6,duplicate=1,b-operand=3'];
   run(join(tmp, 'mix1'), [...args, '--threads', '1', '--batches', '5']);
@@ -174,7 +174,7 @@ test('--changes: only the changes named, as often as their weights, the same run
   assert.deepEqual(before, stable(one).slice(0, before.length));
   const bad = spawnSync(evolve, [join(tmp, 'mix-bad'), ...TINY, '--changes', 'opcode=1,tunes=2'], { encoding: 'utf8' });
   assert.equal(bad.status, 2);
-  assert.match(bad.stderr, /--changes takes name=weight.* shared-constant tune$/m);
+  assert.match(bad.stderr, /--changes takes name=weight.* shared-constant tune loop$/m);
 });
 
 test('--panel-files, --screen-members: a chosen panel, a screen against panel and members, the same run on any thread count and after a resume', { skip }, () => {
@@ -550,7 +550,7 @@ test('42spectrum: every child of every change counted once, the same result on a
   assert.deepEqual(runIt('3', join(tmp, 'spectrum3.json')), one);
   assert.deepEqual(one.warriors.map((w) => w.name), ['Dwarf', 'Imp']);
   for (const w of one.warriors) {
-    assert.equal(Object.keys(w.changes).length, 18);
+    assert.equal(Object.keys(w.changes).length, 19);
     for (const [name, c] of Object.entries(w.changes)) {
       assert.equal(c.tried, 12);
       assert.ok(c.applied <= c.tried);

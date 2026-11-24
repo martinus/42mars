@@ -505,6 +505,8 @@ typedef struct {
   genome *migr;               // --migrate: the best members of the other islands, played first in the next batch
   uint64_t *migr_id;
   uint32_t *migr_noun, migr_n;
+  genome *donor;              // the change loop (#182): the best member of each other island before this round
+  uint32_t donor_n, donor_cap;
   uint32_t tuned_noun;
   double *sigma;
   pushoff_value *values;
@@ -2393,6 +2395,12 @@ static void run_batch(run *r) {
     }
 
   // breed
+  // the donors of the change loop: the warriors that left (the archive) and,
+  // in a run of islands, the best of the others (islands_donors())
+  const genome *donors[GENOME_DONORS_MAX];
+  uint32_t nd = 0;
+  for (uint32_t i = 0; i < r->archive_n && nd < GENOME_DONORS_MAX; i++) donors[nd++] = &r->archive[i];
+  for (uint32_t i = 0; i < r->donor_n && nd < GENOME_DONORS_MAX; i++) donors[nd++] = &r->donor[i];
   // --reintroduce: a warrior of the archive whose code is in the list, or
   // came back already in this batch, does not come back: in a list that had
   // settled (kd1, 16th November 2026) 204 of 1,141 that came back were
@@ -2452,8 +2460,8 @@ static void run_batch(run *r) {
       if (!copy) in_list[in_n++] = h;
     } else {
       const warrior *a = select_parent(r, &g, &x->rival), *b = select_parent(r, &g, 0);
-      genome_breed(&x->g, a->g, b->g, &g, core, p->rules.max_length, &r->style, &p->changes, x->ops,
-                   sizeof x->ops);
+      genome_breed_donors(&x->g, a->g, b->g, donors, nd, &g, core, p->rules.max_length, &r->style, &p->changes, x->ops,
+                          sizeof x->ops);
       x->parents[0] = a->id;
       x->noun = a->noun;
       x->origin = a->origin;
@@ -4472,11 +4480,41 @@ static int island_restarts(const islands *I, uint32_t k) {
 // Whether island k takes migrants before its batch b: every --migrate
 // batches, but not a leaf of the tree (it has no children), not a nemesis
 // island younger than --nemesis-every, not an explorer.
-static int island_takes_migrants(const islands *I, uint32_t k, uint32_t b) {
-  if (!I->migrate || !b || b % I->migrate) return 0;
+// Whether island k at batch b takes from the others at all: not a leaf of
+// the tree (it has no children), not a nemesis island younger than
+// --nemesis-every, not an explorer.
+static int island_open(const islands *I, uint32_t k, uint32_t b) {
   if (I->migrate_next == MIGRATE_TREE && island_leaf(I, k)) return 0;
   if (I->since[k] && b < I->since[k] + I->nemesis_every) return 0;
   return k < I->n - I->explorers;
+}
+
+// Whether island k takes migrants before its batch b: every --migrate batches, when it is open.
+static int island_takes_migrants(const islands *I, uint32_t k, uint32_t b) {
+  return I->migrate && b && b % I->migrate == 0 && island_open(I, k, b);
+}
+
+// The donors of the change loop (#182) for island k before its batch b: a
+// copy of the best member against the panel (the first on a tie) of every
+// other live island, as the round before left it, when k is open to the
+// others and gives loop a weight; none otherwise.
+static void islands_donors(islands *I, uint32_t k, uint32_t b) {
+  run *r = I->is[k];
+  r->donor_n = 0;
+  if (!r->p.changes.w[CH_LOOP] || !island_open(I, k, b)) return;
+  if (r->donor_cap < I->n) {
+    free(r->donor);
+    r->donor = xmalloc(I->n * sizeof *r->donor);
+    r->donor_cap = I->n;
+  }
+  for (uint32_t j = 0; j < I->n; j++) {
+    const run *o = I->is[j];
+    if (j == k || !I->live[j]) continue;
+    uint32_t best = UINT32_MAX;
+    for (uint32_t a = o->panel_n; a < o->active_n; a++)
+      if (best == UINT32_MAX || panel_avg(o, o->active[a]) > panel_avg(o, best)) best = o->active[a];
+    if (best != UINT32_MAX) r->donor[r->donor_n++] = *o->slot[best]->g;
+  }
 }
 
 static void *island_thread(void *arg) {
@@ -4525,6 +4563,7 @@ static void islands_loop(islands *I, uint32_t batches, double seconds) {
       if (I->live[i] && I->is[i]->batch == lo) round[m++] = i;
     for (uint32_t j = 0; j < m; j++) // the migrants first: from the islands as the round before left them
       if (island_takes_migrants(I, round[j], lo)) islands_migrate(I, round[j]);
+    for (uint32_t j = 0; j < m; j++) islands_donors(I, round[j], lo);
     for (uint32_t j = 0; j < m; j++)
       if (island_restarts(I, round[j])) island_restart(I, round[j]);
     islands_round(I, round, m);
