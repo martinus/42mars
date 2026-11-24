@@ -219,20 +219,41 @@ typedef struct {
   pool *p;
   m42_ctx *m;
   pthread_t t;
-  double busy; // seconds spent in matches
-  uint64_t instructions, rounds;
 } worker;
 
-struct pool {
-  pthread_mutex_t mutex;
-  pthread_cond_t work, done;
+// The matches of one call of pool_run(): several threads (islands that play a
+// batch at the same time) can each have one in the pool. Its counters are
+// those of its own matches.
+typedef struct job {
   unit *units;
   uint32_t n, next, finished;
+  struct job *after; // the next job with matches not handed out yet
+  pthread_cond_t done;
+  double busy;
+  uint64_t instructions, rounds;
+} job;
+
+// The threads play the matches of the jobs in the order they came, every
+// thread of the pool; the threads that called pool_run() wait for theirs.
+struct pool {
+  pthread_mutex_t mutex;
+  pthread_cond_t work;
+  job *head, *tail;
   int quit;
   int mirror; // --positions mirror (play())
   uint32_t threads;
   worker *w;
+  double busy; // seconds all threads spent in matches, under the mutex
 };
+
+// What a run measures of its batches (the event speed): how busy the pool's
+// threads were (all of them, for every caller), and the instructions and
+// rounds of the matches this thread asked for (an island's own).
+typedef struct {
+  double busy, wall;
+  uint64_t instructions, rounds;
+} speed;
+static _Thread_local speed pool_mine;
 
 static double now(void) {
   struct timespec ts;
@@ -267,7 +288,6 @@ static int play_rounds(worker *w, unit *u, uint32_t first, uint32_t rounds, int 
 // difference of two warriors' scores loses the noise of where they start.
 // Without it: rounds first + 1 .. first + rounds as pMARS plays them.
 static void play(worker *w, unit *u) {
-  const double t0 = now();
   u->instructions = 0;
   memset(u->s, 0, sizeof u->s);
   u->status = M42_OK;
@@ -285,29 +305,32 @@ static void play(worker *w, unit *u) {
     if (end % 2 && end - 1 >= g) st |= play_rounds(w, u, (end - 1) / 2, 1, 0); // the first half of a position
     u->status = st;
   }
-  w->busy += now() - t0;
-  w->instructions += u->instructions;
-  w->rounds += u->rounds;
 }
 
-// Takes units until none is left. Called with the mutex held, returns with it held.
-static void take_units(pool *p, worker *w) {
-  while (p->next < p->n) {
-    unit *u = &p->units[p->next++];
-    pthread_mutex_unlock(&p->mutex);
-    play(w, u);
-    pthread_mutex_lock(&p->mutex);
-    if (++p->finished == p->n) pthread_cond_broadcast(&p->done);
-  }
-}
-
+// A thread of the pool: the next match of the first job that has one.
 static void *worker_main(void *arg) {
   worker *w = arg;
   pool *p = w->p;
   pthread_mutex_lock(&p->mutex);
   while (!p->quit) {
-    if (p->next < p->n) take_units(p, w);
-    else pthread_cond_wait(&p->work, &p->mutex);
+    job *j = p->head;
+    if (!j) {
+      pthread_cond_wait(&p->work, &p->mutex);
+      continue;
+    }
+    unit *u = &j->units[j->next++];
+    if (j->next == j->n) { // all handed out: the next job is first
+      p->head = j->after;
+      if (!p->head) p->tail = 0;
+    }
+    pthread_mutex_unlock(&p->mutex);
+    const double t0 = now();
+    play(w, u);
+    const double dt = now() - t0;
+    pthread_mutex_lock(&p->mutex);
+    j->busy += dt, j->instructions += u->instructions, j->rounds += u->rounds;
+    p->busy += dt;
+    if (++j->finished == j->n) pthread_cond_broadcast(&j->done);
   }
   pthread_mutex_unlock(&p->mutex);
   return 0;
@@ -317,7 +340,6 @@ static void pool_start(pool *p, uint32_t threads, const m42_rules *rules) {
   memset(p, 0, sizeof *p);
   pthread_mutex_init(&p->mutex, 0);
   pthread_cond_init(&p->work, 0);
-  pthread_cond_init(&p->done, 0);
   p->threads = threads;
   p->w = xmalloc(threads * sizeof *p->w);
   for (uint32_t i = 0; i < threads; i++) {
@@ -328,8 +350,8 @@ static void pool_start(pool *p, uint32_t threads, const m42_rules *rules) {
       fprintf(stderr, "42evolve: %s\n", m42_status_text(status));
       exit(1);
     }
-    // worker 0 is the main thread, it takes units in pool_run()
-    if (i && pthread_create(&p->w[i].t, 0, worker_main, &p->w[i]) != 0) {
+    // every one a thread of its own: the callers of pool_run() wait for their matches
+    if (pthread_create(&p->w[i].t, 0, worker_main, &p->w[i]) != 0) {
       fprintf(stderr, "42evolve: cannot start a thread\n");
       exit(1);
     }
@@ -341,12 +363,12 @@ static void pool_stop(pool *p) {
   p->quit = 1;
   pthread_cond_broadcast(&p->work);
   pthread_mutex_unlock(&p->mutex);
-  for (uint32_t i = 1; i < p->threads; i++) pthread_join(p->w[i].t, 0);
+  for (uint32_t i = 0; i < p->threads; i++) pthread_join(p->w[i].t, 0);
   for (uint32_t i = 0; i < p->threads; i++) m42_free(p->w[i].m);
   free(p->w);
 }
 
-// Plays all units on all threads, the calling one included.
+// Plays all units on the pool's threads; the caller waits.
 static void pool_run_blocks(pool *p, unit *units, uint32_t n);
 
 // A match of more rounds than BLOCK is played as blocks of at most BLOCK
@@ -394,15 +416,17 @@ static void pool_run(pool *p, unit *units, uint32_t n) {
 
 static void pool_run_blocks(pool *p, unit *units, uint32_t n) {
   if (!n) return;
+  job j = {.units = units, .n = n};
+  pthread_cond_init(&j.done, 0);
   pthread_mutex_lock(&p->mutex);
-  p->units = units;
-  p->n = n;
-  p->next = p->finished = 0;
+  if (p->tail) p->tail->after = &j;
+  else p->head = &j;
+  p->tail = &j;
   pthread_cond_broadcast(&p->work);
-  take_units(p, &p->w[0]);
-  while (p->finished < p->n) pthread_cond_wait(&p->done, &p->mutex);
-  p->n = p->next = p->finished = 0;
+  while (j.finished < j.n) pthread_cond_wait(&j.done, &p->mutex);
   pthread_mutex_unlock(&p->mutex);
+  pthread_cond_destroy(&j.done);
+  pool_mine.busy += j.busy, pool_mine.instructions += j.instructions, pool_mine.rounds += j.rounds;
   for (uint32_t i = 0; i < n; i++) {
     if (units[i].status != M42_OK) {
       fprintf(stderr, "42evolve: match failed: %s\n", m42_status_text(units[i].status));
@@ -1607,18 +1631,11 @@ static const warrior *select_parent(run *r, rng *g, uint64_t *rival) {
   return r->slot[win->index];
 }
 
-typedef struct {
-  double busy, wall;
-  uint64_t instructions, rounds;
-} speed;
-
-static speed pool_speed(const pool *p) {
-  speed s = {0, 0, 0, 0};
-  for (uint32_t i = 0; i < p->threads; i++) {
-    s.busy += p->w[i].busy;
-    s.instructions += p->w[i].instructions;
-    s.rounds += p->w[i].rounds;
-  }
+static speed pool_speed(pool *p) {
+  speed s = pool_mine;
+  pthread_mutex_lock(&p->mutex);
+  s.busy = p->busy;
+  pthread_mutex_unlock(&p->mutex);
   return s;
 }
 
@@ -3842,7 +3859,7 @@ static void usage(void) {
           "         [--genome list|gen] [--refactor p] [--min-length N] [--tie-points t]\n"
           "         [--islands N [--select-after B [--keep K]] [--score-rounds R] [--migrate M [--migrate-pick best|random] [--migrate-to all|next|random|tree]]\n"
           "         [--island-variant \"options\" ...] [--island-panels shared|own] [--leaf-restart N]\n"
-          "         [--nemesis-every N]]\n"
+          "         [--nemesis-every N] [--explorers K]]\n"
           "         [--draw-seed S]\n"
           "         [--niche N]\n"
           "         [--panel-choice picked|random|kinds] [--pick-sample 300] [--no-fill] [--map-elites [cells|crowding]]\n"
@@ -4011,10 +4028,10 @@ static void run_step(run *r) {
 // ordinary run folder: it can be continued, served and read alone). The
 // panel is picked once, and every island gets it as --panel-files and the
 // same --draw-seed, so all of them have the same panel and holdout; island i
-// evolves with the seed + i - 1. One pool of threads, and the islands take
-// turns: always the island with the fewest batches (on a tie the first), so
-// they advance by batches, not by time, and the run is the same on any thread
-// count. Every --select-after batches of each, the best.red of each island
+// evolves with the seed + i - 1. One pool of threads, and the islands play
+// in rounds (islands_loop()): every island its next batch, all at the same
+// time, so they advance by batches, not by time, and the run is the same on
+// any thread count. Every --select-after batches of each, the best.red of each island
 // and its three members best against the panel play every warrior of the
 // opponent folder (--score-rounds rounds each, 100); the first time, the --keep
 // islands with the best of those scores go on and the others stop (their
@@ -4032,6 +4049,7 @@ typedef struct {
                                          // its children in the tree (island_child())
   uint32_t leaf_restart; // --leaf-restart N: every N batches each leaf of the tree starts over from random warriors, 0 never
   uint32_t nemesis_every; // --nemesis-every N: every N batches the weakest island makes way for a nemesis island, 0 never
+  uint32_t explorers;  // --explorers K: the last K islands take no migrants (the others may take from them)
   uint32_t threads;    // of the pool, for the islands that start during the run
   uint32_t since[ISLANDS_MAX]; // the batch an island started at: 0, or a nemesis island's first
   uint64_t seed;
@@ -4057,7 +4075,7 @@ static void islands_save(const islands *I) {
   for (uint32_t i = 0; i < I->n; i++) fprintf(f, " %u", I->live[i]);
   fprintf(f, "\nmigrate %u %u %u %u\nnemesis %u\nsince", I->migrate, I->migrate_random, I->migrate_next, I->leaf_restart, I->nemesis_every);
   for (uint32_t i = 0; i < I->n; i++) fprintf(f, " %u", I->since[i]);
-  fputc('\n', f);
+  fprintf(f, "\nexplorers %u\n", I->explorers);
   fclose(f);
   if (rename(tmp, path) != 0) {
     fprintf(stderr, "42evolve: cannot write %s\n", path);
@@ -4085,6 +4103,7 @@ static int islands_load(islands *I) {
   if (ok && fscanf(f, " since%n", &since) >= 0 && since > 0)
     for (uint32_t i = 0; i < I->n; i++)
       if (fscanf(f, "%u", &I->since[i]) != 1) I->since[i] = 0;
+  if (ok && fscanf(f, " explorers %u", &I->explorers) != 1) I->explorers = 0; // a state from before --explorers
   fclose(f);
   if (!ok) fprintf(stderr, "42evolve: %s is not a state of islands\n", path);
   return ok ? 0 : -1;
@@ -4123,8 +4142,8 @@ static int join_files(char *out, size_t size, char *const *names, uint32_t from,
 // the one it replaces, the seed + its number - 1, the same holdout, and as
 // its panel the warriors of the folder the champion (the best warrior of the
 // score) does worst against, the first on a tie, none of the holdout. It
-// starts from random warriors at the batch of the others, so the turns go on
-// as before, and takes no migrants for its first N batches: a strong warrior
+// starts from random warriors at the batch of the others, so the rounds go
+// on as before, and takes no migrants for its first N batches: a strong warrior
 // from another island would take over its list before anything new grows
 // (others take from it as from any island); then N batches with migrants
 // before it can be stopped, since a list from random warriors is weaker than
@@ -4339,8 +4358,9 @@ static void islands_score(islands *I) {
 // from one other live island drawn from the seed and the batch; --migrate-to
 // tree: from its children only, so that warriors only climb toward island 1
 // (Hierarchical Fair Competition, Hu and Goodman 2002). The other islands are
-// as far as the turns took them, so a run is the same on any thread count
-// and after a resume. Event `migrate`: [island, id].
+// as the round before left them (islands_loop() takes all migrants of a round
+// before its batches), so a run is the same on any thread count and after a
+// resume. Event `migrate`: [island, id].
 // --migrate-to tree: the islands as a binary tree, island 1 its root, the
 // children of island i (from 1) are 2i and 2i + 1; c is 0 or 1 for the
 // first or second child, UINT32_MAX none (indexes from 0).
@@ -4420,9 +4440,41 @@ static int island_restarts(const islands *I, uint32_t k) {
   return I->leaf_restart && island_leaf(I, k) && b && b % I->leaf_restart == (uint64_t)(k - first) * I->leaf_restart / leaves;
 }
 
-// Batches in turns until the limits: the live island with the fewest
-// batches next; every `every` batches of each, the scores; every `migrate`
-// batches the migrants; every `leaf_restart` batches a leaf starts over.
+// Batches in rounds until the limits: in a round every live island plays
+// its next batch, all at the same time, each on a thread of its own with its
+// matches in the one pool (the serial parts of a batch, the push-off,
+// entering, the style of newcomers, the events, overlap). Before a round,
+// on one thread: every `every` batches the scores; every `migrate` batches
+// the migrants, each island's taken from the others as they are after the
+// round before; then every `leaf_restart` batches a leaf starts over. So a
+// run is the same on any thread count and after a resume. A run stopped
+// while its islands took turns (before rounds) may have islands a batch
+// ahead: the others catch up first.
+// --explorers K: the last K islands never take migrants. Each is an
+// independent try, like a run of its own, that no strong design from
+// elsewhere pushes out; the other islands (the core) take from all, so what
+// an explorer finds is taken up and tuned there (with --island-variant, for
+// example --average panel on the core).
+static void *island_thread(void *arg) {
+  run_step(arg);
+  return 0;
+}
+
+// The batch of each island of round[0 .. m), at the same time.
+static void islands_round(islands *I, const uint32_t *round, uint32_t m) {
+  if (m == 1) {
+    run_step(I->is[round[0]]);
+    return;
+  }
+  pthread_t t[ISLANDS_MAX];
+  for (uint32_t j = 0; j < m; j++)
+    if (pthread_create(&t[j], 0, island_thread, I->is[round[j]]) != 0) {
+      fprintf(stderr, "42evolve: cannot start a thread\n");
+      exit(1);
+    }
+  for (uint32_t j = 0; j < m; j++) pthread_join(t[j], 0);
+}
+
 static void islands_loop(islands *I, uint32_t batches, double seconds) {
   const double t0 = now();
   uint32_t lo = UINT32_MAX;
@@ -4430,21 +4482,28 @@ static void islands_loop(islands *I, uint32_t batches, double seconds) {
     if (I->live[i] && I->is[i]->batch < lo) lo = I->is[i]->batch;
   const uint32_t target = batches ? lo + batches : UINT32_MAX;
   while (!stop_now && (!seconds || now() - t0 < seconds)) {
-    uint32_t k = UINT32_MAX;
+    lo = UINT32_MAX;
     for (uint32_t i = 0; i < I->n; i++)
-      if (I->live[i] && (k == UINT32_MAX || I->is[i]->batch < I->is[k]->batch)) k = i;
-    if (k == UINT32_MAX || I->is[k]->batch >= target) break;
-    if (I->every && I->is[k]->batch >= I->next_score) { // every live island is there
+      if (I->live[i] && I->is[i]->batch < lo) lo = I->is[i]->batch;
+    if (lo == UINT32_MAX || lo >= target) break;
+    if (I->every && lo >= I->next_score) { // every live island is there
       islands_score(I);
       I->next_score += I->every;
       islands_save(I);
       continue;
     }
-    if (island_restarts(I, k)) island_restart(I, k);
-    if (I->migrate && I->is[k]->batch && I->is[k]->batch % I->migrate == 0 && !(I->migrate_next == 3 && island_leaf(I, k)) &&
-        !(I->since[k] && I->is[k]->batch < I->since[k] + I->nemesis_every))
-      islands_migrate(I, k); // a leaf of the tree takes from no island, a young nemesis island neither
-    run_step(I->is[k]);
+    uint32_t round[ISLANDS_MAX], m = 0; // the islands of this round: those at batch lo
+    for (uint32_t i = 0; i < I->n; i++)
+      if (I->live[i] && I->is[i]->batch == lo) round[m++] = i;
+    for (uint32_t j = 0; j < m; j++) { // the migrants first: from the islands as the round before left them
+      const uint32_t k = round[j];
+      if (I->migrate && lo && lo % I->migrate == 0 && !(I->migrate_next == 3 && island_leaf(I, k)) &&
+          !(I->since[k] && lo < I->since[k] + I->nemesis_every) && k < I->n - I->explorers)
+        islands_migrate(I, k); // a leaf of the tree takes from no island, a young nemesis island and an explorer neither
+    }
+    for (uint32_t j = 0; j < m; j++)
+      if (island_restarts(I, round[j])) island_restart(I, round[j]);
+    islands_round(I, round, m);
   }
 }
 
@@ -4509,13 +4568,13 @@ static int island_panels(islands *I, run *root, const params *base) {
 // A new run of islands: base has the parameters (defaults applied, checked).
 static int islands_new(const params *base, const params *variant, const char *const *variant_text, uint32_t variant_n,
                        const char *dir, uint32_t n, uint32_t keep, uint32_t every, uint32_t rounds, uint32_t migrate,
-                       uint32_t migrate_random, uint32_t migrate_next, uint32_t leaf_restart, uint32_t nemesis_every,
+                       uint32_t migrate_random, uint32_t migrate_next, uint32_t leaf_restart, uint32_t nemesis_every, uint32_t explorers,
                        int own_panels, uint32_t threads, uint32_t batches, double seconds) {
   static islands I;
   snprintf(I.dir, sizeof I.dir, "%s", dir);
   I.n = n, I.keep = keep, I.every = every, I.next_score = every, I.seed = base->seed, I.best = -1, I.rounds = rounds;
   I.migrate = migrate, I.migrate_random = migrate_random, I.migrate_next = migrate_next, I.leaf_restart = leaf_restart;
-  I.nemesis_every = nemesis_every, I.threads = threads;
+  I.nemesis_every = nemesis_every, I.explorers = explorers, I.threads = threads;
   if (mkdir(dir, 0777) != 0 && errno != EEXIST) {
     fprintf(stderr, "42evolve: cannot make %s\n", dir);
     return 1;
@@ -4553,8 +4612,8 @@ static int islands_new(const params *base, const params *variant, const char *co
   json_str(root->events, base->opponents, 0);
   fputs(",\"panel\":", root->events);
   json_str(root->events, p.panel_files, 0);
-  fprintf(root->events, ",\"islandPanels\":\"%s\",\"leafRestart\":%u,\"nemesisEvery\":%u", own_panels ? "own" : "shared", leaf_restart,
-          nemesis_every);
+  fprintf(root->events, ",\"islandPanels\":\"%s\",\"leafRestart\":%u,\"nemesisEvery\":%u,\"explorers\":%u", own_panels ? "own" : "shared",
+          leaf_restart, nemesis_every, explorers);
   fputs(",\"variants\":[", root->events);
   for (uint32_t k = 0; k < variant_n; k++) {
     if (k) fputc(',', root->events);
@@ -4705,6 +4764,7 @@ typedef struct {
   int own_panels;                                                   // --island-panels own
   uint32_t leaf_restart;                                            // --leaf-restart
   uint32_t nemesis_every;                                           // --nemesis-every
+  uint32_t explorers;                                               // --explorers
   int islands_option;
   const char *variant[ISLANDS_MAX]; // --island-variant, in their order
   uint32_t variant_n;
@@ -4922,6 +4982,7 @@ static int parse_cli(int argc, char **argv, cli *c) {
     else if (!strcmp(a, "--migrate")) c->islands_migrate_every = u, c->islands_option = c->migrate_given = 1;
     else if (!strcmp(a, "--leaf-restart")) c->leaf_restart = u, c->islands_option = 1;
     else if (!strcmp(a, "--nemesis-every")) c->nemesis_every = u, c->islands_option = 1;
+    else if (!strcmp(a, "--explorers")) c->explorers = u, c->islands_option = 1;
     else if (!strcmp(a, "--size")) p->rules.core_size = u;
     else if (!strcmp(a, "--cycles")) p->rules.max_cycles = u;
     else if (!strcmp(a, "--processes")) p->rules.max_processes = u;
@@ -5034,7 +5095,7 @@ static int island_variants(int argc, char **argv, const cli *c, params *out) {
                    w.islands_n != c->islands_n ||
                    w.islands_keep != c->islands_keep || w.islands_every != c->islands_every ||
                    w.islands_rounds != c->islands_rounds || w.islands_migrate_every != c->islands_migrate_every ||
-                   w.migrate_random != c->migrate_random || w.migrate_next != c->migrate_next || w.own_panels != c->own_panels || w.leaf_restart != c->leaf_restart || w.nemesis_every != c->nemesis_every ||
+                   w.migrate_random != c->migrate_random || w.migrate_next != c->migrate_next || w.own_panels != c->own_panels || w.leaf_restart != c->leaf_restart || w.nemesis_every != c->nemesis_every || w.explorers != c->explorers ||
                    w.optimize_file != c->optimize_file))
       differs = "--batches, --seconds, --optimize or an option of the islands";
     if (wrong || differs) {
@@ -5137,6 +5198,10 @@ int main(int argc, char **argv) {
         fprintf(stderr, "42evolve: --leaf-restart with --migrate-to tree\n");
         return 2;
       }
+      if (c.explorers && (c.explorers >= islands_n || (c.migrate_given && !islands_migrate_every) || c.migrate_next == 3 || c.nemesis_every || islands_keep)) {
+        fprintf(stderr, "42evolve: --explorers fewer than the islands, with migration, not with --migrate-to tree, --nemesis-every or --keep\n");
+        return 2;
+      }
       if (c.nemesis_every && (islands_n < 2 || !islands_every || c.nemesis_every % islands_every || islands_keep || c.migrate_next == 3)) {
         fprintf(stderr, "42evolve: --nemesis-every with 2 islands or more, a multiple of --select-after, not with --keep or --migrate-to tree\n");
         return 2;
@@ -5178,8 +5243,8 @@ int main(int argc, char **argv) {
       signal(SIGINT, on_signal);
       signal(SIGTERM, on_signal);
       return islands_new(p, variants, c.variant, c.variant_n, dir, islands_n, islands_keep, islands_every, islands_rounds,
-                         islands_migrate_every, c.migrate_random, c.migrate_next, c.leaf_restart, c.nemesis_every, c.own_panels,
-                         threads, batches, seconds);
+                         islands_migrate_every, c.migrate_random, c.migrate_next, c.leaf_restart, c.nemesis_every, c.explorers,
+                         c.own_panels, threads, batches, seconds);
     }
     if (run_new(&r, threads, optimize_file != 0) != 0) return 1;
   }
