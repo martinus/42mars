@@ -20,6 +20,16 @@ import { kind as styleKind, measureStyle } from '../tools/style.js';
 import { bestRedInfo } from '../tools/progress.js';
 import { setup, cleanup, root, tmp, evolve, skip, RULES, TINY, run, events, without, stable, checkValues } from './evolver-common.js';
 
+// Each [extra, message] of cases is refused: exit code 2, the message on stderr, no folder made.
+function refuses(dir, base, cases) {
+  for (const [extra, message] of cases) {
+    const r = spawnSync(evolve, [dir, ...base, ...extra, '--batches', '1'], { encoding: 'utf8', timeout: 60000 });
+    assert.equal(r.status, 2, extra.join(' '));
+    assert.match(r.stderr, message, extra.join(' '));
+  }
+  assert.ok(!existsSync(dir));
+}
+
 before(setup);
 after(cleanup);
 
@@ -352,12 +362,7 @@ test('--island-variant: islands with their own settings, each the run alone with
     [['--island-variant', 'elsewhere'], /usage/],
     [['--island-variant', '--tune-novel 1', '--migrate', '2'], /not with --tune-novel/],
   ];
-  for (const [extra, message] of refused) {
-    const r = spawnSync(evolve, [join(tmp, 'var-no'), ...args, '--islands', '3', ...extra, '--batches', '1'], { encoding: 'utf8', timeout: 60000 });
-    assert.equal(r.status, 2, extra.join(' '));
-    assert.match(r.stderr, message, extra.join(' '));
-  }
-  assert.ok(!existsSync(join(tmp, 'var-no')));
+  refuses(join(tmp, 'var-no'), [...args, '--islands', '3'], refused);
   // a variant without --islands
   assert.equal(spawnSync(evolve, [join(tmp, 'var-no'), ...args, '--island-variant', '--list 12', '--batches', '1'], { encoding: 'utf8', timeout: 60000 }).status, 2);
 });
@@ -409,12 +414,23 @@ test('--island-panels own: each island its own panel from one round robin, one h
     [['--island-panels', 'own'], /usage/],
     [['--islands', '3', '--island-panels', 'mine'], /usage/],
   ];
-  for (const [extra, message] of refused) {
-    const r = spawnSync(evolve, [join(tmp, 'own-no'), ...args, ...extra, '--batches', '1'], { encoding: 'utf8', timeout: 60000 });
-    assert.equal(r.status, 2, extra.join(' '));
-    assert.match(r.stderr, message, extra.join(' '));
+  refuses(join(tmp, 'own-no'), args, refused);
+  // too few candidates (10 of a sample of 40 for a panel of 10): every island would get the same panel
+  const few = spawnSync(evolve, [join(tmp, 'own-few'), ...without(args, '--pick-sample', '--panel'), '--pick-sample', '40', '--panel', '10', ...isl, '--batches', '1'], { encoding: 'utf8', timeout: 60000 });
+  assert.notEqual(few.status, 0);
+  assert.match(few.stderr, /--island-panels own: 10 candidates of a sample of 40 for a panel of 10; it needs twice the panel/);
+  // a holdout of 420, more than the warriors in no panel (of the 436 files, those that fit the rules): each island the
+  // same, as many as there are, in no panel
+  const big = join(tmp, 'own-holdout');
+  run(big, [...without(args, '--holdout'), '--holdout', '420', ...isl, '--threads', '4', '--batches', '1']);
+  const starts = [1, 2, 3, 4].map((i) => events(join(big, `island-0${i}`))[0]);
+  const inPanels = new Set(starts.flatMap((e) => files(e.panel)));
+  for (const e of starts) {
+    assert.deepEqual(files(e.holdout), files(starts[0].holdout));
+    assert.ok(!files(e.holdout).some((x) => inPanels.has(x)), 'a holdout warrior in a panel');
   }
-  assert.ok(!existsSync(join(tmp, 'own-no')));
+  // of the warriors that fit the rules all are in a panel or the holdout: fewer than 420 are left
+  assert.ok(starts[0].holdout.length < 420, `a holdout of ${starts[0].holdout.length}`);
 });
 
 test('--migrate-to tree --leaf-restart: each island takes the best of its children, the leaves start over from random warriors in turns; the same on any thread count and after a resume', { skip }, () => {
@@ -480,14 +496,11 @@ test('--migrate-to tree --leaf-restart: each island takes the best of its childr
     [['--islands', '7', '--migrate-to', 'next', '--leaf-restart', '4'], /--leaf-restart with --migrate-to tree/],
     [['--islands', '2', '--migrate-to', 'tree'], /--migrate-to tree with 3 islands or more/],
     [['--islands', '7', '--migrate-to', 'tree', '--island-variant', '--leaf-restart 4'], /an option of the islands the same/],
+    [['--islands', '7', '--migrate-to', 'tree', '--leaf-restart', '4', '--start', join(root, 'warriors')], /--leaf-restart and --nemesis-every not with --start/],
+    [['--islands', '7', '--migrate-to', 'tree', '--leaf-restart', '4', '--tune-novel', '1'], /need migration \(not with --migrate 0 or --tune-novel\)/],
     [['--leaf-restart', '4'], /usage/],
   ];
-  for (const [extra, message] of refused) {
-    const r = spawnSync(evolve, [join(tmp, 'tree-no'), ...args, ...extra, '--batches', '1'], { encoding: 'utf8', timeout: 60000 });
-    assert.equal(r.status, 2, extra.join(' '));
-    assert.match(r.stderr, message, extra.join(' '));
-  }
-  assert.ok(!existsSync(join(tmp, 'tree-no')));
+  refuses(join(tmp, 'tree-no'), args, refused);
 });
 
 test('--nemesis-every: the weakest island makes way for one whose panel is what the champion does worst against; the same on any thread count and after a resume', { skip }, () => {
@@ -573,14 +586,10 @@ test('--nemesis-every: the weakest island makes way for one whose panel is what 
     [['--islands', '4', '--select-after', '2', '--keep', '2', '--nemesis-every', '4'], /not with --keep or --migrate-to tree/],
     [['--islands', '4', '--select-after', '2', '--migrate-to', 'tree', '--nemesis-every', '4'], /not with --keep or --migrate-to tree/],
     [['--islands', '4', '--select-after', '2', '--island-variant', '--nemesis-every 4'], /an option of the islands the same/],
+    [['--islands', '4', '--select-after', '2', '--nemesis-every', '4', '--start', join(root, 'warriors')], /--leaf-restart and --nemesis-every not with --start/],
     [['--nemesis-every', '4'], /usage/],
   ];
-  for (const [extra, message] of refused) {
-    const r = spawnSync(evolve, [join(tmp, 'nemesis-no'), ...args, ...extra, '--batches', '1'], { encoding: 'utf8', timeout: 60000 });
-    assert.equal(r.status, 2, extra.join(' '));
-    assert.match(r.stderr, message, extra.join(' '));
-  }
-  assert.ok(!existsSync(join(tmp, 'nemesis-no')));
+  refuses(join(tmp, 'nemesis-no'), args, refused);
 });
 
 test('--explorers: the last K islands take no migrants, the others take from all of them; the same on any thread count and after a resume', { skip }, () => {
@@ -609,19 +618,15 @@ test('--explorers: the last K islands take no migrants, the others take from all
   // no core, no migration, a tree, nemesis islands, --keep, in a variant, without --islands: refused
   const refused = [
     [['--islands', '3', '--explorers', '3'], /--explorers fewer than the islands/],
-    [['--islands', '3', '--explorers', '1', '--migrate', '0'], /--explorers fewer than the islands, with migration/],
+    [['--islands', '3', '--explorers', '1', '--migrate', '0'], /need migration \(not with --migrate 0 or --tune-novel\)/],
     [['--islands', '3', '--explorers', '1', '--migrate-to', 'tree'], /not with --migrate-to tree/],
     [['--islands', '3', '--explorers', '1', '--select-after', '2', '--nemesis-every', '2'], /not with --migrate-to tree, --nemesis-every/],
     [['--islands', '3', '--explorers', '1', '--select-after', '2', '--keep', '2'], /--nemesis-every or --keep/],
     [['--islands', '3', '--island-variant', '--explorers 1'], /an option of the islands the same/],
+    [['--islands', '3', '--explorers', '1', '--tune-novel', '1'], /need migration \(not with --migrate 0 or --tune-novel\)/],
     [['--explorers', '1'], /usage/],
   ];
-  for (const [extra, message] of refused) {
-    const r = spawnSync(evolve, [join(tmp, 'explorers-no'), ...args, ...extra, '--batches', '1'], { encoding: 'utf8', timeout: 60000 });
-    assert.equal(r.status, 2, extra.join(' '));
-    assert.match(r.stderr, message, extra.join(' '));
-  }
-  assert.ok(!existsSync(join(tmp, 'explorers-no')));
+  refuses(join(tmp, 'explorers-no'), args, refused);
 });
 
 test('--optimize: the constants of a warrior, steps confirmed with other seeds, the same on any thread count', { skip }, () => {
