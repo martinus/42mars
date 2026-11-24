@@ -6,7 +6,7 @@ Each file is the `best.red` as the run wrote it, with one line added: `;strategy
 
 The tables are sorted by the score against the holdout: points per 100 rounds against the 100 warriors of the hill that run kept out of its panel. Each run drew its own holdout, so these scores compare only roughly. "Whole hill" is the score against every warrior of the hill, 100 rounds each, where the run measured it (folders of islands, `--islands`); that one compares across runs. "Batch" is when the warrior was found, as far as the run says.
 
-The runs of 14th to 19th November 2026 are in this first collection: the E5 comparisons and the push-off comparisons of `docs/evolver.md`. Fancy Falcon (21st November) is the first from a run on generators (`--genome gen`, #174): 16 islands, half of them screening against every member, each taking a member drawn from an island drawn every 5 batches; 117.0 against the whole hill, 6.7 above the best before it. Lucky Minotaur II, island 13 of the same run at batch 200, is the same design tuned further: 122.1. The islands then stayed at 122 to 123 for 800 batches, all with such a clear on top, while the other warriors of their lists kept rising against the panel; at batch 1100 Zesty Coyote, island 8, a clear with a second write stream and a second SPL, scored 131.4, and five islands were above 127. Rowdy Stingray, island 10 at batch 1200, is that design in four instructions: 135.3. From then to batch 1700 the run stayed at 135 to 136 with this clear on top of every island; Eager Ferret II, island 14, is the best of that time, 135.6.
+The runs of 14th to 19th November 2026 are in this first collection: the E5 comparisons and the push-off comparisons of `docs/evolver.md`. Fancy Falcon (21st November) is the first from a run on generators (`--genome gen`, #174): 16 islands, half of them screening against every member, each taking a member drawn from an island drawn every 5 batches; 117.0 against the whole hill, 6.7 above the best before it. Lucky Minotaur II, island 13 of the same run at batch 200, is the same design tuned further: 122.1. The islands then stayed at 122 to 123 for 800 batches, all with such a clear on top, while the other warriors of their lists kept rising against the panel; at batch 1100 Zesty Coyote, island 8, a clear with a second write stream and a second SPL, scored 131.4, and five islands were above 127. Rowdy Stingray, island 10 at batch 1200, is that design in four instructions: 135.3. On the tiny hill, Zealous Adder CXXVII (`tiny-own16`, 16 islands with a panel of their own, 23rd November 2026) is the best so far: 167.2 against the whole hill. Fickle Mosquito XLIV of the same run, 165.3, placed 110th of 437 in a round robin with the hill's 436 warriors. From then to batch 1700 the run stayed at 135 to 136 with this clear on top of every island; Eager Ferret II, island 14, is the best of that time, 135.6.
 
 ## '94 hill without p-space: `94nop/`, 169 warriors
 
@@ -184,12 +184,13 @@ Rules: pMARS's defaults: core 8000, 80,000 cycles, 8000 processes, length 100, d
 | [Smug Yeti XI](94nop/smug-yeti-xi.red) | 2 |  | 105.8 | `islsda/island-02` | pareto-sd --difference ahead | 86 | 18th November 2026 |
 | [Rogue Kitten IV](94nop/rogue-kitten-iv.red) | 2 |  | 106.2 | `islv/island-06` | value | 42 | 18th November 2026 |
 
-## Tiny hill: `tiny/`, 118 warriors
+## Tiny hill: `tiny/`, 119 warriors
 
 Rules: `--size 800 --cycles 8000 --processes 800 --length 20 --distance 20`; opponents `warriors/koenigstuhl/tiny`.
 
 | warrior | length | holdout | whole hill | run | push-off | batch | date |
 |---|---|---|---|---|---|---|---|
+| [Zealous Adder CXXVII](tiny/zealous-adder-cxxvii.red) | 20 | 183.4 | 167.2 | `tiny-own16/island-13` | pareto-sd | 6194 | 23rd November 2026 |
 | [Fearless Lobster MCCCXXXVII](tiny/fearless-lobster-mcccxxxvii.red) | 20 | 165.1 | 159.9 | `tsc5/island-11` | pareto-sd --clear 5 | 12889 | 19th November 2026 |
 | [Clever Llama MCCXLV](tiny/clever-llama-mccxlv.red) | 8 | 162.7 |  | `tall2` | pareto-sd --clear 5 | 15289 | 19th November 2026 |
 | [Neon Salamander CLIX](tiny/neon-salamander-clix.red) | 7 | 156.1 |  | `tsd/island-16` | pareto-sd | 1459 | 18th November 2026 |
