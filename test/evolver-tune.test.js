@@ -66,7 +66,7 @@ test('--tune-novel 1: the most novel survivor that left is tuned, and comes back
   assert.deepEqual(stable(events(join(tmp, 'tn-resumed'))), stable(evs));
 });
 
-test('--islands: runs in one process with the same panel and holdout, in turns; the best go on after their scores against the folder; the same on any thread count and after a resume', { skip }, () => {
+test('--islands: runs in one process with the same panel and holdout, in rounds; the best go on after their scores against the folder; the same on any thread count and after a resume', { skip }, () => {
   const N = 3, EVERY = 4, KEEP = 2, BATCHES = 9, SCORE = 5;
   // a picked panel, to see it picked once
   const args = [...without(TINY, '--panel-choice'), '--panel-choice', 'picked', '--pick-sample', '40',
@@ -119,7 +119,7 @@ test('--islands: runs in one process with the same panel and holdout, in turns; 
   assert.equal(s2.kept, undefined);
   assert.deepEqual(s2.islands.map((x) => x.island), s1.kept);
   const batchesOf = (ev) => ev.filter((e) => e.type === 'batch').length;
-  all.forEach((ev, k) => assert.equal(batchesOf(ev), s1.kept.includes(k + 1) ? BATCHES : EVERY, `batches of island ${k + 1}: in turns`));
+  all.forEach((ev, k) => assert.equal(batchesOf(ev), s1.kept.includes(k + 1) ? BATCHES : EVERY, `batches of island ${k + 1}: in rounds`));
   // one score as it was played: that warrior against every warrior of the folder with the logged seeds, in the WebAssembly engine
   const bestOf = [...s2.islands].sort((a, b) => b.score - a.score)[0], bw = [...bestOf.warriors].sort((a, b) => b.score - a.score)[0];
   const src = all[bestOf.island - 1].find((e) => e.type === 'enter' && e.id === bw.id).code;
@@ -179,8 +179,8 @@ test('--migrate: every M batches each island plays the best member of every othe
     for (const m of migrations) {
       assert.deepEqual(m.from.map(([j]) => j), [1, 2, 3].filter((j) => j !== k + 1));
       for (const [j, id] of m.from) {
-        // the islands take turns: one before this one has played its batch m.batch already, one after it not yet
-        const src = all[j - 1], upTo = j < k + 1 ? m.batch : m.batch - 1;
+        // the islands play in rounds: every island as the round before left it
+        const src = all[j - 1], upTo = m.batch - 1;
         const vals = src.filter((e) => e.type === 'values' && e.batch <= upTo).at(-1).values.filter((v) => !panel.has(v[0]));
         const best = vals.reduce((a, b) => (b[5] > a[5] ? b : a));
         assert.equal(id, best[0], `island ${k + 1}, batch ${m.batch}: the best of island ${j}`);
@@ -259,8 +259,8 @@ test('--migrate-pick random --migrate-to next: a member drawn, from the island b
       const j = k === 0 ? 3 : k;
       assert.deepEqual(m.from.map(([i]) => i), [j], `island ${k + 1}, batch ${m.batch}`);
       const [, id] = m.from[0];
-      // a member of that island then, as the turns took it
-      const src = all[j - 1], upTo = j < k + 1 ? m.batch : m.batch - 1;
+      // a member of that island then, as the round before left it
+      const src = all[j - 1], upTo = m.batch - 1;
       const vals = src.filter((e) => e.type === 'values' && e.batch <= upTo).at(-1).values.filter((v) => !panel.has(v[0]));
       assert.ok(vals.some((v) => v[0] === id), `island ${k + 1}, batch ${m.batch}: ${id} is no member of island ${j}`);
       if (id !== vals.reduce((a, b) => (b[5] > a[5] ? b : a))[0]) notBest++;
@@ -581,6 +581,47 @@ test('--nemesis-every: the weakest island makes way for one whose panel is what 
     assert.match(r.stderr, message, extra.join(' '));
   }
   assert.ok(!existsSync(join(tmp, 'nemesis-no')));
+});
+
+test('--explorers: the last K islands take no migrants, the others take from all of them; the same on any thread count and after a resume', { skip }, () => {
+  const args = [...TINY, '--list', '16', '--survivors', '8'];
+  const isl = ['--islands', '5', '--explorers', '3', '--migrate', '1', '--island-variant', ''];
+  const dir = join(tmp, 'explorers');
+  run(dir, [...args, ...isl, '--threads', '2', '--batches', '9']);
+  assert.equal(events(dir, 'islands.jsonl')[0].explorers, 3);
+  const all = [1, 2, 3, 4, 5].map((i) => events(join(dir, `island-0${i}`)));
+  const from = all.map((ev) => ev.filter((e) => e.type === 'migrate'));
+  for (const k of [2, 3, 4]) assert.equal(from[k].length, 0, `island ${k + 1} is an explorer`);
+  // the core (islands 1 and 2) takes a member every batch, from an island drawn among all others, explorers too
+  for (const k of [0, 1]) {
+    assert.deepEqual(from[k].map((e) => e.batch), [1, 2, 3, 4, 5, 6, 7, 8], `island ${k + 1}`);
+    const sources = new Set(from[k].flatMap((e) => e.from.map((f) => f[0])));
+    assert.ok([3, 4, 5].some((j) => sources.has(j)), `island ${k + 1} took from ${[...sources]}`);
+    assert.ok(!sources.has(k + 1));
+  }
+  // an explorer is the run alone: no warrior of another island ever enters it
+  for (const k of [2, 3, 4]) assert.ok(!all[k].some((e) => e.type === 'enter' && e.ops === 'migrant'), `island ${k + 1}`);
+  // the same stopped and continued on other thread counts
+  const again = join(tmp, 'explorers-resumed');
+  run(again, [...args, ...isl, '--threads', '3', '--batches', '4']);
+  run(again, ['--threads', '1', '--batches', '5']);
+  all.forEach((ev, k) => assert.deepEqual(stable(events(join(again, `island-0${k + 1}`))), stable(ev), `island ${k + 1}`));
+  // no core, no migration, a tree, nemesis islands, --keep, in a variant, without --islands: refused
+  const refused = [
+    [['--islands', '3', '--explorers', '3'], /--explorers fewer than the islands/],
+    [['--islands', '3', '--explorers', '1', '--migrate', '0'], /--explorers fewer than the islands, with migration/],
+    [['--islands', '3', '--explorers', '1', '--migrate-to', 'tree'], /not with --migrate-to tree/],
+    [['--islands', '3', '--explorers', '1', '--select-after', '2', '--nemesis-every', '2'], /not with --migrate-to tree, --nemesis-every/],
+    [['--islands', '3', '--explorers', '1', '--select-after', '2', '--keep', '2'], /--nemesis-every or --keep/],
+    [['--islands', '3', '--island-variant', '--explorers 1'], /an option of the islands the same/],
+    [['--explorers', '1'], /usage/],
+  ];
+  for (const [extra, message] of refused) {
+    const r = spawnSync(evolve, [join(tmp, 'explorers-no'), ...args, ...extra, '--batches', '1'], { encoding: 'utf8', timeout: 60000 });
+    assert.equal(r.status, 2, extra.join(' '));
+    assert.match(r.stderr, message, extra.join(' '));
+  }
+  assert.ok(!existsSync(join(tmp, 'explorers-no')));
 });
 
 test('--optimize: the constants of a warrior, steps confirmed with other seeds, the same on any thread count', { skip }, () => {
