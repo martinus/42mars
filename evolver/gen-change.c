@@ -1732,6 +1732,40 @@ int gen_change(gen *x, const gen *p2, rng *r, uint32_t core, uint32_t max_length
       gen_compile_info(p2, core, GEN_LINES, code, &info2);
       return rebuilt(x, p2, &o, core, max_length, r, st, &info2);
     }
+    case CH_LOOP: { // a loop of the donor p2: the units of its top level that write it, as crossover-insert copies them
+      if (!p2) return 0;
+      gen_info info2;
+      m42_instruction code[GEN_LINES];
+      const uint32_t len2 = gen_compile_info(p2, core, GEN_LINES, code, &info2);
+      uint32_t from, to;
+      if (!genome_pick_loop(code, len2, core, r, &from, &to)) return 0;
+      shape_of(p2, &sh2);
+      const uint32_t count2 = seq_units(p2, &sh2, 0, u2);
+      uint32_t a = NONE, b = NONE; // the units whose instructions hold from and to
+      for (uint32_t j = 0; j < count2; j++) {
+        const uint32_t ln = u2[j].first;
+        if (p2->l[ln].kind == GL_DEF || info2.pos[ln] == GEN_NONE) continue;
+        if (a == NONE && from >= info2.pos[ln] && from < info2.pos[ln] + info2.len[ln]) a = j;
+        if (to >= info2.pos[ln] && to < info2.pos[ln] + info2.len[ln]) b = j;
+      }
+      if (a == NONE || b == NONE || b < a) return 0;
+      const uint32_t k = b - a + 1, first = u2[a].first, lines = u2[b].first + u2[b].lines - first;
+      const uint32_t s = pick_sequence(&sh, r), count = seq_units(x, &sh, s, u);
+      const uint32_t cut = count + k > max_length ? count + k - max_length : 0; // what it replaces
+      if (cut && cut >= count) return 0;
+      const uint32_t q = rng_below(r, count - cut + 1);
+      uint8_t in[GEN_LINES] = {0};
+      for (uint32_t j = 0; j < lines; j++) {
+        in[first + j] = 1;
+        if (s && p2->l[first + j].kind == GL_DEF) return 0; // a function goes to the top level only
+      }
+      const uint32_t at = unit_line(x, &sh, s, u, count, q), on = unit_line(x, &sh, s, u, count, q + cut);
+      put(&o, SLOT_A, 0, at);
+      put(&o, SLOT_B, first, lines);
+      put(&o, SLOT_A, on, x->n - on);
+      put_functions(&o, p2, &sh2, in);
+      return rebuilt(x, p2, &o, core, max_length, r, st, &info2);
+    }
     case CH_RELATED_OPCODE: {
       uint32_t cand[GEN_LINES], cn = 0;
       for (uint32_t i = 0; i < x->n; i++)
@@ -1792,6 +1826,11 @@ int gen_change(gen *x, const gen *p2, rng *r, uint32_t core, uint32_t max_length
 
 void gen_breed(gen *child, const gen *p1, const gen *p2, rng *r, uint32_t core, uint32_t max_length, const genome_style *st,
                const genome_mix *mix, char *ops, size_t ops_n) {
+  gen_breed_donors(child, p1, p2, 0, 0, r, core, max_length, st, mix, ops, ops_n);
+}
+
+void gen_breed_donors(gen *child, const gen *p1, const gen *p2, const gen *const *donors, uint32_t nd, rng *r, uint32_t core,
+                      uint32_t max_length, const genome_style *st, const genome_mix *mix, char *ops, size_t ops_n) {
   if (ops_n) ops[0] = 0;
   if (max_length > GEN_LINES) max_length = GEN_LINES;
   const genome_mix def = genome_mix_default();
@@ -1806,7 +1845,9 @@ void gen_breed(gen *child, const gen *p1, const gen *p2, rng *r, uint32_t core, 
       uint64_t d = rng_below(r, total);
       int kind = 0;
       while (d >= mix->w[kind]) d -= mix->w[kind++];
-      if (gen_change(child, p2, r, core, max_length, st, kind)) {
+      const gen *mate = p2;
+      if (kind == CH_LOOP) mate = nd ? donors[rng_below(r, nd)] : 0;
+      if (gen_change(child, mate, r, core, max_length, st, kind)) {
         const char *name = genome_change_name(kind);
         const size_t len = strlen(ops);
         if (len + strlen(name) + 2 <= ops_n) {

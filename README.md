@@ -232,7 +232,7 @@ evolver/            42evolve, the evolver: a list kept by diversity push-off, on
 ui/                 Core War Theater, the visualizer, and the evolver's dashboard (plain ES modules, no build step)
 tools/              Node tools: asm, corpus, tournament, pushoff, serve, style, and the comparisons with pMARS
 bench/              speed measurements and A/B timing
-test/               npm test: 481 tests on node:test; C tests in test/c/, fuzz targets in test/fuzz/, recorded results in test/fixtures/
+test/               npm test: 482 tests on node:test; C tests in test/c/, fuzz targets in test/fuzz/, recorded results in test/fixtures/
 docs/               the semantics, the plan, the speed tricks, the performance log, development guide
 warriors/           sample warriors written for this repository, and Dewdney's Imp and Dwarf;
                     koenigstuhl/: 5,261 hill warriors, test material without a license;

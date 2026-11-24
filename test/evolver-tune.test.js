@@ -629,6 +629,35 @@ test('--explorers: the last K islands take no migrants, the others take from all
   refuses(join(tmp, 'explorers-no'), args, refused);
 });
 
+test('--changes loop: a loop of a donor, the warriors that left or the best of the other islands (not for an explorer); the same on any thread count and after a resume', { skip }, () => {
+  // every island starts from the Dwarf, whose loop (add, mov, jmp back) the others can give
+  const start = join(tmp, 'loop-start');
+  mkdirSync(start, { recursive: true });
+  copyFileSync(join(root, 'warriors/dwarf.red'), join(start, 'dwarf.red'));
+  const mix = 'opcode=81,modifier=81,a-mode=54,b-mode=54,a-operand=108,b-operand=108,org=27,replace=27,insert=100,delete=100,duplicate=70,move=70,crossover-insert=60,crossover-replace=60,loop=600';
+  const args = [...TINY, '--list', '16', '--survivors', '8', '--start', start, '--changes', mix];
+  const isl = ['--islands', '3', '--explorers', '1', '--migrate', '1', '--island-variant', ''];
+  const dir = join(tmp, 'loop');
+  run(dir, [...args, ...isl, '--threads', '2', '--batches', '8']);
+  const all = [1, 2, 3].map((i) => events(join(dir, `island-0${i}`)));
+  // while no member has left an island its archive is empty, so a loop bred then has its donor on another island
+  const loops = all.map((ev) => {
+    const born = new Map(ev.filter((e) => e.type === 'enter').map((e) => [e.id, e.batch]));
+    const left = ev.find((e) => e.type === 'leave' && born.get(e.id) < e.batch)?.batch ?? Infinity;
+    const bred = (keep) => ev.filter((e) => e.type === 'batch' && keep(e.batch)).reduce((a, e) => a + (e.ops.loop?.[0] ?? 0), 0);
+    return { early: bred((b) => b <= left), late: bred((b) => b > left) };
+  });
+  assert.ok(loops[0].early + loops[1].early > 0, `loops bred before the archives filled: ${JSON.stringify(loops)}`);
+  assert.equal(loops[2].early, 0, 'an explorer has no island donors');
+  assert.ok(loops[2].late > 0, 'the explorer breeds loops from its archive once a member left');
+  assert.ok(all.some((ev) => ev.some((e) => e.type === 'enter' && / loop\b|^loop\b/.test(e.ops))), 'a child with a loop entered');
+  // the same stopped and continued on other thread counts
+  const again = join(tmp, 'loop-resumed');
+  run(again, [...args, ...isl, '--threads', '3', '--batches', '3']);
+  run(again, ['--threads', '1', '--batches', '5']);
+  all.forEach((ev, k) => assert.deepEqual(stable(events(join(again, `island-0${k + 1}`))), stable(ev), `island ${k + 1}`));
+});
+
 test('--optimize: the constants of a warrior, steps confirmed with other seeds, the same on any thread count', { skip }, () => {
   // a stone whose step of 100 bombs 8 cells of a core of 800
   const file = join(tmp, 'badstep.red');

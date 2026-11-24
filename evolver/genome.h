@@ -99,6 +99,7 @@ enum {
   CH_RELATED_MODE,   // another mode of the same family ($ @ *, < > { }; # becomes $)
   CH_SHARED,         // a far value set to another far value of the warrior, or its negative
   CH_TUNE,           // a far value moved by up to 2% of its size (at least 4)
+  CH_LOOP,           // a loop of a donor (genome_pick_loop()) copied in: from the archive or another island (#182)
   CH_COUNT,          // the kinds of a list
   // The kinds that make and change the structure of a generator
   // (gen-change.h); on a list they do not apply.
@@ -120,7 +121,8 @@ const char *genome_change_name(int kind);
 
 // One change of the given kind. Returns 0 and leaves x as it was when the
 // kind does not apply (insert at the longest length, crossover without p2,
-// shared-constant with fewer than two far values, ...).
+// shared-constant with fewer than two far values, ...). CH_LOOP takes its
+// loop from p2, the donor.
 int genome_change(genome *x, const genome *p2, rng *r, uint32_t core_size, uint32_t max_length,
                   const genome_style *style, int kind);
 
@@ -137,6 +139,13 @@ void genome_mutate_operand(rng *r, uint32_t core_size, uint32_t n, int64_t offse
                            uint8_t *ref, uint32_t *v);
 uint32_t genome_block(rng *r, uint32_t len);
 uint32_t genome_tune(rng *r, uint32_t core_size, uint32_t v); // a far value moved by one step of CH_TUNE
+// A loop of the warrior code[0 .. len) for CH_LOOP: an instruction i that
+// jumps back (JMP, JMZ, JMN or DJN with a direct A operand) to an instruction
+// t at or before it, one of them drawn, with the cells of the warrior that
+// the operands of t .. i point at (not #), and theirs, until nothing more is
+// added: the data the loop works through. *from and *to the first and last
+// instruction. 0 (and nothing drawn) when the warrior has none.
+int genome_pick_loop(const m42_instruction *code, uint32_t len, uint32_t core_size, rng *r, uint32_t *from, uint32_t *to);
 int genome_opcode_family(uint8_t op);
 int genome_mode_family(uint8_t m);
 
@@ -173,6 +182,14 @@ size_t genome_mix_text(const genome_mix *m, char *buf, size_t n);
 // ops_n).
 void genome_breed(genome *child, const genome *p1, const genome *p2, rng *r, uint32_t core_size, uint32_t max_length,
                   const genome_style *style, const genome_mix *mix, char *ops, size_t ops_n);
+#define GENOME_DONORS_MAX 1024 // the most donors of genome_breed_donors()
+// genome_breed() with donors for CH_LOOP: warriors from elsewhere than the
+// list (its archive, other islands). A CH_LOOP draws one of the n of them;
+// without donors it does not apply. Nothing is drawn for them otherwise, so a
+// mix without CH_LOOP breeds as genome_breed().
+void genome_breed_donors(genome *child, const genome *p1, const genome *p2, const genome *const *donors, uint32_t n,
+                         rng *r, uint32_t core_size, uint32_t max_length, const genome_style *style, const genome_mix *mix,
+                         char *ops, size_t ops_n);
 
 // Text form for the state file: "len start" then 8 numbers per instruction;
 // of a generator "gen" and the numbers of gen_save(). GENOME_SAVE_MAX bytes

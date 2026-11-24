@@ -461,7 +461,7 @@ static void test_changes(void) {
     if (!genome_change(&c, &q, &r, CORE, 40, 0, kind)) continue;
     applied[kind]++;
     CHECK(valid(&c, 40), "%s gave an invalid genome", genome_change_name(kind));
-    if (kind < CH_RELATED_OPCODE) continue;
+    if (kind < CH_RELATED_OPCODE || kind == CH_LOOP) continue; // the four small steps follow; loop copies a block
     CHECK(c.len == p.len && c.start == p.start, "%s changed the length or the start", genome_change_name(kind));
     uint32_t diff = 0;
     for (uint32_t i = 0; i < p.len; i++) {
@@ -503,7 +503,44 @@ static void test_changes(void) {
     }
     CHECK(diff == 1, "%s changed %u instructions", genome_change_name(kind), diff);
   }
-  for (int k = 0; k < CH_COUNT; k++) CHECK(applied[k] > 50, "%s applied only %u times", genome_change_name(k), applied[k]);
+  // loop needs a donor with a loop, which few random warriors have (test_loop() has one)
+  for (int k = 0; k < CH_COUNT; k++) CHECK(applied[k] > (k == CH_LOOP ? 10 : 50), "%s applied only %u times", genome_change_name(k), applied[k]);
+}
+
+// loop: a loop of the donor, from its jump back's target to the jump, with
+// the cell it works through (the DAT its ADD and MOV point at), goes into the
+// child whole, the jump still going back to the copy of its target; a child
+// at the longest length gets it in place of as many instructions; a donor
+// without a loop gives nothing.
+static void test_loop(void) {
+  rng r = rng_seed(31, 32, 33);
+  // a DAT, then the Dwarf's loop (ADD.AB #4, $3; MOV.I $2, @2; JMP $-2), then the DAT both point at
+  const m42_instruction d[5] = {{12, 4, 0, 0, 0, 0, 1},  {1, 2, 0, 1, 4, 3, 2}, {0, 6, 1, 2, 2, 2, 3},
+                                {13, 1, 1, 1, CORE - 2, 0, 4}, {12, 4, 0, 0, 0, 0, 5}};
+  genome donor, none, p, c;
+  genome_from_code(&donor, d, 5, 1, CORE);
+  m42_instruction flat[5] = {d[0], d[1], d[2], d[0], d[4]}; // the JMP a DAT: no loop
+  genome_from_code(&none, flat, 5, 0, CORE);
+  uint32_t full = 0;
+  for (int round = 0; round < 300; round++) {
+    const uint32_t len = round % 10 ? 2 + rng_below(&r, 30) : 40;
+    genome_random(&p, &r, CORE, len, 0);
+    c = p;
+    CHECK(!genome_change(&c, &none, &r, CORE, 40, 0, CH_LOOP) && memcmp(&c, &p, sizeof c) == 0, "a donor without a loop gave one");
+    CHECK(genome_change(&c, &donor, &r, CORE, 40, 0, CH_LOOP), "round %d: no loop from the Dwarf", round);
+    CHECK(valid(&c, 40) && c.len == (len + 4 <= 40 ? len + 4 : 40), "round %d: length %u from %u", round, c.len, len);
+    full += len == 40;
+    m42_instruction code[GENOME_MAX];
+    genome_code(&c, CORE, code);
+    int found = 0;
+    for (uint32_t i = 0; i + 3 < c.len && !found; i++) {
+      const m42_instruction *k = &code[i];
+      found = k[0].opcode == 1 && k[0].a == 4 && k[0].b == 3 && k[1].opcode == 0 && k[1].a == 2 && k[1].b == 2 &&
+              k[2].opcode == 13 && k[2].a_mode == 1 && k[2].a == CORE - 2 && k[3].opcode == 12;
+    }
+    CHECK(found, "round %d: the loop is not whole in the child", round);
+  }
+  CHECK(full >= 20, "only %u children at the longest length", full);
 }
 
 // --changes: the text form reads back, bad texts are refused, and
@@ -564,6 +601,7 @@ int main(void) {
   test_weights();
   test_from_code();
   test_changes();
+  test_loop();
   test_mix();
   if (failures) {
     fprintf(stderr, "%d failures\n", failures);
