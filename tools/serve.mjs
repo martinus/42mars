@@ -15,6 +15,9 @@
 // to a host, and a stream per run kept them all busy, so that pages from the
 // same server waited for a free one (Firefox, 15th November 2026).
 // ui/evolver.html?run=<n> shows one run, ui/runs.html all of them.
+// /run/<n>/scores: of an island, the events `score` of its folder's
+// islands.jsonl and the kinds of the opponents' warriors where
+// tools/hill-kinds.mjs has a cache of them (the dashboard's tab Designs).
 // A folder of islands (42evolve --islands) given to --run stands for all its
 // islands, each named <folder>/island-NN.
 // --run takes every folder up to the next option, so `--run ~/42evolve.*`
@@ -43,6 +46,7 @@ import { createServer } from 'node:http';
 import { open, readFile, stat } from 'node:fs/promises';
 import { basename, dirname, extname, join, normalize, resolve } from 'node:path';
 import { bestRedInfo, kindCounts, progressPoint } from './progress.js';
+import { shortKind } from './style.js';
 
 const root = resolve(new URL('..', import.meta.url).pathname);
 const usage = (why) => {
@@ -362,12 +366,54 @@ async function runList() {
   });
 }
 
+// The scores of the islands of the folder of run dir (an island): { scores,
+// opponents, kinds: file -> short kind, or null without a cache }. The cache
+// is the one tools/hill-kinds.mjs writes by default (defaultOut(): the hill
+// named as the opponents' folder, else 94nop); the server never measures, a
+// first measurement takes minutes.
+async function scoresOf(dir) {
+  if (!ISLAND.test(basename(dir))) return { scores: [], opponents: null, kinds: null };
+  const text = await readFile(join(dir, '..', 'islands.jsonl'), 'utf8').catch(() => '');
+  const scores = [];
+  let opponents = null;
+  for (const line of text.split('\n')) {
+    const t = typeOf(line);
+    if (t !== 'score' && t !== 'islands') continue;
+    try {
+      const e = JSON.parse(line);
+      if (t === 'islands') opponents = e.opponents;
+      else scores.push(e);
+    } catch {} // a line being written
+  }
+  let kinds = null;
+  if (opponents) {
+    const base = basename(opponents), hill = ['94nop', 'tiny'].includes(base) ? base : '94nop';
+    try {
+      const cache = JSON.parse(await readFile(join(root, 'build', 'hill-kinds', `${hill}-${base}.json`), 'utf8'));
+      kinds = Object.fromEntries(Object.entries(cache.warriors).map(([f, w]) => [f, shortKind(w.kind)]));
+    } catch {} // no cache: the designs without the kinds of their opponents
+  }
+  return { scores, opponents, kinds };
+}
+
 const eventStream = (res) => res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', connection: 'keep-alive' });
 const sse = (event, data) => `${event === 'message' ? '' : `event: ${event}\n`}data: ${data}\n\n`;
 
 createServer(async (req, res) => {
   const url = new URL(req.url, 'http://x');
   const path = decodeURIComponent(url.pathname);
+  const scores = /^\/run\/(\d+)\/scores$/.exec(path);
+  if (scores) {
+    if (Number(scores[1]) >= runDirs.length) findRuns();
+    const dir = runDirs[Number(scores[1])];
+    if (!dir) {
+      res.writeHead(404).end('no such run');
+      return;
+    }
+    res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-cache' });
+    res.end(JSON.stringify(await scoresOf(dir)));
+    return;
+  }
   const run = /^\/run(?:\/(\d+))?\/events$/.exec(path);
   if (run) {
     if (Number(run[1] ?? 0) >= runDirs.length) findRuns(); // a run that started since the last /runs
