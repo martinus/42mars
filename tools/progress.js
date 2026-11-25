@@ -60,11 +60,16 @@ export function opcodesOf(code) {
   return ops.join(' ');
 }
 
-// A small hash of a text (FNV-1a), to find the same code again.
+// A hash of a text to find the same code again without keeping it: two
+// hashes of 32 bits (FNV-1a and the multiplier 31) and the length, as text.
 function hashOf(s) {
-  let h = 0x811c9dc5;
-  for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 16777619);
-  return h >>> 0;
+  let h = 0x811c9dc5, g = 0;
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i);
+    h = Math.imul(h ^ c, 16777619);
+    g = (Math.imul(g, 31) + c) | 0;
+  }
+  return `${(h >>> 0).toString(36)}.${(g >>> 0).toString(36)}.${s.length}`;
 }
 
 const NUMBER = Object.fromEntries(['id', 'batch', 'members', 'avg'].map((k) => [k, new RegExp(`"${k}":(-?[\\d.]+(?:e[-+]?\\d+)?)`)]));
@@ -88,10 +93,12 @@ function finish(w) {
 //
 //   start     the rules and settings of the run (event start)
 //   batch     the last batch, members its list after it
-//   top       per batch with a values event: [batch, best and mean of the
-//             members' averages against the panel, best against the holdout
-//             so far (-1 none), the ids of the 3 best by panel average (-1
-//             none)], as progressPoint() of the dashboard
+//   top       per batch: [batch, best and mean of the members' averages
+//             against the panel, best against the holdout so far (-1 none),
+//             the ids of the 3 best by panel average (-1 none)], as
+//             progressPoint() of the dashboard: the members of the values
+//             event, the holdout at the batch event (the bench of a batch
+//             comes after its values)
 //   now       the 3 best by panel average after the last batch, with code
 //   designs   each family and each kind of style the first time it holds
 //             a place among the 3 best by panel average for `hold` batches
@@ -107,7 +114,8 @@ function finish(w) {
 //             ops (the changes that made it), name, kind of style, opcodes,
 //             last average against the panel (-1 none), hash of its code,
 //             a migrant: the [island, id] of each warrior its migrate event
-//             sent (lineOf() takes the one with its code), else null]
+//             sent (sourceOf() takes the one it is), else null, the batch it
+//             left (-1 not)]
 //
 // Of the events only start, enter, leave, values, bench, migrate and batch
 // are read (TYPES); of an enter event only what comes before the
@@ -132,6 +140,7 @@ export class RunDigest {
     this.born = []; // the ids that entered in this batch
     this.migrants = []; // the candidates [island, id] of the last migrate event
     this.top = [];
+    this.point = null; // the progress point of the values event, until its batch event
     this.designs = [];
     this.held = new Set(); // 'family Mantis', 'kind ...': the designs held already
     this.streaks = new Map(); // design -> { batch, w, n }: those among the 3 best now, since when, with whom, how long
@@ -161,14 +170,17 @@ export class RunDigest {
         }
         const from = e.ops === 'migrant' ? this.migrants : null;
         // the opcodes and the hash once it stays (finish): most newcomers leave in their batch
-        this.known.set(e.id, { id: e.id, parents: e.parents, batch: e.batch, ops: e.ops, name: e.name ?? `#${e.id}`, kind: e.style?.kind ?? '', code: e.code, opcodes: null, panelAvg: -1, hash: 0, from, kids: false });
+        this.known.set(e.id, { id: e.id, parents: e.parents, batch: e.batch, ops: e.ops, name: e.name ?? `#${e.id}`, kind: e.style?.kind ?? '', code: e.code, opcodes: null, panelAvg: -1, hash: '', from, kids: false, left: -1 });
         this.alive.set(e.id, e.code);
         this.born.push(e.id);
         break;
       }
-      case 'leave':
-        this.alive.delete(number('id'));
+      case 'leave': {
+        const id = number('id'), w = this.known.get(id);
+        this.alive.delete(id);
+        if (w) w.left = number('batch');
         break;
+      }
       case 'migrate':
         this.migrants = JSON.parse(line).from;
         break;
@@ -182,9 +194,9 @@ export class RunDigest {
           ms.push(v);
         }
         ms.sort((a, b) => b[5] - a[5] || a[0] - b[0]);
-        const p = progressPoint(ms.map((v) => v[5] ?? 0), this.holdout?.avg ?? -1);
+        const p = progressPoint(ms.map((v) => v[5] ?? 0), -1);
         const ids = [0, 1, 2].map((k) => ms[k]?.[0] ?? -1);
-        this.top.push([e.batch, p.best, p.mean, p.holdout, ...ids]);
+        this.point = [e.batch, p.best, p.mean, ...ids]; // the holdout at the batch event: 42evolve writes the bench after the values
         this.last = ids.filter((id) => id >= 0);
         const now = new Map(); // design -> the first of the 3 best that has it
         for (const id of this.last) {
@@ -208,6 +220,9 @@ export class RunDigest {
       }
       case 'batch':
         this.batch = number('batch');
+        // the progress point as the dashboard and tools/serve.mjs take it at the batch event, with the bench of this batch
+        if (this.point?.[0] === this.batch) this.top.push([...this.point.slice(0, 3), this.holdout?.avg ?? -1, ...this.point.slice(3)]);
+        this.point = null;
         this.members = number('members') || this.alive.size;
         // a warrior that came and went in this batch without children is nobody's ancestor, unless it comes back
         for (const id of this.born) {
@@ -228,7 +243,7 @@ export class RunDigest {
   }
 
   result() {
-    const warriors = [...this.known.values()].map(finish).map((w) => [w.id, w.parents[0] ?? -1, w.parents[1] ?? -1, w.batch, w.ops, w.name, w.kind, w.opcodes, w.panelAvg, w.hash, w.from]);
+    const warriors = [...this.known.values()].map(finish).map((w) => [w.id, w.parents[0] ?? -1, w.parents[1] ?? -1, w.batch, w.ops, w.name, w.kind, w.opcodes, w.panelAvg, w.hash, w.from, w.left]);
     const now = this.last.map((id) => ({ ...this.byId(id), code: this.alive.get(id) }));
     return { start: this.start, batch: this.batch, members: this.members, top: this.top, now, designs: this.designs, holdout: this.holdout, warriors };
   }
@@ -242,13 +257,14 @@ export class RunDigest {
 
 // The line of a warrior: it and its first parents back to where it came
 // from, the oldest first. warrior(island, id) gives the row of
-// RunDigest.result().warriors (island 0 for a run without islands). A
-// migrant continues on the island it came from, with the warrior of its
-// migrate event that has its code (the only one there was, when that one is
-// not known). Each step: { island, id, batch, ops, name, family, kind,
-// opcodes, panelAvg }; the oldest also has missing: true when the line goes
-// on but its warrior is not known (a run continued with --start from
-// another one, or the history lost).
+// RunDigest.result().warriors (island 0 for a run without islands). Each
+// step: { island, id, batch, ops, name, family, kind, opcodes, panelAvg }.
+// A migrant continues on the island it came from (sourceOf). The oldest step
+// has missing: true when the line goes on but its warrior is not known (a
+// run continued with --start from another one, the history lost, a migrant
+// whose source is not among the warriors of its migrate event); then island
+// and id are null and from has the candidates, and ambiguous: true when
+// more than one of them can be it.
 export function lineOf(warrior, island, id) {
   const steps = [], seen = new Set();
   for (let at = [island, id]; at;) {
@@ -263,8 +279,34 @@ export function lineOf(warrior, island, id) {
     const [wid, parent, , batch, ops, name, kind, opcodes, panelAvg, , from] = w;
     steps.push({ island: at[0], id: wid, batch, ops, name, family: familyOf(name), kind, opcodes, panelAvg });
     if (parent >= 0) at = [at[0], parent];
-    else if (from?.length) at = from.find(([i, j]) => warrior(i, j)?.[9] === w[9]) ?? (from.length === 1 ? from[0] : null);
-    else at = null;
+    else if (from?.length) {
+      const source = sourceOf(warrior, w);
+      at = source.at;
+      if (!at) steps.push({ island: null, id: null, missing: true, ambiguous: source.ambiguous, from });
+    } else at = null;
   }
   return steps.reverse();
+}
+
+// Where a migrant (a row of RunDigest.result().warriors) came from: { at:
+// [island, id] or null, ambiguous }. 42evolve plays the warriors of a
+// migrate event in their order and leaves out one whose code is in the list
+// already, also one sent before in the same event: so it is the first of
+// them with its code (the hash) that was a member of its island then
+// (entered before the batch, not left before it). The only one sent, also
+// when it is not known. Ambiguous when a warrior before it in that order is
+// not known: that one may have had the same code.
+export function sourceOf(warrior, w) {
+  const from = w[10], batch = w[3];
+  let unknown = false;
+  for (const [i, j] of from) {
+    const s = warrior(i, j);
+    if (!s) {
+      unknown = true;
+      continue;
+    }
+    if (s[9] !== w[9] || s[3] >= batch || (s[11] >= 0 && s[11] < batch)) continue;
+    return unknown ? { at: null, ambiguous: true } : { at: [i, j], ambiguous: false };
+  }
+  return { at: from.length === 1 ? from[0] : null, ambiguous: false };
 }

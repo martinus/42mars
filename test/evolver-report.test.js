@@ -71,6 +71,11 @@ test('run-report: the islands, their scores against the folder and the 3 best of
     const best = Math.max(...at);
     assert.deepEqual(row, [`island-0${k}`, String(x.batch.batch), String(x.batch.members), ...at.map((s) => s.toFixed(1)),
       best.toFixed(1), `(${scores[at.indexOf(best)].batch})`, x.members[0][5].toFixed(1), x.holdout.toFixed(1)], `island ${k}`);
+    // the progress of each batch: the best against the holdout so far, with the bench of that batch
+    const benches = x.ev.filter((e) => e.type === 'bench');
+    const want = x.ev.filter((e) => e.type === 'batch').map((b) => [b.batch, Math.max(-1, ...benches.filter((e) => e.batch <= b.batch).map((e) => e.avg))]);
+    assert.ok(want.some(([b], i) => i && want[i - 1][1] !== want[i][1] && benches.some((e) => e.batch === b)), 'a bench in the run');
+    assert.deepEqual(json.islands[k - 1].history.map((h) => [h.batch, h.holdout]), want);
     // the 3 best by panel average now, with their opcodes
     const top = json.onTop.members.filter((w) => w.island === k);
     assert.deepEqual(top.map((w) => [w.rank, w.id, w.opcodes]), x.members.slice(0, 3).map((v, i) => [i + 1, v[0], opcodes(x.enters.get(v[0]).code)]));
@@ -158,8 +163,53 @@ test('lineOf: first parents, a migrant on the island it came from by the hash of
   assert.deepEqual(line(2, 6), ['1:8?', '1:9 insert Owl', '2:3 migrant Owl', '2:6 delete Owl']);
   rows[2][0][10] = [[3, 4]]; // the only one sent, also when its code differs (its warrior had left)
   assert.deepEqual(line(2, 3), ['3:4 random Ant', '2:3 migrant Owl']);
-  rows[2][0][10] = [[3, 4], [1, 5]]; // none with its code
-  assert.deepEqual(line(2, 3), ['2:3 migrant Owl']);
+  rows[2][0][10] = [[3, 4], [1, 5]]; // none with its code: a step not known, with the candidates
+  assert.deepEqual(line(2, 3), ['null:null?', '2:3 migrant Owl']);
+  assert.deepEqual(lineOf(warrior, 2, 3)[0], { island: null, id: null, missing: true, ambiguous: false, from: [[3, 4], [1, 5]] });
+});
+
+// The islands of a folder from hand-written events, as RunDigest reads them:
+// migrants and the warriors their migrate events sent.
+function digests(islands) {
+  const code = (op) => `        ORG     0\n        ${op}.I   $0, $1\n`;
+  const out = {};
+  for (const [k, evs] of Object.entries(islands)) {
+    const d = new RunDigest();
+    for (const e of evs) {
+      const line = e.type === 'enter' ? { type: 'enter', batch: e.batch, id: e.id, name: `Odd ${e.family ?? 'Owl'}`, parents: e.parents ?? [], ops: e.ops ?? 'random', length: 1, style: { kind: 'k' }, code: code(e.op), scores: [] } : e;
+      d.add(JSON.stringify(line));
+    }
+    out[k] = new Map(d.result().warriors.map((w) => [w[0], w]));
+  }
+  return (i, id) => out[i]?.get(id);
+}
+
+test('lineOf: a migrant comes from the first warrior of its migrate event with its code that was a member then; else a step not known, ambiguous where a warrior before it is not known', () => {
+  const batch = (b) => ({ type: 'batch', batch: b, members: 1 });
+  const migrant = (b, id, from, op = 'SPL') => [{ type: 'migrate', batch: b, from }, { type: 'enter', batch: b, id, ops: 'migrant', op }, batch(b)];
+  const warrior = digests({
+    // islands 1 and 2 have a warrior with the same code; 11 of island 1 leaves in batch 1, 12 enters in batch 2
+    1: [{ type: 'enter', batch: 0, id: 10, op: 'SPL' }, { type: 'enter', batch: 0, id: 11, op: 'MOV', family: 'Ant' }, batch(0),
+      { type: 'leave', batch: 1, id: 11 }, batch(1), { type: 'enter', batch: 2, id: 12, op: 'MOV', family: 'Ant' }, batch(2)],
+    2: [{ type: 'enter', batch: 0, id: 20, op: 'SPL', family: 'Yak' }, { type: 'enter', batch: 0, id: 21, op: 'MOV', family: 'Yak' }, batch(0)],
+    3: migrant(1, 30, [[2, 20], [1, 10]]), // both have its code: the first sent
+    4: migrant(1, 40, [[1, 10], [2, 20]]),
+    5: migrant(2, 50, [[1, 11], [1, 12], [2, 21]], 'MOV'), // 11 left in batch 1, 12 came in batch 2: 21
+    6: migrant(1, 60, [[1, 11], [2, 21]], 'MOV'), // 11 still a member in batch 1, until it left
+    7: migrant(2, 70, [[1, 10], [2, 20]], 'DAT'), // none with its code
+    8: migrant(2, 80, [[2, 99], [1, 10]]), // 99 not known: it may have had the code
+  });
+  const first = (i, id) => {
+    const s = lineOf(warrior, i, id)[0];
+    return s.missing ? `${s.ambiguous ? 'ambiguous' : 'missing'} ${JSON.stringify(s.from)}` : `${s.island}:${s.id} ${s.family}`;
+  };
+  assert.equal(first(3, 30), '2:20 Yak');
+  assert.equal(first(4, 40), '1:10 Owl');
+  assert.equal(first(5, 50), '2:21 Yak');
+  assert.equal(first(6, 60), '1:11 Ant');
+  assert.equal(first(7, 70), 'missing [[1,10],[2,20]]');
+  assert.equal(first(8, 80), 'ambiguous [[2,99],[1,10]]');
+  assert.equal(lineOf(warrior, 8, 80).length, 2);
 });
 
 test('run-report --bench: best.red and the 3 best of each island against a folder, as tournament.mjs --bench plays each', { skip }, () => {
@@ -205,8 +255,8 @@ function smallRun() {
     { type: 'values', batch: 0, values: [[0, 1, 1, 1, 1, 99], [10, 1, 1, 1, 1, 50], [15, 1, 1, 1, 1, 40]] },
     { type: 'batch', batch: 0, members: 2 },
     enter(1, 14, [11], 'reintroduce', 'SPL', 'scanner'),
-    { type: 'bench', batch: 1, id: 14, rounds: 100, avg: 70, scores: [] },
     { type: 'values', batch: 1, values: [[0, 1, 1, 1, 1, 99], [10, 1, 1, 1, 1, 50], [14, 1, 1, 1, 1, 60], [15, 1, 1, 1, 1, 45]] },
+    { type: 'bench', batch: 1, id: 14, rounds: 100, avg: 70, scores: [] }, // as 42evolve writes it: after the values
     { type: 'batch', batch: 1, members: 3 },
   ];
   writeFileSync(join(d, 'events.jsonl'), `${ev.map((e) => JSON.stringify(e)).join('\n')}\n{"type":"enter","batch":2,"id":16,"na`);
@@ -222,6 +272,8 @@ test('RunDigest: keeps the warriors that can be ancestors; run-report reads a ru
   // 12 came and went without children; 11 came back as a parent, 13 had a child before it left
   assert.deepEqual(r.warriors.map((w) => w[0]).sort(), [10, 11, 13, 14, 15]);
   assert.deepEqual(r.top.map((t) => t.slice(4)), [[10, 15, -1], [14, 10, 15]]);
+  // the holdout of a batch with its bench, as the dashboard's progressPoint() takes it at the batch event
+  assert.deepEqual(r.top.map((t) => t.slice(0, 4)), [[0, 50, 45, -1], [1, 60, (60 + 50 + 45) / 3, 70]]);
   assert.deepEqual(r.now.map((w) => [w.id, w.opcodes, w.code.includes('SPL.I')]), [[14, 'SPL DAT', true], [10, 'MOV DAT', false], [15, 'SUB DAT', false]]);
   assert.deepEqual([r.batch, r.members, r.holdout], [1, 3, { id: 14, avg: 70, batch: 1 }]);
   const out = report(d, '--json');
@@ -232,6 +284,28 @@ test('RunDigest: keeps the warriors that can be ancestors; run-report reads a ru
   const text = report(d).stdout;
   assert.match(text, /^run\s+1\s+3\s+60\.0\s+70\.0$/m);
   assert.match(text, /The line of best\.red \(Odd Owl14\): 1 steps back to random Odd Owl11 in batch 0\./);
+  // a buffer size that is no positive number: the default (0 read nothing, and doubled stayed 0)
+  for (const size of ['0', '', 'x']) {
+    const z = spawnSync(process.execPath, [join(root, 'tools/run-report.mjs'), d, '--json'], { encoding: 'utf8', timeout: 30000, env: { ...process.env, RUN_REPORT_BUFFER: size } });
+    assert.equal(z.status, 0, `RUN_REPORT_BUFFER=${size}: ${z.stderr}`);
+    assert.equal(z.stdout, out.stdout, `RUN_REPORT_BUFFER=${size}`);
+  }
+  // a folder of islands in the order of their numbers, not of their names
+  const many = join(tmp, 'many');
+  for (const k of [2, 10, 100]) {
+    mkdirSync(join(many, `island-${String(k).padStart(2, '0')}`), { recursive: true });
+    copyFileSync(join(d, 'events.jsonl'), join(many, `island-${String(k).padStart(2, '0')}`, 'events.jsonl'));
+  }
+  writeFileSync(join(many, 'islands.txt'), '42evolve-islands 1\n');
+  assert.deepEqual(JSON.parse(report(many, '--json').stdout).runs[0].islands.map((x) => x.island), [2, 10, 100]);
+  // --bench on a run without islands: its best.red is the run's, not a folder's
+  const opponents = join(tmp, 'small-opponents');
+  mkdirSync(opponents, { recursive: true });
+  for (const f of readdirSync(join(root, 'warriors/koenigstuhl/tiny')).sort().slice(0, 2)) copyFileSync(join(root, 'warriors/koenigstuhl/tiny', f), join(opponents, f));
+  const bench = report(d, '--bench', '--opponents', opponents, '--rounds', '2', '--jobs', '1');
+  assert.equal(bench.status, 0, bench.stderr);
+  assert.match(bench.stdout, /^run\s+best\.red\s+14\s/m);
+  assert.doesNotMatch(bench.stdout, /^folder/m);
 });
 
 test('run-report: a wrong or missing argument prints the usage and exits with 2', () => {
