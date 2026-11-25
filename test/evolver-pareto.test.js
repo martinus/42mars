@@ -73,7 +73,7 @@ test('--pushoff pareto: NSGA-II on panel and members, pareto-age also on the age
   const rule = checkEarly(st);
   assert.ok(rule.decisions >= 2, `${rule.decisions} early decisions`);
   // refused with the options that change the value otherwise, and a value other than value and pareto
-  for (const [bad, why] of [[['--select', 'value'], /--pushoff pareto not with/], [['--pushoff', 'front'], /usage/], [['--pushoff', 'value', '--clear', '2'], /--clear with --pushoff pareto/], [['--clear', '0'], /usage/]]) {
+  for (const [bad, why] of [[['--average', 'panel'], /--pushoff pareto not with/], [['--pushoff', 'front'], /usage/], [['--pushoff', 'value', '--clear', '2'], /--clear with --pushoff pareto/], [['--clear', '0'], /usage/]]) {
     const r = spawnSync(evolve, [join(tmp, 'pareto-bad'), ...args, ...bad, '--batches', '1'], { encoding: 'utf8' });
     assert.equal(r.status, 2, bad.join(' '));
     assert.match(r.stderr, why);

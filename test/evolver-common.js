@@ -202,14 +202,6 @@ export function checkValues(evs) {
   };
   for (const e of evs) {
     if (e.type === 'panel') for (const [a, b, w, l, t] of e.scores) put(a, b, w, l, t);
-    if (e.type === 'rotate') {
-      assert.ok(panel.has(e.out) && !panel.has(e.panel.id) && !pts.has(`${e.panel.id},${e.out}`), `rotate ${e.out} -> ${e.panel.id}`);
-      panel.delete(e.out);
-      panel.add(e.panel.id);
-      slots[slots.indexOf(e.out)] = e.panel.id;
-      for (const [o, w, l, t] of e.scores) put(e.panel.id, o, w, l, t);
-      assert.equal(e.scores.length, slots.filter((x) => x !== null).length - 1, 'a new panel warrior plays everyone in');
-    }
     if (e.type === 'enter' && e.rival >= 0) {
       // the first parent won its tournament of two against the rival: by
       // push-off value at the start of the batch, or with --parents duel by
@@ -218,7 +210,7 @@ export function checkValues(evs) {
       if (start.params.parents === 'duel' && w !== l && pts.get(`${w},${l}`) !== pts.get(`${l},${w}`)) {
         assert.ok(pts.get(`${w},${l}`) > pts.get(`${l},${w}`), `${e.name}: parent ${w} lost to ${l}`);
         duels++;
-      } else if (!start.params.rotate) {
+      } else {
         assert.ok(value(w) >= value(l), `${e.name}: parent ${w} has less value than ${l}`);
       }
     }
