@@ -226,6 +226,31 @@ typedef struct {
   uint32_t seen_n, seen_next;
 } run;
 
+// ---------------------------------------------------------------- islands
+
+// --islands N (islands.c)
+#define ISLANDS_MAX 256
+
+// --migrate-to, as islands.txt keeps it: from every other island, from one
+// other drawn (1 was next, a ring, and 3 tree, removed in #193)
+enum { MIGRATE_ALL = 0, MIGRATE_RANDOM = 2 };
+
+typedef struct {
+  char dir[1000]; // shorter than a run's, for /island-NN
+  uint32_t n, keep, every, selected, next_score;
+  uint32_t rounds;     // --score-rounds: of each match of a score
+  uint32_t migrate;    // --migrate M: every M batches each island plays the best member of every other one, 0 never
+  uint32_t migrate_random, migrate_next; // --migrate-pick random: a member drawn, not the best; --migrate-to (MIGRATE_*)
+  uint32_t explorers;  // --explorers K: the last K islands take no migrants (the others may take from them)
+  uint64_t seed;
+  uint8_t live[ISLANDS_MAX];
+  run *is[ISLANDS_MAX];
+  run root;            // the root's parameters, the pool, its events; scores with its seed
+  warrior *opp;        // every warrior of the folder, for the scores
+  uint32_t opp_n;
+  double best;         // the best score so far, of the warrior in the root's best.red
+} islands;
+
 // ---------------------------------------------------------------- scores
 
 // The seed of every match against warrior id: its first position, later
@@ -287,8 +312,18 @@ static inline double panel_avg(const run *r, uint32_t slot) { return panel_avg_o
 
 // ---------------------------------------------------------------- the functions of the files
 
-// evolve.c
+// evolve.c, for now
 void *xmalloc(size_t n);
+char *read_file(const char *path, size_t *len);
+m42_warrior *make_warrior(const genome *g, const m42_rules *rules);
+void set_result(run *r, uint32_t a, uint32_t b, m42_score sa);
+void set_result1(run *r, uint32_t a, uint32_t b, m42_score sa);
+void rebuild_active(run *r);
+void compute_values(run *r);
+uint32_t free_slot(const run *r);
+uint32_t slot_of_id(const run *r, uint64_t id);
+void setup_matrix(run *r);
+void load_list(run *r, warrior **list, uint32_t *n, char **names, uint32_t count, int kind, uint64_t first_id);
 
 // pool.c: the thread pool
 void pool_start(pool *p, uint32_t threads, const m42_rules *rules);
@@ -304,5 +339,13 @@ void event_panel(run *r);
 void event_enter(run *r, uint32_t slot, double screen, double estimate, uint64_t rival, const unit *row);
 void event_leave(run *r, const pushoff_value *v, int early);
 void event_values(run *r);
+
+// state.c: state.txt and islands.txt
+void save_state(run *r);
+int load_state(run *r, const char *path);
+long state_events_size(const char *path);
+int names_loop(const char *mix);
+void islands_save(const islands *I);
+int islands_load(islands *I);
 
 #endif
