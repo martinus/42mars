@@ -152,6 +152,166 @@ static const char *const removed_options[] = {"--map-elites", "--specialists", "
                                               "--tune-novel", "--fractions", "--prior", "--refactor",
                                               "--leaf-restart", "--nemesis-every", 0};
 
+// An option of the command line whose value need not be a number (a word,
+// a folder, a file; --tie-points takes what strtod() reads, d), into c: 1
+// if a is one of them, else 0. *rc: the exit code after a message.
+static int option_text(cli *c, const char *a, const char *v, double d, int *rc) {
+  params *p = &c->p;
+  if (!strcmp(a, "--opponents")) snprintf(p->opponents, sizeof p->opponents, "%s", v);
+  else if (!strcmp(a, "--start")) snprintf(p->start, sizeof p->start, "%s", v);
+  else if (!strcmp(a, "--optimize")) c->optimize_file = v;
+  else if (!strcmp(a, "--panel-files")) {
+    if (!*v || strlen(v) >= sizeof p->panel_files || strstr(v, ",,") || v[strlen(v) - 1] == ',') usage();
+    snprintf(p->panel_files, sizeof p->panel_files, "%s", v);
+  }
+  else if (!strcmp(a, "--changes")) {
+    if (names_loop(v)) {
+      fprintf(stderr, "42evolve: --changes loop was removed after 1.1.0 (#193)\n");
+      *rc = 2;
+      return 1;
+    }
+    if (genome_mix_parse(&p->changes, v) != 0) {
+      fprintf(stderr, "42evolve: --changes takes name=weight,... with these names:");
+      for (int k = 0; k < CH_COUNT; k++) fprintf(stderr, " %s", genome_change_name(k));
+      fprintf(stderr, "\nand with --genome gen:");
+      for (int k = CH_COUNT; k < CH_ALL; k++) fprintf(stderr, " %s", genome_change_name(k));
+      fprintf(stderr, "\n");
+      *rc = 2;
+      return 1;
+    }
+    c->new_changes = p->changes, c->changes_given = 1;
+  }
+  else if (!strcmp(a, "--parents")) {
+    if (!strcmp(v, "value")) p->parents = PARENTS_VALUE;
+    else if (!strcmp(v, "duel")) p->parents = PARENTS_DUEL;
+    else usage();
+  } else if (!strcmp(a, "--panel-choice")) {
+    c->panel_choice_given = 1;
+    if (!strcmp(v, "picked")) p->panel_random = PANEL_PICKED;
+    else if (!strcmp(v, "random")) p->panel_random = PANEL_RANDOM;
+    else if (!strcmp(v, "kinds")) p->panel_random = PANEL_KINDS;
+    else usage();
+  } else if (!strcmp(a, "--diversity")) {
+    c->diversity_given = 1;
+    if (!strcmp(v, "all")) p->distance_panel = 0;
+    else if (!strcmp(v, "panel")) p->distance_panel = 1;
+    else usage();
+  } else if (!strcmp(a, "--member-games")) {
+    if (!strcmp(v, "all")) p->member_games_none = 0;
+    else if (!strcmp(v, "none")) p->member_games_none = 1;
+    else usage();
+  } else if (!strcmp(a, "--average")) {
+    if (!strcmp(v, "all")) p->average_panel = 0;
+    else if (!strcmp(v, "panel")) p->average_panel = 1;
+    else usage();
+  } else if (!strcmp(a, "--pushoff")) {
+    c->pushoff_given = 1;
+    if (!strcmp(v, "value")) p->pareto = 0;
+    else if (!strcmp(v, "pareto")) p->pareto = 1;
+    else if (!strcmp(v, "pareto-age")) {
+      fprintf(stderr, "42evolve: --pushoff pareto-age was removed after 1.1.0 (#193)\n");
+      *rc = 2;
+      return 1;
+    }
+    else if (!strcmp(v, "pareto-sd")) p->pareto = 3;
+    else usage();
+  } else if (!strcmp(a, "--migrate-pick")) {
+    if (!strcmp(v, "best")) c->migrate_random = 0;
+    else if (!strcmp(v, "random")) c->migrate_random = 1;
+    else usage();
+    c->pick_given = c->islands_option = 1;
+  } else if (!strcmp(a, "--migrate-to")) {
+    if (!strcmp(v, "all")) c->migrate_next = MIGRATE_ALL;
+    else if (!strcmp(v, "random")) c->migrate_next = MIGRATE_RANDOM;
+    else if (!strcmp(v, "next") || !strcmp(v, "tree")) {
+      fprintf(stderr, "42evolve: --migrate-to %s was removed after 1.1.0 (#193)\n", v);
+      *rc = 2;
+      return 1;
+    }
+    else usage();
+    c->to_given = c->islands_option = 1;
+  } else if (!strcmp(a, "--island-panels")) {
+    if (!strcmp(v, "shared")) c->own_panels = 0;
+    else if (!strcmp(v, "own")) c->own_panels = 1;
+    else usage();
+    c->islands_option = 1;
+  } else if (!strcmp(a, "--island-variant")) {
+    if (c->variant_n >= ISLANDS_MAX) usage();
+    c->variant[c->variant_n++] = v;
+    c->islands_option = 1;
+  } else if (!strcmp(a, "--tie-points")) {
+    p->tie = d;
+  } else if (!strcmp(a, "--genome")) {
+    c->genome_given = 1;
+    if (!strcmp(v, "gen")) p->gen = 1;
+    else if (!strcmp(v, "list")) p->gen = 0;
+    else usage();
+  } else if (!strcmp(a, "--positions")) {
+    c->positions_given = 1;
+    if (!strcmp(v, "mirror")) p->mirror = 1;
+    else if (!strcmp(v, "pmars")) p->mirror = 0;
+    else usage();
+  } else if (!strcmp(a, "--sd")) {
+    if (!strcmp(v, "opponent")) p->sd = SD_OPPONENT;
+    else if (!strcmp(v, "sum")) p->sd = SD_SUM;
+    else usage();
+  } else return 0;
+  return 1;
+}
+
+// An option of the command line whose value is a number (d, and u when it
+// is a whole number from 0 to 2^32 - 1, else 0), into c; the usage when a
+// is none.
+static void option_number(cli *c, const char *a, int number, double d, uint32_t u) {
+  params *p = &c->p;
+  if (!strcmp(a, "--panel")) p->panel = u;
+  else if (!strcmp(a, "--holdout")) p->holdout = u;
+  else if (!strcmp(a, "--list")) p->list = c->new_list = u;
+  else if (!strcmp(a, "--batch")) p->batch = u;
+  else if (!strcmp(a, "--survivors")) p->survivors = u;
+  else if (!strcmp(a, "--rounds")) p->rounds = u;
+  else if (!strcmp(a, "--screen-rounds")) p->screen_rounds = u;
+  else if (!strcmp(a, "--screen-factor")) p->screen_factor = d;
+  else if (!strcmp(a, "--bench-every")) p->bench_every = u;
+  else if (!strcmp(a, "--bench-rounds")) p->bench_rounds = u;
+  else if (!strcmp(a, "--alpha")) p->alpha = d;
+  else if (!strcmp(a, "--reintroduce")) {
+    if (!number || d < 0 || d > 1) usage();
+    p->reintroduce = c->new_reintroduce = d;
+  }
+  else if (!strcmp(a, "--screen-members")) p->screen_members = u, c->screen_members_given = 1;
+  else if (!strcmp(a, "--stage")) p->stage = u, c->stage_given = 1;
+  else if (!strcmp(a, "--panel-rounds")) p->panel_rounds = u, c->panel_rounds_given = 1;
+  else if (!strcmp(a, "--pick-sample")) p->pick_sample = u;
+
+  else if (!strcmp(a, "--screen-stop") || !strcmp(a, "--screen-check")) {
+    const int stop = !strcmp(a, "--screen-stop");
+    if (!number || d < 0 || (!stop && !(d > 0))) usage(); // --screen-stop 0: off
+    if (stop) p->screen_stop = c->new_stop = d;
+    else p->screen_check = c->new_check = d;
+  }
+  else if (!strcmp(a, "--clear")) {
+    if (!number || !(d > 0)) usage();
+    p->clear = d;
+  }
+  else if (!strcmp(a, "--init-length")) p->init_length = u;
+  else if (!strcmp(a, "--min-length")) p->min_length = u;
+  else if (!strcmp(a, "--seed")) p->seed = (uint64_t)d;
+  else if (!strcmp(a, "--draw-seed")) p->draw_seed = (uint64_t)d, c->draw_seed_given = 1;
+  else if (!strcmp(a, "--islands")) c->islands_n = u, c->islands_option = 1;
+  else if (!strcmp(a, "--keep")) c->islands_keep = u, c->islands_option = 1;
+  else if (!strcmp(a, "--select-after")) c->islands_every = u, c->islands_option = 1;
+  else if (!strcmp(a, "--score-rounds")) c->islands_rounds = u, c->islands_option = 1;
+  else if (!strcmp(a, "--migrate")) c->islands_migrate_every = u, c->islands_option = c->migrate_given = 1;
+  else if (!strcmp(a, "--explorers")) c->explorers = u, c->islands_option = 1;
+  else if (!strcmp(a, "--size")) p->rules.core_size = u;
+  else if (!strcmp(a, "--cycles")) p->rules.max_cycles = u;
+  else if (!strcmp(a, "--processes")) p->rules.max_processes = u;
+  else if (!strcmp(a, "--length")) p->rules.max_length = u;
+  else if (!strcmp(a, "--distance")) p->rules.min_distance = u;
+  else usage();
+}
+
 // Reads the command line into c; 0, or the exit code after a message.
 static int parse_cli(int argc, char **argv, cli *c) {
   memset(c, 0, sizeof *c);
@@ -182,152 +342,14 @@ static int parse_cli(int argc, char **argv, cli *c) {
     const double d = strtod(v, &end);
     const int number = *end == 0 && end != v;
     const uint32_t u = number && d >= 0 && d <= 4294967295.0 ? (uint32_t)d : 0;
-    params *p = &c->p;
-    int run_option = 0;
+    int run_option = 0, rc = 0;
     if (!strcmp(a, "--threads")) c->threads = u, run_option = 1;
     else if (!strcmp(a, "--batches")) c->batches = u, run_option = 1;
     else if (!strcmp(a, "--seconds")) c->seconds = d, run_option = 1;
-    else if (!strcmp(a, "--opponents")) snprintf(p->opponents, sizeof p->opponents, "%s", v);
-    else if (!strcmp(a, "--start")) snprintf(p->start, sizeof p->start, "%s", v);
-    else if (!strcmp(a, "--optimize")) c->optimize_file = v;
-    else if (!strcmp(a, "--panel-files")) {
-      if (!*v || strlen(v) >= sizeof p->panel_files || strstr(v, ",,") || v[strlen(v) - 1] == ',') usage();
-      snprintf(p->panel_files, sizeof p->panel_files, "%s", v);
-    }
-    else if (!strcmp(a, "--changes")) {
-      if (names_loop(v)) {
-        fprintf(stderr, "42evolve: --changes loop was removed after 1.1.0 (#193)\n");
-        return 2;
-      }
-      if (genome_mix_parse(&p->changes, v) != 0) {
-        fprintf(stderr, "42evolve: --changes takes name=weight,... with these names:");
-        for (int k = 0; k < CH_COUNT; k++) fprintf(stderr, " %s", genome_change_name(k));
-        fprintf(stderr, "\nand with --genome gen:");
-        for (int k = CH_COUNT; k < CH_ALL; k++) fprintf(stderr, " %s", genome_change_name(k));
-        fprintf(stderr, "\n");
-        return 2;
-      }
-      c->new_changes = p->changes, c->changes_given = 1;
-    }
-    else if (!strcmp(a, "--parents")) {
-      if (!strcmp(v, "value")) p->parents = PARENTS_VALUE;
-      else if (!strcmp(v, "duel")) p->parents = PARENTS_DUEL;
-      else usage();
-    } else if (!strcmp(a, "--panel-choice")) {
-      c->panel_choice_given = 1;
-      if (!strcmp(v, "picked")) p->panel_random = PANEL_PICKED;
-      else if (!strcmp(v, "random")) p->panel_random = PANEL_RANDOM;
-      else if (!strcmp(v, "kinds")) p->panel_random = PANEL_KINDS;
-      else usage();
-    } else if (!strcmp(a, "--diversity")) {
-      c->diversity_given = 1;
-      if (!strcmp(v, "all")) p->distance_panel = 0;
-      else if (!strcmp(v, "panel")) p->distance_panel = 1;
-      else usage();
-    } else if (!strcmp(a, "--member-games")) {
-      if (!strcmp(v, "all")) p->member_games_none = 0;
-      else if (!strcmp(v, "none")) p->member_games_none = 1;
-      else usage();
-    } else if (!strcmp(a, "--average")) {
-      if (!strcmp(v, "all")) p->average_panel = 0;
-      else if (!strcmp(v, "panel")) p->average_panel = 1;
-      else usage();
-    } else if (!strcmp(a, "--pushoff")) {
-      c->pushoff_given = 1;
-      if (!strcmp(v, "value")) p->pareto = 0;
-      else if (!strcmp(v, "pareto")) p->pareto = 1;
-      else if (!strcmp(v, "pareto-age")) {
-        fprintf(stderr, "42evolve: --pushoff pareto-age was removed after 1.1.0 (#193)\n");
-        return 2;
-      }
-      else if (!strcmp(v, "pareto-sd")) p->pareto = 3;
-      else usage();
-    } else if (!strcmp(a, "--migrate-pick")) {
-      if (!strcmp(v, "best")) c->migrate_random = 0;
-      else if (!strcmp(v, "random")) c->migrate_random = 1;
-      else usage();
-      c->pick_given = c->islands_option = 1;
-    } else if (!strcmp(a, "--migrate-to")) {
-      if (!strcmp(v, "all")) c->migrate_next = MIGRATE_ALL;
-      else if (!strcmp(v, "random")) c->migrate_next = MIGRATE_RANDOM;
-      else if (!strcmp(v, "next") || !strcmp(v, "tree")) {
-        fprintf(stderr, "42evolve: --migrate-to %s was removed after 1.1.0 (#193)\n", v);
-        return 2;
-      }
-      else usage();
-      c->to_given = c->islands_option = 1;
-    } else if (!strcmp(a, "--island-panels")) {
-      if (!strcmp(v, "shared")) c->own_panels = 0;
-      else if (!strcmp(v, "own")) c->own_panels = 1;
-      else usage();
-      c->islands_option = 1;
-    } else if (!strcmp(a, "--island-variant")) {
-      if (c->variant_n >= ISLANDS_MAX) usage();
-      c->variant[c->variant_n++] = v;
-      c->islands_option = 1;
-    } else if (!strcmp(a, "--tie-points")) {
-      p->tie = d;
-    } else if (!strcmp(a, "--genome")) {
-      c->genome_given = 1;
-      if (!strcmp(v, "gen")) p->gen = 1;
-      else if (!strcmp(v, "list")) p->gen = 0;
-      else usage();
-    } else if (!strcmp(a, "--positions")) {
-      c->positions_given = 1;
-      if (!strcmp(v, "mirror")) p->mirror = 1;
-      else if (!strcmp(v, "pmars")) p->mirror = 0;
-      else usage();
-    } else if (!strcmp(a, "--sd")) {
-      if (!strcmp(v, "opponent")) p->sd = SD_OPPONENT;
-      else if (!strcmp(v, "sum")) p->sd = SD_SUM;
-      else usage();
+    else if (option_text(c, a, v, d, &rc)) {
+      if (rc) return rc;
     } else if (!number) usage();
-    else if (!strcmp(a, "--panel")) p->panel = u;
-    else if (!strcmp(a, "--holdout")) p->holdout = u;
-    else if (!strcmp(a, "--list")) p->list = c->new_list = u;
-    else if (!strcmp(a, "--batch")) p->batch = u;
-    else if (!strcmp(a, "--survivors")) p->survivors = u;
-    else if (!strcmp(a, "--rounds")) p->rounds = u;
-    else if (!strcmp(a, "--screen-rounds")) p->screen_rounds = u;
-    else if (!strcmp(a, "--screen-factor")) p->screen_factor = d;
-    else if (!strcmp(a, "--bench-every")) p->bench_every = u;
-    else if (!strcmp(a, "--bench-rounds")) p->bench_rounds = u;
-    else if (!strcmp(a, "--alpha")) p->alpha = d;
-    else if (!strcmp(a, "--reintroduce")) {
-      if (!number || d < 0 || d > 1) usage();
-      p->reintroduce = c->new_reintroduce = d;
-    }
-    else if (!strcmp(a, "--screen-members")) p->screen_members = u, c->screen_members_given = 1;
-    else if (!strcmp(a, "--stage")) p->stage = u, c->stage_given = 1;
-    else if (!strcmp(a, "--panel-rounds")) p->panel_rounds = u, c->panel_rounds_given = 1;
-    else if (!strcmp(a, "--pick-sample")) p->pick_sample = u;
-
-    else if (!strcmp(a, "--screen-stop") || !strcmp(a, "--screen-check")) {
-      const int stop = !strcmp(a, "--screen-stop");
-      if (!number || d < 0 || (!stop && !(d > 0))) usage(); // --screen-stop 0: off
-      if (stop) p->screen_stop = c->new_stop = d;
-      else p->screen_check = c->new_check = d;
-    }
-    else if (!strcmp(a, "--clear")) {
-      if (!number || !(d > 0)) usage();
-      p->clear = d;
-    }
-    else if (!strcmp(a, "--init-length")) p->init_length = u;
-    else if (!strcmp(a, "--min-length")) p->min_length = u;
-    else if (!strcmp(a, "--seed")) p->seed = (uint64_t)d;
-    else if (!strcmp(a, "--draw-seed")) p->draw_seed = (uint64_t)d, c->draw_seed_given = 1;
-    else if (!strcmp(a, "--islands")) c->islands_n = u, c->islands_option = 1;
-    else if (!strcmp(a, "--keep")) c->islands_keep = u, c->islands_option = 1;
-    else if (!strcmp(a, "--select-after")) c->islands_every = u, c->islands_option = 1;
-    else if (!strcmp(a, "--score-rounds")) c->islands_rounds = u, c->islands_option = 1;
-    else if (!strcmp(a, "--migrate")) c->islands_migrate_every = u, c->islands_option = c->migrate_given = 1;
-    else if (!strcmp(a, "--explorers")) c->explorers = u, c->islands_option = 1;
-    else if (!strcmp(a, "--size")) p->rules.core_size = u;
-    else if (!strcmp(a, "--cycles")) p->rules.max_cycles = u;
-    else if (!strcmp(a, "--processes")) p->rules.max_processes = u;
-    else if (!strcmp(a, "--length")) p->rules.max_length = u;
-    else if (!strcmp(a, "--distance")) p->rules.min_distance = u;
-    else usage();
+    else option_number(c, a, number, d, u);
     if (!run_option && strcmp(a, "--changes") && strcmp(a, "--screen-stop") && strcmp(a, "--screen-check") &&
         strcmp(a, "--reintroduce") && strcmp(a, "--list"))
       c->new_options = 1; // these go with a run that continues
@@ -447,6 +469,99 @@ static int island_variants(int argc, char **argv, const cli *c, params *out) {
   return rc;
 }
 
+// A new run of islands (--islands) with the parameters p (defaults applied,
+// checked): the checks of the islands' options, their defaults, the
+// variants, the run; the exit code.
+static int new_islands(int argc, char **argv, cli *c, const params *p, uint32_t threads) {
+  const char *dir = c->dir, *optimize_file = c->optimize_file;
+  const uint32_t batches = c->batches;
+  const double seconds = c->seconds;
+  const uint32_t islands_n = c->islands_n, islands_keep = c->islands_keep, islands_every = c->islands_every;
+  const uint32_t islands_rounds = c->islands_rounds;
+  uint32_t islands_migrate_every = c->islands_migrate_every;
+  if (islands_n > ISLANDS_MAX || islands_keep >= islands_n || (islands_keep && !islands_every) || !islands_rounds || optimize_file) {
+    fprintf(stderr, "42evolve: --islands 1..%d, --keep fewer than the islands and with --select-after, not with --optimize\n", ISLANDS_MAX);
+    return 2;
+  }
+  if (islands_migrate_every && islands_n < 2) {
+    fprintf(stderr, "42evolve: --migrate with 2 islands or more\n");
+    return 2;
+  }
+  if (c->own_panels && (islands_n < 2 || p->panel_files[0] || p->panel_random == PANEL_RANDOM)) {
+    fprintf(stderr, "42evolve: --island-panels own with 2 islands or more, a panel that is picked (--panel-choice picked or kinds), not --panel-files\n");
+    return 2;
+  }
+  if (c->explorers && (c->explorers >= islands_n || islands_keep)) {
+    fprintf(stderr, "42evolve: --explorers fewer than the islands, not with --keep\n");
+    return 2;
+  }
+  if ((c->pick_given || c->to_given) && c->migrate_given && !islands_migrate_every) {
+    fprintf(stderr, "42evolve: --migrate-pick and --migrate-to not with --migrate 0\n");
+    return 2;
+  }
+  static params variants[ISLANDS_MAX];
+  if (!c->variant_n && islands_n >= 2) { // new runs of islands: half exploit, half explore (gen-var16-rnd)
+    c->variant[0] = "";
+    c->variant[1] = "--screen-members 80 --screen-rounds 8";
+    c->variant_n = 2;
+    c->variant_default = 1;
+  }
+  if (c->variant_n > islands_n) {
+    fprintf(stderr, "42evolve: --island-variant at most once per island\n");
+    return 2;
+  }
+  {
+    const int rc = island_variants(argc, argv, c, variants);
+    if (rc) return rc;
+  }
+  // new runs of islands: every 5 batches a member drawn from an island drawn (gen-var16-rnd); --migrate 0: none
+  if (!c->migrate_given && islands_n >= 2) islands_migrate_every = 5;
+  if (c->explorers && !islands_migrate_every) {
+    fprintf(stderr, "42evolve: --explorers needs migration (not with --migrate 0)\n");
+    return 2;
+  }
+  if (!c->pick_given) c->migrate_random = 1;
+  if (!c->to_given) c->migrate_next = MIGRATE_RANDOM;
+  signal(SIGINT, on_signal);
+  signal(SIGTERM, on_signal);
+  return islands_new(p, variants, c->variant, c->variant_n, dir, islands_n, islands_keep, islands_every, islands_rounds,
+                     islands_migrate_every, c->migrate_random, c->migrate_next, c->explorers,
+                     c->own_panels, threads, batches, seconds);
+}
+
+// A run that continues: what the command line changes from now on, each
+// with its event; 0, or the exit code after a message.
+static int resume_changes(run *r, const cli *c) {
+  const genome_mix new_changes = c->new_changes;
+  const int changes_given = c->changes_given;
+  const double new_stop = c->new_stop, new_check = c->new_check, new_reintroduce = c->new_reintroduce;
+  const uint32_t new_list = c->new_list;
+  if (changes_given) { // the weights of the changes from now on; the run is no longer the one without a break
+    r->p.changes = new_changes;
+    char mix[CH_ALL * 32];
+    genome_mix_text(&r->p.changes, mix, sizeof mix);
+    fprintf(r->events, "{\"type\":\"changes\",\"batch\":%u,\"changes\":\"%s\"}\n", r->batch, mix);
+  }
+  if (new_list) // the list grew (load_state()); children fill the new places
+    fprintf(r->events, "{\"type\":\"list\",\"batch\":%u,\"list\":%u,\"fill\":false}\n", r->batch, r->p.list);
+  if (new_reintroduce >= 0) { // how often a warrior of the archive comes back, from now on
+    r->p.reintroduce = new_reintroduce;
+    fprintf(r->events, "{\"type\":\"reintroduce\",\"batch\":%u,\"reintroduce\":%.17g}\n", r->batch, r->p.reintroduce);
+  }
+  if (new_stop >= 0 || new_check > 0) { // the screen from now on; --screen-stop 0 turns it off
+    if (new_stop >= 0) r->p.screen_stop = new_stop, r->p.screen_check = 0;
+    if (new_check > 0) r->p.screen_check = new_check, r->p.screen_stop = 0;
+    const char *wrong = params_error(&r->p);
+    if (wrong) {
+      fprintf(stderr, "42evolve: %s\n", wrong);
+      return 2;
+    }
+    fprintf(r->events, "{\"type\":\"screen-options\",\"batch\":%u,\"screenStop\":%.17g,\"screenCheck\":%.17g}\n", r->batch,
+            r->p.screen_stop, r->p.screen_check);
+  }
+  return 0;
+}
+
 int main(int argc, char **argv) {
   static run r;
   static cli c;
@@ -463,9 +578,7 @@ int main(int argc, char **argv) {
   const int changes_given = c.changes_given, new_options = c.new_options;
   const double new_stop = c.new_stop, new_check = c.new_check, new_reintroduce = c.new_reintroduce;
   const uint32_t new_list = c.new_list;
-  const uint32_t islands_n = c.islands_n, islands_keep = c.islands_keep, islands_every = c.islands_every;
-  const uint32_t islands_rounds = c.islands_rounds;
-  uint32_t islands_migrate_every = c.islands_migrate_every;
+  const uint32_t islands_n = c.islands_n;
   const int islands_option = c.islands_option;
   if (!dir) usage();
   if (!threads) threads = hardware_threads();
@@ -513,57 +626,7 @@ int main(int argc, char **argv) {
     // islands with variants say it per variant (island_variants())
     if (c.pushoff_fallback && !c.variant_n && islands_n < 2) fprintf(stderr, "42evolve: " PUSHOFF_FALLBACK "\n", c.pushoff_fallback);
     r.p = c.p;
-    params *p = &r.p;
-    if (islands_n) {
-      if (islands_n > ISLANDS_MAX || islands_keep >= islands_n || (islands_keep && !islands_every) || !islands_rounds || optimize_file) {
-        fprintf(stderr, "42evolve: --islands 1..%d, --keep fewer than the islands and with --select-after, not with --optimize\n", ISLANDS_MAX);
-        return 2;
-      }
-      if (islands_migrate_every && islands_n < 2) {
-        fprintf(stderr, "42evolve: --migrate with 2 islands or more\n");
-        return 2;
-      }
-      if (c.own_panels && (islands_n < 2 || p->panel_files[0] || p->panel_random == PANEL_RANDOM)) {
-        fprintf(stderr, "42evolve: --island-panels own with 2 islands or more, a panel that is picked (--panel-choice picked or kinds), not --panel-files\n");
-        return 2;
-      }
-      if (c.explorers && (c.explorers >= islands_n || islands_keep)) {
-        fprintf(stderr, "42evolve: --explorers fewer than the islands, not with --keep\n");
-        return 2;
-      }
-      if ((c.pick_given || c.to_given) && c.migrate_given && !islands_migrate_every) {
-        fprintf(stderr, "42evolve: --migrate-pick and --migrate-to not with --migrate 0\n");
-        return 2;
-      }
-      static params variants[ISLANDS_MAX];
-      if (!c.variant_n && islands_n >= 2) { // new runs of islands: half exploit, half explore (gen-var16-rnd)
-        c.variant[0] = "";
-        c.variant[1] = "--screen-members 80 --screen-rounds 8";
-        c.variant_n = 2;
-        c.variant_default = 1;
-      }
-      if (c.variant_n > islands_n) {
-        fprintf(stderr, "42evolve: --island-variant at most once per island\n");
-        return 2;
-      }
-      {
-        const int rc = island_variants(argc, argv, &c, variants);
-        if (rc) return rc;
-      }
-      // new runs of islands: every 5 batches a member drawn from an island drawn (gen-var16-rnd); --migrate 0: none
-      if (!c.migrate_given && islands_n >= 2) islands_migrate_every = 5;
-      if (c.explorers && !islands_migrate_every) {
-        fprintf(stderr, "42evolve: --explorers needs migration (not with --migrate 0)\n");
-        return 2;
-      }
-      if (!c.pick_given) c.migrate_random = 1;
-      if (!c.to_given) c.migrate_next = MIGRATE_RANDOM;
-      signal(SIGINT, on_signal);
-      signal(SIGTERM, on_signal);
-      return islands_new(p, variants, c.variant, c.variant_n, dir, islands_n, islands_keep, islands_every, islands_rounds,
-                         islands_migrate_every, c.migrate_random, c.migrate_next, c.explorers,
-                         c.own_panels, threads, batches, seconds);
-    }
+    if (islands_n) return new_islands(argc, argv, &c, &r.p, threads);
     if (run_new(&r, threads, optimize_file != 0) != 0) return 1;
   }
 
@@ -581,29 +644,8 @@ int main(int argc, char **argv) {
     run_first(&r);
   } else {
     fprintf(r.events, "{\"type\":\"resume\",\"batch\":%u}\n", r.batch);
-    if (changes_given) { // the weights of the changes from now on; the run is no longer the one without a break
-      r.p.changes = new_changes;
-      char mix[CH_ALL * 32];
-      genome_mix_text(&r.p.changes, mix, sizeof mix);
-      fprintf(r.events, "{\"type\":\"changes\",\"batch\":%u,\"changes\":\"%s\"}\n", r.batch, mix);
-    }
-    if (new_list) // the list grew (load_state()); children fill the new places
-      fprintf(r.events, "{\"type\":\"list\",\"batch\":%u,\"list\":%u,\"fill\":false}\n", r.batch, r.p.list);
-    if (new_reintroduce >= 0) { // how often a warrior of the archive comes back, from now on
-      r.p.reintroduce = new_reintroduce;
-      fprintf(r.events, "{\"type\":\"reintroduce\",\"batch\":%u,\"reintroduce\":%.17g}\n", r.batch, r.p.reintroduce);
-    }
-    if (new_stop >= 0 || new_check > 0) { // the screen from now on; --screen-stop 0 turns it off
-      if (new_stop >= 0) r.p.screen_stop = new_stop, r.p.screen_check = 0;
-      if (new_check > 0) r.p.screen_check = new_check, r.p.screen_stop = 0;
-      const char *wrong = params_error(&r.p);
-      if (wrong) {
-        fprintf(stderr, "42evolve: %s\n", wrong);
-        return 2;
-      }
-      fprintf(r.events, "{\"type\":\"screen-options\",\"batch\":%u,\"screenStop\":%.17g,\"screenCheck\":%.17g}\n", r.batch,
-              r.p.screen_stop, r.p.screen_check);
-    }
+    const int rc = resume_changes(&r, &c);
+    if (rc) return rc;
   }
   fprintf(stderr, "42evolve: %s, %u panel and %u holdout warriors, %u threads, batch %u\n", dir, r.panel_n, r.hold_n,
           threads, r.batch);
