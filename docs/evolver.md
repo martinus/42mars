@@ -723,3 +723,21 @@ build/42spectrum --opponents warriors/koenigstuhl/94nop --changes a-operand,b-op
 **Not built:**
 - Idea 3, several lists that play one shared hill (islands that also play the best members of the other islands): only runs can say anything about it, islands with and without the shared opponents at equal time, and #172 puts it after ideas 1 and 2 are measured. Those runs wait for the machine (the baseline of #196).
 - Idea 4, a warrior back from the archive with changes in half of the cases: not cheap here. Such a child has a parent that is no member (the archive's), so its line (`origin`), the counts per change of the batch event, the Operators tab and the line of best.red in `tools/run-report.mjs` would each need a case for it, and a test. It can come with the runs of idea 1 or 2 if those show that the list needs more new material.
+
+## Two warriors joined with one `SPL`: the hand test (#223)
+
+25th November 2026. `94-own16` (16 islands, own panels, seed 301, '94nop) held two designs that complement each other: Kernels (`SPL`/`MOV`/`MOV`/`DJN`, 5 lines, Undying Kernel IX) and papers (84 lines, a salvo of far `MOV`s then a `SPL`/`MOV` copy loop, Scarlet Ant III). #223 proposed a change `join` that builds `[SPL to B] [A] [B]` from two members. Its first step was a test by hand: if no hand-made join beats the Kernel alone, the change is not built.
+
+The joins, written by hand from the two warriors' code in the run's events: line 0 `SPL` to the start of the second part, line 1 `JMP` to the start of the first (the Kernel starts at its line 1, so the `SPL` cannot sit right before it without moving its relative references), then both parts unchanged. 91 lines. Each against the 1,107 '94nop Koenigstuhl warriors, 100 rounds, `tools/tournament.mjs --bench`, by the kinds of `tools/hill-kinds.mjs` (#221):
+
+| Warrior | score | vs paper (321) | vs mover (178) | vs scanner (219) | vs stone (360) |
+|---|---|---|---|---|---|
+| Undying Kernel IX alone | **127.5** | 48.7 | 125.5 | 156.3 | 171.1 |
+| Scarlet Ant III alone | 113.5 | 88.2 | 123.0 | 107.8 | 125.1 |
+| Kernel first, `SPL` to the paper | 107.1 | 79.8 | 120.8 | 98.9 | 119.2 |
+| paper first, `SPL` to the Kernel | 103.2 | 75.4 | 119.2 | 94.1 | 115.0 |
+| the better of the two per opponent (bound) | 146.9 | | | | |
+
+Both joins score below both parts. They play like a weaker paper: against scanners and stones, where the Kernel scores 156 and 171, they drop to the paper's level or below. The paper's processes take the cycles, and the Kernel, one of many processes, no longer does its work in time. Against single opponents the join beats the better of its parts by more than 10 points per 100 rounds 29 times and is below the weaker part by as much 239 times; its mean, 107.1, is below even the mean of the two parts (120.5). The best-of bound (146.9, 149 in #223 with other seeds) is no estimate of a join.
+
+Verdict: the change `join` is not built (#223 closed as not planned). A combination of two designs would need a share of the processes for each, which one `SPL` does not give: a paper splits until its share swamps the other part. If that comes back, it is a different change (the second part started only after the first has made its processes, or a paper whose copy carries the Kernel), and the hand test above is its baseline.
