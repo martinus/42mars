@@ -60,7 +60,7 @@ endif
 
 LIB_SOURCES := lib/42mars.c lib/42mars.h $(wildcard lib/src/*.c lib/src/*.h)
 # the files of 42evolve alone (evolver/evolve.h)
-EVOLVE := evolver/evolve.c evolver/pool.c
+EVOLVE := evolver/evolve.c evolver/pool.c evolver/events.c
 EVOLVER_SOURCES := evolver/genome.c evolver/generator.c evolver/gen-change.c evolver/pushoff.c evolver/names.c evolver/style.c $(wildcard evolver/*.h)
 DIST := 42mars-$(VERSION)-$(shell uname -s | tr A-Z a-z)-$(shell uname -m)
 
