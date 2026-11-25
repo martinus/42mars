@@ -177,7 +177,7 @@ A list genome becomes a generator line by line: an operand that is a reference b
   - an unroll when something uses the block's length, or its end while no instruction, repeat or call follows it, or when a count inside the block uses a place of the block (a count sees the repetitions before its own);
   - a fold when a third line refers to the second instruction;
   - a constant's double or negative only as integers, not mod the core size: the number may be divided further on.
-- **Refactoring in place (`--refactor p`).** A rewrite alone never enters the list, but a member can be rewritten where it is: its warrior, and so every score it has, stays. Each batch, before breeding, each member's generator gets one refactoring with probability p (`gen_refactor()`), and its children start from the new structure. No battles are played for it. What is drawn:
+- **Refactoring in place (`--refactor p`, removed in #193: 87.7 against 90.3 of its control on the tiny hill, "After step 2b" below).** A rewrite alone never enters the list, but a member can be rewritten where it is: its warrior, and so every score it has, stays. Each batch, before breeding, each member's generator gets one refactoring with probability p (`gen_refactor()`), and its children start from the new structure. No battles are played for it. What is drawn:
 
 | weight | refactoring | what it does |
 |---|---|---|
@@ -206,7 +206,7 @@ Nobody writes a function: `extract` makes one from lines that evolved, `call` an
 - **`--genome list|gen`,** `gen` the default since 21st November 2026 (`list` with `--optimize`). A run folder keeps its kind.
 - **The `genome` struct** has a `gen` next to its list (26 KB instead of 4). For a generator the list holds the compiled warrior, so `make_warrior()`, `genome_hash()`, `genome_text()`, the names, the style and the events' `length` need no change. `genome_breed()`, `genome_save()` and `genome_load()` branch on the kind; a random or a start warrior is made as a list and becomes a generator line for line (`genome_as_generator()`).
 - **Random starts** are generators without structure, drawn as today: structure has to pay to appear.
-- **`--refactor p`** (0 to 1, 0 unless given): the refactoring in place of "Changes". An event `refactor` has the member's id, what was done and its generator as it is then.
+- **`--refactor p`** (0 to 1, 0 unless given): the refactoring in place of "Changes". An event `refactor` has the member's id, what was done and its generator as it is then. Removed in #193.
 - **`--start`** takes the `.gen` files of its folder too, generators as `42gen` reads them: the `best.gen` of other runs enter with their structure, so that a run can mix what several runs found.
 - **Events** carry the generator's text next to the code (`"gen"`), `best.gen` is the generator of `best.red`, and the state file has the generator's numbers (`gen_save()`).
 - **`--changes`** takes the new names, with `--genome gen` only. Without `--changes` a run on generators draws the weights of a list and `repeat` 30, `count` 40, `fold` 30, `unroll` 15, `index` 40, `expression` 40, `constant` 40, `extract` 20, `parameter` 20, `call` 25, `inline` 10, `transplant` 15: a quarter of the changes. A first guess, not measured.

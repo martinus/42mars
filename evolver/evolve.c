@@ -80,7 +80,6 @@ typedef struct {
   double screen_check;      // --screen-check z: plays the whole screen, logs what --screen-stop z would have done
   uint32_t pick_sample;     // --pick-sample: warriors of the round robin of pick_panel(), 0 PICK_SAMPLE
   int gen;                  // --genome gen: a warrior's genome is a generator (generator.h), not the list of its instructions
-  double refactor;          // --refactor p: each batch a member's generator gets another structure for the same warrior with probability p
   uint32_t min_length;      // --min-length N: a child with fewer instructions that are not DAT.F $0, $0 is not played; 0 none
   double tie;               // --tie-points t: what a tie counts in the screen, the values and the push-off (a win 3); scores against the hill stay 3/1/0
 } params;
@@ -954,7 +953,7 @@ static void event_start(run *r) {
           "\"rounds\":%u,\"screenRounds\":%u,\"benchEvery\":%u,\"benchRounds\":%u,\"initLength\":%u,"
           "\"screenFactor\":%.17g,\"alpha\":%.17g,\"reintroduce\":%.17g,\"sd\":\"%s\",\"seed\":%" PRIu64
           ","
-          "\"parents\":\"%s\",\"screenMembers\":%u,\"stage\":%u,\"fill\":%s,\"panelRounds\":%u,\"diversity\":\"%s\",\"panelChoice\":\"%s\",\"screenStop\":%.17g,\"screenCheck\":%.17g,\"average\":\"%s\",\"memberGames\":\"%s\",\"drawSeed\":%" PRIu64 ",\"pushoff\":\"%s\",\"positions\":\"%s\",\"clear\":%.17g,\"genome\":\"%s\",\"refactor\":%.17g,\"minLength\":%u,\"tiePoints\":%.17g},"
+          "\"parents\":\"%s\",\"screenMembers\":%u,\"stage\":%u,\"fill\":%s,\"panelRounds\":%u,\"diversity\":\"%s\",\"panelChoice\":\"%s\",\"screenStop\":%.17g,\"screenCheck\":%.17g,\"average\":\"%s\",\"memberGames\":\"%s\",\"drawSeed\":%" PRIu64 ",\"pushoff\":\"%s\",\"positions\":\"%s\",\"clear\":%.17g,\"genome\":\"%s\",\"minLength\":%u,\"tiePoints\":%.17g},"
           "\"opponents\":",
           m42_version(), p->rules.core_size, p->rules.max_cycles, p->rules.max_processes, p->rules.max_length,
           p->rules.min_distance, r->panel_n, r->hold_n, p->list, p->batch, p->survivors, p->rounds, p->screen_rounds,
@@ -968,7 +967,7 @@ static void event_start(run *r) {
                                             : "picked",
           p->screen_stop, p->screen_check,
           p->average_panel ? "panel" : "all", p->member_games_none ? "none" : "all", p->draw_seed,
-          p->pareto == 3 ? "pareto-sd" : p->pareto == 2 ? "pareto-age" : p->pareto ? "pareto" : "value", p->mirror ? "mirror" : "pmars", p->clear, p->gen ? "gen" : "list", p->refactor, p->min_length, p->tie);
+          p->pareto == 3 ? "pareto-sd" : p->pareto == 2 ? "pareto-age" : p->pareto ? "pareto" : "value", p->mirror ? "mirror" : "pmars", p->clear, p->gen ? "gen" : "list", p->min_length, p->tie);
   json_str(f, p->opponents, 0);
   fputs(",\"panelFiles\":", f);
   json_str(f, p->panel_files, 0);
@@ -1116,7 +1115,7 @@ static const param_field param_fields[] = {
     GONE("--noise"), PF('u', stage), PF('d', fill), PF('u', panel_rounds), PF('d', distance_panel), GONE("--niche"),
     GONE("--map-elites"), GONE("--specialists"), GONE("--sharing"), PF('g', screen_stop), PF('g', screen_check),
     GONE("--tune-novel"), PF('d', average_panel), PF('d', member_games_none), GONE("--simple"), PF('q', draw_seed),
-    GONE("--difference"), PF('d', pareto), PF('d', mirror), PF('g', clear), PF('d', gen), PF('g', refactor),
+    GONE("--difference"), PF('d', pareto), PF('d', mirror), PF('g', clear), PF('d', gen), GONE("--refactor"),
     PF('u', min_length), PF('g', tie)};
 #define PARAM_FIELDS (sizeof param_fields / sizeof *param_fields)
 
@@ -1861,23 +1860,6 @@ static void run_batch(run *r) {
   candidate *c = xmalloc(B * sizeof *c);
   const uint32_t core = p->rules.core_size;
   uint32_t evaluated = 0;
-
-  // --refactor: some members get another structure for the same warrior
-  // (gen_refactor()). Their warriors, and so every score, stay; their
-  // children start from the new structure.
-  if (p->refactor > 0)
-    for (uint32_t k = r->panel_n; k < r->active_n; k++) {
-      warrior *w = r->slot[r->active[k]];
-      if (w->kind != MEMBER || !w->g->generated) continue;
-      rng g = rng_seed(p->seed, 0x7265666163u + r->batch, w->id); // "refac"
-      const char *how = 0;
-      if (!rng_chance(&g, p->refactor) || !gen_refactor(&w->g->p, &g, core, p->rules.max_length, &how)) continue;
-      fprintf(r->events, "{\"type\":\"refactor\",\"batch\":%u,\"id\":%" PRIu64 ",\"how\":\"%s\",\"gen\":", r->batch, w->id, how);
-      char *text = generator_text(w->g, core);
-      json_str(r->events, text, 0);
-      free(text);
-      fputs("}\n", r->events);
-    }
 
   // breed
   // the donors of the change loop: the warriors that left (the archive) and,
@@ -2798,7 +2780,7 @@ static void usage(void) {
           "         [--panel-files a.red,b.red,...] [--screen-members N] [--stage N (screen rounds; 0 none)] [--fill]\n"
           "         [--panel-rounds N] [--diversity all|panel] [--average all|panel] [--member-games all|none]\n"
           "         [--pushoff value|pareto|pareto-age|pareto-sd] [--clear R] [--positions mirror|pmars]\n"
-          "         [--genome list|gen] [--refactor p] [--min-length N] [--tie-points t]\n"
+          "         [--genome list|gen] [--min-length N] [--tie-points t]\n"
           "         [--islands N [--select-after B [--keep K]] [--score-rounds R] [--migrate M [--migrate-pick best|random] [--migrate-to all|next|random|tree]]\n"
           "         [--island-variant \"options\" ...] [--island-panels shared|own] [--leaf-restart N]\n"
           "         [--nemesis-every N] [--explorers K]]\n"
@@ -3691,8 +3673,6 @@ static const char *params_error(const params *p) {
   if (p->clear > 0 && !p->pareto) return "--clear with --pushoff pareto, pareto-age or pareto-sd only";
   if (p->screen_stop > 0 && p->screen_check > 0) return "--screen-stop or --screen-check, not both";
   if (!p->gen && structure_kinds(&p->changes)) return STRUCTURE_NEEDS_GEN;
-  if (p->refactor < 0 || p->refactor > 1) return "--refactor 0 to 1";
-  if (p->refactor > 0 && !p->gen) return "--refactor with --genome gen only";
   if (p->min_length > p->rules.max_length) return "--min-length at most --length";
   if (!(p->tie >= 0 && p->tie <= 3)) return "--tie-points 0 to 3";
   return 0;
@@ -3730,7 +3710,7 @@ typedef struct {
 // --island-variant (a state that used one: load_state()).
 static const char *const removed_options[] = {"--map-elites", "--specialists", "--niche", "--sharing", "--simple",
                                               "--noise", "--difference", "--select", "--rotate", "--race", "--race-keep",
-                                              "--tune-novel", "--fractions", "--prior", 0};
+                                              "--tune-novel", "--fractions", "--prior", "--refactor", 0};
 
 // Reads the command line into c; 0, or the exit code after a message.
 static int parse_cli(int argc, char **argv, cli *c) {
@@ -3836,8 +3816,6 @@ static int parse_cli(int argc, char **argv, cli *c) {
       if (c->variant_n >= ISLANDS_MAX) usage();
       c->variant[c->variant_n++] = v;
       c->islands_option = 1;
-    } else if (!strcmp(a, "--refactor")) {
-      p->refactor = d;
     } else if (!strcmp(a, "--tie-points")) {
       p->tie = d;
     } else if (!strcmp(a, "--genome")) {

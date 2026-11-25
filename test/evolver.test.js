@@ -77,6 +77,7 @@ const REMOVED = [
   { args: ['--tune-novel', '1'], option: '--tune-novel', at: 34 },
   { args: ['--fractions', '0.5'], option: '--fractions', at: 17 },
   { args: ['--prior', 'hill'], option: '--prior', at: 20 },
+  { args: ['--refactor', '0.5'], option: '--refactor', at: 44 },
 ];
 // and the lines of a state that only they wrote
 const REMOVED_LINES = [
