@@ -69,8 +69,8 @@ static void usage(void) {
           "         [--fill | --no-fill] [--panel-rounds N] [--diversity all|panel] [--average all|panel]\n"
           "         [--member-games all|none] [--pushoff value|pareto|pareto-sd] [--clear R] [--positions mirror|pmars]\n"
           "         [--genome list|gen] [--min-length N] [--tie-points t] [--parsimony] [--no-spl]\n"
-          "         [--islands N [--select-after B [--keep K]] [--score-rounds R] [--migrate M [--migrate-pick best|random]\n"
-          "           [--migrate-to all|random]] [--island-variant \"options\" ...] [--island-panels shared|own] [--explorers K]]\n"
+          "         [--islands N [--select-after B [--keep K]] [--score-rounds R] [--score-designs 3]\n"
+          "           [--migrate M [--migrate-pick best|random] [--migrate-to all|random]] [--island-variant \"options\" ...] [--island-panels shared|own] [--explorers K]]\n"
           "         [--size 8000] [--cycles 80000] [--processes 8000] [--length 100] [--distance 100]\n"
           "         [--threads N] [--batches N] [--seconds S]\n"
           "       42evolve <run folder> [--threads N] [--batches N] [--seconds S] [--changes ...] [--reintroduce p] [--list N]\n"
@@ -135,6 +135,7 @@ typedef struct {
   int variant_default; // the variants of new_island_defaults(), not given
   const char *pushoff_fallback; // the option that made the default push-off value, not pareto-sd (#199)
   uint32_t islands_n, islands_keep, islands_every, islands_rounds; // --islands, --keep, --select-after, --score-rounds
+  uint32_t islands_designs;                                         // --score-designs
   uint32_t islands_migrate_every;                                   // --migrate
   uint32_t migrate_random, migrate_next, pick_given, to_given;      // --migrate-pick, --migrate-to
   int own_panels;                                                   // --island-panels own
@@ -302,6 +303,7 @@ static void option_number(cli *c, const char *a, int number, double d, uint32_t 
   else if (!strcmp(a, "--keep")) c->islands_keep = u, c->islands_option = 1;
   else if (!strcmp(a, "--select-after")) c->islands_every = u, c->islands_option = 1;
   else if (!strcmp(a, "--score-rounds")) c->islands_rounds = u, c->islands_option = 1;
+  else if (!strcmp(a, "--score-designs")) c->islands_designs = u, c->islands_option = 1;
   else if (!strcmp(a, "--migrate")) c->islands_migrate_every = u, c->islands_option = c->migrate_given = 1;
   else if (!strcmp(a, "--explorers")) c->explorers = u, c->islands_option = 1;
   else if (!strcmp(a, "--size")) p->rules.core_size = u;
@@ -318,6 +320,7 @@ static int parse_cli(int argc, char **argv, cli *c) {
   c->p = default_params();
   c->new_stop = c->new_check = c->new_reintroduce = -1;
   c->islands_rounds = 100;
+  c->islands_designs = 3;
   for (int i = 1; i < argc; i++) {
     const char *a = argv[i];
     if (a[0] != '-') {
@@ -453,7 +456,7 @@ static int island_variants(int argc, char **argv, const cli *c, params *out) {
     if (!wrong && (w.batches != c->batches || w.seconds != c->seconds || w.variant_n != (c->variant_default ? 0 : c->variant_n) ||
                    w.islands_n != c->islands_n ||
                    w.islands_keep != c->islands_keep || w.islands_every != c->islands_every ||
-                   w.islands_rounds != c->islands_rounds || w.islands_migrate_every != c->islands_migrate_every ||
+                   w.islands_rounds != c->islands_rounds || w.islands_designs != c->islands_designs || w.islands_migrate_every != c->islands_migrate_every ||
                    w.migrate_random != c->migrate_random || w.migrate_next != c->migrate_next || w.own_panels != c->own_panels || w.explorers != c->explorers ||
                    w.optimize_file != c->optimize_file))
       differs = "--batches, --seconds, --optimize or an option of the islands";
@@ -531,7 +534,7 @@ static int new_islands(int argc, char **argv, cli *c, const params *p, uint32_t 
   signal(SIGINT, on_signal);
   signal(SIGTERM, on_signal);
   return islands_new(p, variants, c->variant, c->variant_n, dir, islands_n, islands_keep, islands_every, islands_rounds,
-                     islands_migrate_every, c->migrate_random, c->migrate_next, c->explorers,
+                     c->islands_designs, islands_migrate_every, c->migrate_random, c->migrate_next, c->explorers,
                      c->own_panels, threads, batches, seconds);
 }
 
