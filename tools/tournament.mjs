@@ -17,6 +17,8 @@
 //
 // --bench plays one warrior against every warrior of the set instead of a
 // round robin and lists the opponents from the worst result to the best.
+// benchMany(), for other programs, plays several warriors that way in one
+// task list (tools/run-report.mjs --bench).
 //
 // Every pairing plays --rounds rounds. The start position of the second
 // warrior in the first round is derived from --seed and the pairing, later
@@ -55,7 +57,7 @@
 
 import { Worker, isMainThread, workerData } from 'node:worker_threads';
 import { spawn } from 'node:child_process';
-import { readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
+import { readFileSync, readdirSync, realpathSync, statSync, writeFileSync } from 'node:fs';
 import { availableParallelism } from 'node:os';
 import { basename, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -367,6 +369,64 @@ function benchTable(o, names, pairs, results) {
   return { text: lines.join('\n'), rows, total: { ...sum, per100: (100 * sum.score) / (o.rounds * rows.length) } };
 }
 
+// Assembles the warriors ({ file, source }; files are read as latin1 where
+// source is missing) under the rules of o. pMARS plays a pairing as `pmars
+// a b` and assembles a with the registers its score formula check leaves,
+// w = s = 2, b with all 0 (semantics doc, section 5): the code of each
+// warrior as a and as b, one entry in codes when both are the same.
+// skipped(k, why) is called for a warrior that does not assemble or has no
+// instructions; true from it stops (the warrior then is not left out).
+function loadWarriors(o, warriors, skipped) {
+  const files = [];
+  const codes = []; // what the engines read of each assembled warrior
+  const names = [];
+  const asA = [];
+  const asB = [];
+  const code = (w) => ({ ok: w.ok, name: w.name, author: w.author, start: w.start, pin: w.pin, instructions: w.instructions });
+  for (const [k, { file, source }] of warriors.entries()) {
+    const src = source ?? readFileSync(file, 'latin1');
+    const rules = { coreSize: o.size, maxLength: o.length, minDistance: o.distance, maxProcesses: o.processes, maxCycles: o.cycles, rounds: o.rounds, warriors: 2, readLimit: o.readLimit, writeLimit: o.writeLimit, icws88: Boolean(o.icws88) };
+    const w = assemble(src, rules);
+    const first = assemble(src, { ...rules, registers: { w: 2, s: 2 } });
+    const bad = [w, first].find((x) => !x.ok || x.instructions.length === 0);
+    if (bad && skipped(k, bad.ok ? 'no instructions' : bad.errors[0].text)) return null;
+    if (bad) continue;
+    files.push(file);
+    names.push(`${w.name} (${basename(file)})`);
+    asB.push(codes.push(code(w)) - 1);
+    const same = JSON.stringify([first.instructions, first.start, first.pin]) === JSON.stringify([w.instructions, w.start, w.pin]);
+    asA.push(same ? asB[asB.length - 1] : codes.push(code(first)) - 1);
+  }
+  return { files, codes, names, asA, asB };
+}
+
+// Several warriors, each against every opponent as --bench plays one (the
+// same positions, so the same results as `--bench` on each alone), all
+// pairings in one task list on o.jobs threads (tools/run-report.mjs --bench).
+// warriors: { file, source? }, opponents: file names; o: the options of
+// parseArgs, e.g. { ...defaultOptions(), rounds: 100, size: 800 }. A warrior
+// that does not assemble throws; an opponent that does not is left out.
+// Returns per warrior { w, l, t, score, per100, opponents }.
+export async function benchMany(warriors, opponents, o) {
+  await compileMars();
+  const ws = loadWarriors(o, warriors, (k, why) => { throw new Error(`${warriors[k].file}: ${why}`); });
+  const os = loadWarriors(o, opponents.map((file) => ({ file })), (k, why) => console.error(`skipped ${opponents[k]}: ${why}`));
+  const codes = [...ws.codes, ...os.codes], n = ws.codes.length;
+  const pairs = [];
+  ws.asA.forEach((ca, a) => os.asB.forEach((cb, j) => pairs.push({ a, b: j, pos: pairPosition(o.seed, 0, 1 + j, o), ca, cb: n + cb })));
+  const { results } = await runEngine(o, codes, pairs);
+  const out = ws.asA.map(() => ({ w: 0, l: 0, t: 0, score: 0, per100: 0, opponents: os.asB.length }));
+  pairs.forEach((p, k) => {
+    const [w, l, t] = results[k].a, r = out[p.a];
+    r.w += w, r.l += l, r.t += t, r.score += 3 * w + t;
+  });
+  for (const r of out) r.per100 = r.opponents ? (100 * r.score) / (o.rounds * r.opponents) : 0;
+  return out;
+}
+
+// The options of parseArgs without arguments.
+export const defaultOptions = () => parseArgs([]);
+
 async function main() {
   const o = parseArgs(process.argv.slice(2));
   await compileMars(); // the assembler is in 42mars.wasm
@@ -376,34 +436,11 @@ async function main() {
     console.error('usage: node tools/tournament.mjs <dir or .red files...> [--rounds N] [--jobs N] [--pmars path [--compare]] [--matrix] [--json file] [--bench warrior.red] [--permute] [--icws88] [--progress]');
     process.exit(2);
   }
-  const files = [];
-  const codes = []; // what the engines read of each assembled warrior
-  const names = [];
-  // pMARS plays a pairing as `pmars a b` and assembles a with the registers
-  // its score formula check leaves, w = s = 2, b with all 0 (semantics doc,
-  // section 5): the code of each warrior as a and as b, one entry in codes
-  // when both are the same.
-  const asA = [];
-  const asB = [];
-  const code = (w) => ({ ok: w.ok, name: w.name, author: w.author, start: w.start, pin: w.pin, instructions: w.instructions });
-  for (const f of all) {
-    const src = readFileSync(f, 'latin1');
-    const rules = { coreSize: o.size, maxLength: o.length, minDistance: o.distance, maxProcesses: o.processes, maxCycles: o.cycles, rounds: o.rounds, warriors: 2, readLimit: o.readLimit, writeLimit: o.writeLimit, icws88: Boolean(o.icws88) };
-    const w = assemble(src, rules);
-    const first = assemble(src, { ...rules, registers: { w: 2, s: 2 } });
-    const bad = [w, first].find((x) => !x.ok || x.instructions.length === 0);
-    if (bad) {
-      const why = bad.ok ? 'no instructions' : bad.errors[0].text;
-      if (o.bench && files.length === 0) { console.error(`${f}: ${why}`); process.exit(2); }
-      console.error(`skipped ${f}: ${why}`);
-      continue;
-    }
-    files.push(f);
-    names.push(`${w.name} (${basename(f)})`);
-    asB.push(codes.push(code(w)) - 1);
-    const same = JSON.stringify([first.instructions, first.start, first.pin]) === JSON.stringify([w.instructions, w.start, w.pin]);
-    asA.push(same ? asB[asB.length - 1] : codes.push(code(first)) - 1);
-  }
+  const { files, codes, names, asA, asB } = loadWarriors(o, all.map((file) => ({ file })), (k, why) => {
+    if (o.bench && k === 0) { console.error(`${all[0]}: ${why}`); process.exit(2); }
+    console.error(`skipped ${all[k]}: ${why}`);
+    return false;
+  });
   // a and b index names and files, ca and cb codes
   const pairs = [];
   for (let a = 0; a < (o.bench ? 1 : files.length); a++) {
@@ -463,5 +500,7 @@ async function main() {
   if (o.json) writeFileSync(o.json, JSON.stringify({ names, files, options: o, pairs, ...report }, null, 1));
 }
 
-if (isMainThread) await main();
-else workerMain();
+// a worker of runEngine(), the program itself, or a module of another
+// program (tools/run-report.mjs imports benchMany)
+if (!isMainThread && workerData?.shared) workerMain();
+else if (isMainThread && process.argv[1] && realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url))) await main();

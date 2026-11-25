@@ -201,6 +201,7 @@ URL parameters: `?cast=lantern,origami,seeker` picks sample warriors, `preset=na
 make
 build/42evolve runs/a --opponents warriors/koenigstuhl/94nop --seconds 600
 node tools/serve.mjs --run runs/a     # the dashboard: http://127.0.0.1:8000/ui/evolver.html
+node tools/run-report.mjs runs/a      # the status in one command: scores, the designs on top, the line of best.red
 ```
 
 Evolves warriors against a panel of picked hill warriors and against each other, with a list of 80 kept by the diversity push-off of Tournament Weekend 2026, on all cores (16 threads 97.7% busy in a 10-minute run). The dashboard shows the score matrix, a map of how the warriors differ, the lineage and the progress while the run goes; a click on a match plays it in the visualizer, the same rounds the evolver scored. How it works and the first results: [`docs/evolver.md`](docs/evolver.md).
@@ -230,9 +231,9 @@ examples/           example.c, a complete program on the library; parallel.c, a 
 wasm/               the JavaScript demo: 42mars.wasm, 42mars.js (JS interface), 42mars.d.ts; build.sh
 evolver/            42evolve, the evolver: a list kept by diversity push-off, on all cores
 ui/                 Core War Theater, the visualizer, and the evolver's dashboard (plain ES modules, no build step)
-tools/              Node tools: asm, corpus, tournament, pushoff, serve, style, and the comparisons with pMARS
+tools/              Node tools: asm, corpus, tournament, pushoff, serve, run-report, style, and the comparisons with pMARS
 bench/              speed measurements and A/B timing
-test/               npm test: 468 tests on node:test; C tests in test/c/, fuzz targets in test/fuzz/, recorded results in test/fixtures/
+test/               npm test: 476 tests on node:test; C tests in test/c/, fuzz targets in test/fuzz/, recorded results in test/fixtures/
 docs/               the semantics, the plan, the speed tricks, the performance log, development guide
 warriors/           sample warriors written for this repository, and Dewdney's Imp and Dwarf;
                     koenigstuhl/: 5,261 hill warriors, test material without a license;

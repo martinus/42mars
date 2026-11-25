@@ -92,6 +92,20 @@ export function kind(s) {
   return 'writes little (scanner, or waits)';
 }
 
+// A word for each kind, for tables (tools/run-report.mjs); a text that is no
+// kind of kind() as it is, '' none.
+const SHORT = {
+  'dies at once': 'dies',
+  'copies itself with many processes (paper)': 'paper',
+  'runs copies of its code, few processes (imp, a stone that moves)': 'mover',
+  'reads far cells before it writes (scanner)': 'scanner',
+  'throws copies of its code (stone, clear)': 'stone',
+  'writes fields, no copies of its code': 'fields',
+  'damages by increments (< > { })': 'increments',
+  'writes little (scanner, or waits)': 'little',
+};
+export const shortKind = (k) => SHORT[k] ?? k ?? '';
+
 // One line for a person.
 export function describe(s) {
   if (s.measured === 0) return 'dies before it can be measured';

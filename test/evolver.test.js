@@ -662,6 +662,7 @@ test('the best warrior against the holdout warriors is in best.red', { skip }, (
   const w = assemble(text, RULES);
   assert.ok(w.ok);
   assert.equal(w.instructions.length, entered.length);
-  // its head as the dashboard's list of runs reads it (tools/serve.mjs): the score and the batch
-  assert.deepEqual(bestRedInfo(text), { holdout: Number(best.avg.toFixed(1)), batch: best.batch });
+  // its head as the dashboard's list of runs reads it (tools/serve.mjs): the score and the batch; and the warrior
+  // (tools/run-report.mjs); a run without islands has no island and no score against the folder
+  assert.deepEqual(bestRedInfo(text), { holdout: Number(best.avg.toFixed(1)), batch: best.batch, id: best.id, island: null, score: null });
 });
