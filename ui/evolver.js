@@ -1033,6 +1033,7 @@ const OP_DOCS = {
   'related-mode': 'another mode of the same family: $ @ *, or < > { }; # becomes $',
   'shared-constant': 'a far value (more than 16 from 0) set to another far value of the warrior, or its negative',
   tune: 'a far value moved by up to 2% of its size (at least 4)',
+  'random-loop': '2 to 5 new random instructions, the last a jump back to the first (DJN, JMN, JMZ, or SEQ/SNE and JMP); in place of old ones at the length limit',
   reintroduce: 'a warrior pushed off earlier, back as it was',
   random: 'a random warrior (first batch)',
   start: 'a start warrior as it is (--start)',

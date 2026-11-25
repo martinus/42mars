@@ -202,7 +202,7 @@ test('--parents duel: a parent beat its rival in their match, the same run on an
 
 test('--changes: only the changes named, as often as their weights, the same run on any thread count and after a resume', { skip }, () => {
   const def = { opcode: 81, modifier: 81, 'a-mode': 54, 'b-mode': 54, 'a-operand': 108, 'b-operand': 108, org: 27, replace: 27, insert: 100, delete: 100,
-    duplicate: 70, move: 70, 'crossover-insert': 60, 'crossover-replace': 60, 'related-opcode': 0, 'related-mode': 0, 'shared-constant': 0, tune: 0 };
+    duplicate: 70, move: 70, 'crossover-insert': 60, 'crossover-replace': 60, 'related-opcode': 0, 'related-mode': 0, 'shared-constant': 0, tune: 0, 'random-loop': 0 };
   assert.deepEqual(base[0].changes, def);
   const args = [...TINY, '--changes', 'shared-constant=6,duplicate=1,b-operand=3'];
   run(join(tmp, 'mix1'), [...args, '--threads', '1', '--batches', '5']);
@@ -235,7 +235,7 @@ test('--changes: only the changes named, as often as their weights, the same run
   assert.deepEqual(before, stable(one).slice(0, before.length));
   const bad = spawnSync(evolve, [join(tmp, 'mix-bad'), ...TINY, '--changes', 'opcode=1,tunes=2'], { encoding: 'utf8' });
   assert.equal(bad.status, 2);
-  assert.match(bad.stderr, /--changes takes name=weight.* shared-constant tune$/m);
+  assert.match(bad.stderr, /--changes takes name=weight.* shared-constant tune random-loop$/m);
 });
 
 test('--panel-files, --screen-members: a chosen panel, a screen against panel and members, the same run on any thread count and after a resume', { skip }, () => {
@@ -583,8 +583,8 @@ test('--start: the first batch starts from the warriors of a folder', { skip }, 
 test('42spectrum: every child of every change counted once, the same result on any thread count', { skip }, () => {
   const args = ['--opponents', join(root, 'warriors/koenigstuhl/tiny'), '--size', '800', '--cycles', '8000', '--processes', '800',
     '--length', '20', '--distance', '20', '--panel', '6', '--children', '12', '--rounds', '8', '--confirm-rounds', '16'];
-  const runIt = (threads, out) => {
-    const r = spawnSync(spectrum, [...args, '--threads', threads, '--json', out, join(root, 'warriors/dwarf.red'), join(root, 'warriors/imp.red')], { encoding: 'utf8', timeout: 120000 });
+  const runIt = (threads, out, more = []) => {
+    const r = spawnSync(spectrum, [...args, ...more, '--threads', threads, '--json', out, join(root, 'warriors/dwarf.red'), join(root, 'warriors/imp.red')], { encoding: 'utf8', timeout: 120000 });
     assert.equal(r.status, 0, r.stderr);
     return JSON.parse(readFileSync(out, 'utf8'));
   };
@@ -592,7 +592,7 @@ test('42spectrum: every child of every change counted once, the same result on a
   assert.deepEqual(runIt('3', join(tmp, 'spectrum3.json')), one);
   assert.deepEqual(one.warriors.map((w) => w.name), ['Dwarf', 'Imp']);
   for (const w of one.warriors) {
-    assert.equal(Object.keys(w.changes).length, 18);
+    assert.equal(Object.keys(w.changes).length, 19);
     for (const [name, c] of Object.entries(w.changes)) {
       assert.equal(c.tried, 12);
       assert.ok(c.applied <= c.tried);
@@ -607,6 +607,18 @@ test('42spectrum: every child of every change counted once, the same result on a
   assert.equal(one.warriors[1].changes.delete.applied, 0); // Imp has 1 instruction
   // a new modifier for Dwarf's DAT changes the code but no result
   assert.ok(one.warriors[0].changes.modifier.identical > one.warriors[0].changes.modifier.sameCode);
+  // --changes: only the kinds named, each child as in the run of all kinds
+  const some = runIt('2', join(tmp, 'spectrum-some.json'), ['--changes', 'random-loop,insert']);
+  assert.deepEqual(some.warriors.map((w) => Object.keys(w.changes)), [['insert', 'random-loop'], ['insert', 'random-loop']]);
+  some.warriors.forEach((w, i) => {
+    for (const name of ['insert', 'random-loop']) assert.deepEqual(w.changes[name], one.warriors[i].changes[name], name);
+  });
+  // the Imp gets a loop: every child of random-loop has one, and plays otherwise than the Imp
+  assert.equal(one.warriors[1].changes['random-loop'].applied, 12);
+  assert.ok(one.warriors[1].changes['random-loop'].sameCode === 0);
+  const bad = spawnSync(spectrum, [...args, '--changes', 'insert,loop', join(root, 'warriors/imp.red')], { encoding: 'utf8' });
+  assert.equal(bad.status, 2);
+  assert.match(bad.stderr, /--changes takes these names: opcode .* tune random-loop$/m);
 });
 
 test('panel warriors never leave, also the weakest', { skip }, () => {
