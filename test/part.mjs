@@ -22,15 +22,9 @@ import { fileURLToPath } from 'node:url';
 
 export const SECONDS = {
   'test/evolver-tune.test.js': 49.0,
-  'test/evolver-crowding.test.js': 37.3,
-  'test/evolver-difference.test.js': 36.7,
-  'test/evolver-sharing.test.js': 35.5,
   'test/evolver.test.js': 34.7,
   'test/evolver-pareto.test.js': 34.5,
   'test/evolver-defaults.test.js': 31.1,
-  'test/evolver-select.test.js': 24.6,
-  'test/evolver-specialists.test.js': 23.1,
-  'test/evolver-map-elites.test.js': 13.2,
   'test/c-api.test.js': 0.8,
   'test/cli.test.js': 0.6,
 };

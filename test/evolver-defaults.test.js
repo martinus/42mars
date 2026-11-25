@@ -135,9 +135,6 @@ test('the defaults: the settings of gen-var16-rnd; a panel picked from a round r
   const fresh = events(join(tmp, 'def-new'))[0];
   const q = fresh.params;
   assert.deepEqual([q.genome, q.panel, q.panelChoice, q.batch, q.survivors, fresh.panel.length], ['gen', 30, 'kinds', 128, 16, 30]);
-  // --map-elites keeps lists
-  run(join(tmp, 'def-me'), [...rules, '--seed', '5', '--map-elites', '--batch', '8', '--threads', '4', '--batches', '1']);
-  assert.equal(events(join(tmp, 'def-me'))[0].params.genome, 'list');
   // islands: half exploit, half explore, every 5 batches a member drawn from an island drawn; --migrate 0 none
   run(join(tmp, 'def-isl'), [...rules, '--seed', '5', '--panel-choice', 'random', '--batch', '16', '--islands', '2', '--threads', '4', '--batches', '1']);
   const isl = events(join(tmp, 'def-isl'), 'islands.jsonl')[0];
@@ -168,8 +165,8 @@ test('the defaults: the settings of gen-var16-rnd; a panel picked from a round r
   // the value push-off where pareto does not go
   run(join(tmp, 'def-simple'), [...args, '--simple', '--threads', '4']);
   assert.equal(events(join(tmp, 'def-simple'))[0].params.pushoff, 'value');
-  // --screen-stop 3 where it goes: not with --race or --map-elites; 0 is off, also for a run that continues
-  for (const [extra, stop] of [[['--race', '3'], 0], [['--map-elites'], 0], [['--screen-stop', '0'], 0], [['--screen-stop', '1.5'], 1.5], [['--screen-check', '2'], 0]]) {
+  // --screen-stop 3 where it goes: not with --race; 0 is off, also for a run that continues
+  for (const [extra, stop] of [[['--race', '3'], 0], [['--screen-stop', '0'], 0], [['--screen-stop', '1.5'], 1.5], [['--screen-check', '2'], 0]]) {
     const d = join(tmp, `def-stop-${extra.join('')}`);
     run(d, [...args, ...extra, '--threads', '2']);
     assert.equal(events(d)[0].params.screenStop, stop, extra.join(' '));

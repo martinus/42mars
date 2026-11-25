@@ -287,12 +287,9 @@ test('--min-length: no child with fewer instructions that are not DAT.F $0, $0 i
   assert.ok(padded.some((e) => e.ops === 'start' && filled(e) === 11));
   assert.ok(padded.length >= 10, `${padded.length} entered`);
   for (const e of padded) if (e.ops !== 'start') assert.ok(filled(e) >= 12, e.code);
-  let r = spawnSync(evolve, [join(tmp, 'bad4'), ...TINY, '--min-length', '21'], { encoding: 'utf8', timeout: 60000 });
+  const r = spawnSync(evolve, [join(tmp, 'bad4'), ...TINY, '--min-length', '21'], { encoding: 'utf8', timeout: 60000 });
   assert.equal(r.status, 2);
   assert.match(r.stderr, /--min-length at most --length/);
-  r = spawnSync(evolve, [join(tmp, 'bad4'), ...TINY, '--min-length', '5', '--map-elites'], { encoding: 'utf8', timeout: 60000 });
-  assert.equal(r.status, 2);
-  assert.match(r.stderr, /--min-length not with --map-elites/);
   assert.ok(!existsSync(join(tmp, 'bad4')));
 });
 
@@ -345,8 +342,5 @@ test('--tie-points: what a tie counts where the run selects, not where it scores
     assert.equal(r.status, 2);
     assert.match(r.stderr, message);
   }
-  const r = spawnSync(evolve, [join(tmp, 'bad5'), ...TINY, '--tie-points', '0.5', '--map-elites'], { encoding: 'utf8', timeout: 60000 });
-  assert.equal(r.status, 2);
-  assert.match(r.stderr, /--tie-points not with --map-elites/);
   assert.ok(!existsSync(join(tmp, 'bad5')));
 });

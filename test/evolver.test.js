@@ -60,6 +60,39 @@ test('a run folder takes no new evolution options', { skip }, () => {
   assert.equal(spawnSync(evolve, [join(tmp, 'none')], { encoding: 'utf8' }).status, 2); // no --opponents
 });
 
+// The options removed after 1.1.0 (#193): what the command line gave, and the
+// option's place in the params line of a state (none: it is in another line)
+const REMOVED = [
+  { args: ['--map-elites'], option: '--map-elites', at: 29 },
+];
+
+test('a removed option is refused on the command line, in an island variant, and in the state of a run that used it (#193)', { skip }, () => {
+  for (const { args, option } of REMOVED) {
+    const r = spawnSync(evolve, [join(tmp, 'removed'), ...TINY, ...args], { encoding: 'utf8' });
+    assert.equal(r.status, 2, option);
+    assert.equal(r.stderr, `42evolve: ${option} was removed after 1.1.0 (#193)\n`);
+    const v = spawnSync(evolve, [join(tmp, 'removed'), ...TINY, '--islands', '2', '--island-variant', args.join(' ')], { encoding: 'utf8' });
+    assert.equal(v.status, 2, option);
+    assert.equal(v.stderr, `42evolve: ${option} was removed after 1.1.0 (#193)\n`);
+  }
+  assert.ok(!existsSync(join(tmp, 'removed')));
+  // the run folder of the base run, with the place of the option in its state not 0
+  const state = readFileSync(join(tmp, 'one', 'state.txt'), 'latin1');
+  for (const { option, at } of REMOVED.filter((x) => x.at !== undefined)) {
+    const dir = join(tmp, `removed-${at}`);
+    mkdirSync(dir);
+    copyFileSync(join(tmp, 'one', 'events.jsonl'), join(dir, 'events.jsonl'));
+    const params = state.match(/^params (.*)$/m)[1].split(' ');
+    assert.equal(params[at], '0', option);
+    params[at] = '1';
+    writeFileSync(join(dir, 'state.txt'), state.replace(/^params .*$/m, `params ${params.join(' ')}`));
+    const r = spawnSync(evolve, [dir, '--batches', '1'], { encoding: 'utf8' });
+    assert.equal(r.status, 1, option);
+    assert.equal(r.stderr, `42evolve: ${dir}: ${option} was removed after 1.1.0 (#193)\n`);
+    assert.equal(readFileSync(join(dir, 'events.jsonl'), 'latin1'), readFileSync(join(tmp, 'one', 'events.jsonl'), 'latin1'));
+  }
+});
+
 test('the logged values are the push-off of the logged scores', { skip }, () => {
   assert.equal(checkValues(base), 6);
 });
