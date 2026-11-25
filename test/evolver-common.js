@@ -372,7 +372,7 @@ export function checkEarly(evs) {
   const slots = one[0].panel.map((w) => w.id);
   const origins = new Map(); // --pushoff pareto
   let decisions = 0, kept = 0;
-  // the early rule (evolve.c, STAGE_CUT 8): fewer than 8 members weaker on the
+  // the early rule (batch.c, STAGE_CUT 8): fewer than 8 members weaker on the
   // first stage, and none, or its nearest no weaker
   const firstStage = () => {
     const ids = slots.filter((x) => x !== null);
@@ -419,7 +419,7 @@ export function checkEarly(evs) {
   return { decisions, kept };
 }
 
-// --positions mirror as 42evolve plays a match (play() in evolve.c): game g is
+// --positions mirror as 42evolve plays a match (play() in pool.c): game g is
 // round g / 2 + 1 of the seed's sequence, with a as the first warrior when g
 // is even and b when it is odd; [wins, losses, ties] of a. One game at a time,
 // not in the blocks 42evolve plays them in.
