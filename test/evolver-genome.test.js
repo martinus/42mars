@@ -326,9 +326,6 @@ test('--tie-points: what a tie counts where the run selects, not where it scores
   assert.ok(ties > 100, `${ties} ties`);
   // and every value, screen and estimate of the run, as tools/diversity.js computes them with a tie 0
   assert.equal(checkValues(evs), 10);
-  // the standard errors too: --noise takes them from the values
-  run(join(tmp, 'ties-noise'), [...args, '--noise', '1', '--threads', '2', '--batches', '10']);
-  assert.equal(checkValues(events(join(tmp, 'ties-noise'))), 10);
   // the holdout counts a tie 1, as the hill does
   const bench = evs.filter((e) => e.type === 'bench');
   assert.ok(bench.length >= 2 && bench.some((e) => e.scores.some((s) => s[3] > 0)));

@@ -245,77 +245,28 @@ static void test_pushoff(void) {
   const uint32_t all[4] = {0, 1, 2, 3};
   double sigma[4];
   pushoff_sigma(S, 4, all, 4, sigma);
-  CHECK(fabs(pushoff_distance(S, 4, all, 4, 0, 1, sigma, 0, 0, 0, SD_OPPONENT, 0) - 1.7557391154451805) < 1e-12, "SD-score 0 1");
-  CHECK(fabs(pushoff_distance(S, 4, all, 4, 2, 3, sigma, 0, 0, 0, SD_OPPONENT, 0) - 2.890943994708568) < 1e-12, "SD-score 2 3");
-  CHECK(fabs(pushoff_distance(S, 4, all, 4, 0, 1, sigma, 0, 0, 0, SD_SUM, 0) - 0.7408076421173693) < 1e-12, "Eq. 6, 0 1");
-  CHECK(fabs(pushoff_distance(S, 4, all, 4, 2, 3, sigma, 0, 0, 0, SD_SUM, 0) - 1.8630962205724457) < 1e-12, "Eq. 6, 2 3");
+  CHECK(fabs(pushoff_distance(S, 4, all, 4, 0, 1, sigma, 0, SD_OPPONENT) - 1.7557391154451805) < 1e-12, "SD-score 0 1");
+  CHECK(fabs(pushoff_distance(S, 4, all, 4, 2, 3, sigma, 0, SD_OPPONENT) - 2.890943994708568) < 1e-12, "SD-score 2 3");
+  CHECK(fabs(pushoff_distance(S, 4, all, 4, 0, 1, sigma, 0, SD_SUM) - 0.7408076421173693) < 1e-12, "Eq. 6, 0 1");
+  CHECK(fabs(pushoff_distance(S, 4, all, 4, 2, 3, sigma, 0, SD_SUM) - 1.8630962205724457) < 1e-12, "Eq. 6, 2 3");
   // --diversity panel: only the marked columns (test/diversity.test.js); the two add up to the whole
   const uint8_t only2[4] = {0, 0, 1, 0}, only3[4] = {0, 0, 0, 1};
-  CHECK(fabs(pushoff_distance(S, 4, all, 4, 0, 1, sigma, 0, 0, only2, SD_OPPONENT, 0) - 0.5309942440535915) < 1e-12, "column 2");
-  CHECK(fabs(pushoff_distance(S, 4, all, 4, 0, 1, sigma, 0, 0, only3, SD_OPPONENT, 0) - 1.224744871391589) < 1e-12, "column 3");
+  CHECK(fabs(pushoff_distance(S, 4, all, 4, 0, 1, sigma, only2, SD_OPPONENT) - 0.5309942440535915) < 1e-12, "column 2");
+  CHECK(fabs(pushoff_distance(S, 4, all, 4, 0, 1, sigma, only3, SD_OPPONENT) - 1.224744871391589) < 1e-12, "column 3");
   // a clone of the strongest goes first; kept indices never go
   const double C[25] = {0, 100, 250, 260, 240, 100, 0, 250, 260, 240, 10, 10, 0, 150, 90,
                         5, 5, 140, 0, 160, 20, 20, 80, 170, 0};
   const uint32_t five[5] = {0, 1, 2, 3, 4};
   double sg[5];
   pushoff_value v[5];
-  pushoff_values(C, 5, five, 5, SD_OPPONENT, 1, 0, 0, 0, 0, sg, v);
+  pushoff_values(C, 5, five, 5, SD_OPPONENT, 1, 0, sg, v);
   CHECK(v[0].distance == 0 && v[1].distance == 0, "clones have distance 0");
   CHECK(pushoff_weakest(v, 5, 0) == 1, "the higher index of two equal clones goes");
   const uint8_t keep[5] = {0, 1, 0, 0, 0};
   CHECK(pushoff_weakest(v, 5, keep) == 0, "a kept warrior went");
   // alpha 0: the average alone (test/diversity.test.js: 3 goes first)
-  pushoff_values(S, 4, all, 4, SD_OPPONENT, 0, 0, 0, 0, 0, sigma, v);
+  pushoff_values(S, 4, all, 4, SD_OPPONENT, 0, 0, sigma, v);
   CHECK(pushoff_weakest(v, 4, 0) == 3, "alpha 0 is not the average");
-  // --noise (test/diversity.test.js has the arithmetic): 0 and 1 against
-  // columns 2 and 3; column 2 differs by 30 with standard errors 6 and 8
-  // (together 10), column 3 not at all
-  const double N[16] = {0, 10, 100, 40, 20, 0, 130, 40, 50, 50, 0, 60, 70, 70, 80, 0};
-  const double E[16] = {0, 0, 6, 3, 0, 0, 8, 4, 0, 0, 0, 0, 0, 0, 0, 0};
-  pushoff_sigma(N, 4, all, 4, sigma);
-  CHECK(fabs(pushoff_distance(N, 4, all, 4, 0, 1, sigma, 0, 0, 0, SD_OPPONENT, 0) - 1.459992790176863) < 1e-12, "plain");
-  CHECK(fabs(pushoff_distance(N, 4, all, 4, 0, 1, sigma, E, 1, 0, SD_OPPONENT, 0) - 0.9733285267845754) < 1e-12, "noise 1");
-  CHECK(fabs(pushoff_distance(N, 4, all, 4, 0, 1, sigma, E, 2, 0, SD_OPPONENT, 0) - 0.4866642633922877) < 1e-12, "noise 2");
-  CHECK(fabs(pushoff_distance(N, 4, all, 4, 0, 1, sigma, E, 1, 0, SD_SUM, 0) - 0.6671973756445573) < 1e-12, "noise 1, Eq. 6");
-  CHECK(pushoff_distance(N, 4, all, 4, 0, 1, sigma, E, 3, 0, SD_OPPONENT, 0) == 0, "noise 3: no difference left");
-  // --difference ahead: only where the first scores more. In column 2, 1 is
-  // 30 ahead of 0; with noise 1 the 20 beyond the errors count, 0 is nowhere ahead
-  CHECK(fabs(pushoff_distance(N, 4, all, 4, 1, 0, sigma, E, 1, 0, SD_OPPONENT, 1) - 0.9733285267845754) < 1e-12, "ahead, noise 1");
-  CHECK(pushoff_distance(N, 4, all, 4, 0, 1, sigma, E, 1, 0, SD_OPPONENT, 1) == 0, "behind, noise 1");
-  // in S, 1 is 5 ahead of 0 in columns 2 and 3: the whole SD-score one way, 0 the other
-  pushoff_sigma(S, 4, all, 4, sigma);
-  CHECK(fabs(pushoff_distance(S, 4, all, 4, 1, 0, sigma, 0, 0, 0, SD_OPPONENT, 1) - 1.7557391154451805) < 1e-12, "ahead 1 0");
-  CHECK(pushoff_distance(S, 4, all, 4, 0, 1, sigma, 0, 0, 0, SD_OPPONENT, 1) == 0, "ahead 0 1");
-  // 2 against 3: 13 ahead in column 1, 1 behind in column 0 (sigma_0 = sqrt(14/3)); the two ways add up to the SD-score
-  const double a23 = pushoff_distance(S, 4, all, 4, 2, 3, sigma, 0, 0, 0, SD_OPPONENT, 1);
-  const double a32 = pushoff_distance(S, 4, all, 4, 3, 2, sigma, 0, 0, 0, SD_OPPONENT, 1);
-  CHECK(fabs(a32 - 1 / sqrt(14.0 / 3)) < 1e-12 && fabs(a23 + a32 - 2.890943994708568) < 1e-12, "ahead 2 3: %.17g %.17g", a23, a32);
-  // three equal strong warriors and one that loses to all: the SD-score
-  // keeps the weak one (it differs) and pushes off a strong one; ahead it is
-  // nowhere ahead of anyone and goes
-  const double W[16] = {0, 150, 150, 250, 150, 0, 150, 250, 150, 150, 0, 250, 50, 50, 50, 0};
-  double sw[4];
-  pushoff_values(W, 4, all, 4, SD_OPPONENT, 1, 0, 0, 0, 0, sw, v);
-  CHECK(v[3].distance > 0 && pushoff_weakest(v, 4, 0) == 2, "both ways: the weak one stays");
-  pushoff_values(W, 4, all, 4, SD_OPPONENT, 1, 0, 0, 0, 1, sw, v);
-  CHECK(v[3].distance == 0 && pushoff_weakest(v, 4, 0) == 3, "ahead: the weak one goes");
-  // --difference shape (test/diversity.test.js has the arithmetic): the weighted median, then |a_k - b_k - c|
-  CHECK(pushoff_shift((const double[]){3, 1, 2}, (const double[]){1, 1, 1}, 3) == 2, "median of 3");
-  CHECK(pushoff_shift((const double[]){4, 1, 3, 2}, (const double[]){1, 1, 1, 1}, 4) == 2, "median of 4");
-  CHECK(pushoff_shift((const double[]){1, 2, 3}, (const double[]){1, 1, 5}, 3) == 3, "weighted median");
-  pushoff_sigma(S, 4, all, 4, sigma);
-  CHECK(pushoff_distance(S, 4, all, 4, 0, 1, sigma, 0, 0, 0, SD_OPPONENT, DIFF_SHAPE) == 0, "shape 0 1");
-  CHECK(fabs(pushoff_distance(S, 4, all, 4, 2, 3, sigma, 0, 0, 0, SD_OPPONENT, DIFF_SHAPE) - 14 / sqrt(86.0 / 3)) < 1e-12, "shape 2 3");
-  CHECK(fabs(pushoff_distance(S, 4, all, 4, 3, 2, sigma, 0, 0, 0, SD_OPPONENT, DIFF_SHAPE) - 14 / sqrt(86.0 / 3)) < 1e-12, "shape 3 2");
-  CHECK(fabs(pushoff_distance(S, 4, all, 4, 2, 3, sigma, 0, 0, 0, SD_SUM, DIFF_SHAPE) - 14 / (sqrt(14.0 / 3) + sqrt(86.0 / 3))) < 1e-12,
-        "shape 2 3, Eq. 6");
-  // a weaker copy of a profile leaves first, a weak warrior of another profile stays
-  const double WS[25] = {0, 150, 200, 100, 150, 100, 0, 150, 50, 100, 150, 200, 0, 120, 140,
-                         180, 220, 160, 0, 130, 60, 90, 40, 200, 0};
-  pushoff_values(WS, 5, five, 5, SD_OPPONENT, 1, 0, 0, 0, DIFF_ABS, sg, v);
-  CHECK(v[1].distance > 0 && pushoff_weakest(v, 5, 0) != 1, "abs: the weaker copy stays");
-  pushoff_values(WS, 5, five, 5, SD_OPPONENT, 1, 0, 0, 0, DIFF_SHAPE, sg, v);
-  CHECK(v[1].distance == 0 && v[1].nearest == 0 && pushoff_weakest(v, 5, 0) == 1 && v[4].distance > 0, "shape: the weaker copy goes");
   // --pushoff pareto: 0, 1 and 2 are not dominated, 3 is (by 0), 4 is a
   // copy of 0. Crowding of 0: by the first objective 2, 0, 4, 1 gives
   // (1 - 0) / 2, by the second 1, 0, 4, 2 gives (1 - 0) / 2; the copy 0
@@ -329,8 +280,6 @@ static void test_pushoff(void) {
   const double L[15] = {0, 4, 0, 1, 3, 1, 2, 2, 2, 3, 1, 3, 4, 0, 4};
   pareto_fronts(L, 5, 3, fr, cr);
   CHECK(fr[0] == 0 && fr[2] == 0 && fr[4] == 0 && fabs(cr[1] - 1.5) < 1e-12 && fabs(cr[2] - 1.5) < 1e-12 && isinf(cr[0]), "a line: %g %g", cr[1], cr[2]);
-  CHECK(fabs(pushoff_se(50, 20, 100, 1) - 13.453624047073712) < 1e-12, "standard error");
-  CHECK(pushoff_se(100, 0, 100, 1) == 0 && pushoff_se(0, 0, 0, 1) == 0, "standard error of a constant score");
 }
 
 static void test_names(void) {
