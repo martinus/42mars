@@ -59,6 +59,8 @@ RPATH = -Wl,-rpath,'$$ORIGIN'
 endif
 
 LIB_SOURCES := lib/42mars.c lib/42mars.h $(wildcard lib/src/*.c lib/src/*.h)
+# the files of 42evolve alone (evolver/evolve.h)
+EVOLVE := evolver/evolve.c evolver/pool.c
 EVOLVER_SOURCES := evolver/genome.c evolver/generator.c evolver/gen-change.c evolver/pushoff.c evolver/names.c evolver/style.c $(wildcard evolver/*.h)
 DIST := 42mars-$(VERSION)-$(shell uname -s | tr A-Z a-z)-$(shell uname -m)
 
@@ -79,8 +81,8 @@ build/$(SHARED): build/42mars.o
 build/42mars: cli/42mars.c build/lib42mars.a
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ cli/42mars.c build/lib42mars.a
 
-build/42evolve: evolver/evolve.c $(EVOLVER_SOURCES) build/lib42mars.a
-	$(CC) $(CFLAGS) -pthread $(LDFLAGS) -Ilib -o $@ evolver/evolve.c evolver/genome.c evolver/generator.c evolver/gen-change.c evolver/pushoff.c evolver/names.c evolver/style.c build/lib42mars.a -lm
+build/42evolve: $(EVOLVE) $(EVOLVER_SOURCES) build/lib42mars.a
+	$(CC) $(CFLAGS) -pthread $(LDFLAGS) -Ilib -o $@ $(EVOLVE) evolver/genome.c evolver/generator.c evolver/gen-change.c evolver/pushoff.c evolver/names.c evolver/style.c build/lib42mars.a -lm
 
 # 42spectrum: what one change does to a warrior (docs/evolver.md)
 build/42spectrum: evolver/spectrum.c $(EVOLVER_SOURCES) build/lib42mars.a
