@@ -45,7 +45,6 @@ static warrior *load_opponent(const run *r, const char *name, int quiet) {
   return o;
 }
 
-// The names of the .red files of a folder, sorted.
 // The names of the .red files of a folder, sorted; with `also` (".gen") the
 // files of that ending too.
 static char **red_files(const char *dir, uint32_t *count, const char *also) {

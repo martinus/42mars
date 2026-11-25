@@ -140,6 +140,29 @@ test('a removed option is refused on the command line, in an island variant, and
   }
 });
 
+// A member line that does not parse, and a member whose slot is taken: the
+// state is refused and the member freed (under the sanitizers of CI a member
+// left behind is a leak report and another exit code).
+test('a state with a bad member line is refused, and the member freed', { skip }, () => {
+  const state = readFileSync(join(tmp, 'one', 'state.txt'), 'latin1');
+  const slots = [...state.matchAll(/^slot (\d+) (\d+)$/gm)];
+  assert.ok(slots.length >= 2);
+  const cases = [
+    state.replace(/^(member (?:\S+ ){8})\S.*$/m, '$1x'), // its genome
+    state.replace(`slot ${slots[1][1]} ${slots[1][2]}`, `slot ${slots[1][1]} ${slots[0][2]}`), // the slot of the first member
+  ];
+  for (const [k, text] of cases.entries()) {
+    assert.notEqual(text, state);
+    const dir = join(tmp, `bad-member-${k}`);
+    mkdirSync(dir);
+    copyFileSync(join(tmp, 'one', 'events.jsonl'), join(dir, 'events.jsonl'));
+    writeFileSync(join(dir, 'state.txt'), text);
+    const r = spawnSync(evolve, [dir, '--batches', '1'], { encoding: 'utf8' });
+    assert.equal(r.status, 1, r.stderr);
+    assert.equal(r.stderr, `42evolve: ${dir}/state.txt is not a state file of this version\n`);
+  }
+});
+
 test('the logged values are the push-off of the logged scores', { skip }, () => {
   assert.equal(checkValues(base), 6);
 });

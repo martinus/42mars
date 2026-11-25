@@ -85,7 +85,6 @@ static uint32_t hardware_threads(void) {
   return n > 0 ? (uint32_t)n : 1;
 }
 
-// What is wrong with the parameters of a new run (defaults applied), 0 nothing.
 // Does the mix draw a kind of change that only a generator has?
 static int structure_kinds(const genome_mix *m) {
   for (int k = CH_COUNT; k < CH_ALL; k++)
@@ -94,6 +93,7 @@ static int structure_kinds(const genome_mix *m) {
 }
 #define STRUCTURE_NEEDS_GEN "--changes with a kind of generators (repeat to transplant) needs --genome gen"
 
+// What is wrong with the parameters of a new run (defaults applied), 0 nothing.
 static const char *params_error(const params *p) {
   static char text[96];
   if (p->rules.max_length < 1 || p->rules.max_length > GENOME_MAX) {
