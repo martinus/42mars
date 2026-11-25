@@ -55,7 +55,7 @@ The smallest change per finding. Removing a line counts as much as adding one.
 | true in every repository under `~/gra` | `~/gra/CLAUDE.md`: outside the repository, edit it directly, name the edit in the report |
 | a command that was put together more than once | a script: `tools/` or `bench/` when users of the engine need it too, else in the folder of the skill that runs it |
 | a tool that misled | the tool: it refuses the input. Not a rule that warns about the tool |
-| a defect or unfinished product work | an issue in Martin's voice (`~/gra/martin-voice.md`), not a rule |
+| a defect or unfinished product work | an issue in Martin's voice (`~/gra/voice-profile-en.md`), not a rule |
 
 - Grep before adding (`grep -rn <symbol> CLAUDE.md .claude/`): extend the bullet that covers it already.
 - A rule is the instruction and one line of reason.
