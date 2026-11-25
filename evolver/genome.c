@@ -233,7 +233,7 @@ const char *genome_change_name(int kind) {
   static const char *const names[CH_ALL] = {
       "opcode", "modifier", "a-mode", "b-mode", "a-operand", "b-operand", "org", "replace", "insert", "delete",
       "duplicate", "move", "crossover-insert", "crossover-replace", "related-opcode", "related-mode", "shared-constant",
-      "tune", "loop", "repeat", "count", "fold", "unroll", "index", "expression", "constant", "extract", "parameter", "call", "inline",
+      "tune", "repeat", "count", "fold", "unroll", "index", "expression", "constant", "extract", "parameter", "call", "inline",
       "transplant"};
   return kind >= 0 && kind < CH_ALL ? names[kind] : "?";
 }
@@ -350,21 +350,6 @@ int genome_change(genome *x, const genome *p2, rng *r, uint32_t core, uint32_t m
       genome_rebuild(x, x, p2, s, n, core, r);
       return 1;
     }
-    case CH_LOOP: { // a loop of the donor p2, from its jump back's target to the jump, into x
-      if (!p2) return 0;
-      m42_instruction code[GENOME_MAX];
-      genome_code(p2, core, code);
-      uint32_t from, to;
-      if (!genome_pick_loop(code, p2->len, core, r, &from, &to)) return 0;
-      const uint32_t k = to - from + 1, cut = len + k > max_length ? len + k - max_length : 0; // what it replaces
-      if (cut && cut >= len) return 0;
-      const uint32_t q = rng_below(r, len - cut + 1);
-      for (uint32_t i = 0; i < q; i++) s[n++] = (slot){SLOT_A, i};
-      for (uint32_t i = 0; i < k; i++) s[n++] = (slot){SLOT_B, from + i};
-      for (uint32_t i = q + cut; i < len; i++) s[n++] = (slot){SLOT_A, i};
-      genome_rebuild(x, x, p2, s, n, core, r);
-      return 1;
-    }
     case CH_RELATED_OPCODE: {
       uint32_t cand[GENOME_MAX], cn = 0;
       for (uint32_t i = 0; i < len; i++)
@@ -415,41 +400,9 @@ int genome_change(genome *x, const genome *p2, rng *r, uint32_t core, uint32_t m
 
 // ---------------------------------------------------------------- breeding
 
-// How far back a jump by the offset a (mod the core) goes: 0 to itself, UINT32_MAX forward.
-static uint32_t back_of(uint32_t a, uint32_t core) { return a == 0 ? 0 : a > core / 2 ? core - a : UINT32_MAX; }
-
-int genome_pick_loop(const m42_instruction *code, uint32_t len, uint32_t core, rng *r, uint32_t *from, uint32_t *to) {
-  enum { OP_JMZ = 6, OP_JMN = 7, OP_DJN = 8, OP_JMP = 13, MODE_DIRECT = 1 };
-  uint32_t cand[GENOME_MAX], n = 0;
-  for (uint32_t i = 0; i < len && i < GENOME_MAX; i++) {
-    const m42_instruction *c = &code[i];
-    if ((c->opcode != OP_JMP && c->opcode != OP_JMZ && c->opcode != OP_JMN && c->opcode != OP_DJN) || c->a_mode != MODE_DIRECT) continue;
-    if (back_of(c->a, core) <= i) cand[n++] = i;
-  }
-  if (!n) return 0;
-  uint32_t lo = cand[rng_below(r, n)], hi = lo;
-  lo -= back_of(code[hi].a, core);
-  // and the cells of the warrior that the block's operands point at (not #): the data a loop works
-  // through, its pointers and what it copies; until nothing more is added
-  for (int grown = 1; grown;) {
-    grown = 0;
-    for (uint32_t i = lo; i <= hi; i++)
-      for (int o = 0; o < 2; o++) {
-        if ((o ? code[i].b_mode : code[i].a_mode) == 0) continue;
-        const uint32_t v = o ? code[i].b : code[i].a;
-        const int64_t t = (int64_t)i + (v > core / 2 ? (int64_t)v - core : (int64_t)v);
-        if (t < 0 || t >= (int64_t)len || t >= GENOME_MAX) continue;
-        if ((uint32_t)t < lo) lo = (uint32_t)t, grown = 1;
-        if ((uint32_t)t > hi) hi = (uint32_t)t, grown = 1;
-      }
-  }
-  *from = lo, *to = hi;
-  return 1;
-}
-
 genome_mix genome_mix_default(void) {
   // per mille; the point changes are 540 of them
-  static const uint32_t w[CH_COUNT] = {81, 81, 54, 54, 108, 108, 27, 27, 100, 100, 70, 70, 60, 60, 0, 0, 0, 0, 0};
+  static const uint32_t w[CH_COUNT] = {81, 81, 54, 54, 108, 108, 27, 27, 100, 100, 70, 70, 60, 60, 0, 0, 0, 0};
   genome_mix m = {{0}};
   memcpy(m.w, w, sizeof w);
   return m;
@@ -520,18 +473,8 @@ void genome_as_generator(genome *x) {
 
 void genome_breed(genome *child, const genome *p1, const genome *p2, rng *r, uint32_t core, uint32_t max_length,
                   const genome_mix *mix, char *ops, size_t ops_n) {
-  genome_breed_donors(child, p1, p2, 0, 0, r, core, max_length, mix, ops, ops_n);
-}
-
-void genome_breed_donors(genome *child, const genome *p1, const genome *p2, const genome *const *donors, uint32_t nd,
-                         rng *r, uint32_t core, uint32_t max_length, const genome_mix *mix,
-                         char *ops, size_t ops_n) {
   if (p1->generated) {
-    const gen *gd[GENOME_DONORS_MAX];
-    uint32_t gn = 0;
-    for (uint32_t i = 0; i < nd && gn < GENOME_DONORS_MAX; i++)
-      if (donors[i]->generated) gd[gn++] = &donors[i]->p;
-    gen_breed_donors(&child->p, &p1->p, p2 && p2->generated ? &p2->p : 0, gd, gn, r, core, max_length, mix, ops, ops_n);
+    gen_breed(&child->p, &p1->p, p2 && p2->generated ? &p2->p : 0, r, core, max_length, mix, ops, ops_n);
     generate(child, core, max_length);
     return;
   }
@@ -549,9 +492,7 @@ void genome_breed_donors(genome *child, const genome *p1, const genome *p2, cons
       uint64_t d = rng_below(r, total);
       int kind = 0;
       while (d >= mix->w[kind]) d -= mix->w[kind++];
-      const genome *mate = p2;
-      if (kind == CH_LOOP) mate = nd ? donors[rng_below(r, nd)] : 0;
-      if (genome_change(&x, mate, r, core, max_length, kind)) {
+      if (genome_change(&x, p2, r, core, max_length, kind)) {
         add_op(ops, ops_n, genome_change_name(kind));
         break;
       }
