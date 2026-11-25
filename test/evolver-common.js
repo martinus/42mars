@@ -54,7 +54,7 @@ export const TINY = ['--opponents', join(root, 'warriors/koenigstuhl/tiny'), '--
   '--stage', '0']; // the tests of --stage set it
 
 export function run(dir, args) {
-  const r = spawnSync(evolve, [dir, ...args], { encoding: 'utf8', timeout: 120000 * slowdown() });
+  const r = spawnSync(evolve, [dir, ...args], { encoding: 'utf8', timeout: Math.ceil(120000 * slowdown()) });
   assert.equal(r.status, 0, r.stderr);
   return r;
 }

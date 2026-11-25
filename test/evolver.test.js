@@ -25,7 +25,7 @@ before(setup);
 after(cleanup);
 
 test('genome and push-off in C', { skip }, () => {
-  const r = spawnSync(unit, { encoding: 'utf8', timeout: 120000 * slowdown() });
+  const r = spawnSync(unit, { encoding: 'utf8', timeout: Math.ceil(120000 * slowdown()) });
   assert.equal(r.status, 0, r.stderr);
   assert.equal(r.stdout.trim(), 'ok');
 });
