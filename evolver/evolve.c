@@ -77,7 +77,6 @@ typedef struct {
   int distance_panel;       // --diversity panel: the push-off's SD-score over the panel's columns only
   int average_panel;        // --average panel: the push-off's average over the panel's columns only
   int member_games_none;    // --member-games none: members never play each other (with --average panel --diversity panel)
-  int simple;               // --simple: a candidate plays the panel only and stops when it cannot make it onto the hill
   int difference;           // --difference: DIFF_ABS, DIFF_AHEAD (a column only where the warrior scores more) or DIFF_SHAPE (#167)
   int pareto;               // --pushoff pareto: fronts on panel average and average against members (NSGA-II); 2 with age, 3 with SD-score
   int mirror;               // --positions mirror: each position twice, the second time with the warriors swapped
@@ -980,7 +979,7 @@ static void event_start(run *r) {
           "\"rounds\":%u,\"screenRounds\":%u,\"benchEvery\":%u,\"benchRounds\":%u,\"initLength\":%u,"
           "\"screenFactor\":%.17g,\"alpha\":%.17g,\"reintroduce\":%.17g,\"sd\":\"%s\",\"seed\":%" PRIu64
           ",\"select\":\"%s\",\"rotate\":%u,\"fractions\":%.17g,\"race\":%u,\"raceKeep\":%u,\"prior\":\"%s\","
-          "\"parents\":\"%s\",\"screenMembers\":%u,\"noise\":%.17g,\"stage\":%u,\"fill\":%s,\"panelRounds\":%u,\"diversity\":\"%s\",\"panelChoice\":\"%s\",\"screenStop\":%.17g,\"screenCheck\":%.17g,\"tuneNovel\":%u,\"average\":\"%s\",\"memberGames\":\"%s\",\"simple\":%s,\"drawSeed\":%" PRIu64 ",\"difference\":\"%s\",\"pushoff\":\"%s\",\"positions\":\"%s\",\"clear\":%.17g,\"genome\":\"%s\",\"refactor\":%.17g,\"minLength\":%u,\"tiePoints\":%.17g},"
+          "\"parents\":\"%s\",\"screenMembers\":%u,\"noise\":%.17g,\"stage\":%u,\"fill\":%s,\"panelRounds\":%u,\"diversity\":\"%s\",\"panelChoice\":\"%s\",\"screenStop\":%.17g,\"screenCheck\":%.17g,\"tuneNovel\":%u,\"average\":\"%s\",\"memberGames\":\"%s\",\"drawSeed\":%" PRIu64 ",\"difference\":\"%s\",\"pushoff\":\"%s\",\"positions\":\"%s\",\"clear\":%.17g,\"genome\":\"%s\",\"refactor\":%.17g,\"minLength\":%u,\"tiePoints\":%.17g},"
           "\"opponents\":",
           m42_version(), p->rules.core_size, p->rules.max_cycles, p->rules.max_processes, p->rules.max_length,
           p->rules.min_distance, r->panel_n, r->hold_n, p->list, p->batch, p->survivors, p->rounds, p->screen_rounds,
@@ -994,7 +993,7 @@ static void event_start(run *r) {
           : p->panel_random == PANEL_KINDS  ? "kinds"
                                             : "picked",
           p->screen_stop, p->screen_check, p->tune_novel,
-          p->average_panel ? "panel" : "all", p->member_games_none ? "none" : "all", p->simple ? "true" : "false", p->draw_seed,
+          p->average_panel ? "panel" : "all", p->member_games_none ? "none" : "all", p->draw_seed,
           difference_name(p->difference), p->pareto == 3 ? "pareto-sd" : p->pareto == 2 ? "pareto-age" : p->pareto ? "pareto" : "value", p->mirror ? "mirror" : "pmars", p->clear, p->gen ? "gen" : "list", p->refactor, p->min_length, p->tie);
   json_str(f, p->opponents, 0);
   fputs(",\"panelFiles\":", f);
@@ -1085,7 +1084,7 @@ static void event_enter(run *r, uint32_t slot, double screen, double estimate, d
   fputs("],\"ops\":", f);
   json_str(f, w->ops, 0);
   fprintf(f, ",\"length\":%u,\"screen\":%.4f,\"estimate\":%.6f,\"screenPoints\":[", w->g->len, screen, estimate);
-  for (uint32_t k = 0; k < r->panel_n; k++) fprintf(f, "%s%.4f", k ? "," : "", points_t(row[k].s[0], r->p.simple ? panel_rounds(&r->p) : r->p.screen_rounds, r->p.tie));
+  for (uint32_t k = 0; k < r->panel_n; k++) fprintf(f, "%s%.4f", k ? "," : "", points_t(row[k].s[0], r->p.screen_rounds, r->p.tie));
   fprintf(f, "],\"style\":{\"kind\":\"%s\",\"copies\":%.6f,\"moved\":%.6f,\"written\":%.6f,\"whole\":%.6f,\"read\":%.6f,"
           "\"tasks\":%.6f,\"alive\":%.6f,\"measured\":%.6f}",
           style_kind_name(w->style_kind), w->st.copies, w->st.moved, w->st.written, w->st.whole, w->st.read, w->st.tasks,
@@ -1152,7 +1151,7 @@ static const param_field param_fields[] = {
     PF('g', fractions), PF('u', race), PF('u', race_keep), PF('d', prior), PF('d', parents), PF('u', screen_members),
     PF('g', noise), PF('u', stage), PF('d', fill), PF('u', panel_rounds), PF('d', distance_panel), GONE("--niche"),
     GONE("--map-elites"), GONE("--specialists"), GONE("--sharing"), PF('g', screen_stop), PF('g', screen_check),
-    PF('u', tune_novel), PF('d', average_panel), PF('d', member_games_none), PF('d', simple), PF('q', draw_seed),
+    PF('u', tune_novel), PF('d', average_panel), PF('d', member_games_none), GONE("--simple"), PF('q', draw_seed),
     PF('d', difference), PF('d', pareto), PF('d', mirror), PF('g', clear), PF('d', gen), PF('g', refactor),
     PF('u', min_length), PF('g', tie)};
 #define PARAM_FIELDS (sizeof param_fields / sizeof *param_fields)
@@ -1509,7 +1508,6 @@ typedef struct {
   double dist;     // the SD-score to the nearest warrior in, from the screen (estimated_distance())
   int out;         // --race: dropped after the first screen rounds; --screen-stop: stopped
   int would_stop;  // --screen-check: --screen-stop would have stopped it
-  int why;         // --simple: what stopped it (SIMPLE_STRENGTH, ...), 0 nothing
   uint32_t played; // rounds of its screen against each opponent
   uint32_t stop_at; // --screen-stop, --screen-check: the rounds after which it stopped (would have), 0 not
   int reached;     // 0 bred, 1 evaluated (not a repeat), 2 past the screen, 3 still in the list after its batch
@@ -1828,167 +1826,6 @@ static uint32_t screen_decide(const run *r, candidate *c, uint32_t B, const unit
   if (log) fputs("]}", log);
   free(lo), free(hi), free(sorted);
   return n;
-}
-
-// --simple: a candidate plays the panel only, in checkpoints of 5, S, 5 S and
-// all F rounds (S the screen rounds, F the panel rounds), and after each one
-// it stops when it cannot make it onto the hill:
-//   strength  its average cannot reach the gate, screen_factor of the weakest
-//             member's average (the product average * SD-score has no floor of
-//             its own: a warrior that loses everywhere is unlike everybody)
-//   twin      after S rounds its results against every panel warrior are those
-//             of a member in its first S rounds (the same seeds): it plays
-//             like that member
-//   value     its push-off value cannot reach the cut, the list-th largest of
-//             the members' values and the lower bounds of the candidates still in
-// A candidate that plays all F rounds enters, and the push-off decides. The
-// bounds, after n of F rounds: a_k its points per 100 rounds against panel
-// warrior k, e_k = sqrt(v_k (F - n) / (F n)) the standard deviation of what
-// it ends with there (v_k as in screen_bounds()). Its average lies within z
-// sqrt(sum e_k^2) / P. Its SD-score to a warrior b is D = sum |a_k - b_k| /
-// sigma_k, each difference without the error's share (sqrt(d^2 - e_k^2), 0
-// below e_k: after 5 rounds the error alone would make every candidate look
-// unlike everybody). An error moves a column by at most itself, so D after
-// all rounds is below D + z sqrt(sum (e_k / sigma_k)^2) about as surely as z
-// says; the lower bound takes z e_k off every column. The upper bound leaves
-// out the members whose panel average is at most the candidate's upper bound:
-// the push-off may drop such a member for it, and the candidate then has that
-// member's distance to the others. The cut counts the members' values from
-// before the candidate entered; a near twin of a member would bring both
-// values down, and the one of the two that stays gets the old value back.
-// With those members in the bound, 136 of 920 candidates stopped by value
-// stayed in a '94nop run, 8 without (#162, docs/evolver.md). The 8: after a
-// push-off with many newcomers the list-th value can be below the cut. The
-// value's bounds are the products.
-// z is --screen-stop: 3 stops a candidate that almost surely cannot make it,
-// a z near 0 one whose value so far would not put it on the hill.
-enum { SIMPLE_STRENGTH = 1, SIMPLE_TWIN, SIMPLE_VALUE };
-
-typedef struct {
-  double avg, hi;           // the average against the panel, its upper bound
-  double value, vlo, vhi;   // average * SD-score to the nearest warrior in, its bounds
-  double dist;
-} simple_bound;
-
-static uint32_t simple_checkpoints(const params *p, uint32_t *cp) {
-  const uint32_t S = p->screen_rounds, F = panel_rounds(p);
-  uint32_t n = 0;
-  if (5 < S) cp[n++] = 5;
-  if (S < F) cp[n++] = S;
-  if (5 * S < F) cp[n++] = 5 * S;
-  cp[n++] = F;
-  return n;
-}
-
-static void simple_bounds(const run *r, const unit *row, uint32_t n, uint32_t F, double z, simple_bound *b) {
-  const uint32_t P = r->panel_n;
-  double *a = xmalloc(P * sizeof *a), *e = xmalloc(P * sizeof *e);
-  double x = 0, s2 = 0;
-  for (uint32_t k = 0; k < P; k++) {
-    const m42_score sc = row[k].s[0];
-    a[k] = points_t(sc, n, r->p.tie);
-    e[k] = sqrt(round_variance(sc, n, r->p.tie) * (F - n) / ((double)F * n));
-    x += a[k];
-    s2 += e[k] * e[k];
-  }
-  b->avg = x / P;
-  const double sd = sqrt(s2) / P, lo = b->avg - z * sd;
-  b->hi = b->avg + z * sd;
-  double dist = INFINITY, dlo = INFINITY, dhi = INFINITY;
-  for (uint32_t i = 0; i < r->active_n; i++) {
-    const uint32_t o = r->active[i];
-    // a member it may outscore may leave in its place, near twins one of
-    // which the push-off drops: the upper bound is to the others
-    const int may_go = i >= P && panel_avg(r, o) <= b->hi;
-    double d = 0, low = 0, e2 = 0;
-    for (uint32_t k = 0; k < P; k++) {
-      if (k == o || !(r->sigma[k] > 0)) continue;
-      // the error makes a column look more different than it is: on average
-      // (x + err)^2 is x^2 + e^2, so the difference is taken without e^2
-      const double raw = fabs(a[k] - r->pts[o * r->cap + k]), q = e[k] / r->sigma[k];
-      const double diff = raw > e[k] ? sqrt(raw * raw - e[k] * e[k]) : 0;
-      d += diff / r->sigma[k];
-      low += (diff > z * e[k] ? diff - z * e[k] : 0) / r->sigma[k];
-      e2 += q * q;
-    }
-    const double high = d + z * sqrt(e2);
-    if (d < dist) dist = d;
-    if (low < dlo) dlo = low;
-    if (high < dhi && !may_go) dhi = high;
-  }
-  if (dist == INFINITY) dist = dlo = dhi = 0;
-  b->dist = with_alpha(r, dist);
-  b->value = b->avg * b->dist;
-  b->vlo = (lo > 0 ? lo : 0) * with_alpha(r, dlo);
-  b->vhi = (b->hi > 0 ? b->hi : 0) * with_alpha(r, dhi);
-  free(a), free(e);
-}
-
-// Whether a member's first S rounds against every panel warrior are this row.
-static int simple_twin(const run *r, const unit *row) {
-  for (uint32_t i = r->panel_n; i < r->active_n; i++) {
-    const uint32_t m = r->active[i];
-    uint32_t k = 0;
-    while (k < r->panel_n) {
-      const m42_score a = row[k].s[0], b = r->wlt1[m * r->cap + k];
-      if (a.wins != b.wins || a.losses != b.losses || a.ties != b.ties) break;
-      k++;
-    }
-    if (k == r->panel_n) return 1;
-  }
-  return 0;
-}
-
-// After `done` rounds: the scores of the candidates still in, and those that
-// stop (out, or with check would_stop: they play on, the rule as if they did
-// not). The members' values are those of the batch's start (r->values, not
-// computed again before the last checkpoint). stops[reason]++.
-static void simple_decide(const run *r, candidate *c, uint32_t B, const unit *u, const uint32_t *at, uint32_t done,
-                          double z, double gate, int check, uint32_t *stops, FILE *log) {
-  const params *p = &r->p;
-  const uint32_t P = r->panel_n, F = panel_rounds(p);
-  simple_bound *b = xmalloc(B * sizeof *b);
-  double *sorted = xmalloc((B + members(r)) * sizeof *sorted);
-  uint32_t on = 0;
-  for (uint32_t i = P; i < r->active_n; i++) sorted[on++] = r->values[i].value;
-  for (uint32_t i = 0; i < B; i++) {
-    if (c[i].skip || c[i].out || c[i].would_stop) continue;
-    simple_bounds(r, u + at[i], done, F, z, &b[i]);
-    c[i].screen = b[i].avg, c[i].dist = b[i].dist, c[i].estimate = c[i].key = b[i].value;
-    sorted[on++] = b[i].vlo;
-  }
-  double cut = -INFINITY; // the list-th largest of the members' values and the candidates' lower bounds
-  if (on > p->list && done < F) {
-    qsort(sorted, on, sizeof *sorted, by_double_down);
-    cut = sorted[p->list - 1];
-  }
-  if (log) {
-    fprintf(log, "%s{\"rounds\":%u,\"cut\":%.17g,\"rows\":[", ftell(log) ? "," : "", done, cut == -INFINITY ? -1e300 : cut);
-    for (uint32_t i = 0, n = 0; i < B; i++) {
-      if (c[i].skip || c[i].out || c[i].would_stop) continue;
-      fprintf(log, "%s[%u", n++ ? "," : "", i);
-      for (uint32_t k = 0; k < P; k++) fprintf(log, ",%u,%u,%u", u[at[i] + k].s[0].wins, u[at[i] + k].s[0].losses, u[at[i] + k].s[0].ties);
-      fputc(']', log);
-    }
-    fputs("],\"stopped\":[", log);
-  }
-  uint32_t n = 0;
-  for (uint32_t i = 0; i < B; i++) {
-    if (c[i].skip || c[i].out || c[i].would_stop) continue;
-    int why = 0;
-    if (b[i].hi < gate) why = SIMPLE_STRENGTH;
-    else if (done == p->screen_rounds && simple_twin(r, u + at[i])) why = SIMPLE_TWIN;
-    else if (b[i].vhi < cut) why = SIMPLE_VALUE;
-    if (!why) continue;
-    if (log) fprintf(log, "%s[%u,%d]", n++ ? "," : "", i, why);
-    if (check) c[i].would_stop = 1;
-    else c[i].out = 1;
-    c[i].stop_at = done;
-    c[i].why = why;
-    stops[why]++;
-  }
-  if (log) fputs("]}", log);
-  free(b), free(sorted);
 }
 
 // `rounds` more rounds, from round `first`, of every candidate still in
@@ -2334,54 +2171,21 @@ static void run_batch(run *r) {
   }
 
   // --screen-stop, --screen-check: the screen in steps of SCREEN_STEP rounds
-  const int simple = p->simple;
-  const int racing = !simple && p->race && p->race < p->screen_rounds;
-  const int stepping = !simple && !racing && (p->screen_stop > 0 || p->screen_check > 0);
-  const uint32_t F = simple ? panel_rounds(p) : p->screen_rounds;
+  const int racing = p->race && p->race < p->screen_rounds;
+  const int stepping = !racing && (p->screen_stop > 0 || p->screen_check > 0);
+  const uint32_t F = p->screen_rounds;
   const uint32_t stage = racing ? p->race : stepping && SCREEN_STEP < F ? SCREEN_STEP : F;
   unit *u = xmalloc((size_t)B * Q * sizeof *u);
   uint32_t n = 0;
-  // --simple: the whole match against the panel in checkpoints, a candidate
-  // stops when it cannot make it (simple_decide()); pre: its results after
-  // the first S rounds, a member's row for the twin test of later candidates
-  m42_score *pre = simple ? xmalloc((size_t)B * Q * sizeof *pre) : 0;
-  const int simple_check = !(p->screen_stop > 0);
-  const double simple_z = simple_check ? p->screen_check : p->screen_stop;
-  uint32_t simple_cp[4], simple_ncp = 0, simple_stopped[4][4] = {{0}}; // the checkpoints, and what stopped at each, by reason
-  char *simple_text = 0;
-  size_t simple_len = 0;
-  FILE *simple_log = 0;
-  if (simple) {
-    simple_ncp = simple_checkpoints(p, simple_cp);
-    simple_log = simple_check ? open_memstream(&simple_text, &simple_len) : 0;
-    uint32_t done = 0;
-    for (uint32_t k = 0; k < simple_ncp; k++) {
-      screen_more(r, c, B, so, Q, u, screen_at, done, simple_cp[k] - done); // Q is P: no members in this screen
-      done = simple_cp[k];
-      for (uint32_t i = 0; i < B; i++) {
-        if (c[i].skip || c[i].out) continue;
-        c[i].played = done;
-        for (uint32_t j = 0; j < Q && done == p->screen_rounds; j++) pre[screen_at[i] + j] = u[screen_at[i] + j].s[0];
-      }
-      simple_decide(r, c, B, u, screen_at, done, simple_z, threshold, simple_check, simple_stopped[k], simple_log);
+  for (uint32_t i = 0; i < B; i++)
+    for (uint32_t j = 0; j < Q && !c[i].skip; j++) {
+      const warrior *o = r->slot[so[j]];
+      u[n++] = (unit){c[i].w, o->w, seed_for(r, o->id), 0, stage, {{0}}, 0, 0};
     }
-    for (uint32_t i = 0; i < B; i++) { // --screen-check: those that would have stopped played on, their scores are the whole match's
-      if (c[i].skip || !c[i].would_stop) continue;
-      simple_bound b;
-      simple_bounds(r, u + screen_at[i], F, F, simple_z, &b);
-      c[i].screen = b.avg, c[i].dist = b.dist, c[i].estimate = c[i].key = b.value;
-    }
-  } else {
-    for (uint32_t i = 0; i < B; i++)
-      for (uint32_t j = 0; j < Q && !c[i].skip; j++) {
-        const warrior *o = r->slot[so[j]];
-        u[n++] = (unit){c[i].w, o->w, seed_for(r, o->id), 0, stage, {{0}}, 0, 0};
-      }
-    pool_run(r->pool, u, n);
-    for (uint32_t i = 0; i < B; i++)
-      if (!c[i].skip) score_screen(r, &c[i], u + screen_at[i], Q, stage);
-    for (uint32_t i = 0; i < B; i++) c[i].played = stage, c[i].stop_at = 0, c[i].would_stop = 0;
-  }
+  pool_run(r->pool, u, n);
+  for (uint32_t i = 0; i < B; i++)
+    if (!c[i].skip) score_screen(r, &c[i], u + screen_at[i], Q, stage);
+  for (uint32_t i = 0; i < B; i++) c[i].played = stage, c[i].stop_at = 0, c[i].would_stop = 0;
   uint32_t stopped = 0;
   FILE *steps_log = 0; // --screen-check: each step's decisions, for the event
   char *steps_text = 0;
@@ -2430,7 +2234,7 @@ static void run_batch(run *r) {
     if (!c[i].skip && !c[i].out && c[i].screen >= threshold) sv[sn++] = &c[i], kept += c[i].keep;
   qsort(sv, sn, sizeof *sv, by_keep_key);
   const uint32_t most = kept > p->survivors ? kept : p->survivors;
-  if (!simple && sn > most) sn = most; // --simple: everyone that played the whole match
+  if (sn > most) sn = most;
   if (stepping) { // event `screen`: what the steps saved, and with --screen-check what stopping would have changed
     uint64_t played = 0, full = 0;
     uint32_t missed = 0;
@@ -2483,12 +2287,11 @@ static void run_batch(run *r) {
   // for those still in
   const uint32_t M = members(r);
   const uint32_t upto = stage_rounds(p);
-  const int staged = !simple && upto < p->rounds; // --simple: the whole match is played already
+  const int staged = upto < p->rounds;
   unit *f = xmalloc((size_t)sn * (P + M + sn) * sizeof *f);
   uint32_t fn = 0;
   const uint32_t first = p->screen_rounds, more = (staged ? (upto > first ? upto : first) : panel_rounds(p)) - first;
-  const uint32_t more_n = simple ? 0 : sn; // --simple: nothing more to play
-  for (uint32_t i = 0; i < more_n; i++) {
+  for (uint32_t i = 0; i < sn; i++) {
     for (uint32_t j = 0; j < P; j++)
       f[fn++] = (unit){sv[i]->w, r->panel[j].w, seed_for(r, r->panel[j].id), first, more, {{0}}, 0, 0};
     if (p->member_games_none) continue; // --member-games none: the panel only
@@ -2529,11 +2332,6 @@ static void run_batch(run *r) {
     const uint32_t at = screen_at[(uint32_t)(x - c)];
     // with --stage these are the first stage's results, in both matrices
     for (uint32_t j = 0; j < P; j++) {
-      if (simple) { // the whole match, and its first S rounds for the twin test
-        set_result(r, s, j, u[at + j].s[0]);
-        set_result1(r, s, j, pre[at + j]);
-        continue;
-      }
       const m42_score sc = add_scores(u[at + j].s[0], f[fn++].s[0]);
       set_result(r, s, j, sc);
       if (staged) set_result1(r, s, j, sc);
@@ -2542,7 +2340,7 @@ static void run_batch(run *r) {
       for (uint32_t k = 0; k < r->active_n; k++)
         if (r->active[k] >= P) {
           set_result(r, s, r->active[k], (m42_score){0, 0, 0});
-          if (staged || simple) set_result1(r, s, r->active[k], (m42_score){0, 0, 0});
+          if (staged) set_result1(r, s, r->active[k], (m42_score){0, 0, 0});
         }
     } else {
     for (uint32_t j = 0; j < M; j++, fn++)
@@ -2645,34 +2443,6 @@ static void run_batch(run *r) {
     if (r->slot[best]->holdout < 0) bench(r, best);
   }
 
-  if (simple) { // event `simple`: what stopped where, the rounds played of those of whole matches for all
-    uint64_t played = 0, full = 0;
-    uint32_t missed[4] = {0, 0, 0, 0}; // --screen-check: stayed past the batch though it would have stopped, by what
-    for (uint32_t i = 0; i < B; i++) {
-      if (c[i].skip) continue;
-      full += (uint64_t)F * P;
-      played += (uint64_t)(c[i].out ? c[i].stop_at : F) * P;
-      missed[c[i].why] += c[i].would_stop && c[i].reached == 3;
-    }
-    fprintf(r->events, "{\"type\":\"simple\",\"batch\":%u,\"z\":%.17g,\"check\":%s,\"gate\":%.17g,\"checkpoints\":[", r->batch,
-            simple_z, simple_check ? "true" : "false", threshold);
-    for (uint32_t k = 0; k < simple_ncp; k++) fprintf(r->events, "%s%u", k ? "," : "", simple_cp[k]);
-    fputs("],\"stopped\":[", r->events); // per checkpoint: by strength, as a twin, by value
-    for (uint32_t k = 0; k < simple_ncp; k++)
-      fprintf(r->events, "%s[%u,%u,%u]", k ? "," : "", simple_stopped[k][SIMPLE_STRENGTH], simple_stopped[k][SIMPLE_TWIN],
-              simple_stopped[k][SIMPLE_VALUE]);
-    fprintf(r->events, "],\"rounds\":%" PRIu64 ",\"full\":%" PRIu64 ",\"missed\":[%u,%u,%u]", played, full, missed[SIMPLE_STRENGTH],
-            missed[SIMPLE_TWIN], missed[SIMPLE_VALUE]);
-    if (simple_log) { // every row at every checkpoint, and which candidate became which warrior
-      fclose(simple_log);
-      fprintf(r->events, ",\"steps\":[%s],\"entered\":[", simple_text ? simple_text : "");
-      free(simple_text);
-      for (uint32_t i = 0, k = 0; i < B; i++)
-        if (c[i].reached >= 2) fprintf(r->events, "%s[%u,%" PRIu64 "]", k++ ? "," : "", i, c[i].id);
-      fputc(']', r->events);
-    }
-    fputs("}\n", r->events);
-  }
   event_parents(r, c, B);
 
   const speed s1 = pool_speed(r->pool);
@@ -2702,7 +2472,6 @@ static void run_batch(run *r) {
   for (uint32_t i = 0; i < B; i++) free(c[i].w);
   free(c);
   free(u);
-  free(pre);
   free(f);
   free(sv);
   free(screen_at);
@@ -3233,7 +3002,7 @@ static void usage(void) {
           "         [--fractions p] [--race N] [--race-keep N] [--prior uniform|hill]\n"
           "         [--parents value|duel] [--start <dir>] [--changes name=weight,...]\n"
           "         [--panel-files a.red,b.red,...] [--screen-members N] [--noise z] [--stage N (screen rounds; 0 none)] [--fill]\n"
-          "         [--panel-rounds N] [--diversity all|panel] [--average all|panel] [--member-games all|none] [--simple]\n"
+          "         [--panel-rounds N] [--diversity all|panel] [--average all|panel] [--member-games all|none]\n"
           "         [--difference abs|ahead|shape] [--pushoff value|pareto|pareto-age|pareto-sd] [--clear R] [--positions mirror|pmars]\n"
           "         [--genome list|gen] [--refactor p] [--min-length N] [--tie-points t]\n"
           "         [--islands N [--select-after B [--keep K]] [--score-rounds R] [--migrate M [--migrate-pick best|random] [--migrate-to all|next|random|tree]]\n"
@@ -4126,22 +3895,17 @@ static const char *params_error(const params *p) {
   if (p->rules.core_size < 2 * p->rules.min_distance) return "--size at least twice --distance";
   if (p->stage && p->stage < p->screen_rounds) return "--stage at least --screen-rounds, or 0";
   if (p->panel_rounds && p->panel_rounds < p->rounds) return "--panel-rounds at least --rounds";
-  if (p->simple && (p->race || p->select == SELECT_VALUE || p->rotate || p->tune_novel || p->sd == SD_SUM))
-    return "--simple not with --race, --select value, --rotate, --tune-novel or --sd sum";
-  if (p->simple && p->screen_rounds >= p->rounds) return "--simple: --screen-rounds below --panel-rounds";
   if (p->member_games_none && (!p->average_panel || !p->distance_panel || p->parents == PARENTS_DUEL || p->screen_members))
-    return "--member-games none (also of --simple) only with --average panel and --diversity panel, not with --parents duel or "
+    return "--member-games none only with --average panel and --diversity panel, not with --parents duel or "
            "--screen-members";
-  if (p->difference && p->simple) return p->difference == DIFF_SHAPE ? "--difference shape not with --simple" : "--difference ahead not with --simple";
-  if (p->pareto && (p->simple || p->average_panel || p->member_games_none || p->select == SELECT_VALUE))
-    return "--pushoff pareto not with --simple, --average panel, --member-games none or --select value";
+  if (p->pareto && (p->average_panel || p->member_games_none || p->select == SELECT_VALUE))
+    return "--pushoff pareto not with --average panel, --member-games none or --select value";
   // pareto-sd takes the SD-score as --difference computes it: ahead, only where a warrior scores more, makes
   // it far only when it does better than its nearest somewhere; pareto and pareto-age do not use it
   if (p->difference && p->pareto && p->pareto != 3)
     return p->difference == DIFF_SHAPE ? "--difference shape with --pushoff pareto-sd only, not pareto or pareto-age" : "--difference ahead with --pushoff pareto-sd only, not pareto or pareto-age";
   if (p->clear > 0 && !p->pareto) return "--clear with --pushoff pareto, pareto-age or pareto-sd only";
   if (p->screen_stop > 0 && p->screen_check > 0) return "--screen-stop or --screen-check, not both";
-  if (p->simple && !stops) return "--simple needs --screen-stop or --screen-check above 0";
   if (stops && p->race) return "--screen-stop and --screen-check not with --race";
   if (p->tune_novel && p->gen) return "--tune-novel not with --genome gen: it changes the operands of a list";
   if (!p->gen && structure_kinds(&p->changes)) return STRUCTURE_NEEDS_GEN;
@@ -4184,7 +3948,7 @@ typedef struct {
 
 // The options removed after 1.1.0 (#193): refused with a message, also in an
 // --island-variant (a state that used one: load_state()).
-static const char *const removed_options[] = {"--map-elites", "--specialists", "--niche", "--sharing", 0};
+static const char *const removed_options[] = {"--map-elites", "--specialists", "--niche", "--sharing", "--simple", 0};
 
 // Reads the command line into c; 0, or the exit code after a message.
 static int parse_cli(int argc, char **argv, cli *c) {
@@ -4206,11 +3970,6 @@ static int parse_cli(int argc, char **argv, cli *c) {
         fprintf(stderr, "42evolve: %s was removed after 1.1.0 (#193)\n", a);
         return 2;
       }
-    if (!strcmp(a, "--simple")) { // an option without a value
-      c->p.simple = 1;
-      c->new_options = 1;
-      continue;
-    }
     if (!strcmp(a, "--fill") || !strcmp(a, "--no-fill")) { // the options without a value
       c->p.fill = !strcmp(a, "--fill");
       c->fill_given = 1;
@@ -4411,11 +4170,6 @@ static const char *new_run_defaults(cli *c) {
   if (!p->race_keep) p->race_keep = p->batch / 4 ? p->batch / 4 : 1;
   // --stage by default at the screen rounds (--stage 0: none); a state keeps
   // the value, and states from before --stage have none
-  if (p->simple) { // the value from the panel alone, no games among members; z 3 unless given
-    p->average_panel = p->member_games_none = 1;
-    if (!c->diversity_given) p->distance_panel = 1;
-    if (c->new_stop < 0 && !(p->screen_check > 0)) p->screen_stop = 3;
-  }
   if (!c->stage_given) p->stage = p->screen_rounds;
   // the defaults of the later options, for new runs only (a state before
   // them has none of them): the best run of E5
@@ -4438,10 +4192,6 @@ static const char *new_run_defaults(cli *c) {
     if (params_error(p)) p->screen_stop = 0;
   }
   if (!c->draw_seed_given) p->draw_seed = p->seed;
-  if (p->simple) { // one length of match, the panel rounds; its first screen rounds are kept as the first stage
-    p->rounds = p->panel_rounds;
-    p->stage = p->screen_rounds;
-  }
   return params_error(p);
 }
 

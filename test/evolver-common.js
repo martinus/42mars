@@ -6,7 +6,7 @@
 // prebuilt in M42_BIN), the run of 6 batches several tests compare with
 // (base), and the replays of a run's events: the push-off values as
 // tools/diversity.js computes them, the early decisions of --stage, the order
-// of the survivors, the counts per change, --simple, the mirrored positions.
+// of the survivors, the counts per change, the mirrored positions.
 // One file per topic, so that node --test runs them in parallel.
 //
 // "The same run on any thread count and after a resume": a run on 1 thread,
@@ -448,100 +448,6 @@ export function checkEarly(evs) {
     }
   });
   return { decisions, kept };
-}
-
-// --simple with --screen-check: every candidate's row at every checkpoint is
-// logged. Replays each decision: the bounds of the average and of the value,
-// the gate, the cut (the list-th largest of the members' values and the
-// candidates' lower bounds), the twins by the members' first S rounds.
-// Returns { steps, stops: [by strength, as a twin, by value] }.
-export function checkSimple(evs) {
-  const start = evs[0], par = start.params;
-  const S = par.screenRounds, F = par.panelRounds, z = par.screenCheck, L = par.list;
-  const panelIds = start.panel.map((w) => w.id), P = panelIds.length;
-  const pts = new Map(); // "a,b" -> points per 100 rounds
-  const put = (a, b, w, l, t) => { pts.set(`${a},${b}`, ((3 * w + t) * 100) / (w + l + t)); pts.set(`${b},${a}`, ((3 * l + t) * 100) / (w + l + t)); };
-  const prefix = new Map(); // member id -> its results after the first S rounds, [w, l, t] per panel warrior
-  const sigmaOf = (ids) => panelIds.map((k) => {
-    const v = ids.filter((x) => x !== k).map((x) => pts.get(`${x},${k}`));
-    const mean = v.reduce((a, b) => a + b, 0) / v.length;
-    return Math.sqrt(v.reduce((a, b) => a + (b - mean) ** 2, 0) / v.length);
-  });
-  let steps = 0;
-  const stops = [0, 0, 0];
-  const bound = (row, n, { ids, sigma }) => { // row: [w, l, t] per panel warrior after n rounds; ids: everyone in
-    const a = [], e = [];
-    let x = 0, s2 = 0;
-    for (let k = 0; k < P; k++) {
-      const [w, , t] = row[k];
-      a[k] = ((3 * w + t) * 100) / n;
-      const pw = (w + 1) / (n + 3), pt = (t + 1) / (n + 3), mu = 300 * pw + 100 * pt;
-      e[k] = Math.sqrt(((90000 * pw + 10000 * pt - mu * mu) * (F - n)) / (F * n));
-      x += a[k];
-      s2 += e[k] * e[k];
-    }
-    const avg = x / P, sd = Math.sqrt(s2) / P, hi = avg + z * sd;
-    let dlo = Infinity, dhi = Infinity;
-    for (const o of ids) {
-      // a member it may outscore is not in the upper bound: the push-off may drop it in the candidate's place
-      const mayGo = !panelIds.includes(o) && panelIds.reduce((a, k) => a + pts.get(`${o},${k}`), 0) / P <= hi;
-      let d = 0, low = 0, e2 = 0;
-      for (let k = 0; k < P; k++) {
-        if (panelIds[k] === o || !(sigma[k] > 0)) continue;
-        const raw = Math.abs(a[k] - pts.get(`${o},${panelIds[k]}`)), q = e[k] / sigma[k];
-        const diff = raw > e[k] ? Math.sqrt(raw * raw - e[k] * e[k]) : 0; // without the error's share
-        d += diff / sigma[k];
-        low += (diff > z * e[k] ? diff - z * e[k] : 0) / sigma[k];
-        e2 += q * q;
-      }
-      dlo = Math.min(dlo, low);
-      if (!mayGo) dhi = Math.min(dhi, d + z * Math.sqrt(e2));
-    }
-    return { avg, hi, vlo: Math.max(avg - z * sd, 0) * dlo, vhi: Math.max(avg + z * sd, 0) * dhi };
-  };
-  let cur = null, next = null; // the state a batch starts from: everyone in, the members' values, the standard deviations
-  for (const e of evs) {
-    if (e.type === 'panel') {
-      for (const [a, b, w, l, t] of e.scores) put(a, b, w, l, t);
-      cur = { ids: panelIds.slice(), values: new Map(), sigma: sigmaOf(panelIds) };
-    }
-    if (e.type === 'enter') for (const [o, w, l, t] of e.scores) put(e.id, o, w, l, t);
-    if (e.type === 'values') { // after the batch; its `simple` event follows
-      const ids = e.values.map((v) => v[0]);
-      next = { ids, values: new Map(e.values.filter((v) => !panelIds.includes(v[0])).map((v) => [v[0], v[4]])), sigma: sigmaOf(ids) };
-    }
-    if (e.type !== 'simple') continue;
-    assert.equal(e.check, true);
-    assert.equal(e.rounds, e.full, 'with --screen-check everyone plays the whole match');
-    const { ids, values } = cur; // the state this batch started from
-    const members = ids.filter((x) => !panelIds.includes(x));
-    const rowsOf = (step) => new Map(step.rows.map((r) => [r[0], Array.from({ length: P }, (_, k) => r.slice(1 + 3 * k, 4 + 3 * k))]));
-    const gone = new Set(); // candidates that would have stopped: the rule goes on as if they had
-    for (const step of e.steps) {
-      const n = step.rounds, rows = rowsOf(step);
-      const inNow = [...rows.keys()];
-      assert.deepEqual(inNow.filter((i) => gone.has(i)), [], 'a candidate that would have stopped is not in the rule');
-      const b = new Map(inNow.map((i) => [i, bound(rows.get(i), n, cur)]));
-      let cut = -Infinity;
-      const all = [...members.map((m) => values.get(m)), ...inNow.map((i) => b.get(i).vlo)].sort((x, y) => y - x);
-      if (all.length > L && n < F) cut = all[L - 1];
-      assert.ok(Math.abs((cut === -Infinity ? -1e300 : cut) - step.cut) <= 1e-5 * Math.max(1, Math.abs(step.cut)), `batch ${e.batch}, ${n} rounds: cut ${step.cut}, not ${cut}`);
-      const twin = (row) => members.some((m) => prefix.get(m).every((x, k) => x[0] === row[k][0] && x[1] === row[k][1] && x[2] === row[k][2]));
-      const expect = [];
-      for (const i of inNow) {
-        const x = b.get(i);
-        const why = x.hi < e.gate ? 1 : n === S && twin(rows.get(i)) ? 2 : x.vhi < cut ? 3 : 0;
-        if (why) expect.push([i, why]), gone.add(i), stops[why - 1]++;
-      }
-      assert.deepEqual(step.stopped, expect, `batch ${e.batch}, ${n} rounds: who stops`);
-      steps++;
-    }
-    // the rows after the first S rounds of those that entered: twins are told by them
-    const atS = rowsOf(e.steps.find((x) => x.rounds === S));
-    for (const [i, id] of e.entered) prefix.set(id, atS.get(i));
-    cur = next;
-  }
-  return { steps, stops };
 }
 
 // --positions mirror as 42evolve plays a match (play() in evolve.c): game g is

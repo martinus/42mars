@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Martin Leitner-Ankerl
 //
 // The evolver (evolver/, #142) on the tiny hill of warriors/koenigstuhl:
-// --select value with --rotate, --screen-check and --screen-stop, --simple. What the evolver's test files share is in
+// --select value with --rotate, --screen-check and --screen-stop. What the evolver's test files share is in
 // test/evolver-common.js; built with cc, or prebuilt in M42_BIN
 // (test/native.js). POSIX only.
 
@@ -18,7 +18,7 @@ import { assemble, createMarsSync } from '../wasm/42mars.js';
 import { paretoFronts, pushoffValues, sdDistance, standardError, weakest } from '../tools/diversity.js';
 import { kind as styleKind, measureStyle } from '../tools/style.js';
 import { bestRedInfo } from '../tools/progress.js';
-import { setup, cleanup, tmp, evolve, skip, RULES, TINY, run, events, without, stable, base, checkValues, checkOrder, checkOps, checkSimple } from './evolver-common.js';
+import { setup, cleanup, tmp, evolve, skip, RULES, TINY, run, events, without, stable, base, checkValues, checkOrder, checkOps } from './evolver-common.js';
 
 before(setup);
 after(cleanup);
@@ -60,64 +60,6 @@ test('--select value --rotate 2: survivors by estimated value, a panel that chan
   run(join(tmp, 'rot-resumed'), [...args, '--threads', '3', '--batches', '3']);
   run(join(tmp, 'rot-resumed'), ['--threads', '2', '--batches', '3']);
   assert.deepEqual(stable(events(join(tmp, 'rot-resumed'))), stable(one));
-});
-
-test('--simple: a candidate plays the panel in checkpoints and stops when it cannot make it; no games among members; the same run on any thread count and after a resume', { skip }, () => {
-  assert.equal(base[0].params.simple, false);
-  const BATCHES = 8, CHECKED = 16, F = 100, P = 10;
-  // --simple sets the screen's members, the stage and the diversity itself
-  // 2000 cycles (TINY): there the value bound stopped near twins of members that then stayed in their place (#162)
-  const args = [...without(TINY, '--screen-members', '--stage', '--diversity', '--panel-rounds', '--screen-stop'), '--simple', '--panel-rounds', String(F), '--list', '16'];
-  // --screen-check: everyone plays the whole match, every row is logged, the rule replayed
-  run(join(tmp, 'simple-check'), [...args, '--screen-check', '3', '--threads', '2', '--batches', String(CHECKED)]);
-  const chk = events(join(tmp, 'simple-check'));
-  assert.deepEqual([chk[0].params.simple, chk[0].params.average, chk[0].params.diversity, chk[0].params.memberGames, chk[0].params.screenMembers],
-    [true, 'panel', 'panel', 'none', 0]);
-  assert.deepEqual([chk[0].params.rounds, chk[0].params.panelRounds, chk[0].params.stage], [F, F, 10]); // one length of match
-  assert.deepEqual(chk.find((e) => e.type === 'simple').checkpoints, [5, 10, 50, F]);
-  const seen = checkSimple(chk);
-  assert.equal(seen.steps, 4 * CHECKED);
-  assert.ok(seen.stops[0] >= 5 && seen.stops[1] >= 5 && seen.stops[2] >= 3, `stops by strength ${seen.stops[0]}, as twins ${seen.stops[1]}, by value ${seen.stops[2]}`);
-  // none that would have stopped by strength or by value stayed past its batch (a twin may: in the place of the member it plays like)
-  const missed = chk.filter((e) => e.type === 'simple').reduce((a, e) => a.map((x, i) => x + e.missed[i]), [0, 0, 0]);
-  assert.deepEqual([missed[0], missed[2]], [0, 0]);
-  assert.equal(checkValues(chk), CHECKED);
-  // with --screen-stop (the default, z 3) those stop: fewer rounds, and whoever enters has played its whole match
-  run(join(tmp, 'simple1'), [...args, '--threads', '1', '--batches', String(BATCHES)]);
-  const one = events(join(tmp, 'simple1'));
-  assert.equal(one[0].params.screenStop, 3);
-  assert.equal(checkValues(one), BATCHES);
-  const simples = one.filter((e) => e.type === 'simple');
-  assert.equal(simples.length, BATCHES);
-  const sum = (k) => simples.reduce((a, e) => a + e[k], 0);
-  assert.ok(sum('rounds') < 0.9 * sum('full'), `${sum('rounds')} of ${sum('full')} rounds played`);
-  for (const e of simples) { // the rounds played: each candidate up to the checkpoint where it stopped
-    const batch = one.find((x) => x.type === 'batch' && x.batch === e.batch);
-    let left = batch.evaluated, rounds = 0;
-    e.stopped.forEach((s, k) => { const n = s[0] + s[1] + s[2]; rounds += n * e.checkpoints[k] * P; left -= n; });
-    assert.equal(e.rounds, rounds + left * F * P, `rounds of batch ${e.batch}`);
-    assert.equal(e.full, batch.evaluated * F * P);
-    // everyone that did not stop was a survivor: no quota
-    assert.equal(batch.survivors, left, `survivors of batch ${e.batch}`);
-  }
-  // the children of each parent: bred, evaluated, past the test, stayed
-  const pe = one.filter((e) => e.type === 'parents');
-  assert.ok(pe.length >= BATCHES - 2);
-  for (const e of pe) {
-    for (const [, bred, evaluated, past, stayed] of e.parents) assert.ok(bred >= evaluated && evaluated >= past && past >= stayed && bred > 0);
-    const enters = one.filter((x) => x.type === 'enter' && x.batch === e.batch && x.parents.length && x.ops !== 'reintroduce');
-    const byParent = new Map();
-    for (const x of enters) byParent.set(x.parents[0], (byParent.get(x.parents[0]) ?? 0) + 1);
-    assert.deepEqual(new Map(e.parents.filter((x) => x[3]).map((x) => [x[0], x[3]])), byParent, `parents of batch ${e.batch}`);
-  }
-  run(join(tmp, 'simple-resumed'), [...args, '--threads', '2', '--batches', String(BATCHES >> 1)]);
-  run(join(tmp, 'simple-resumed'), ['--threads', '4', '--batches', String(BATCHES - (BATCHES >> 1))]);
-  assert.deepEqual(stable(events(join(tmp, 'simple-resumed'))), stable(one));
-  // refused with what it replaces
-  for (const extra of [['--race', '5'], ['--select', 'value'], ['--rotate', '2'], ['--sd', 'sum'], ['--parents', 'duel'], ['--screen-members', '3'], ['--diversity', 'all']]) {
-    const r = spawnSync(evolve, [join(tmp, 'simple-no'), ...args, ...extra, '--batches', '1'], { encoding: 'utf8' });
-    assert.notEqual(r.status, 0, `--simple with ${extra.join(' ')}`);
-  }
 });
 
 test('--screen-check 3 is the run without it and logs every bound; --screen-stop 3 stops those children; the same run on any thread count and after a resume', { skip }, () => {
