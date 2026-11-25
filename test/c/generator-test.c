@@ -714,7 +714,8 @@ static void test_mirror(void) {
     const int kind = round % CH_COUNT;
     const uint32_t lengths[] = {1, 2, 3, 5, 8, 20, 60, 100, 255, 256};
     const uint32_t len = round % 11 ? 1 + rng_below(&seeds, 24) : lengths[rng_below(&seeds, 10)];
-    uint32_t max = round % 5 == 0 ? len : round % 5 == 1 ? len + 1 + rng_below(&seeds, 5) : round % 5 == 2 ? 20 : round % 5 == 3 ? 100 : 300;
+    const int room = (round + round / CH_COUNT) % 5; // not round % 5: with a multiple of 5 kinds each kind would have one
+    uint32_t max = room == 0 ? len : room == 1 ? len + 1 + rng_below(&seeds, 5) : room == 2 ? 20 : room == 3 ? 100 : 300;
     if (max < len) max = len;
     genome_random(&g, &seeds, CORE, len);
     genome_random(&p2, &seeds, CORE, 1 + rng_below(&seeds, round % 7 ? 24 : 256));

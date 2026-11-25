@@ -75,6 +75,7 @@ typedef struct {
   int gen;                  // --genome gen: a warrior's genome is a generator (generator.h), not the list of its instructions
   uint32_t min_length;      // --min-length N: a child with fewer instructions that are not DAT.F $0, $0 is not played; 0 none
   double tie;               // --tie-points t: what a tie counts in the screen, the values and the push-off (a win 3); scores against the hill stay 3/1/0
+  int parsimony;            // --parsimony: of a newcomer and a member with the same results (twins), the longer one leaves (#172)
 } params;
 
 enum { PARENTS_VALUE, PARENTS_DUEL };
@@ -347,7 +348,7 @@ char *generator_text(const genome *g, uint32_t core);
 void event_start(run *r);
 void event_panel(run *r);
 void event_enter(run *r, uint32_t slot, double screen, double estimate, uint64_t rival, const unit *row);
-void event_leave(run *r, const pushoff_value *v, int early);
+void event_leave(run *r, const pushoff_value *v, int early, uint64_t twin);
 void event_values(run *r);
 
 // state.c: state.txt and islands.txt

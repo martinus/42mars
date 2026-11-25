@@ -149,11 +149,33 @@ export function checkValues(evs) {
     pts.set(`${b},${a}`, ((3 * l + tie * t) * 100) / (w + l + t));
     played.set(`${a},${b}`, w + l + t);
     played.set(`${b},${a}`, w + l + t);
+    wlt.set(`${a},${b}`, `${w},${l},${t}`);
+    wlt.set(`${b},${a}`, `${l},${w},${t}`);
   };
+  const wlt = new Map(); // "a,b" -> "wins,losses,ties" of a against b
   const played = new Map(); // "a,b" -> rounds of that result
   const slots = start.panel.map((w) => w.id);
   const panel = new Set(slots); // the panel now
   let checked = 0, duels = 0, lastValues = new Map(), parentDistances = 0, pushoffs = 0, roundings = 0;
+  // --parsimony: of a newcomer and a member with the same results in every game both played with the same seeds
+  // (against the panel, and against the members in before the member: ids are given in the order of entering),
+  // the longest such twin leaves when the newcomer is shorter, else the newcomer
+  const lengths = new Map();
+  let fresh = null, twinLeaves = 0, twinChecks = 0;
+  const twinRule = () => { // [who leaves, who stays] for the newcomer `fresh`, or null
+    let longest = null;
+    for (const m of slots) {
+      if (m === null || m === fresh || panel.has(m)) continue;
+      const same = slots.every((o) => o === null || o === fresh || o === m || (!panel.has(o) && (noGames || o > m)) || wlt.get(`${fresh},${o}`) === wlt.get(`${m},${o}`));
+      if (same && (longest === null || lengths.get(m) > lengths.get(longest))) longest = m;
+    }
+    if (longest === null) return null;
+    return lengths.get(fresh) >= lengths.get(longest) ? [fresh, longest] : [longest, fresh];
+  };
+  const noTwin = () => { // the newcomer stayed without a leave: it has no twin
+    if (start.params.parsimony && fresh !== null) assert.equal(twinRule(), null, `${fresh} has a twin and stayed`), twinChecks++;
+    fresh = null;
+  };
   let listNow = start.params.list; // --list on a run that continues: event `list`
   // --pushoff pareto: the members' value is their place in NSGA-II's order on the panel average, the average
   // against the other members, with pareto-sd the SD-score to the nearest; 10 (fronts - front) + min(crowding, 5)
@@ -215,7 +237,10 @@ export function checkValues(evs) {
         assert.ok(value(w) >= value(l), `${e.name}: parent ${w} has less value than ${l}`);
       }
     }
+    if (e.type === 'enter' || e.type === 'values') noTwin();
     if (e.type === 'enter') {
+      lengths.set(e.id, e.length);
+      fresh = e.id;
       // the origin of its line: a new family, or no parents in the list when it was bred (random, back from the
       // archive, a start warrior), start a new one; else the older line of its parents
       const bred = e.parents.length && e.ops !== 'reintroduce' && e.parents.every((p) => origins.has(p));
@@ -256,7 +281,17 @@ export function checkValues(evs) {
         put(e.id, o, w, l, t);
       }
     }
-    if (e.type === 'leave' && !e.early) {
+    if (e.type === 'leave' && e.early) fresh = null;
+    if (e.type === 'leave' && !e.early && start.params.parsimony) {
+      const rule = twinRule();
+      if (e.twin !== undefined) {
+        assert.deepEqual([e.id, e.twin], rule, `batch ${e.batch}: ${e.id} left as the twin of ${e.twin}, the rule says ${rule}`);
+        twinLeaves++;
+      } else assert.equal(rule, null, `batch ${e.batch}: ${fresh} has a twin, the push-off decided`);
+      twinChecks++;
+      fresh = null;
+    } else assert.equal(e.twin, undefined, 'a twin without --parsimony');
+    if (e.type === 'leave' && !e.early && e.twin === undefined) {
       // the push-off: the weakest of those that may leave (not the panel), by
       // tools/diversity.js on the logged scores
       const ids = slots.filter((x) => x !== null);
@@ -325,6 +360,8 @@ export function checkValues(evs) {
   checkValues.paretoLeaves = paretoLeaves; // push-offs where --pushoff pareto changed who left
   checkValues.newLines = newLines; // children that started a line of their own (a new family)
   checkValues.olderSecond = olderSecond; // crossovers that took the older line of the second parent
+  checkValues.twinLeaves = twinLeaves; // --parsimony: leaves of the longer of two twins
+  checkValues.twinChecks = twinChecks; // --parsimony: newcomers checked for twins
   return checked;
 }
 

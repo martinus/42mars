@@ -383,15 +383,18 @@ static void test_changes(void) {
           if (d < -(int32_t)CORE / 2) d += CORE;
           const int32_t most = abs(sw) / 50 > 4 ? abs(sw) / 50 : 4;
           CHECK(d != 0 && abs(d) <= most && abs(sw) > 16, "tune moved %d from %d", d, sw);
-        } else { // shared: now equals another far value of the parent, or its negative
+        } else { // shared: now equals another far value of the parent, or its negative; shared-target: it points
+                 // at the cell another far value points at
           int found = 0;
           for (uint32_t j = 0; j < p.len; j++)
             for (int o = 0; o < 2; o++) {
               const uint32_t v = o ? p.g[j].b : p.g[j].a;
-              if ((o ? p.g[j].bref : p.g[j].aref) || (j == i && o == changed_b)) continue;
-              found |= v == now || (CORE - v) % CORE == now;
+              const int32_t sv = v > CORE / 2 ? (int32_t)v - (int32_t)CORE : (int32_t)v;
+              if ((o ? p.g[j].bref : p.g[j].aref) || (j == i && o == changed_b) || abs(sv) <= 16) continue;
+              if (kind == CH_SHARED_TARGET) found |= (v + j + CORE - i) % CORE == now;
+              else found |= v == now || (CORE - v) % CORE == now;
             }
-          CHECK(found, "shared-constant %u is no other value of the warrior", now);
+          CHECK(found, "%s %u is no other value of the warrior", genome_change_name(kind), now);
         }
       }
     }
