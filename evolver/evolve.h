@@ -313,6 +313,7 @@ static inline double panel_avg(const run *r, uint32_t slot) { return panel_avg_o
 // ---------------------------------------------------------------- the functions of the files
 
 // evolve.c, for now
+extern volatile sig_atomic_t stop_now; // Ctrl-C: the run ends after the current batch
 void *xmalloc(size_t n);
 char *read_file(const char *path, size_t *len);
 m42_warrior *make_warrior(const genome *g, const m42_rules *rules);
@@ -372,5 +373,8 @@ uint32_t pick_choose(run *r, const pick_table *t, char **names, const uint8_t *a
 
 // batch.c: one batch
 void run_batch(run *r);
+
+// optimize.c: the constant optimizer
+int optimize(run *r, const char *file);
 
 #endif
