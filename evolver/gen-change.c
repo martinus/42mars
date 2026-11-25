@@ -1522,8 +1522,23 @@ int gen_change(gen *x, const gen *p2, rng *r, uint32_t core, uint32_t max_length
 
 // ---------------------------------------------------------------- breeding
 
+// Does the warrior of x have an instruction with an opcode of the mask ops?
+static int writes_opcode(const gen *x, uint32_t core, uint32_t max_length, uint32_t ops) {
+  m42_instruction code[GEN_LINES];
+  uint32_t start;
+  const uint32_t n = gen_compile(x, core, max_length, code, &start, 0);
+  for (uint32_t i = 0; i < n; i++)
+    if (ops >> code[i].opcode & 1) return 1;
+  return 0;
+}
+
 void gen_breed(gen *child, const gen *p1, const gen *p2, rng *r, uint32_t core, uint32_t max_length,
                const genome_mix *mix, char *ops, size_t ops_n) {
+  gen_breed_forbid(child, p1, p2, r, core, max_length, mix, 0, ops, ops_n);
+}
+
+void gen_breed_forbid(gen *child, const gen *p1, const gen *p2, rng *r, uint32_t core, uint32_t max_length,
+                      const genome_mix *mix, uint32_t forbid, char *ops, size_t ops_n) {
   if (ops_n) ops[0] = 0;
   if (max_length > GEN_LINES) max_length = GEN_LINES;
   const genome_mix def = genome_mix_default();
@@ -1531,6 +1546,8 @@ void gen_breed(gen *child, const gen *p1, const gen *p2, rng *r, uint32_t core, 
   uint64_t total = 0;
   for (int k = 0; k < CH_ALL; k++) total += mix->w[k];
   if (child != p1) *child = *p1;
+  gen *y = forbid ? malloc(sizeof *y) : 0; // --no-spl: the change on a copy, kept when the warrior has none
+  if (forbid && !y) abort();
   uint32_t changes = 1;
   while (changes < 6 && rng_chance(r, 0.35)) changes++;
   for (uint32_t c = 0; c < changes && total; c++) {
@@ -1538,7 +1555,14 @@ void gen_breed(gen *child, const gen *p1, const gen *p2, rng *r, uint32_t core, 
       uint64_t d = rng_below(r, total);
       int kind = 0;
       while (d >= mix->w[kind]) d -= mix->w[kind++];
-      if (gen_change(child, p2, r, core, max_length, kind)) {
+      int applied;
+      if (!forbid) applied = gen_change(child, p2, r, core, max_length, kind);
+      else {
+        *y = *child;
+        applied = gen_change(y, p2 == child ? y : p2, r, core, max_length, kind) && !writes_opcode(y, core, max_length, forbid);
+        if (applied) *child = *y;
+      }
+      if (applied) {
         const char *name = genome_change_name(kind);
         const size_t len = strlen(ops);
         if (len + strlen(name) + 2 <= ops_n) {
@@ -1549,6 +1573,7 @@ void gen_breed(gen *child, const gen *p1, const gen *p2, rng *r, uint32_t core, 
       }
     }
   }
+  free(y);
   // a function that nothing calls any more goes, and a constant that nothing uses is 0
   drop_functions(child, core);
   uint8_t used[GEN_CONSTS] = {0};

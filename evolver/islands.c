@@ -204,6 +204,10 @@ static void islands_score(islands *I) {
 // before its batches), so a run is the same on any thread count and after a
 // resume. Event `migrate`: [island, id].
 
+// --no-spl (#185): an island with it takes migrants only from islands with
+// it, so that no SPL comes in; the others take from every island.
+static int takes_from(const islands *I, uint32_t k, uint32_t j) { return !I->is[k]->p.no_spl || I->is[j]->p.no_spl; }
+
 static void islands_migrate(islands *I, uint32_t k) {
   run *r = I->is[k];
   if (!r->migr) {
@@ -214,18 +218,18 @@ static void islands_migrate(islands *I, uint32_t k) {
   r->migr_n = 0;
   fprintf(r->events, "{\"type\":\"migrate\",\"batch\":%u,\"from\":[", r->batch);
   uint32_t before = k; // --migrate-to random: the island it takes from
-  if (I->migrate_next == MIGRATE_RANDOM) { // one of the other live islands
+  if (I->migrate_next == MIGRATE_RANDOM) { // one of the other live islands it takes from
     uint32_t others = 0;
-    for (uint32_t j = 0; j < I->n; j++) others += j != k && I->live[j];
+    for (uint32_t j = 0; j < I->n; j++) others += j != k && I->live[j] && takes_from(I, k, j);
     rng g = rng_seed(I->seed, 0x6d69677274u + r->batch, k); // "migrt"
     uint32_t pick = others ? rng_below(&g, others) : 0;
     before = k;
     for (uint32_t j = 0; j < I->n && before == k; j++)
-      if (j != k && I->live[j] && pick-- == 0) before = j;
+      if (j != k && I->live[j] && takes_from(I, k, j) && pick-- == 0) before = j;
   }
   for (uint32_t j = 0; j < I->n; j++) {
     const run *o = I->is[j];
-    if (j == k || !I->live[j]) continue;
+    if (j == k || !I->live[j] || !takes_from(I, k, j)) continue;
     if (I->migrate_next != MIGRATE_ALL && j != before) continue;
     uint32_t best = UINT32_MAX;
     if (I->migrate_random && o->active_n > o->panel_n) {

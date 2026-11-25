@@ -29,7 +29,7 @@ static const param_field param_fields[] = {
     GONE("--map-elites"), GONE("--specialists"), GONE("--sharing"), PF('g', screen_stop), PF('g', screen_check),
     GONE("--tune-novel"), PF('d', average_panel), PF('d', member_games_none), GONE("--simple"), PF('q', draw_seed),
     GONE("--difference"), PF('d', pareto), PF('d', mirror), PF('g', clear), PF('d', gen), GONE("--refactor"),
-    PF('u', min_length), PF('g', tie), PF('d', parsimony)};
+    PF('u', min_length), PF('g', tie), PF('d', parsimony), PF('d', no_spl)};
 #define PARAM_FIELDS (sizeof param_fields / sizeof *param_fields)
 
 static void save_params(FILE *f, const params *p) {

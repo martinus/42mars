@@ -515,10 +515,21 @@ void genome_as_generator(genome *x) {
   x->generated = 1;
 }
 
+int genome_has_opcode(const genome *x, uint32_t ops) {
+  for (uint32_t i = 0; i < x->len; i++)
+    if (ops >> x->g[i].op & 1) return 1;
+  return 0;
+}
+
 void genome_breed(genome *child, const genome *p1, const genome *p2, rng *r, uint32_t core, uint32_t max_length,
                   const genome_mix *mix, char *ops, size_t ops_n) {
+  genome_breed_forbid(child, p1, p2, r, core, max_length, mix, 0, ops, ops_n);
+}
+
+void genome_breed_forbid(genome *child, const genome *p1, const genome *p2, rng *r, uint32_t core, uint32_t max_length,
+                         const genome_mix *mix, uint32_t forbid, char *ops, size_t ops_n) {
   if (p1->generated) {
-    gen_breed(&child->p, &p1->p, p2 && p2->generated ? &p2->p : 0, r, core, max_length, mix, ops, ops_n);
+    gen_breed_forbid(&child->p, &p1->p, p2 && p2->generated ? &p2->p : 0, r, core, max_length, mix, forbid, ops, ops_n);
     generate(child, core, max_length);
     return;
   }
@@ -529,6 +540,8 @@ void genome_breed(genome *child, const genome *p1, const genome *p2, rng *r, uin
   uint64_t total = 0;
   for (int k = 0; k < CH_COUNT; k++) total += mix->w[k];
   genome x = *p1;
+  genome *y = forbid ? malloc(sizeof *y) : 0; // --no-spl: the change on a copy, kept when the warrior has none
+  if (forbid && !y) abort();
   uint32_t changes = 1;
   while (changes < 6 && rng_chance(r, 0.35)) changes++;
   for (uint32_t c = 0; c < changes && total; c++) {
@@ -536,12 +549,20 @@ void genome_breed(genome *child, const genome *p1, const genome *p2, rng *r, uin
       uint64_t d = rng_below(r, total);
       int kind = 0;
       while (d >= mix->w[kind]) d -= mix->w[kind++];
-      if (genome_change(&x, p2, r, core, max_length, kind)) {
+      int applied;
+      if (!forbid) applied = genome_change(&x, p2, r, core, max_length, kind);
+      else {
+        *y = x;
+        applied = genome_change(y, p2, r, core, max_length, kind) && !genome_has_opcode(y, forbid);
+        if (applied) x = *y;
+      }
+      if (applied) {
         add_op(ops, ops_n, genome_change_name(kind));
         break;
       }
     }
   }
+  free(y);
   *child = x;
 }
 

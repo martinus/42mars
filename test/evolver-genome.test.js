@@ -126,11 +126,11 @@ test('--genome gen: start warriors, what it refuses, and a state from before it'
   // a state without the field (written before --genome) is a run on lists
   const file = join(tmp, 'start-list', 'state.txt');
   const state = readFileSync(file, 'latin1');
-  const old = state.replace(/^(params .*) 0 0 0 1 0$/m, '$1'); // and without --refactor, --min-length, --tie-points and --parsimony
+  const old = state.replace(/^(params .*) 0 0 0 1 0 0$/m, '$1'); // and without --refactor, --min-length, --tie-points, --parsimony and --no-spl
   assert.notEqual(old, state);
   writeFileSync(file, old, 'latin1');
   run(join(tmp, 'start-list'), ['--threads', '2', '--batches', '1']);
-  assert.match(readFileSync(file, 'latin1'), /^params .* 0 0 0 1 0$/m);
+  assert.match(readFileSync(file, 'latin1'), /^params .* 0 0 0 1 0 0$/m);
   assert.ok(events(join(tmp, 'start-list')).every((e) => !('gen' in e)));
 });
 

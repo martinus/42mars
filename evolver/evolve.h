@@ -76,6 +76,7 @@ typedef struct {
   uint32_t min_length;      // --min-length N: a child with fewer instructions that are not DAT.F $0, $0 is not played; 0 none
   double tie;               // --tie-points t: what a tie counts in the screen, the values and the push-off (a win 3); scores against the hill stay 3/1/0
   int parsimony;            // --parsimony: of a newcomer and a member with the same results (twins), the longer one leaves (#172)
+  int no_spl;               // --no-spl: no SPL in a warrior of the run (#185): a change that would make one is drawn again
 } params;
 
 enum { PARENTS_VALUE, PARENTS_DUEL };
@@ -284,6 +285,10 @@ static inline double points_of(m42_score s) { return points_of_t(s, 1); }
 // The rounds of a whole match against a panel warrior (--panel-rounds), and
 // against the warrior in slot o.
 static inline uint32_t panel_rounds(const params *p) { return p->panel_rounds ? p->panel_rounds : p->rounds; }
+
+// The opcodes no warrior of the run may have (genome_breed_forbid()): SPL
+// with --no-spl, else none.
+static inline uint32_t forbidden_opcodes(const params *p) { return p->no_spl ? 1u << GENOME_SPL : 0; }
 
 // The rounds of the first stage of a match, p.rounds without --stage.
 static inline uint32_t stage_rounds(const params *p) { return p->stage && p->stage < p->rounds ? p->stage : p->rounds; }

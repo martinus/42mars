@@ -29,7 +29,7 @@ test('--parsimony: of a newcomer and its twin the longer one leaves, the newcome
   assert.equal(checkValues.twinLeaves, twins.length);
   assert.ok(checkValues.twinChecks > 3 * twins.length, `${checkValues.twinChecks} newcomers checked`);
   assert.ok(twins.length >= 3 && twins.every((e) => e.id > e.twin), 'the newcomers that left as twins');
-  assert.match(readFileSync(join(tmp, 'twins1', 'state.txt'), 'latin1'), /^params .* 1$/m);
+  assert.match(readFileSync(join(tmp, 'twins1', 'state.txt'), 'latin1'), /^params .* 1 0$/m); // --parsimony, then --no-spl
   run(join(tmp, 'twins-resumed'), [...args, '--threads', '2', '--batches', String(BATCHES >> 1)]);
   run(join(tmp, 'twins-resumed'), ['--threads', '3', '--batches', String(BATCHES - (BATCHES >> 1))]);
   assert.deepEqual(stable(events(join(tmp, 'twins-resumed'))), stable(one));
