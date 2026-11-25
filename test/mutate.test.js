@@ -35,6 +35,15 @@ test('mutate.mjs: reports caught and surviving mutants and restores the file', (
   assert.equal(readFileSync(join(tmp, 'x.txt'), 'utf8'), 'a=1\n');
 });
 
+test('mutate.mjs: a command that fails without a mutant stops it before the mutants', () => {
+  writeFileSync(join(tmp, 'y.txt'), 'a=1\n');
+  writeFileSync(join(tmp, 'mutants2.json'), JSON.stringify([{ name: 'any', file: 'y.txt', old: 'a=1', new: 'a=2' }]));
+  const r = spawnSync('node', [script, 'mutants2.json', '--timeout', '30', '--', 'node', '-e', "console.log('not ok 1 - broken'); process.exit(1)"], { cwd: tmp, encoding: 'utf8' });
+  assert.equal(r.status, 1, r.stderr);
+  assert.deepEqual(r.stdout.trim().split('\n'), ['== without a mutant: FAILS: not ok 1 - broken: the command fails by itself, no mutant can say anything']);
+  assert.equal(readFileSync(join(tmp, 'y.txt'), 'utf8'), 'a=1\n');
+});
+
 test('mutate.mjs refuses an unknown option and a missing command', () => {
   for (const args of [['m.json', '--fast', '--', 'true'], ['m.json'], ['m.json', '--timeout', '--', 'true']]) {
     assert.equal(spawnSync('node', [script, ...args], { cwd: tmp }).status, 2, args.join(' '));
