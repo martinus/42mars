@@ -8,6 +8,7 @@
 make                                                   # builds build/42evolve, POSIX threads (Linux, macOS)
 build/42evolve runs/a --opponents warriors/koenigstuhl/94nop --seconds 3600
 node tools/serve.mjs --run runs/a                      # then http://127.0.0.1:8000/ui/evolver.html
+node tools/run-report.mjs runs/a                       # the status in the terminal (below)
 ```
 
 Ctrl-C ends the run after the current batch. `build/42evolve runs/a` continues it, also with another `--threads`, `--batches` or `--seconds`; other options are refused for a folder that has a run. The same seed gives the same run for any number of threads, and a continued run is the same as one that never stopped (`test/evolver.test.js` checks both).
@@ -98,6 +99,25 @@ The page (21st November 2026): the list of runs on the left; the matrix the whol
 **Several runs**: `node tools/serve.mjs --run ~/42evolve.a ~/42evolve.b ...` (one `--run`, any number of folders, so `--run ~/42evolve.*` works) serves each run's events; `ui/evolver.html` is then one dashboard for all of them: a list on the left names each run with its batch, the age of its `best.red` (batches since it was found) and its score against the holdout, colored from red for the lowest of the runs to green for the highest (a click on a heading sorts by that column, a second one turns the order around; a grey dot when the run has not written for 3 of its batch times: such a stopped run goes into a second part below the running ones, and its cores busy chip says stopped; the islands of a run, which take turns, count as running while any of them writes, apart from those the score stopped (0 in the `live` line of `islands.txt`); a field above the list shows only the runs whose name contains its text), a click or `[` and `]` switches the page to another run, and `?run=<n>` keeps which (0 is the first); the list comes from `/runs`, every 5 seconds. Besides, [`ui/runs.html`](../ui/runs.html) shows them all on one page: the best against the holdout and the best member against the panel over the minutes of each run (the fair axis when runs share a machine), and a table with the settings in which they differ, where each stands, the speed, the families and the opcodes of the list.
 
 The arena loads `ui/index.html?embed&paused&speed=9#battle=...`, which carries both warriors, the rules, the seed and the rounds; opened by itself, without `embed`, that page starts in the grid layout at learn speed, every step explained (`?layout=ring` and `?speed=` before the `#` still win). The visualizer plays the same rounds as the evolver did: the WebAssembly build gives the same results as the native one, and stepping a match round by round with a watch gives the same rounds as `m42_match()`. `test/evolver.test.js` replays logged matches in the WebAssembly engine.
+
+## The status of a run: `tools/run-report.mjs`
+
+```sh
+node tools/run-report.mjs ~/42evolve.a [~/42evolve.b ...] [--full] [--json]
+node tools/run-report.mjs ~/42evolve.a --bench --opponents warriors/koenigstuhl/94nop [--rounds 100] [--jobs N]
+```
+
+What took many commands per look, from the run folders alone (a run folder or a folder of islands; no games without `--bench`):
+
+- **The islands**: per island its last batch and list, the best against the whole opponent folder at each score of `islands.jsonl` (the best of best.red and the 3 best by panel average; up to 8 of the scores, the last one is the score now), the best of all scores and its batch, the best member against the panel now and the best against the holdout so far. `*` marks an island the score stopped.
+- **The 3 best by panel average of each island now**: name (its noun is the family), kind of style (a word for each kind of `tools/style.js`) and opcodes, then the opcode sequences most of them share and on how many islands: one design that took every island shows at once.
+- **New designs**: a family or kind of style the first time it holds a place among the 3 best of an island for 10 batches in a row, with the batch it came in (without `--full` the last 6). Without the 10 batches the list is noise: the 3 best are often tied with others, and an island of 6,500 batches had 150 families there for a batch or two.
+- **The line of best.red**: its first parents back to a random or start warrior, across islands (a migrant goes on in the island it came from, with the warrior of its `migrate` event that has its code), the changes that made each step and how often each kind of change is on the line. Without `--full` only the steps that changed the opcodes or the island, and the last 3.
+- **Several runs**: each as above, then the same numbers side by side at the last batch all of them have.
+
+`--bench` plays the folder's best.red and, of each island, its best.red and the 3 best by panel average against every warrior of `--opponents`, under the rules of the run, as `tools/tournament.mjs --bench` plays one warrior (the same positions, so the same result), all of them in one task list on all threads: the warriors the rule of a look scores. `--json` gives everything as JSON.
+
+It reads `events.jsonl` with `RunDigest` of `tools/progress.js`, one worker thread per island: only the event types it needs, an enter event only up to the warrior's code, and of the warriors only those that can be ancestors (those that stayed past their batch or had children). On 25th November 2026, with a load of 76 on the 32 threads (runs in the idle class and other agents): `~/42evolve.94-own16` (16 islands, 870 batches, 1.5 GB of events) in 10 s with at most 620 MB, 9.7 s of CPU time; `~/42evolve.tiny-own16` (16 islands, 6,560 batches, 9.7 GB) in 36 s with at most 1.1 GB, 41 s of CPU time, so about 3 s on an idle machine; one island of it alone (614 MB) 2.5 s of CPU time and 140 MB. Most of the memory is the 16 worker threads, each about 65 MB; `--jobs 4` keeps it near 300 MB. `--jobs` also sets the threads of `--bench`. `test/evolver-report.test.js` checks the table, the 3 best, the line and the new designs against the events read whole, on a run of 2 islands.
 
 ## E5, eighth comparison: diversity measured against the panel
 

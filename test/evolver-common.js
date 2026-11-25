@@ -80,8 +80,9 @@ export function classic() {
 }
 
 export let base; // the events of the run on one thread, 6 batches
-// before() of every file: the programs, then the base run
-export async function setup() {
+// before() of every file: the programs, then the base run (not with
+// { base: false }, for a file that needs only the programs)
+export async function setup(options) {
   if (skip) return;
   if (!prebuilt) {
     [evolve, unit, spectrum] = await Promise.all([
@@ -90,6 +91,7 @@ export async function setup() {
       builtProgram('42spectrum', ['evolver/spectrum.c', 'evolver/genome.c', 'evolver/generator.c', 'evolver/gen-change.c'], ['-pthread', '-Ilib']),
     ]);
   }
+  if (options?.base === false) return;
   run(join(tmp, 'one'), [...TINY, '--threads', '1', '--batches', '6']);
   base = events(join(tmp, 'one'));
 }
