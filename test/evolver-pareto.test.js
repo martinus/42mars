@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Martin Leitner-Ankerl
 //
 // The evolver (evolver/, #142) on the tiny hill of warriors/koenigstuhl:
-// --pushoff pareto, pareto-age and pareto-sd, --clear. What the evolver's test files share is in
+// --pushoff pareto and pareto-sd, --clear. What the evolver's test files share is in
 // test/evolver-common.js; built with cc, or prebuilt in M42_BIN
 // (test/native.js). POSIX only.
 
@@ -23,7 +23,7 @@ import { setup, cleanup, tmp, evolve, skip, TINY, run, events, without, stable, 
 before(setup);
 after(cleanup);
 
-test('--pushoff pareto: NSGA-II on panel and members, pareto-age also on the age of the line, pareto-sd on the SD-score; the same run on any thread count and after a resume', { skip }, () => {
+test('--pushoff pareto: NSGA-II on panel and members, pareto-sd also on the SD-score; the same run on any thread count and after a resume', { skip }, () => {
   assert.equal(base[0].params.pushoff, 'value');
   const BATCHES = 12;
   // seed 11: with 2000 cycles the seed of TINY had no child that started a line of its own
@@ -46,9 +46,9 @@ test('--pushoff pareto: NSGA-II on panel and members, pareto-age also on the age
   // with --stage: the early decisions on the first-stage results by the fronts too; many crossovers, some of
   // which continue the older line of their second parent
   const cross = 'opcode=81,a-operand=108,b-operand=108,insert=100,crossover-insert=400,crossover-replace=400';
-  run(join(tmp, 'pareto-stage'), [...without(args, '--pushoff'), '--pushoff', 'pareto-age', '--panel-rounds', '100', '--stage', '20', '--changes', cross, '--threads', '2', '--batches', '16']);
+  run(join(tmp, 'pareto-stage'), [...args, '--panel-rounds', '100', '--stage', '20', '--changes', cross, '--threads', '2', '--batches', '16']);
   const st = events(join(tmp, 'pareto-stage'));
-  assert.equal(st[0].params.pushoff, 'pareto-age');
+  assert.equal(st[0].params.pushoff, 'pareto');
   // pareto-sd: the SD-score to the nearest as the third objective, every value and push-off replayed
   run(join(tmp, 'pareto-sd'), [...without(args, '--pushoff'), '--pushoff', 'pareto-sd', '--threads', '2', '--batches', String(BATCHES)]);
   const sd = events(join(tmp, 'pareto-sd'));

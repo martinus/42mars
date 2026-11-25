@@ -96,8 +96,7 @@ export async function setup() {
 
 // --pushoff pareto: the members' values of v as 42evolve computes them, their
 // place in NSGA-II's order on the panel average (without the own column) and
-// the average against the other members, with pareto-age also the origin of
-// their line (later is younger), with pareto-sd the SD-score to the nearest of
+// the average against the other members, with pareto-sd also the SD-score to the nearest of
 // v: 10 (fronts - front) + min(crowding, 5). Panel warriors keep theirs.
 // clear: --clear, { radius, and the options of pushoffValues for the SD-score }:
 // the members by average, the strongest first, each a winner unless its
@@ -117,7 +116,7 @@ export function paretoValues(v, ids, score, panel, origins, third, clear = null)
     const pc = ids.map((b, j) => j).filter((j) => panel.has(ids[j]) && j !== i);
     const mc = ms.filter((j) => j !== i);
     const o = [pc.reduce((t, j) => t + score[i][j], 0) / pc.length, mc.length ? mc.reduce((t, j) => t + score[i][j], 0) / mc.length : 0];
-    return third === 'pareto-age' ? [...o, origins.get(ids[i])] : third === 'pareto-sd' ? [...o, v[i].distance] : o;
+    return third === 'pareto-sd' ? [...o, v[i].distance] : o;
   });
   const front = [], crowd = [];
   let F = 0;
@@ -155,7 +154,7 @@ export function checkValues(evs) {
   let checked = 0, duels = 0, lastValues = new Map(), parentDistances = 0, pushoffs = 0, roundings = 0;
   let listNow = start.params.list; // --list on a run that continues: event `list`
   // --pushoff pareto: the members' value is their place in NSGA-II's order on the panel average, the average
-  // against the other members and the origin of their line (later is younger); 10 (fronts - front) + min(crowding, 5)
+  // against the other members, with pareto-sd the SD-score to the nearest; 10 (fronts - front) + min(crowding, 5)
   const origins = new Map(); // id -> the batch its line started, from the enter events
   let paretoLeaves = 0, newLines = 0, olderSecond = 0;
   const paretoed = (v, ids, score, o) => (start.params.pushoff?.startsWith('pareto') ? paretoValues(v, ids, score, panel, origins, start.params.pushoff, { radius: start.params.clear, ...o }) : v);

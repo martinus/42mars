@@ -71,7 +71,7 @@ typedef struct {
   int distance_panel;       // --diversity panel: the push-off's SD-score over the panel's columns only
   int average_panel;        // --average panel: the push-off's average over the panel's columns only
   int member_games_none;    // --member-games none: members never play each other (with --average panel --diversity panel)
-  int pareto;               // --pushoff pareto: fronts on panel average and average against members (NSGA-II); 2 with age, 3 with SD-score
+  int pareto;               // --pushoff pareto: fronts on panel average and average against members (NSGA-II); 3 with SD-score (2 was with age)
   int mirror;               // --positions mirror: each position twice, the second time with the warriors swapped
   double clear;             // --clear R: with a pareto push-off, a member within SD-score R of a stronger one goes behind the fronts, 0 off
   uint64_t draw_seed;       // the order of the opponent folder, so the panel and the holdout: --draw-seed, else the seed
@@ -125,7 +125,7 @@ typedef struct {
   genome *g; // members
   uint64_t parents[2];
   uint32_t born;
-  uint32_t origin; // members: the batch its line started (--pushoff pareto's age): a parent's, or born for a new family
+  uint32_t origin; // members: the batch its line started (the events' origin): a parent's, or born for a new family
   uint32_t adjective, noun, earlier; // the name (evolver/names.h)
   double parent_difference; // members: row_difference() to the first parent when it entered, -1 if that was not in
   int new_family;           // members: it plays so unlike its first parent that it got a noun of its own
@@ -635,13 +635,10 @@ static void clear_members(const run *r, const double *pts, uint8_t *cleared) {
 // --pushoff pareto: instead of average * distance, the members' value is
 // their place in NSGA-II's order (Deb et al. 2002) on two objectives: the
 // average against the panel and the average against the other members.
-// pareto-age adds the youth of their line (Schmidt and Lipson 2011,
-// age-fitness Pareto optimization), r->batch - origin smaller is better; in
-// pareto30 (17th November 2026) that left 73 to 80 of 80 members on the
-// first front, and the crowding alone decided. pareto-sd adds the SD-score
-// to the nearest warrior instead (diversity as an objective, Mouret and
-// Doncieux 2012): on long30's list of 18th November 32 of 80 were on the
-// first front with it, 78 with the age. value = 10 (F - f) +
+// pareto-sd adds the SD-score to the nearest warrior (diversity as an
+// objective, Mouret and Doncieux 2012): on long30's list of 18th November
+// 32 of 80 were on the first front with it, 78 with the age of the line
+// (pareto-age, removed in #193). value = 10 (F - f) +
 // min(crowding, 5) with F fronts and f the warrior's, 0 the first: the
 // lowest value is the most crowded of the last front, and a tournament by
 // value is NSGA-II's crowded comparison. A copy of a warrior has its point
@@ -650,7 +647,7 @@ static void pareto_values(run *r, const double *pts) {
   if (!r->p.pareto) return;
   const uint32_t P = r->panel_n, n = r->active_n > P ? r->active_n - P : 0;
   if (!n) return;
-  const uint32_t m = r->p.pareto >= 2 ? 3 : 2; // pareto-age: the youth of the line too; pareto-sd: the SD-score
+  const uint32_t m = r->p.pareto == 3 ? 3 : 2; // pareto-sd: the SD-score too
   double *obj = xmalloc(3 * n * sizeof *obj), *crowd = xmalloc(n * sizeof *crowd);
   uint32_t *front = xmalloc(n * sizeof *front), *at = xmalloc(n * sizeof *at), won = 0;
   uint8_t *cleared = xmalloc(n);
@@ -667,7 +664,6 @@ static void pareto_values(run *r, const double *pts) {
       if (r->active[q] != a) e += pts[a * r->cap + r->active[q]];
     obj[m * j] = panel_avg_on(r, pts, a);
     obj[m * j + 1] = n > 1 ? e / (n - 1) : 0;
-    if (r->p.pareto == 2) obj[m * j + 2] = (double)r->slot[a]->origin;      // a later start is a younger line
     if (r->p.pareto == 3) obj[m * j + 2] = r->values[P + at[j]].distance; // farther from the nearest is better
   }
   // the fronts of the winners, then those of the cleared ones behind them
@@ -965,7 +961,7 @@ static void event_start(run *r) {
                                             : "picked",
           p->screen_stop, p->screen_check,
           p->average_panel ? "panel" : "all", p->member_games_none ? "none" : "all", p->draw_seed,
-          p->pareto == 3 ? "pareto-sd" : p->pareto == 2 ? "pareto-age" : p->pareto ? "pareto" : "value", p->mirror ? "mirror" : "pmars", p->clear, p->gen ? "gen" : "list", p->min_length, p->tie);
+          p->pareto == 3 ? "pareto-sd" : p->pareto ? "pareto" : "value", p->mirror ? "mirror" : "pmars", p->clear, p->gen ? "gen" : "list", p->min_length, p->tie);
   json_str(f, p->opponents, 0);
   fputs(",\"panelFiles\":", f);
   json_str(f, p->panel_files, 0);
@@ -1298,6 +1294,7 @@ static int load_state(run *r, const char *path) {
       const char *gone;
       const int got = load_params(line + 7, p, &gone);
       if (got < 15) goto bad; // the first version had 15; what a state lacks keeps its default
+      if (!gone && p->pareto == 2) gone = "--pushoff pareto-age"; // 3 is pareto-sd
       if (gone) {
         fprintf(stderr, "42evolve: %s: %s was removed after 1.1.0 (#193)\n", r->dir, gone);
         refused = 1;
@@ -1373,7 +1370,7 @@ static int load_state(run *r, const char *path) {
           genome_load(w->g, line + 7 + used, p->rules.core_size, 0) != 0)
         goto bad;
       w->w = make_warrior(w->g, &p->rules);
-      w->origin = w->born; // a state from before --pushoff pareto has no origin line
+      w->origin = w->born; // a state from before the origin has no origin line
       name_text(w->name, sizeof w->name, w->adjective, w->noun, w->earlier);
       uint32_t at = UINT32_MAX;
       for (uint32_t k = 0; k < slots; k++)
@@ -1931,7 +1928,7 @@ static void run_batch(run *r) {
       x->origin = a->origin;
       if (strstr(x->ops, "crossover") && b->id != a->id) {
         x->parents[1] = b->id;
-        if (b->origin < x->origin) x->origin = b->origin; // the older line, as age-fitness Pareto optimization
+        if (b->origin < x->origin) x->origin = b->origin; // the older line
       }
     }
     const uint64_t h = genome_hash(&x->g, core);
@@ -2160,7 +2157,7 @@ static void run_batch(run *r) {
       w->parent_difference = row_difference(r, s, ps);
       w->new_family = w->parent_difference > NEW_FAMILY;
     }
-    if (w->new_family) w->origin = r->batch; // a new design: a new line, young for --pushoff pareto
+    if (w->new_family) w->origin = r->batch; // a new design: a new line
     rng name = rng_seed(p->seed, 0x6e616d65u, w->id); // "name"
     w->adjective = rng_below(&name, NAME_ADJECTIVES);
     w->noun = x->noun;
@@ -2783,7 +2780,7 @@ static void usage(void) {
                     "         [--parents value|duel] [--start <dir>] [--changes name=weight,...]\n"
           "         [--panel-files a.red,b.red,...] [--screen-members N] [--stage N (screen rounds; 0 none)] [--fill]\n"
           "         [--panel-rounds N] [--diversity all|panel] [--average all|panel] [--member-games all|none]\n"
-          "         [--pushoff value|pareto|pareto-age|pareto-sd] [--clear R] [--positions mirror|pmars]\n"
+          "         [--pushoff value|pareto|pareto-sd] [--clear R] [--positions mirror|pmars]\n"
           "         [--genome list|gen] [--min-length N] [--tie-points t]\n"
           "         [--islands N [--select-after B [--keep K]] [--score-rounds R] [--migrate M [--migrate-pick best|random] [--migrate-to all|random]]\n"
           "         [--island-variant \"options\" ...] [--island-panels shared|own] [--explorers K]]\n"
@@ -3525,7 +3522,7 @@ static const char *params_error(const params *p) {
            "--screen-members";
   if (p->pareto && (p->average_panel || p->member_games_none))
     return "--pushoff pareto not with --average panel or --member-games none";
-  if (p->clear > 0 && !p->pareto) return "--clear with --pushoff pareto, pareto-age or pareto-sd only";
+  if (p->clear > 0 && !p->pareto) return "--clear with --pushoff pareto or pareto-sd only";
   if (p->screen_stop > 0 && p->screen_check > 0) return "--screen-stop or --screen-check, not both";
   if (!p->gen && structure_kinds(&p->changes)) return STRUCTURE_NEEDS_GEN;
   if (p->min_length > p->rules.max_length) return "--min-length at most --length";
@@ -3650,7 +3647,10 @@ static int parse_cli(int argc, char **argv, cli *c) {
       c->pushoff_given = 1;
       if (!strcmp(v, "value")) p->pareto = 0;
       else if (!strcmp(v, "pareto")) p->pareto = 1;
-      else if (!strcmp(v, "pareto-age")) p->pareto = 2;
+      else if (!strcmp(v, "pareto-age")) {
+        fprintf(stderr, "42evolve: --pushoff pareto-age was removed after 1.1.0 (#193)\n");
+        return 2;
+      }
       else if (!strcmp(v, "pareto-sd")) p->pareto = 3;
       else usage();
     } else if (!strcmp(a, "--migrate-pick")) {

@@ -83,6 +83,7 @@ const REMOVED = [
   { args: ['--migrate-to', 'tree'], option: '--migrate-to tree' },
   { args: ['--leaf-restart', '4'], option: '--leaf-restart' },
   { args: ['--nemesis-every', '4'], option: '--nemesis-every' },
+  { args: ['--pushoff', 'pareto-age'], option: '--pushoff pareto-age', at: 40, value: '2' },
 ];
 // and the lines of a state that only they wrote
 const REMOVED_LINES = [
@@ -102,13 +103,13 @@ test('a removed option is refused on the command line, in an island variant, and
   assert.ok(!existsSync(join(tmp, 'removed')));
   // the run folder of the base run, with the place of the option in its state not 0
   const state = readFileSync(join(tmp, 'one', 'state.txt'), 'latin1');
-  for (const { option, at } of REMOVED.filter((x) => x.at !== undefined)) {
+  for (const { option, at, value } of REMOVED.filter((x) => x.at !== undefined)) {
     const dir = join(tmp, `removed-${at}`);
     mkdirSync(dir);
     copyFileSync(join(tmp, 'one', 'events.jsonl'), join(dir, 'events.jsonl'));
     const params = state.match(/^params (.*)$/m)[1].split(' ');
     assert.equal(params[at], '0', option);
-    params[at] = '1';
+    params[at] = value ?? '1';
     writeFileSync(join(dir, 'state.txt'), state.replace(/^params .*$/m, `params ${params.join(' ')}`));
     const r = spawnSync(evolve, [dir, '--batches', '1'], { encoding: 'utf8' });
     assert.equal(r.status, 1, option);
