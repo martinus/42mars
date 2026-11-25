@@ -149,6 +149,23 @@ test('survivors of the screen enter by their screen score', { skip }, () => {
   checkOrder(base, 'screen');
 });
 
+test('the logged screen points are those of the WebAssembly engine, with the logged seeds', { skip }, () => {
+  const st = base[0], m = createMarsSync(RULES);
+  const sources = new Map(st.panel.map((w) => [w.id, w.source]));
+  let replayed = 0;
+  for (const e of base.filter((x) => x.type === 'enter' && x.batch > 0).slice(0, 6)) {
+    const a = assemble(`;name x\n${e.code}`, RULES);
+    for (const k of [0, 3, 7]) {
+      const p = st.panel[k];
+      const r = m.runMatch([a, assemble(sources.get(p.id), RULES)], { seed: e.scores.find((x) => x[0] === p.id)[4], rounds: st.params.screenRounds });
+      const pts = ((3 * r.warriors[0].wins + r.warriors[0].ties) * 100) / st.params.screenRounds;
+      assert.ok(Math.abs(pts - e.screenPoints[k]) < 1e-3, `${e.name} against ${p.name}: ${pts}, logged ${e.screenPoints[k]}`);
+      replayed++;
+    }
+  }
+  assert.equal(replayed, 18);
+});
+
 test('--parents duel: a parent beat its rival in their match, the same run on any thread count', { skip }, () => {
   assert.equal(base[0].params.parents, 'value');
   const args = [...CLASSIC, '--parents', 'duel'];

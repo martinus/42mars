@@ -264,6 +264,17 @@ static void test_pushoff(void) {
   // alpha 0: the average alone (test/diversity.test.js: 3 goes first)
   pushoff_values(S, 4, all, 4, SD_OPPONENT, 0, 0, sigma, v);
   CHECK(pushoff_weakest(v, 4, 0) == 3, "alpha 0 is not the average");
+  // three equal strong warriors and one that loses to all: the SD-score
+  // keeps the weak one (it differs) and pushes off a strong one
+  const double W[16] = {0, 150, 150, 250, 150, 0, 150, 250, 150, 150, 0, 250, 50, 50, 50, 0};
+  double sw[4];
+  pushoff_values(W, 4, all, 4, SD_OPPONENT, 1, 0, sw, v);
+  CHECK(v[3].distance > 0 && pushoff_weakest(v, 4, 0) == 2, "the weak one stays");
+  // a weak warrior of another profile stays, and so does the weaker copy of a profile
+  const double WS[25] = {0, 150, 200, 100, 150, 100, 0, 150, 50, 100, 150, 200, 0, 120, 140,
+                         180, 220, 160, 0, 130, 60, 90, 40, 200, 0};
+  pushoff_values(WS, 5, five, 5, SD_OPPONENT, 1, 0, sg, v);
+  CHECK(v[1].distance > 0 && pushoff_weakest(v, 5, 0) != 1, "the weaker copy stays");
   // --pushoff pareto: 0, 1 and 2 are not dominated, 3 is (by 0), 4 is a
   // copy of 0. Crowding of 0: by the first objective 2, 0, 4, 1 gives
   // (1 - 0) / 2, by the second 1, 0, 4, 2 gives (1 - 0) / 2; the copy 0
