@@ -74,7 +74,7 @@ Read [practices.md](practices.md) and go through the agent files with it: `CLAUD
 Nothing changed: no pull request, go to step 6.
 
 1. `node .claude/skills/wrap-up/agent-files.mjs --check` ends with 0 stale references, and `npm test` passes.
-2. Uncommitted work that is not part of the wrap-up: commit it to its own branch or ask. Then a branch `wrap-up-<yyyy-mm-dd>` from `origin/main`.
+2. Uncommitted work that is not part of the wrap-up: commit it to its own branch or ask. Then a branch `wrap-up-<yyyy-mm-dd>` from `origin/main`, with `-2` when `git ls-remote --heads origin <name>` lists it already (a second wrap-up of the day: the push was refused, and `gh pr create` opened a pull request on the old branch, #230).
 3. The pull request body lists every added, changed and removed line with its reason and evidence, every removed rule in full, and the table of `agent-files.mjs` with the change against `origin/main`. If the bytes loaded in every session grew, it says why they had to.
 4. Push, CI and merge: steps 2 to 5 of [the pull request loop](../issues/pull-request-loop.md).
 
