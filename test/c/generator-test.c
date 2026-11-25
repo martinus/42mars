@@ -383,7 +383,7 @@ static void test_list(void) {
   static char text[64 * GEN_LINES];
   uint32_t labels = 0;
   for (int round = 0; round < 2000; round++) {
-    genome_random(&g, &r, CORE, 1 + rng_below(&r, round % 50 ? 60 : GENOME_MAX), 0);
+    genome_random(&g, &r, CORE, 1 + rng_below(&r, round % 50 ? 60 : GENOME_MAX));
     genome_code(&g, CORE, code);
     gen_from_code(&x, code, g.len, g.start, CORE);
     CHECK(!gen_check(&x, CORE, err, sizeof err), "a generator from code: %s", err);
@@ -710,26 +710,21 @@ static void test_mirror(void) {
   static genome g, p2, before;
   static gen x, x2, want;
   uint32_t applied[CH_COUNT] = {0}, refused[CH_COUNT] = {0};
-  genome_style style = {0.3, {0}, {0}, {0}};
-  for (uint32_t k = 0; k < GENOME_OPCODES; k++) style.op[k] = 1 + k % 5;
-  for (uint32_t k = 0; k < 7; k++) style.mod[k] = 1 + k % 3;
-  for (uint32_t k = 0; k < 8; k++) style.mode[k] = 1 + k % 4;
   for (int round = 0; round < 60000; round++) {
     const int kind = round % CH_COUNT;
     const uint32_t lengths[] = {1, 2, 3, 5, 8, 20, 60, 100, 255, 256};
     const uint32_t len = round % 11 ? 1 + rng_below(&seeds, 24) : lengths[rng_below(&seeds, 10)];
     uint32_t max = round % 5 == 0 ? len : round % 5 == 1 ? len + 1 + rng_below(&seeds, 5) : round % 5 == 2 ? 20 : round % 5 == 3 ? 100 : 300;
     if (max < len) max = len;
-    const genome_style *st = round % 3 ? 0 : &style;
-    genome_random(&g, &seeds, CORE, len, st);
-    genome_random(&p2, &seeds, CORE, 1 + rng_below(&seeds, round % 7 ? 24 : 256), st);
+    genome_random(&g, &seeds, CORE, len);
+    genome_random(&p2, &seeds, CORE, 1 + rng_below(&seeds, round % 7 ? 24 : 256));
     const int second = round % 13 != 0; // sometimes no second parent
     gen_from_genome(&x, &g);
     gen_from_genome(&x2, &p2);
     before = g;
     rng r1 = rng_seed(71, (uint64_t)round, 0), r2 = r1;
-    const int a = genome_change(&g, second ? &p2 : 0, &r1, CORE, max, st, kind);
-    const int b = gen_change(&x, second ? &x2 : 0, &r2, CORE, max, st, kind);
+    const int a = genome_change(&g, second ? &p2 : 0, &r1, CORE, max, kind);
+    const int b = gen_change(&x, second ? &x2 : 0, &r2, CORE, max, kind);
     gen_from_genome(&want, &g);
     a ? applied[kind]++ : refused[kind]++;
     if (a != b || r1.s != r2.s || !same_gen(&want, &x)) {
@@ -750,15 +745,15 @@ static void test_mirror(void) {
   static genome child, generated, gchild;
   uint32_t several = 0;
   for (int round = 0; round < 20000; round++) {
-    genome_random(&g, &seeds, CORE, 1 + rng_below(&seeds, 20), 0);
-    genome_random(&p2, &seeds, CORE, 1 + rng_below(&seeds, 20), 0);
+    genome_random(&g, &seeds, CORE, 1 + rng_below(&seeds, 20));
+    genome_random(&p2, &seeds, CORE, 1 + rng_below(&seeds, 20));
     const uint32_t max = round % 2 ? 20 : 100;
     rng r1 = rng_seed(81, (uint64_t)round, 0), r2 = r1, r3 = r1;
     char ops1[96], ops2[96], ops3[96];
-    genome_breed(&child, &g, &p2, &r1, CORE, max, 0, round % 3 ? 0 : &small, ops1, sizeof ops1);
+    genome_breed(&child, &g, &p2, &r1, CORE, max, round % 3 ? 0 : &small, ops1, sizeof ops1);
     gen_from_genome(&x, &g);
     gen_from_genome(&x2, &p2);
-    gen_breed(&x, &x, &x2, &r2, CORE, max, 0, round % 3 ? 0 : &small, ops2, sizeof ops2);
+    gen_breed(&x, &x, &x2, &r2, CORE, max, round % 3 ? 0 : &small, ops2, sizeof ops2);
     gen_from_genome(&want, &child);
     CHECK(r1.s == r2.s && !strcmp(ops1, ops2) && same_gen(&want, &x), "breeding, round %d: '%s' and '%s'", round, ops1, ops2);
     several += strchr(ops1, ' ') != 0;
@@ -768,7 +763,7 @@ static void test_mirror(void) {
     static genome second;
     second = p2;
     genome_as_generator(&second);
-    genome_breed(&gchild, &generated, &second, &r3, CORE, max, 0, round % 3 ? 0 : &small, ops3, sizeof ops3);
+    genome_breed(&gchild, &generated, &second, &r3, CORE, max, round % 3 ? 0 : &small, ops3, sizeof ops3);
     CHECK(gchild.generated == 1 && r3.s == r1.s && !strcmp(ops1, ops3) && genome_hash(&gchild, CORE) == genome_hash(&child, CORE) &&
               gchild.len == child.len && gchild.start == child.start && same_gen(&gchild.p, &x),
           "genome_breed() of a generator, round %d: '%s' and '%s'", round, ops1, ops3);
@@ -806,7 +801,7 @@ static void test_structured(void) {
     while (!keeps_limits(&p2, max));
     const int kind = round % CH_ALL;
     before = x;
-    const int ok = gen_change(&x, &p2, &r, CORE, max, 0, kind);
+    const int ok = gen_change(&x, &p2, &r, CORE, max, kind);
     ok ? applied[kind]++ : refused[kind]++;
     if (!ok) {
       CHECK(same_gen(&x, &before), "%s did not apply and changed the generator", genome_change_name(kind));
@@ -831,16 +826,16 @@ static void test_structured(void) {
   for (int round = 0; round < 200000; round++) {
     if (round % 400 == 0) {
       static genome g;
-      genome_random(&g, &r, CORE, 2 + rng_below(&r, 10), 0);
+      genome_random(&g, &r, CORE, 2 + rng_below(&r, 10));
       gen_from_genome(&x, &g);
-      genome_random(&g, &r, CORE, 2 + rng_below(&r, 10), 0);
+      genome_random(&g, &r, CORE, 2 + rng_below(&r, 10));
       gen_from_genome(&p2, &g);
     }
     uint32_t d = rng_below(&r, total);
     int kind = 0;
     while (d >= mix.w[kind]) d -= mix.w[kind++];
     before = x;
-    if (!gen_change(&x, &p2, &r, CORE, 100, 0, kind)) continue;
+    if (!gen_change(&x, &p2, &r, CORE, 100, kind)) continue;
     applied[kind]++;
     if (same_warrior(&x, &before, 100)) same[kind]++, x = before; // as if never made
     else if (round % 7 == 0) p2 = before;
@@ -862,10 +857,10 @@ static void test_structured(void) {
       while (!keeps_limits(&p2, 100));
     if (round % 3000 == 0) { // from a list again
       static genome g;
-      genome_random(&g, &r, CORE, 1 + rng_below(&r, 12), 0);
+      genome_random(&g, &r, CORE, 1 + rng_below(&r, 12));
       gen_from_genome(&x, &g);
     }
-    gen_breed(&x, &x, &p2, &r, CORE, 100, 0, &all, ops, sizeof ops);
+    gen_breed(&x, &x, &p2, &r, CORE, 100, &all, ops, sizeof ops);
     if (gen_check(&x, CORE, err, sizeof err) || !keeps_limits(&x, 100)) {
       CHECK(0, "after %d generations (%s): %s\n%s", round, ops, err, text_of(&x));
       return;
@@ -1324,17 +1319,17 @@ static void test_kinds(void) {
   rng r = rng_seed(121, 122, 123);
   static genome g, before, child;
   for (int round = 0; round < 500; round++) {
-    genome_random(&g, &r, CORE, 1 + rng_below(&r, 20), 0);
+    genome_random(&g, &r, CORE, 1 + rng_below(&r, 20));
     before = g;
     for (int k = CH_COUNT; k < CH_ALL; k++)
-      CHECK(!genome_change(&g, &before, &r, CORE, 100, 0, k) && g.len == before.len && !memcmp(g.g, before.g, g.len * sizeof g.g[0]),
+      CHECK(!genome_change(&g, &before, &r, CORE, 100, k) && g.len == before.len && !memcmp(g.g, before.g, g.len * sizeof g.g[0]),
             "%s applies to a list", genome_change_name(k));
     char ops[96];
     rng r1 = rng_seed(124, (uint64_t)round, 0), r2 = r1;
-    genome_breed(&child, &g, &g, &r1, CORE, 100, 0, &gen, ops, sizeof ops);
+    genome_breed(&child, &g, &g, &r1, CORE, 100, &gen, ops, sizeof ops);
     CHECK(!strstr(ops, "repeat") && !strstr(ops, "fold") && !strstr(ops, "constant"), "a list bred with %s", ops);
     // and the same child as without them: their weights are not drawn
-    genome_breed(&before, &g, &g, &r2, CORE, 100, 0, &list, ops, sizeof ops);
+    genome_breed(&before, &g, &g, &r2, CORE, 100, &list, ops, sizeof ops);
     CHECK(r1.s == r2.s, "a list bred with the weights of the new kinds drew other numbers");
   }
 }
@@ -1362,7 +1357,7 @@ static void test_rebuild(void) {
             "org s\n");
   // lines 5 and 6 leave the block, a new line in front: every label follows
   const slot moved[] = {{SLOT_NEW, 0}, {SLOT_A, 0}, {SLOT_A, 1}, {SLOT_A, 2}, {SLOT_A, 5}, {SLOT_A, 6}, {SLOT_A, 3}, {SLOT_A, 4}, {SLOT_A, 7}, {SLOT_A, 8}};
-  gen_rebuild(&child, &a, &a, moved, 10, CORE, &r, 0, 0);
+  gen_rebuild(&child, &a, &a, moved, 10, CORE, &r, 0);
   child.l[0] = a.l[5], child.l[0].x[1].v[0] = 6; // the new line: something known
   CHECK(!strcmp(text_of(&child), "c0 = 7\n"
                                  "        DAT.F   #c0, #L6\n"
@@ -1380,7 +1375,7 @@ static void test_rebuild(void) {
   // lines 3 and 4 gone (with 7, the block's end): a reference to them goes to the next line left,
   // the start too (line 3 of the child, where its text starts anyway)
   const slot gone[] = {{SLOT_A, 0}, {SLOT_A, 1}, {SLOT_A, 2}, {SLOT_A, 5}, {SLOT_A, 6}, {SLOT_A, 8}};
-  gen_rebuild(&child, &a, &a, gone, 6, CORE, &r, 0, 0);
+  gen_rebuild(&child, &a, &a, gone, 6, CORE, &r, 0);
   CHECK(!strcmp(text_of(&child), "c0 = 7\n"
                                  "f0:     def\n"
                                  "L1:       SPL.B   $L1, #x\n"
@@ -1392,7 +1387,7 @@ static void test_rebuild(void) {
   // the block a second time (a is b): the copy's labels are its own, the others stay
   const slot twice[] = {{SLOT_A, 0}, {SLOT_A, 1}, {SLOT_A, 2}, {SLOT_A, 3}, {SLOT_A, 4}, {SLOT_A, 5}, {SLOT_A, 6}, {SLOT_A, 7},
                         {SLOT_B, 4}, {SLOT_B, 5}, {SLOT_B, 6}, {SLOT_B, 7}, {SLOT_A, 8}};
-  gen_rebuild(&child, &a, &a, twice, 13, CORE, &r, 0, 0);
+  gen_rebuild(&child, &a, &a, twice, 13, CORE, &r, 0);
   CHECK(!strcmp(text_of(&child), "c0 = 7\n"
                                  "f0:     def\n"
                                  "L1:       SPL.B   $L1, #x\n"
@@ -1430,7 +1425,7 @@ static void test_rebuild(void) {
   // b's warrior: DAT, JMP, NOP NOP (h calls g), SPL, NOP NOP
   CHECK(info.n == 7 && info.pos[10] == 4 && info.pos[4] == 2 && info.len[4] == 2, "b's warrior");
   const slot cross[] = {{SLOT_A, 3}, {SLOT_B, 8}, {SLOT_B, 9}, {SLOT_B, 10}, {SLOT_B, 11}, {SLOT_B, 4}, {SLOT_B, 5}, {SLOT_B, 6}, {SLOT_B, 7}};
-  gen_rebuild(&child, &a, &b, cross, 9, CORE, &r, 0, &info);
+  gen_rebuild(&child, &a, &b, cross, 9, CORE, &r, &info);
   CHECK(!strcmp(text_of(&child), "c0 = 7\n"
                                  "L0:     MOV.I   $L0, $L0.len\n"
                                  "L1:     JMP.B   $L8, $L3\n"
@@ -1443,11 +1438,11 @@ static void test_rebuild(void) {
                                  "L8:     DAT.F   #300, #-5+i\n"),
         "crossed:\n%s", text_of(&child));
   // without the copy of line 7, JMP's label p is the distance in b's warrior: 1 back
-  gen_rebuild(&child, &a, &b, cross, 8, CORE, &r, 0, &info);
+  gen_rebuild(&child, &a, &b, cross, 8, CORE, &r, &info);
   CHECK(child.l[1].x[0].kind[0] == GT_NUM && child.l[1].x[0].v[0] == CORE - 1, "a label of b that is not copied: %s", text_of(&child));
   // and w, two lines on, is 3 instructions on: the call of h between them writes two
   const slot one[] = {{SLOT_A, 3}, {SLOT_B, 8}};
-  gen_rebuild(&child, &a, &b, one, 2, CORE, &r, 0, &info);
+  gen_rebuild(&child, &a, &b, one, 2, CORE, &r, &info);
   CHECK(child.l[1].x[1].kind[0] == GT_NUM && child.l[1].x[1].v[0] == 3, "a label of b across a call: %s", text_of(&child));
   char err[160];
   CHECK(!gen_check(&child, CORE, err, sizeof err), "%s", err);
@@ -1465,7 +1460,7 @@ static void test_crossover(void) {
   for (uint64_t seed = 0; seed < 400; seed++) {
     rng r = rng_seed(98, seed, 0);
     x = a;
-    if (!gen_change(&x, &b, &r, CORE, 100, 0, CH_XINSERT)) continue;
+    if (!gen_change(&x, &b, &r, CORE, 100, CH_XINSERT)) continue;
     char err[160];
     CHECK(!gen_check(&x, CORE, err, sizeof err), "%s", err);
     const char *text = text_of(&x);
@@ -1499,7 +1494,7 @@ static void test_parts(void) {
   for (uint64_t seed = 0; seed < 200; seed++) {
     rng r = rng_seed(102, seed, 0);
     y = x;
-    CHECK(!gen_change(&y, 0, &r, CORE, 100, 0, CH_TUNE) && !gen_change(&y, 0, &r, CORE, 100, 0, CH_SHARED) && same_gen(&x, &y),
+    CHECK(!gen_change(&y, 0, &r, CORE, 100, CH_TUNE) && !gen_change(&y, 0, &r, CORE, 100, CH_SHARED) && same_gen(&x, &y),
           "tune or shared-constant changed\n%s", text_of(&y));
   }
   // a far number in an argument and one in an operand are two
@@ -1508,7 +1503,7 @@ static void test_parts(void) {
   for (uint64_t seed = 0; seed < 200; seed++) {
     rng r = rng_seed(103, seed, 0);
     y = x;
-    CHECK(gen_change(&y, 0, &r, CORE, 100, 0, CH_TUNE), "tune does not apply");
+    CHECK(gen_change(&y, 0, &r, CORE, 100, CH_TUNE), "tune does not apply");
     argument += y.l[6].x[1].v[0] != 300;
     operand += y.l[4].x[0].v[1] != 700;
     CHECK(y.l[3].x[0].v[0] == 50 && (y.l[6].x[1].v[0] != 300) != (y.l[4].x[0].v[1] != 700), "tune changed\n%s", text_of(&y));
@@ -1520,7 +1515,7 @@ static void test_parts(void) {
   for (uint64_t seed = 0; seed < 2000; seed++) {
     rng r = rng_seed(107, seed, 0);
     y = x;
-    gen_change(&y, 0, &r, CORE, 100, 0, CH_TUNE);
+    gen_change(&y, 0, &r, CORE, 100, CH_TUNE);
     const int32_t a = (int32_t)y.l[0].x[0].v[0] - 100, b = (int32_t)y.l[0].x[1].v[0] - (int32_t)(CORE - 1000);
     CHECK((a == 0) != (b == 0) && abs(a) <= 4 && abs(b) <= 20, "tune moved 100 by %d and -1000 by %d", a, b);
     if (abs(a) <= 4 && abs(b) <= 20) steps[0][abs(a)]++, steps[1][abs(b)]++;
@@ -1533,7 +1528,7 @@ static void test_parts(void) {
     rng r = rng_seed(104, seed, 0);
     y = x;
     const int kind = seed % 2 ? CH_AOPERAND : CH_BOPERAND;
-    CHECK(gen_change(&y, 0, &r, CORE, 100, 0, kind), "an operand change does not apply");
+    CHECK(gen_change(&y, 0, &r, CORE, 100, kind), "an operand change does not apply");
     const gen_expr *a = &y.l[1].x[0], *b = &y.l[1].x[1];
     CHECK(a->n == 5 && a->kind[0] == GT_INDEX && a->kind[2] == GT_MUL && a->kind[3] == GT_CONST && a->kind[4] == GT_ADD && b->n == 5 &&
               b->kind[0] == GT_LEN && b->kind[1] == GT_INDEX && b->kind[2] == GT_SUB && b->kind[4] == GT_ADD,
@@ -1550,7 +1545,7 @@ static void test_parts(void) {
   for (uint64_t seed = 0; seed < 400; seed++) {
     rng r = rng_seed(105, seed, 0);
     y = x;
-    gen_change(&y, 0, &r, CORE, 100, 0, CH_BOPERAND);
+    gen_change(&y, 0, &r, CORE, 100, CH_BOPERAND);
     const gen_expr *b = &y.l[3].x[1];
     if (b->kind[0] != GT_NUM) continue;
     numbers++;
@@ -1567,7 +1562,7 @@ static void test_parts(void) {
     const int kinds[] = {CH_OPCODE, CH_MODIFIER, CH_AMODE, CH_BMODE, CH_AOPERAND, CH_BOPERAND, CH_REPLACE, CH_RELATED_OPCODE, CH_RELATED_MODE,
                          CH_SHARED, CH_TUNE, CH_EXPRESSION, CH_CONSTANT};
     const int kind = kinds[seed % 13];
-    if (!gen_change(&y, 0, &r, CORE, 100, 0, kind)) continue;
+    if (!gen_change(&y, 0, &r, CORE, 100, kind)) continue;
     y.l[6] = x.l[6];
     memcpy(y.c, x.c, sizeof y.c);
     CHECK(same_gen(&x, &y), "%s changed a line that is never written:\n%s", genome_change_name(kind), text_of(&y));
@@ -1579,7 +1574,7 @@ static void test_parts(void) {
     genome_mix only = {{0}};
     only.w[CH_TUNE] = 1;
     char ops[64];
-    gen_breed(&y, &x, 0, &r, CORE, 100, 0, &only, ops, sizeof ops);
+    gen_breed(&y, &x, 0, &r, CORE, 100, &only, ops, sizeof ops);
     uint32_t defs = 0, calls = 0;
     for (uint32_t i = 0; i < y.n; i++) defs += y.l[i].kind == GL_DEF, calls += y.l[i].kind == GL_CALL && y.l[y.l[i].callee].kind == GL_DEF;
     char err[160];
@@ -1594,7 +1589,7 @@ static void test_parts(void) {
     rng r = rng_seed(106, seed, 0);
     y = x;
     const int kinds[] = {CH_DELETE, CH_MOVE, CH_DUPLICATE, CH_INSERT};
-    if (!gen_change(&y, 0, &r, CORE, 100, 0, kinds[seed % 4])) continue;
+    if (!gen_change(&y, 0, &r, CORE, 100, kinds[seed % 4])) continue;
     char err[160];
     CHECK(!gen_check(&y, CORE, err, sizeof err), "%s:\n%s", err, text_of(&y));
     uint32_t repeats = 0, ends = 0;
@@ -1617,7 +1612,7 @@ static void test_state(void) {
     CHECK(!gen_load(&y, text, CORE, &end) && same_gen(&x, &y) && end == text + len, "a generator's state does not read back");
     // a genome that is a generator: its list is the warrior
     if (!keeps_limits(&x, 100)) continue;
-    genome_random(&g, &r, CORE, 3, 0);
+    genome_random(&g, &r, CORE, 3);
     genome_as_generator(&g);
     g.p = x;
     const size_t glen = genome_save(&g, text, sizeof text);

@@ -45,7 +45,7 @@ void gen_from_genome(gen *x, const genome *g);
 // call of no function yet.
 enum { SLOT_REPEAT = SLOT_NEW + 1, SLOT_END, SLOT_DEF, SLOT_CALL };
 void gen_rebuild(gen *child, const gen *a, const gen *b, const slot *s, uint32_t n, uint32_t core_size, rng *r,
-                 const genome_style *style, const gen_info *info_b);
+                 const gen_info *info_b);
 
 // The rewrites of the kinds that make structure, alone: each leaves the
 // warrior as it is. 0, and x as it was, when the rewrite is not possible;
@@ -142,16 +142,15 @@ int gen_keeps(const gen *x, uint32_t core_size, uint32_t max_length);
 
 // One change of the given kind (CH_* of genome.h). Returns 0 and leaves x as
 // it was when the kind does not apply.
-int gen_change(gen *x, const gen *p2, rng *r, uint32_t core_size, uint32_t max_length, const genome_style *style,
-               int kind);
+int gen_change(gen *x, const gen *p2, rng *r, uint32_t core_size, uint32_t max_length, int kind);
 
 // A child of p1 with 1 or more changes, as genome_breed(); mix 0 is
 // genome_mix_default(), the changes of a list.
 void gen_breed(gen *child, const gen *p1, const gen *p2, rng *r, uint32_t core_size, uint32_t max_length,
-               const genome_style *style, const genome_mix *mix, char *ops, size_t ops_n);
+               const genome_mix *mix, char *ops, size_t ops_n);
 // gen_breed() with donors for CH_LOOP, as genome_breed_donors().
 void gen_breed_donors(gen *child, const gen *p1, const gen *p2, const gen *const *donors, uint32_t n, rng *r,
-                      uint32_t core_size, uint32_t max_length, const genome_style *style, const genome_mix *mix, char *ops,
+                      uint32_t core_size, uint32_t max_length, const genome_mix *mix, char *ops,
                       size_t ops_n);
 
 // Text form for the state file: numbers on one line. gen_load() reads it; 0
