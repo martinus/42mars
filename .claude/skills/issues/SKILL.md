@@ -139,7 +139,7 @@ the order of the work:
 
 1. `pgrep -a 42evolve` first. A run already going belongs to Martin or an earlier session: never stop it without asking; the latest `tracking` status says which issue it serves.
 2. Build and merge the code of an experiment (an option, its test, its docs row) as an ordinary PR before the runs start: runs use a binary built from `main`, copied into the scratchpad so a later build does not change it.
-3. Several seeds per arm, started from the same seeds; one experiment on the machine at a time. Start them with a script in the scratchpad (`nice -n 10`, a log file, the scores at fixed batches), and wait in the background for the log lines, never with `sleep`.
+3. Several seeds per arm, started from the same seeds; one experiment on the machine at a time. Start them with a script in the scratchpad (`chrt -i 0 nice -n 19`, a log file, the scores at fixed batches), and wait in the background for the log lines, never with `sleep`.
 4. While runs go, work issues that time nothing: no `perf-experiment`, no A/B timing; tests and code are fine, slower.
 5. The result goes into `docs/evolver.md` (a section with the table of every seed, the command, the verdict), better warriors into `warriors/evolved/<hill>/` with their README row, in one PR. A loss is a result: the same PR, the issue closed `--reason "not planned"` with the numbers, and its option removed or put on a removal issue.
 6. When a run needs more time than the session has left, say so in the issue (which runs, where, the script and its log) and go on; the next session picks it up from there.
