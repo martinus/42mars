@@ -1460,6 +1460,34 @@ int gen_change(gen *x, const gen *p2, rng *r, uint32_t core, uint32_t max_length
       *v = old;
       return 0;
     }
+    case CH_LOOP: { // k new instructions in front of unit q of a sequence, in place of `cut` units where the limit leaves no room
+      if (max_length < 2) return 0;
+      const uint32_t s = pick_sequence(&sh, r), count = seq_units(x, &sh, s, u);
+      uint32_t k = 2 + rng_below(r, 4); // as loop_size() of genome.c
+      if (k > max_length) k = max_length;
+      const uint32_t how = rng_below(r, GENOME_LOOP_WAYS);
+      const uint32_t cut = sh.emits + k > max_length ? sh.emits + k - max_length : 0;
+      if (cut > count) return 0;
+      const uint32_t q = rng_below(r, count - cut + 1);
+      const uint32_t at = unit_line(x, &sh, s, u, count, q), on = unit_line(x, &sh, s, u, count, q + cut);
+      put(&o, SLOT_A, 0, at);
+      put(&o, SLOT_NEW, 0, k);
+      put(&o, SLOT_A, on, x->n - on);
+      if (o.over) return 0;
+      gen child;
+      gen_rebuild(&child, x, x, o.s, o.n, core, r, 0);
+      uint8_t test;
+      gen_line *jump = &child.l[at + k - 1];
+      jump->op = genome_loop_close(how, &test);
+      jump->am = 1; // $: to the first new instruction
+      jump->x[0].n = 1;
+      jump->x[0].kind[0] = GT_POS;
+      jump->x[0].v[0] = at;
+      if (test < GENOME_OPCODES) child.l[at + k - 2].op = test;
+      if (!keeps(&child, core, max_length)) return 0;
+      set(x, &child);
+      return 1;
+    }
     default: return 0;
   }
 }

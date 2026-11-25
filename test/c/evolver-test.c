@@ -355,7 +355,7 @@ static void test_changes(void) {
     if (!genome_change(&c, &q, &r, CORE, 40, kind)) continue;
     applied[kind]++;
     CHECK(valid(&c, 40), "%s gave an invalid genome", genome_change_name(kind));
-    if (kind < CH_RELATED_OPCODE) continue; // the four small steps follow
+    if (kind < CH_RELATED_OPCODE || kind == CH_LOOP) continue; // the four small steps follow; random-loop: test_loop()
     CHECK(c.len == p.len && c.start == p.start, "%s changed the length or the start", genome_change_name(kind));
     uint32_t diff = 0;
     for (uint32_t i = 0; i < p.len; i++) {
@@ -398,6 +398,65 @@ static void test_changes(void) {
     CHECK(diff == 1, "%s changed %u instructions", genome_change_name(kind), diff);
   }
   for (int k = 0; k < CH_COUNT; k++) CHECK(applied[k] > 50, "%s applied only %u times", genome_change_name(k), applied[k]);
+}
+
+// random-loop (#201): 2 to 5 new instructions in one block, the last a jump
+// back to the first (DJN, JMN, JMZ, or SEQ/SNE and JMP); the old ones keep
+// their order and references, and at the length limit the block takes the
+// place of as many old ones as it needs.
+static void test_loop(void) {
+  enum { JMZ = 6, JMN = 7, DJN = 8, JMP = 13, SEQ = 14, SNE = 15 };
+  rng r = rng_seed(31, 32, 33);
+  uint32_t sizes[6] = {0}, ways[GENOME_LOOP_WAYS] = {0}, replaced = 0, inserted = 0;
+  for (int round = 0; round < 6000; round++) {
+    genome p, c;
+    const uint32_t len = 1 + rng_below(&r, 30);
+    tagged(&p, len);
+    const uint32_t max = round % 3 == 0 ? len : round % 3 == 1 ? len + 1 + rng_below(&r, 3) : 40;
+    c = p;
+    if (!genome_change(&c, 0, &r, CORE, max, CH_LOOP)) {
+      CHECK(max < 2, "random-loop did not apply to %u of %u instructions", len, max);
+      continue;
+    }
+    CHECK(valid(&c, max), "random-loop gave an invalid genome");
+    uint32_t q = UINT32_MAX, k = 0, at[GENOME_MAX], olds = 0;
+    int whole = 1;
+    for (uint32_t i = 0; i < c.len; i++) {
+      const gene *g = &c.g[i]; // tagged(): MOV.A $ref, $tag; a new random instruction is that with a chance of about 1e-8
+      const int old = !g->op && !g->mod && !g->am && !g->bm && g->aref && !g->bref && g->b >= 1000 && g->b < 1000 + len;
+      if (old) {
+        at[olds++] = i;
+        continue;
+      }
+      if (q == UINT32_MAX) q = i;
+      whole &= q + k == i;
+      k++;
+    }
+    if (!(q != UINT32_MAX && whole && k >= 2 && k <= 5)) {
+      CHECK(0, "random-loop: %u new instructions from %u, not in one block of 2 to 5", k, q);
+      continue;
+    }
+    const uint32_t cut = len + k > max ? len + k - max : 0;
+    CHECK(c.len == len - cut + k && olds == len - cut, "random-loop: %u instructions of %u, %u old ones", c.len, len, olds);
+    for (uint32_t j = 0; j < olds; j++) { // the old ones in order, the cut ones a block at the loop
+      const uint32_t t = tag(&c, at[j]), want = j < q ? j : j + cut;
+      CHECK(t == want, "random-loop: old instruction %u is %u, not %u", j, t, want);
+      const uint32_t ref = (t * 7 + 3) % len; // its reference, to the instruction left in place of a cut one
+      const uint32_t to = ref < q ? ref : ref < q + cut ? (q + cut < len ? q + k : q - 1) : ref - cut + k;
+      CHECK(c.g[at[j]].aref && c.g[at[j]].a == to, "random-loop: a reference to %u goes to %u, not %u", ref, c.g[at[j]].a, to);
+    }
+    const gene *jump = &c.g[q + k - 1];
+    CHECK(jump->am == 1 && jump->aref && jump->a == q, "random-loop: the jump goes to %u (mode %u), not %u", jump->a, jump->am, q);
+    const uint8_t before = c.g[q + k - 2].op;
+    int way = jump->op == DJN ? 0 : jump->op == JMN ? 1 : jump->op == JMZ ? 2 : jump->op != JMP ? -1 : before == SEQ ? 3 : before == SNE ? 4 : -1;
+    CHECK(way >= 0, "random-loop: closes with %u after %u", jump->op, before);
+    if (way >= 0) ways[way]++;
+    sizes[k]++;
+    cut ? replaced++ : inserted++;
+  }
+  for (uint32_t k = 2; k <= 5; k++) CHECK(sizes[k] > 200, "random-loop: %u loops of %u instructions", sizes[k], k);
+  for (uint32_t w = 0; w < GENOME_LOOP_WAYS; w++) CHECK(ways[w] > 200, "random-loop: way %u %u times", w, ways[w]);
+  CHECK(replaced > 1000 && inserted > 1000, "random-loop: %u replaced, %u inserted", replaced, inserted);
 }
 
 // --changes: the text form reads back, bad texts are refused, and
@@ -456,6 +515,7 @@ int main(void) {
   test_names();
   test_from_code();
   test_changes();
+  test_loop();
   test_mix();
   if (failures) {
     fprintf(stderr, "%d failures\n", failures);

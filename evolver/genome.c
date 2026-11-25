@@ -233,7 +233,7 @@ const char *genome_change_name(int kind) {
   static const char *const names[CH_ALL] = {
       "opcode", "modifier", "a-mode", "b-mode", "a-operand", "b-operand", "org", "replace", "insert", "delete",
       "duplicate", "move", "crossover-insert", "crossover-replace", "related-opcode", "related-mode", "shared-constant",
-      "tune", "repeat", "count", "fold", "unroll", "index", "expression", "constant", "extract", "parameter", "call", "inline",
+      "tune", "random-loop", "repeat", "count", "fold", "unroll", "index", "expression", "constant", "extract", "parameter", "call", "inline",
       "transplant"};
   return kind >= 0 && kind < CH_ALL ? names[kind] : "?";
 }
@@ -265,6 +265,23 @@ uint32_t genome_tune(rng *r, uint32_t core, uint32_t v) {
 }
 
 static uint32_t *operand_at(genome *x, uint32_t k) { return k % 2 ? &x->g[k / 2].b : &x->g[k / 2].a; }
+
+uint8_t genome_loop_close(uint32_t how, uint8_t *test) {
+  enum { JMZ = 6, JMN = 7, DJN = 8, JMP = 13, SEQ = 14, SNE = 15 };
+  static const uint8_t jump[GENOME_LOOP_WAYS] = {DJN, JMN, JMZ, JMP, JMP}, before[GENOME_LOOP_WAYS] = {0, 0, 0, SEQ, SNE};
+  how %= GENOME_LOOP_WAYS;
+  *test = before[how] ? before[how] : GENOME_OPCODES;
+  return jump[how];
+}
+
+// CH_LOOP: how many new instructions (2 to 5, at most max_length) and how
+// the loop closes; the generator's change draws them the same way.
+static uint32_t loop_size(rng *r, uint32_t max_length, uint32_t *how) {
+  uint32_t k = 2 + rng_below(r, 4);
+  if (k > max_length) k = max_length;
+  *how = rng_below(r, GENOME_LOOP_WAYS);
+  return k;
+}
 
 int genome_change(genome *x, const genome *p2, rng *r, uint32_t core, uint32_t max_length, int kind) {
   if (max_length > GENOME_MAX) max_length = GENOME_MAX;
@@ -392,6 +409,24 @@ int genome_change(genome *x, const genome *p2, rng *r, uint32_t core, uint32_t m
       if (!fn) return 0;
       uint32_t *v = operand_at(x, at[rng_below(r, fn)]);
       *v = genome_tune(r, core, *v);
+      return 1;
+    }
+    case CH_LOOP: { // k new instructions at q, in place of `cut` old ones where the length limit leaves no room
+      if (max_length < 2) return 0;
+      uint32_t how;
+      const uint32_t k = loop_size(r, max_length, &how), cut = len + k > max_length ? len + k - max_length : 0;
+      const uint32_t q = rng_below(r, len - cut + 1);
+      for (uint32_t i = 0; i < q; i++) s[n++] = (slot){SLOT_A, i};
+      for (uint32_t i = 0; i < k; i++) s[n++] = (slot){SLOT_NEW, 0};
+      for (uint32_t i = q + cut; i < len; i++) s[n++] = (slot){SLOT_A, i};
+      genome_rebuild(x, x, x, s, n, core, r);
+      uint8_t test;
+      gene *jump = &x->g[q + k - 1];
+      jump->op = genome_loop_close(how, &test);
+      jump->am = 1; // $: to the first new instruction
+      jump->aref = 1;
+      jump->a = q;
+      if (test < GENOME_OPCODES) x->g[q + k - 2].op = test;
       return 1;
     }
     default: return 0;

@@ -13,11 +13,14 @@
 //
 //   42spectrum --opponents <dir> [--panel 40] [--children 250] [--rounds 50]
 //              [--confirm-rounds 200] [--seed 1] [--threads N] [--json out.json]
+//              [--changes name,name,...]
 //              [--size 8000 --cycles 80000 --processes 8000 --length 100
 //               --distance 100] <warrior.red> ...
 //
 // Crossover takes its second parent from the next warrior given (the same
-// one if only one is given). POSIX threads; docs/evolver.md has results.
+// one if only one is given). --changes: only these kinds (the names of
+// --changes of 42evolve, without weights); a child of a kind is the same
+// with or without the others. POSIX threads; docs/evolver.md has results.
 
 #define _POSIX_C_SOURCE 200809L
 #define _DARWIN_C_SOURCE
@@ -159,7 +162,8 @@ static int64_t seed_of(uint64_t seed, uint64_t salt, uint32_t j, const m42_rules
 
 static void usage(void) {
   fprintf(stderr, "usage: 42spectrum --opponents <dir> [--panel 40] [--children 250] [--rounds 50] [--confirm-rounds 200]\n"
-                  "         [--seed 1] [--threads N] [--json out.json] [--size --cycles --processes --length --distance]\n"
+                  "         [--seed 1] [--threads N] [--json out.json] [--changes name,name,...]\n"
+                  "         [--size --cycles --processes --length --distance]\n"
                   "         <warrior.red> ...\n");
   exit(2);
 }
@@ -178,6 +182,8 @@ int main(int argc, char **argv) {
   uint64_t seed = 1;
   const char *files[64];
   uint32_t nf = 0;
+  int use[CH_COUNT];
+  for (int k = 0; k < CH_COUNT; k++) use[k] = 1;
   for (int i = 1; i < argc; i++) {
     const char *a = argv[i];
     if (a[0] != '-') {
@@ -196,6 +202,22 @@ int main(int argc, char **argv) {
     else if (!strcmp(a, "--confirm-rounds")) confirm_rounds = (uint32_t)u;
     else if (!strcmp(a, "--seed")) seed = u;
     else if (!strcmp(a, "--threads")) threads = (uint32_t)u;
+    else if (!strcmp(a, "--changes")) {
+      for (int k = 0; k < CH_COUNT; k++) use[k] = 0;
+      for (const char *q = v; *q;) {
+        const size_t len = strcspn(q, ",");
+        int found = 0;
+        for (int k = 0; k < CH_COUNT; k++)
+          if (strlen(genome_change_name(k)) == len && !strncmp(q, genome_change_name(k), len)) use[k] = found = 1;
+        if (!found) {
+          fprintf(stderr, "42spectrum: --changes takes these names:");
+          for (int k = 0; k < CH_COUNT; k++) fprintf(stderr, " %s", genome_change_name(k));
+          fputc('\n', stderr);
+          return 2;
+        }
+        q += len + (q[len] == ',');
+      }
+    }
     else if (!strcmp(a, "--size")) rules.core_size = (uint32_t)u;
     else if (!strcmp(a, "--cycles")) rules.max_cycles = (uint32_t)u;
     else if (!strcmp(a, "--processes")) rules.max_processes = (uint32_t)u;
@@ -281,7 +303,7 @@ int main(int argc, char **argv) {
         const uint32_t at = 1 + (uint32_t)k * children + c;
         rng r = rng_seed(seed, (uint64_t)w * 64 + (uint64_t)k, c);
         kid[at] = parent[w];
-        ok[at] = genome_change(&kid[at], mate, &r, core, rules.max_length, k) ? 1 : 0;
+        ok[at] = use[k] && genome_change(&kid[at], mate, &r, core, rules.max_length, k) ? 1 : 0;
         if (ok[at] && genome_hash(&kid[at], core) == ph) ok[at] = 2; // the same warrior
       }
     uint32_t nu = 0;
@@ -307,7 +329,7 @@ int main(int argc, char **argv) {
     for (int k = 0; k < CH_COUNT; k++)
       for (uint32_t c = 0; c < children; c++) {
         const uint32_t at = 1 + (uint32_t)k * children + c;
-        t[k].tried++;
+        t[k].tried += use[k];
         if (!ok[at]) continue;
         t[k].applied++;
         if (ok[at] == 2) {
@@ -359,6 +381,7 @@ int main(int argc, char **argv) {
     printf("  %-18s %7s %9s %7s %7s %7s %7s %10s %8s %7s\n", "change", "applied", "identical", "fatal", "worse", "same",
            "better", "confirmed", "mean Δ", "best");
     for (int k = 0; k < CH_COUNT; k++) {
+      if (!use[k]) continue;
       const tally *x = &t[k];
       const double a = x->applied ? x->applied : 1, nonid = x->applied - x->cls[IDENTICAL];
       printf("  %-18s %7u %8.1f%% %6.1f%% %6.1f%% %6.1f%% %6.1f%% %9.2f%% %+8.2f %+7.1f\n", genome_change_name(k),
@@ -369,13 +392,16 @@ int main(int argc, char **argv) {
     if (out) {
       fprintf(out, "%s{\"name\":\"%s\",\"length\":%u,\"panelAvg\":%.4f,\"changes\":{", w ? "," : "", pname[w], parent[w].len,
               parent_avg);
-      for (int k = 0; k < CH_COUNT; k++)
+      for (int k = 0, first = 1; k < CH_COUNT; k++) {
+        if (!use[k]) continue;
         fprintf(out, "%s\"%s\":{\"tried\":%u,\"applied\":%u,\"identical\":%u,\"sameCode\":%u,\"fatal\":%u,\"worse\":%u,"
                      "\"same\":%u,\"better\":%u,\"confirmed\":%u,\"meanDelta\":%.4f,\"bestConfirmed\":%.4f}",
-                k ? "," : "", genome_change_name(k), t[k].tried, t[k].applied, t[k].cls[IDENTICAL], t[k].same_code, t[k].cls[FATAL],
+                first ? "" : ",", genome_change_name(k), t[k].tried, t[k].applied, t[k].cls[IDENTICAL], t[k].same_code, t[k].cls[FATAL],
                 t[k].cls[WORSE], t[k].cls[SAME], t[k].cls[BETTER], t[k].confirmed,
                 t[k].applied - t[k].cls[IDENTICAL] ? t[k].sum / (t[k].applied - t[k].cls[IDENTICAL]) : 0,
                 t[k].best_confirmed);
+        first = 0;
+      }
       fputs("}}", out);
     }
     fflush(stdout);

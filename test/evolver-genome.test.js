@@ -26,7 +26,7 @@ after(cleanup);
 
 // every kind of change of a list, the four small steps too
 const ALL = 'opcode=81,modifier=81,a-mode=54,b-mode=54,a-operand=108,b-operand=108,org=27,replace=27,insert=100,delete=100,duplicate=70,move=70,'
-  + 'crossover-insert=60,crossover-replace=60,related-opcode=40,related-mode=40,shared-constant=40,tune=40';
+  + 'crossover-insert=60,crossover-replace=60,related-opcode=40,related-mode=40,shared-constant=40,tune=40,random-loop=40';
 const ARGS = [...TINY, '--changes', ALL];
 // a run without what only a run on generators has
 const STRUCTURE = ['repeat', 'count', 'fold', 'unroll', 'index', 'expression', 'constant', 'extract', 'parameter', 'call', 'inline', 'transplant'];

@@ -89,6 +89,7 @@ enum {
   CH_RELATED_MODE,   // another mode of the same family ($ @ *, < > { }; # becomes $)
   CH_SHARED,         // a far value set to another far value of the warrior, or its negative
   CH_TUNE,           // a far value moved by up to 2% of its size (at least 4)
+  CH_LOOP,           // 2 to 5 new instructions, the last one a jump back to the first (#201)
   CH_COUNT,          // the kinds of a list
   // The kinds that make and change the structure of a generator
   // (gen-change.h); on a list they do not apply.
@@ -125,6 +126,12 @@ gene genome_random_gene(rng *r, uint32_t core_size, uint32_t n);
 void genome_mutate_operand(rng *r, uint32_t core_size, uint32_t n, int64_t offset, uint8_t *ref, uint32_t *v);
 uint32_t genome_block(rng *r, uint32_t len);
 uint32_t genome_tune(rng *r, uint32_t core_size, uint32_t v); // a far value moved by one step of CH_TUNE
+// CH_LOOP: the opcode of the jump back (DJN, JMN, JMZ or JMP) for the way
+// `how` (0 .. GENOME_LOOP_WAYS-1) a loop closes; *test the opcode of the
+// instruction before the jump, SEQ or SNE, when the jump is a JMP behind a
+// test, else GENOME_OPCODES (none).
+#define GENOME_LOOP_WAYS 5
+uint8_t genome_loop_close(uint32_t how, uint8_t *test);
 int genome_opcode_family(uint8_t op);
 int genome_mode_family(uint8_t m);
 
