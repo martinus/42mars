@@ -79,6 +79,10 @@ const REMOVED = [
   { args: ['--prior', 'hill'], option: '--prior', at: 20 },
   { args: ['--refactor', '0.5'], option: '--refactor', at: 44 },
   { args: ['--changes', 'insert=1,loop=1'], option: '--changes loop' },
+  { args: ['--migrate-to', 'next'], option: '--migrate-to next' },
+  { args: ['--migrate-to', 'tree'], option: '--migrate-to tree' },
+  { args: ['--leaf-restart', '4'], option: '--leaf-restart' },
+  { args: ['--nemesis-every', '4'], option: '--nemesis-every' },
 ];
 // and the lines of a state that only they wrote
 const REMOVED_LINES = [
@@ -117,6 +121,18 @@ test('a removed option is refused on the command line, in an island variant, and
     mkdirSync(dir);
     copyFileSync(join(tmp, 'one', 'events.jsonl'), join(dir, 'events.jsonl'));
     writeFileSync(join(dir, 'state.txt'), state.replace(/^end$/m, `${line}\nend`));
+    const r = spawnSync(evolve, [dir, '--batches', '1'], { encoding: 'utf8' });
+    assert.equal(r.status, 1, option);
+    assert.equal(r.stderr, `42evolve: ${dir}: ${option} was removed after 1.1.0 (#193)\n`);
+  }
+  // the islands.txt of a run of islands that used one, as 42evolve wrote it before: migrate M, pick, to (1 next, 3 tree),
+  // --leaf-restart; --nemesis-every; the batch each island started at
+  for (const [k, [migrate, nemesis, since, option]] of [['2 1 1 0', 0, '0 0', '--migrate-to next'], ['2 0 3 0', 0, '0 0', '--migrate-to tree'],
+    ['2 0 3 4', 0, '0 0', '--migrate-to tree'], ['2 1 2 4', 0, '0 0', '--leaf-restart'], ['1 1 2 0', 4, '0 0', '--nemesis-every'],
+    ['1 1 2 0', 0, '0 4', '--nemesis-every']].entries()) {
+    const dir = join(tmp, `removed-islands-${k}`);
+    mkdirSync(dir);
+    writeFileSync(join(dir, 'islands.txt'), `42evolve-islands 1\nislands 2 0 0 0 0 7 -1 100\nlive 1 1\nmigrate ${migrate}\nnemesis ${nemesis}\nsince ${since}\nexplorers 0\n`);
     const r = spawnSync(evolve, [dir, '--batches', '1'], { encoding: 'utf8' });
     assert.equal(r.status, 1, option);
     assert.equal(r.stderr, `42evolve: ${dir}: ${option} was removed after 1.1.0 (#193)\n`);
