@@ -30,7 +30,7 @@ node --test test/wasm.test.js              # one file; --test-name-pattern=<re> 
 PMARS_VALIDATE=$O/validate.red npm test    # + 2 tests that need validate.red (skipped otherwise)
 npm run serve                              # http://127.0.0.1:8000/, no build step
 build/42evolve <run> --opponents warriors/koenigstuhl/94nop --seconds 600   # after make; then:
-node tools/serve.mjs --run <run> [<run> ...]   # dashboard: ui/evolver.html (a list on the left switches runs), side by side: ui/runs.html
+node tools/serve.mjs --run <run> [<run> ...] [--watch ~/42evolve.]   # dashboard: ui/evolver.html (a list on the left switches runs; runs started later join it), side by side: ui/runs.html
 node tools/run-report.mjs <run> [<run> ...]    # the status of runs in the terminal; --bench --opponents <dir> scores them
 wasm/build.sh                              # after every change under lib/src/, with Fedora 45's clang (CI's); md5 must repeat
 node tools/asm.mjs warriors/dwarf.red      # pMARS-style listing

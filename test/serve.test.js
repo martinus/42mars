@@ -267,12 +267,48 @@ test('a folder of islands stands for its islands', { timeout: 15000 }, async () 
   assert.deepEqual(await running(), [false, false, false]);
 });
 
+test('runs that start after the server are added at the end: --watch and the islands of a folder that got islands.txt later', { timeout: 15000 }, async () => {
+  const w = join(dir, 'watch');
+  const runAt = (d, name) => {
+    mkdirSync(d, { recursive: true });
+    writeFileSync(join(d, 'events.jsonl'), `{"type":"start","run":"${name}"}\n`);
+  };
+  runAt(join(w, 'w-a'), 'a');
+  mkdirSync(join(w, 'w-empty'), { recursive: true }); // not a run (yet): no events.jsonl
+  runAt(join(w, 'other'), 'other'); // another prefix
+  const given = join(w, 'given-isl'); // a run of islands given to --run before its pick: islands.jsonl only
+  mkdirSync(given, { recursive: true });
+  writeFileSync(join(given, 'islands.jsonl'), '{"type":"islands"}\n');
+  const url = await serve(['--run', given, '--watch', join(w, 'w-')]);
+  const names = async () => (await (await fetch(`${url}/runs`)).json()).map((x) => [x.index, x.name]);
+  assert.deepEqual(await names(), [[0, 'w-a']]);
+  // a new run, a run of islands before and after its pick, and the given one after its pick
+  runAt(join(w, 'w-b'), 'b');
+  const isl = join(w, 'w-isl');
+  mkdirSync(isl, { recursive: true });
+  writeFileSync(join(isl, 'islands.jsonl'), '{"type":"islands"}\n');
+  assert.deepEqual(await names(), [[0, 'w-a'], [1, 'w-b']]);
+  for (const d of [isl, given]) {
+    runAt(join(d, 'island-02'), 'i2'), runAt(join(d, 'island-01'), 'i1');
+    writeFileSync(join(d, 'islands.txt'), '42evolve-islands 1\n');
+  }
+  runAt(join(w, 'w-empty'), 'empty');
+  assert.deepEqual(await names(), [[0, 'w-a'], [1, 'w-b'], [2, 'given-isl/island-01'], [3, 'given-isl/island-02'],
+    [4, 'w-empty'], [5, 'w-isl/island-01'], [6, 'w-isl/island-02']]);
+  // a run added later streams like the others
+  const reader = (await fetch(`${url}/run/6/events`)).body.getReader();
+  const got = await read(reader, [], (g) => g.length >= 2);
+  await reader.cancel();
+  assert.deepEqual([JSON.parse(got[0].data).name, JSON.parse(got[1].data).run], ['w-isl/island-02', 'i2']);
+});
+
 test('a wrong option or port is refused with the usage', () => {
   const r = (args) => spawnSync(process.execPath, [join(root, 'tools/serve.mjs'), ...args], { encoding: 'utf8', timeout: 10000 });
   for (const [args, why] of [
     [['--runs', dir], /unknown option --runs \(--run\?\)/],
     [['--run'], /--run needs the folder/],
     [['--run', '--x'], /--run needs the folder/],
+    [['--watch'], /--watch needs the start/],
     [['80x'], /not a port: '80x'/],
     [['70000'], /not a port/],
     [['8000', '8001'], /one port only/],
