@@ -55,14 +55,27 @@ exception: one idea, one measurement.** Two ideas in one PR may land
 together only if each was measured alone first, or nobody knows which one
 helped.
 
-Order: a change others build on first (e.g. a tournament startup fix before
-anything timed with `tools/tournament.mjs`), cheap and certain before risky.
-Say the grouping and the order, one line each.
+Order: by label, `priority: 1` first, then 2, 3, 4, then issues without one.
+Within a level, the order of the table in the latest status comment of the
+`tracking` issue (#142) when it has one; otherwise a change others build on
+first (e.g. a tournament startup fix before anything timed with
+`tools/tournament.mjs`), cheap and certain before risky. An issue that says
+it waits for another ("after #193") waits. Say the grouping and the order, one
+line each.
+
+An issue labelled `tracking` is an umbrella, not work: never close it; at the
+end of the loop post its new status and order (step "When it is over").
+
+An issue that the results on `main` already answer (its last comment or a
+merged PR says so) needs no PR: close it with a comment of the numbers that
+answer it, `--reason completed` or `--reason "not planned"`. A part not yet
+tried becomes a new issue first.
 
 ### 2. Reproduce or re-measure before you change anything
 
 - **A bug**: write the smallest warrior that shows it and run it on `$O/bin/pmars` and on our engine (`tools/pmars-diff.mjs`, `tools/asm.mjs`). The report's cause is a guess until you have seen it.
 - **A speed issue**: the numbers in the issue are from the day it was filed. Measure the baseline again on an idle machine (`perf-experiment` skill). If the issue says "measure first, stop if small", that measurement is the first deliverable: a PR with only the log entry, and the issue closed with the numbers, is a complete result.
+- **An evolver experiment** (a run or a comparison of runs): see "Evolver experiments" below. Its premise comes from runs of the day it was filed; check it against the latest results in `docs/evolver.md` and the issue's comments first.
 
 ### 3. Ask before you build, never after
 
@@ -74,12 +87,14 @@ Stop and ask for:
 - a change to the public API that the UI or the tests read (`createMars`, `runMatch`, the watch, the assembler output)
 - anything in the clean-room hook or its rule
 - any choice where two readings of the issue lead to different work
+- an issue that says Martin decides (e.g. which options a removal takes): ask with the list and your recommendation
 
-Decide everything else yourself and say what you decided.
+Decide everything else yourself and say what you decided. While a question
+waits, go on with the next issue; never build on a guess of the answer.
 
 ### 4. Build it
 
-Read the rule files the change touches first (`.claude/rules/engine.md`, `wasm.md`, `ui.md` load when you open matching files). Every new test is proven by the smallest mutation that brings the defect back (`~/gra/CLAUDE.md`, "Making a change"); for C, check that the mutant built (`md5sum` of `42mars.wasm` changed) before reading the result.
+Read the rule files the change touches first (`.claude/rules/engine.md`, `wasm.md`, `ui.md`, `evolver.md` load when you open matching files). Every new test is proven by the smallest mutation that brings the defect back (`~/gra/CLAUDE.md`, "Making a change"); for C, check that the mutant built (`md5sum` of `42mars.wasm` changed) before reading the result.
 
 If you hand an issue to an agent, its prompt gets the issue's "Done when", and you check the result against it. The agent's report covers what it did, not what it left out.
 
@@ -116,15 +131,28 @@ Do not start the next speed experiment while CI or anything else runs on this ma
 
 [pull-request-loop.md](pull-request-loop.md), steps 5 to 8. Then read every open issue by `martinus` again: Martin files new ones while you work, and so do you.
 
+## Evolver experiments
+
+Issues that ask for runs (a baseline, a new kind of island, a comparison) take
+hours to days of the whole machine. `.claude/rules/evolver.md` has the rules;
+the order of the work:
+
+1. `pgrep -a 42evolve` first. A run already going belongs to Martin or an earlier session: never stop it without asking; the latest `tracking` status says which issue it serves.
+2. Build and merge the code of an experiment (an option, its test, its docs row) as an ordinary PR before the runs start: runs use a binary built from `main`, copied into the scratchpad so a later build does not change it.
+3. Several seeds per arm, started from the same seeds; one experiment on the machine at a time. Start them with a script in the scratchpad (`nice -n 10`, a log file, the scores at fixed batches), and wait in the background for the log lines, never with `sleep`.
+4. While runs go, work issues that time nothing: no `perf-experiment`, no A/B timing; tests and code are fine, slower.
+5. The result goes into `docs/evolver.md` (a section with the table of every seed, the command, the verdict), better warriors into `warriors/evolved/<hill>/` with their README row, in one PR. A loss is a result: the same PR, the issue closed `--reason "not planned"` with the numbers, and its option removed or put on a removal issue.
+6. When a run needs more time than the session has left, say so in the issue (which runs, where, the script and its log) and go on; the next session picks it up from there.
+
 ## While looping
 
 - A bug Martin reports in the chat goes before the issue list.
-- Something you find on the way: if it is small or in the code you are changing, do it now. Otherwise file an issue (Martin's voice, `~/gra/martin-voice.md`) and leave it.
+- Something you find on the way: if it is small or in the code you are changing, do it now. Otherwise file an issue (Martin's voice, `~/gra/voice-profile-en.md`; a priority label) and leave it.
 - Say what you left out, and why.
 
 ## When it is over
 
-No open issue by `martinus`, `main` green. Report which issues closed in which PR (with the measured numbers for speed issues), what you filed, what you decided not to do, what waits on Martin, and the numbers of open issues by anybody else, unread.
+No open issue by `martinus` except `tracking` ones and experiments whose runs go on, `main` green. Post the new status on the `tracking` issue: best results, what closed, what runs where, the order of what is left. Report which issues closed in which PR (with the measured numbers for speed issues), what you filed, what you decided not to do, what waits on Martin, and the numbers of open issues by anybody else, unread.
 
 ## Wrap up
 
