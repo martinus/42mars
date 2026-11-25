@@ -15,7 +15,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { assemble, createMarsSync } from '../wasm/42mars.js';
-import { paretoFronts, pushoffValues, sdDistance, standardError, weakest } from '../tools/diversity.js';
+import { paretoFronts, pushoffValues, sdDistance, weakest } from '../tools/diversity.js';
 import { kind as styleKind, measureStyle } from '../tools/style.js';
 import { bestRedInfo } from '../tools/progress.js';
 import { setup, cleanup, root, tmp, evolve, unit, spectrum, skip, RULES, TINY, run, events, without, stable, base, checkValues, checkOrder, checkOps, checkEarly, mirrored, CLASSIC, RULES_CLASSIC, classic } from './evolver-common.js';
@@ -56,7 +56,7 @@ test('the same seed gives the same run on 1 and 4 threads, and after a resume', 
 test('a run folder takes no new evolution options', { skip }, () => {
   const r = spawnSync(evolve, [join(tmp, 'one'), '--rounds', '50'], { encoding: 'utf8' });
   assert.equal(r.status, 2);
-  assert.match(r.stderr, /only --threads, --batches, --seconds, --changes, --reintroduce, --list \(larger\), --tune-novel, --screen-stop, --screen-check and --difference/);
+  assert.match(r.stderr, /only --threads, --batches, --seconds, --changes, --reintroduce, --list \(larger\), --tune-novel, --screen-stop and --screen-check go/);
   assert.equal(spawnSync(evolve, [join(tmp, 'none')], { encoding: 'utf8' }).status, 2); // no --opponents
 });
 
@@ -68,6 +68,8 @@ const REMOVED = [
   { args: ['--specialists'], option: '--specialists', at: 30 },
   { args: ['--sharing', '20'], option: '--sharing', at: 31 },
   { args: ['--simple'], option: '--simple', at: 37 },
+  { args: ['--noise', '1'], option: '--noise', at: 23 },
+  { args: ['--difference', 'ahead'], option: '--difference', at: 39 },
 ];
 
 test('a removed option is refused on the command line, in an island variant, and in the state of a run that used it (#193)', { skip }, () => {
@@ -283,21 +285,6 @@ test('--panel-files, --screen-members: a chosen panel, a screen against panel an
   const bad = spawnSync(evolve, [join(tmp, 'sm-bad'), ...TINY, '--panel-files', 'afterstorm.red,nothere.red'], { encoding: 'utf8' });
   assert.equal(bad.status, 2);
   assert.match(bad.stderr, /nothere\.red is not a warrior/);
-});
-
-test('--noise 1: the distance counts differences beyond the noise, the same run on any thread count and after a resume', { skip }, () => {
-  assert.equal(base[0].params.noise, 0);
-  const args = [...TINY, '--noise', '1'];
-  run(join(tmp, 'noise1'), [...args, '--threads', '1', '--batches', '5']);
-  const one = events(join(tmp, 'noise1'));
-  assert.equal(one[0].params.noise, 1);
-  assert.equal(checkValues(one), 5); // against tools/diversity.js with the standard errors of the logged matches
-  // the distances are smaller than without: the noise of 40 rounds is a good part of them
-  const dist = (evs) => evs.filter((e) => e.type === 'values').at(-1).values.reduce((s, v) => s + v[2], 0);
-  assert.ok(dist(one) < dist(base.filter((e) => e.type !== 'values' || e.batch < 5)) * 0.8, `${dist(one)} against ${dist(base)}`);
-  run(join(tmp, 'noise-resumed'), [...args, '--threads', '2', '--batches', '2']);
-  run(join(tmp, 'noise-resumed'), ['--threads', '4', '--batches', '3']);
-  assert.deepEqual(stable(events(join(tmp, 'noise-resumed'))), stable(one));
 });
 
 test('--stage 10: survivors play 10 rounds, those that stay the rest; the same run on any thread count and after a resume', { skip }, () => {

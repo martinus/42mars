@@ -23,85 +23,13 @@ void pushoff_sigma(const double *score, size_t stride, const uint32_t *active, u
   }
 }
 
-double pushoff_se(uint32_t wins, uint32_t ties, uint32_t rounds, double tie) {
-  if (!rounds) return 0;
-  const double n = rounds, mu = (3.0 * wins + tie * ties) / n, v = (9.0 * wins + tie * tie * ties) / n - mu * mu;
-  return v > 0 ? 100 * sqrt(v / n) : 0;
-}
-
-typedef struct {
-  double x, w;
-  uint32_t i;
-} shift_item;
-
-static int by_x(const void *p, const void *q) {
-  const shift_item *a = p, *b = q;
-  if (a->x != b->x) return a->x < b->x ? -1 : 1;
-  return a->i < b->i ? -1 : a->i > b->i;
-}
-
-// The weighted median of it[0 .. m-1], which it sorts.
-static double median_of(shift_item *it, uint32_t m) {
-  double total = 0, cum = 0;
-  for (uint32_t i = 0; i < m; i++) total += it[i].w;
-  if (!m || !(total > 0)) return 0;
-  if (m > 64) qsort(it, m, sizeof *it, by_x);
-  else // the panel's 20 to 80 columns: an insertion sort, twice as fast as qsort here; equal x keep their order
-    for (uint32_t i = 1; i < m; i++) {
-      const shift_item t = it[i];
-      uint32_t j = i;
-      while (j && it[j - 1].x > t.x) it[j] = it[j - 1], j--;
-      it[j] = t;
-    }
-  for (uint32_t i = 0; i < m; i++) {
-    cum += it[i].w;
-    if (2 * cum >= total) return it[i].x;
-  }
-  return it[m - 1].x;
-}
-
-double pushoff_shift(const double *x, const double *w, uint32_t m) {
-  shift_item buf[256], *it = m <= 256 ? buf : malloc(m * sizeof *it);
-  if (!it) abort();
-  for (uint32_t i = 0; i < m; i++) it[i] = (shift_item){x[i], w[i], i};
-  const double c = median_of(it, m);
-  if (it != buf) free(it);
-  return c;
-}
-
-// --difference shape: the weighted median of a_k - b_k over the columns that
-// count, each with the weight it has in the sum.
-static double shape_shift(const double *score, size_t stride, const uint32_t *active, uint32_t n, uint32_t a, uint32_t b,
-                          const double *sigma, const uint8_t *cols, int variant) {
-  shift_item buf[256], *it = n <= 256 ? buf : malloc(n * sizeof *it);
-  if (!it) abort();
-  uint32_t m = 0;
-  for (uint32_t i = 0; i < n; i++) {
-    const uint32_t k = active[i];
-    if (k == a || k == b || (cols && !cols[k])) continue;
-    if (variant != SD_SUM && !(sigma[k] > 0)) continue;
-    it[m] = (shift_item){score[a * stride + k] - score[b * stride + k], variant == SD_SUM ? 1 : 1 / sigma[k], m};
-    m++;
-  }
-  const double c = median_of(it, m);
-  if (it != buf) free(it);
-  return c;
-}
-
 double pushoff_distance(const double *score, size_t stride, const uint32_t *active, uint32_t n, uint32_t a, uint32_t b,
-                        const double *sigma, const double *se, double z, const uint8_t *cols, int variant, int difference) {
-  const double c = difference == DIFF_SHAPE ? shape_shift(score, stride, active, n, a, b, sigma, cols, variant) : 0;
+                        const double *sigma, const uint8_t *cols, int variant) {
   double num = 0, den = 0, sum = 0;
   for (uint32_t i = 0; i < n; i++) {
     const uint32_t k = active[i];
     if (k == a || k == b || (cols && !cols[k])) continue;
-    double d = score[a * stride + k] - score[b * stride + k] - c;
-    if (difference != DIFF_AHEAD) d = fabs(d);
-    if (se) {
-      const double sa = se[a * stride + k], sb = se[b * stride + k];
-      d -= z * sqrt(sa * sa + sb * sb);
-    }
-    if (d < 0) d = 0; // ahead: only where a scores more than b
+    const double d = fabs(score[a * stride + k] - score[b * stride + k]);
     if (variant == SD_SUM) {
       num += d;
       den += sigma[k];
@@ -114,7 +42,7 @@ double pushoff_distance(const double *score, size_t stride, const uint32_t *acti
 }
 
 void pushoff_values(const double *score, size_t stride, const uint32_t *active, uint32_t n, int variant, double alpha,
-                    const double *se, double z, const uint8_t *cols, int difference, double *sigma, pushoff_value *out) {
+                    const uint8_t *cols, double *sigma, pushoff_value *out) {
   pushoff_sigma(score, stride, active, n, sigma);
   for (uint32_t i = 0; i < n; i++) {
     const uint32_t a = active[i];
@@ -127,7 +55,7 @@ void pushoff_values(const double *score, size_t stride, const uint32_t *active, 
     for (uint32_t j = 0; j < n; j++) {
       const uint32_t b = active[j];
       if (b == a) continue;
-      const double d = pushoff_distance(score, stride, active, n, a, b, sigma, se, z, cols, variant, difference);
+      const double d = pushoff_distance(score, stride, active, n, a, b, sigma, cols, variant);
       if (d < distance) distance = d, nearest = b;
     }
     if (nearest == UINT32_MAX) distance = 0;

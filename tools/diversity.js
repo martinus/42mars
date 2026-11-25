@@ -21,37 +21,6 @@
 // columns (42evolve --diversity panel): an array of booleans by index, only
 // those columns count for the distance; the average is over all.
 //
-// noise { se, z } (42evolve --noise z, #148): se[a][b] is the standard error
-// of score[a][b]; a column then counts only the part of |a_k - b_k| above
-// z sqrt(se_ak^2 + se_bk^2), what the noise of the two matches cannot
-// explain. Without it, the plain SD-score (what the tournament scores).
-//
-// ahead (42evolve --difference ahead): a column counts only a_k - b_k where
-// it is positive, where a scores more than b. The score is then not
-// symmetric: a warrior is far from its nearest only when it does better
-// against someone, not when it does worse; with noise the part above
-// z sqrt(se_ak^2 + se_bk^2).
-//
-// shape (42evolve --difference shape, #167): a column counts |a_k - b_k - c|,
-// c the shift that makes the sum smallest, so two rows that differ by a
-// constant (the same profile, one uniformly weaker) are at distance 0: the
-// distance says against whom a warrior does relatively better, not how
-// strong it is. c is the weighted median of the a_k - b_k (weightedMedian()),
-// each with its weight in the sum: 1 / sigma_k for the columns with
-// sigma_k > 0 ('opponent'), 1 for all ('sum'); with noise the part of
-// |a_k - b_k - c| above z sqrt(se_ak^2 + se_bk^2).
-//
-// difference: false or 'abs' (the plain SD-score), true or 'ahead', 'shape'.
-
-// The standard error of a score in points per 100 rounds (3 a win, `tie` a
-// tie, 1 as on a hill) from one match: mu = (3W + tie T)/n,
-// v = (9W + tie^2 T)/n - mu^2, 100 sqrt(v / n).
-export function standardError(wins, ties, rounds, tie = 1) {
-  if (!rounds) return 0;
-  const n = rounds, mu = (3 * wins + tie * ties) / n, v = (9 * wins + tie * tie * ties) / n - mu * mu;
-  return v > 0 ? 100 * Math.sqrt(v / n) : 0;
-}
-
 // score[a][b]: a's score against b (any scale, null or undefined on the
 // diagonal). active: the indices still in.
 // sigma[k] of every column of the warriors in: what sdDistance() divides by.
@@ -68,50 +37,15 @@ export function columnSigmas(score, active) {
   return sigma;
 }
 
-// The c that makes sum w_i |x_i - c| smallest, the weighted median: with the
-// x sorted (on a tie by position), the first whose weights up to and
-// including it reach half of all; 0 for none or no weight. As
-// evolver/pushoff.c pushoff_shift().
-export function weightedMedian(x, w) {
-  let total = 0;
-  for (const v of w) total += v;
-  if (!x.length || !(total > 0)) return 0;
-  const order = x.map((_, i) => i).sort((i, j) => x[i] - x[j] || i - j);
-  let cum = 0;
-  for (const i of order) {
-    cum += w[i];
-    if (2 * cum >= total) return x[i];
-  }
-  return x[order[order.length - 1]];
-}
-
 // sigmas: columnSigmas(score, active), when the caller has it already
 // (pushoffValues: once for all pairs instead of once per pair).
-export function sdDistance(score, active, a, b, variant = 'opponent', noise = null, columns = null, difference = false, sigmas = null) {
+export function sdDistance(score, active, a, b, variant = 'opponent', columns = null, sigmas = null) {
   const sg = sigmas ?? columnSigmas(score, active);
-  const mode = difference === true ? 'ahead' : difference || 'abs';
-  let c = 0;
-  if (mode === 'shape') {
-    const x = [], w = [];
-    for (const k of active) {
-      if (k === a || k === b || (columns && !columns[k])) continue;
-      if (variant !== 'sum' && !(sg[k] > 0)) continue;
-      x.push(score[a][k] - score[b][k]);
-      w.push(variant === 'sum' ? 1 : 1 / sg[k]);
-    }
-    c = weightedMedian(x, w);
-  }
   let num = 0, den = 0, sum = 0;
   for (const k of active) {
     if (k === a || k === b || (columns && !columns[k])) continue;
     const sigma = sg[k];
-    let d = score[a][k] - score[b][k] - c;
-    if (mode !== 'ahead') d = Math.abs(d);
-    if (noise) {
-      const sa = noise.se[a][k], sb = noise.se[b][k];
-      d -= noise.z * Math.sqrt(sa * sa + sb * sb);
-    }
-    if (d < 0) d = 0; // ahead: only where a scores more than b
+    const d = Math.abs(score[a][k] - score[b][k]);
     if (variant === 'sum') {
       num += d;
       den += sigma;
@@ -124,11 +58,8 @@ export function sdDistance(score, active, a, b, variant = 'opponent', noise = nu
 }
 
 // For each index of `active`: { avg, nearest, distance, value }.
-// value = avg * distance ** alpha, distance the lowest SD-score to any other
-// (with ahead: from it to any other). difference as for sdDistance(); ahead
-// is its older name.
-export function pushoffValues(score, active, { variant = 'opponent', alpha = 1, se = null, z = 0, columns = null, ahead = false, difference = ahead } = {}) {
-  const noise = se ? { se, z } : null;
+// value = avg * distance ** alpha, distance the lowest SD-score to any other.
+export function pushoffValues(score, active, { variant = 'opponent', alpha = 1, columns = null } = {}) {
   const sigmas = columnSigmas(score, active);
   return active.map((a) => {
     let avg = 0;
@@ -137,7 +68,7 @@ export function pushoffValues(score, active, { variant = 'opponent', alpha = 1, 
     let distance = Infinity, nearest = -1;
     for (const b of active) {
       if (b === a) continue;
-      const d = sdDistance(score, active, a, b, variant, noise, columns, difference, sigmas);
+      const d = sdDistance(score, active, a, b, variant, columns, sigmas);
       if (d < distance) { distance = d; nearest = b; }
     }
     if (nearest < 0) distance = 0;

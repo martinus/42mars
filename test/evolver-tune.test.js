@@ -15,7 +15,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { assemble, createMarsSync } from '../wasm/42mars.js';
-import { paretoFronts, pushoffValues, sdDistance, standardError, weakest } from '../tools/diversity.js';
+import { paretoFronts, pushoffValues, sdDistance, weakest } from '../tools/diversity.js';
 import { kind as styleKind, measureStyle } from '../tools/style.js';
 import { bestRedInfo } from '../tools/progress.js';
 import { setup, cleanup, root, tmp, evolve, skip, RULES, TINY, run, events, without, stable, checkValues } from './evolver-common.js';
