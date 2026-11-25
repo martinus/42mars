@@ -115,8 +115,17 @@ char **opponent_files(run *r, uint32_t *count) {
   return names;
 }
 
-// --start: the warriors of the folder that fit the rules, sorted by file
-// name, as genomes; each starts a family of its own.
+// --no-spl (#185): a start warrior with SPL (r->starts[k]) is left out, with
+// a message, as one that does not fit the rules; 1 when it is.
+static int spl_start(const run *r, uint32_t k, const char *path) {
+  if (!genome_has_opcode(&r->starts[k], forbidden_opcodes(&r->p))) return 0;
+  fprintf(stderr, "42evolve: %s has SPL, not a start warrior of a run with --no-spl\n", path);
+  return 1;
+}
+
+// --start: the warriors of the folder that fit the rules (with --no-spl
+// those without SPL), sorted by file name, as genomes; each starts a family
+// of its own.
 void load_starts(run *r) {
   if (!r->p.start[0]) return;
   uint32_t n;
@@ -143,9 +152,14 @@ void load_starts(run *r) {
         free(names[i]);
         continue;
       }
-      const uint32_t k = r->start_n++;
+      const uint32_t k = r->start_n;
       genome_from_generator(&r->starts[k], p, r->p.rules.core_size, r->p.rules.max_length);
       free(p);
+      if (spl_start(r, k, path)) {
+        free(names[i]);
+        continue;
+      }
+      r->start_n++;
       snprintf(r->start_name[k], sizeof r->start_name[k], "%.*s", (int)(strlen(names[i]) - 4), names[i]); // the file's name
       rng g = rng_seed(r->p.seed, 0x7374617274u, k); // "start"
       r->start_noun[k] = rng_below(&g, NAME_NOUNS);
@@ -162,8 +176,14 @@ void load_starts(run *r) {
       free(names[i]);
       continue;
     }
-    const uint32_t k = r->start_n++;
+    const uint32_t k = r->start_n;
     genome_from_code(&r->starts[k], m42_warrior_code(w), wl, m42_warrior_start(w), r->p.rules.core_size);
+    if (spl_start(r, k, path)) {
+      m42_warrior_free(w);
+      free(names[i]);
+      continue;
+    }
+    r->start_n++;
     if (r->p.gen) genome_as_generator(&r->starts[k]);
     m42_warrior_text(w, M42_NAME, r->start_name[k], sizeof r->start_name[k]);
     rng g = rng_seed(r->p.seed, 0x7374617274u, k); // "start"
@@ -173,7 +193,7 @@ void load_starts(run *r) {
   }
   free(names);
   if (!r->start_n) {
-    fprintf(stderr, "42evolve: no warrior in %s fits the rules\n", r->p.start);
+    fprintf(stderr, "42evolve: no warrior in %s fits the rules%s\n", r->p.start, r->p.no_spl ? " and has no SPL (--no-spl)" : "");
     exit(1);
   }
 }

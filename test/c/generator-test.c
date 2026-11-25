@@ -8,7 +8,8 @@
 // (evolver/gen-change.c): on a generator without structure each kind gives
 // the child that genome_change() gives on the list, from the same random
 // numbers; on any generator a child keeps the limits; references follow
-// the lines; the state form reads back.
+// the lines; with the mask of --no-spl no child has SPL; the state form
+// reads back.
 // Prints "ok" and exits 0, or names the first failures and exits 1.
 //
 //   cc -O2 -Ilib -Ievolver -o generator-test test/c/generator-test.c evolver/generator.c evolver/gen-change.c evolver/genome.c lib/42mars.c -lm
@@ -1223,6 +1224,85 @@ static void test_kinds(void) {
 }
 
 
+// --no-spl (#185): with the mask of SPL no change of any kind, on a list or
+// on a generator, gives a child whose warrior has SPL; the same kinds without
+// the mask do; mask 0 is genome_breed(), the same numbers drawn.
+static int writes_spl(const gen *x, uint32_t max) {
+  m42_instruction code[GEN_LINES];
+  uint32_t start;
+  const uint32_t n = gen_compile(x, CORE, max, code, &start, 0);
+  for (uint32_t i = 0; i < n; i++)
+    if (code[i].opcode == GENOME_SPL) return 1;
+  return 0;
+}
+
+static int list_has_spl(const genome *g) {
+  for (uint32_t i = 0; i < g->len; i++)
+    if (g->g[i].op == GENOME_SPL) return 1;
+  return 0;
+}
+
+static void no_spl_lines(gen *x) {
+  for (uint32_t i = 0; i < x->n; i++)
+    if (x->l[i].op == GENOME_SPL) x->l[i].op = 0;
+}
+
+static void test_forbid(void) {
+  rng r = rng_seed(131, 132, 133);
+  static gen x, p2, child, plain;
+  static genome g, g2, gc;
+  const uint32_t mask = 1u << GENOME_SPL;
+  uint32_t changed[CH_ALL] = {0}, with[CH_ALL] = {0};
+  for (int round = 0; round < 20000; round++) {
+    const int kind = round % CH_ALL;
+    const uint32_t max = round % 5 ? 100 : 20;
+    genome_mix only = {{0}};
+    only.w[kind] = 1;
+    char ops[96];
+    if (kind < CH_COUNT && round / CH_ALL % 2) { // a list
+      genome_random(&g, &r, CORE, 1 + rng_below(&r, 20));
+      genome_random(&g2, &r, CORE, 1 + rng_below(&r, 20));
+      for (uint32_t i = 0; i < g.len; i++) g.g[i].op = g.g[i].op == GENOME_SPL ? 0 : g.g[i].op;
+      for (uint32_t i = 0; i < g2.len; i++) g2.g[i].op = g2.g[i].op == GENOME_SPL ? 0 : g2.g[i].op;
+      rng r1 = rng_seed(134, (uint64_t)round, 0), r2 = r1, r3 = r1;
+      genome_breed_forbid(&gc, &g, &g2, &r1, CORE, max, &only, mask, ops, sizeof ops);
+      CHECK(!list_has_spl(&gc) && !genome_has_opcode(&gc, mask), "%s on a list gave SPL", genome_change_name(kind));
+      changed[kind] += gc.len != g.len || memcmp(gc.g, g.g, g.len * sizeof g.g[0]) || gc.start != g.start;
+      static genome a, b;
+      genome_breed_forbid(&a, &g, &g2, &r2, CORE, max, &only, 0, ops, sizeof ops);
+      genome_breed(&b, &g, &g2, &r3, CORE, max, &only, ops, sizeof ops);
+      with[kind] += list_has_spl(&a);
+      CHECK(genome_has_opcode(&a, mask) == list_has_spl(&a), "genome_has_opcode()");
+      CHECK(r2.s == r3.s && a.len == b.len && a.start == b.start && !memcmp(a.g, b.g, a.len * sizeof a.g[0]), "mask 0 is not genome_breed()");
+      continue;
+    }
+    do round / CH_ALL % 3 ? random_gen(&x, &r) : regular_gen(&x, &r), no_spl_lines(&x);
+    while (!keeps_limits(&x, max));
+    do random_gen(&p2, &r), no_spl_lines(&p2);
+    while (!keeps_limits(&p2, max));
+    // the parent's warrior has no SPL, and its lines may write one only through what a change makes
+    CHECK(!writes_spl(&x, max), "a parent with SPL");
+    rng r1 = rng_seed(135, (uint64_t)round, 0), r2 = r1, r3 = r1;
+    gen_breed_forbid(&child, &x, &p2, &r1, CORE, max, &only, mask, ops, sizeof ops);
+    CHECK(!writes_spl(&child, max), "%s (%s) gave SPL:\n%s", genome_change_name(kind), ops, text_of(&child));
+    changed[kind] += !same_warrior(&child, &x, max);
+    gen_breed_forbid(&child, &x, &p2, &r2, CORE, max, &only, 0, ops, sizeof ops);
+    gen_breed(&plain, &x, &p2, &r3, CORE, max, &only, ops, sizeof ops);
+    with[kind] += writes_spl(&child, max);
+    CHECK(r2.s == r3.s && same_gen(&child, &plain), "mask 0 is not gen_breed()");
+  }
+  for (int k = 0; k < CH_ALL; k++) {
+    CHECK(changed[k] > (k < CH_COUNT ? 250 : 25),
+          "%s changed the warrior %u times with the mask", genome_change_name(k), changed[k]);
+    if (getenv("GEN_RATES")) fprintf(stderr, "%-18s changed %5u, SPL without the mask %5u\n", genome_change_name(k), changed[k], with[k]);
+  }
+  // without the mask these make SPL: a new opcode or instruction (the parents have none)
+  const int makes[] = {CH_OPCODE, CH_REPLACE, CH_INSERT, CH_RELATED_OPCODE, CH_LOOP};
+  for (size_t i = 0; i < sizeof makes / sizeof *makes; i++)
+    CHECK(with[makes[i]] > 20, "%s without the mask made SPL %u times", genome_change_name(makes[i]), with[makes[i]]);
+}
+
+
 static void parse(gen *x, const char *text) {
   char err[160];
   if (gen_parse(x, text, CORE, err, sizeof err)) CHECK(0, "%s in\n%s", err, text);
@@ -1572,6 +1652,7 @@ int main(void) {
   test_parts();
   test_rewrites();
   test_kinds();
+  test_forbid();
   test_state();
   if (failures) {
     fprintf(stderr, "%d failures\n", failures);

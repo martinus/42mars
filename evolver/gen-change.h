@@ -113,6 +113,11 @@ int gen_change(gen *x, const gen *p2, rng *r, uint32_t core_size, uint32_t max_l
 // genome_mix_default(), the changes of a list.
 void gen_breed(gen *child, const gen *p1, const gen *p2, rng *r, uint32_t core_size, uint32_t max_length,
                const genome_mix *mix, char *ops, size_t ops_n);
+// gen_breed() where a change after which the warrior has an opcode of
+// `forbid` (a bit per opcode, genome.h) is undone and drawn again, as one
+// that does not apply; forbid 0 is gen_breed().
+void gen_breed_forbid(gen *child, const gen *p1, const gen *p2, rng *r, uint32_t core_size, uint32_t max_length,
+                      const genome_mix *mix, uint32_t forbid, char *ops, size_t ops_n);
 
 // Text form for the state file: numbers on one line. gen_load() reads it; 0
 // on success, -1 on a text that is malformed or no well-formed generator.

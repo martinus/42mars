@@ -506,12 +506,14 @@ static void breed(run *r, batch *b) {
         reintro = 1; // always evaluated
         x->keep = 1;
       } else {
-        genome_breed(&x->g, &r->starts[k], &r->starts[(k + 1) % r->start_n], &g, core, p->rules.max_length,
-                     &p->changes, x->ops, sizeof x->ops);
+        genome_breed_forbid(&x->g, &r->starts[k], &r->starts[(k + 1) % r->start_n], &g, core, p->rules.max_length,
+                            &p->changes, forbidden_opcodes(p), x->ops, sizeof x->ops);
       }
       x->noun = r->start_noun[k];
     } else if (members(r) == 0 || (p->fill && members(r) < p->list && !r->start_n)) {
-      genome_random(&x->g, &g, core, random_length(p, &g));
+      const uint32_t len = random_length(p, &g);
+      do genome_random(&x->g, &g, core, len); // --no-spl: one with SPL is drawn again, as long
+      while (genome_has_opcode(&x->g, forbidden_opcodes(p)));
       if (p->gen) genome_as_generator(&x->g);
       strcpy(x->ops, "random");
       x->noun = rng_below(&g, NAME_NOUNS); // a new family
@@ -527,7 +529,8 @@ static void breed(run *r, batch *b) {
       if (!copy) in_list[in_n++] = h;
     } else {
       const warrior *a = select_parent(r, &g, &x->rival), *b2 = select_parent(r, &g, 0);
-      genome_breed(&x->g, a->g, b2->g, &g, core, p->rules.max_length, &p->changes, x->ops, sizeof x->ops);
+      genome_breed_forbid(&x->g, a->g, b2->g, &g, core, p->rules.max_length, &p->changes, forbidden_opcodes(p), x->ops,
+                          sizeof x->ops);
       x->parents[0] = a->id;
       x->noun = a->noun;
       x->origin = a->origin;

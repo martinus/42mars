@@ -170,6 +170,18 @@ size_t genome_mix_text(const genome_mix *m, char *buf, size_t n);
 void genome_breed(genome *child, const genome *p1, const genome *p2, rng *r, uint32_t core_size, uint32_t max_length,
                   const genome_mix *mix, char *ops, size_t ops_n);
 
+// The opcodes a child may not have, a bit per opcode (1u << GENOME_SPL:
+// --no-spl, #185); 0 any.
+#define GENOME_SPL 11
+// genome_breed() where a change after which the warrior has an opcode of
+// `forbid` is undone and drawn again, as one that does not apply; forbid 0
+// is genome_breed(), the same numbers drawn.
+void genome_breed_forbid(genome *child, const genome *p1, const genome *p2, rng *r, uint32_t core_size,
+                         uint32_t max_length, const genome_mix *mix, uint32_t forbid, char *ops, size_t ops_n);
+
+// Does the warrior of x have an instruction with an opcode of the mask ops?
+int genome_has_opcode(const genome *x, uint32_t ops);
+
 // Text form for the state file: "len start" then 8 numbers per instruction;
 // of a generator "gen" and the numbers of gen_save(). GENOME_SAVE_MAX bytes
 // hold any of them.
