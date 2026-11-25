@@ -88,56 +88,11 @@ static m42_warrior *make_warrior(const genome *g, const m42_rules *rules) {
   return w;
 }
 
-// ---------------------------------------------------------------- JSON
-
-// A JSON string; latin1: bytes 0x80..0xff are Latin-1 characters (warrior files).
-static void json_str(FILE *f, const char *s, int latin1) {
-  fputc('"', f);
-  for (const unsigned char *p = (const unsigned char *)s; *p; p++) {
-    const unsigned c = *p;
-    if (c == '"' || c == '\\') fprintf(f, "\\%c", c);
-    else if (c == '\n') fputs("\\n", f);
-    else if (c == '\t') fputs("\\t", f);
-    else if (c < 0x20 || c == 0x7f) fprintf(f, "\\u%04x", c);
-    else if (c >= 0x80 && latin1) fprintf(f, "\\u%04x", c);
-    else if (c >= 0x80) fputc('?', f);
-    else fputc((int)c, f);
-  }
-  fputc('"', f);
-}
-
 static volatile sig_atomic_t stop_now = 0;
 static void on_signal(int sig) {
   stop_now = 1;
   signal(sig, SIG_DFL); // a second Ctrl-C ends it at once
 }
-
-// The seed of every match against warrior id: its first position, later
-// rounds from it (semantics doc, 3.2). Never 0: Park-Miller stays at 0, and
-// every round would put the second warrior minDistance from the first. One
-// id in about 7,800 got 0; in pareto30 (17th November 2026) Bitter Robot II
-// learned that position and won 1,125,180 of 1,127,080 rounds against the
-// newcomers. The others keep their seeds.
-static int64_t seed_for(const run *r, uint64_t id) {
-  const m42_rules *ru = &r->p.rules;
-  const uint64_t range = ru->core_size - 2 * ru->min_distance + 1;
-  const uint64_t s = rng_mix(r->p.seed * 0x9e3779b97f4a7c15u ^ rng_mix(id + 1)) % range;
-  return (int64_t)(s ? s : 1);
-}
-
-// Points per 100 rounds, a win 3 and a tie `tie`; points() counts a tie 1,
-// as the hill does: the scores against the folder, the holdout, the bench.
-// What selects (the screen, the values, the push-off) counts it --tie-points.
-static double points_t(m42_score s, uint32_t rounds, double tie) { return (3.0 * s.wins + tie * s.ties) * 100.0 / rounds; }
-static double points(m42_score s, uint32_t rounds) { return points_t(s, rounds, 1); }
-
-// Points per 100 rounds over the rounds the result has (--stage: fewer than
-// p.rounds until a survivor that stays plays the rest).
-static double points_of_t(m42_score s, double tie) {
-  const uint32_t n = s.wins + s.losses + s.ties;
-  return n ? points_t(s, n, tie) : 0;
-}
-static double points_of(m42_score s) { return points_of_t(s, 1); }
 
 static void set_result(run *r, uint32_t a, uint32_t b, m42_score sa) {
   const uint32_t c = r->cap;
@@ -158,41 +113,11 @@ static void set_result1(run *r, uint32_t a, uint32_t b, m42_score sa) {
   r->pts1[b * c + a] = points_of_t(sb, r->p.tie);
 }
 
-// The rounds of a whole match against a panel warrior (--panel-rounds), and
-// against the warrior in slot o.
-static uint32_t panel_rounds(const params *p) { return p->panel_rounds ? p->panel_rounds : p->rounds; }
-
-// The rounds of the first stage of a match, p.rounds without --stage.
-static uint32_t stage_rounds(const params *p) { return p->stage && p->stage < p->rounds ? p->stage : p->rounds; }
-
-static m42_score add_scores(m42_score a, m42_score b) {
-  return (m42_score){a.wins + b.wins, a.losses + b.losses, a.ties + b.ties};
-}
-
 static void rebuild_active(run *r) {
   r->active_n = 0;
   for (uint32_t i = 0; i < r->cap; i++)
     if (r->slot[i]) r->active[r->active_n++] = i;
 }
-
-static uint32_t members(const run *r) { return r->active_n - r->panel_n; }
-
-// A distance to the power alpha (--alpha, 1 by default).
-
-static double with_alpha(const run *r, double d) { return r->p.alpha == 1 ? d : pow(d, r->p.alpha); }
-
-// A warrior's average against the panel in a matrix of points per 100 rounds
-// (pts, or pts1 of the first stage); a panel warrior's own column does not
-// count.
-static double panel_avg_on(const run *r, const double *pts, uint32_t slot) {
-  double s = 0;
-  uint32_t n = 0;
-  for (uint32_t j = 0; j < r->panel_n; j++)
-    if (j != slot) s += pts[slot * r->cap + j], n++;
-  return n ? s / n : 0;
-}
-
-static double panel_avg(const run *r, uint32_t slot) { return panel_avg_on(r, r->pts, slot); }
 
 // --average panel: the push-off's average over the panel's columns only. With
 // the average over everyone, the design that holds most of the list sets what
@@ -523,179 +448,6 @@ static void load_starts(run *r) {
     fprintf(stderr, "42evolve: no warrior in %s fits the rules\n", r->p.start);
     exit(1);
   }
-}
-
-// ---------------------------------------------------------------- events
-
-// The text of g's generator, to be freed; 0 when g is a list.
-static char *generator_text(const genome *g, uint32_t core) {
-  if (!g->generated) return 0;
-  const size_t n = gen_text(&g->p, core, 0, 0) + 1;
-  char *text = xmalloc(n);
-  gen_text(&g->p, core, text, n);
-  return text;
-}
-
-// The warrior's code, and behind it "gen": its generator (--genome gen).
-static void write_code(FILE *f, const genome *g, uint32_t core) {
-  char text[GENOME_MAX * 48 + 64];
-  genome_text(g, core, text, sizeof text);
-  json_str(f, text, 0);
-  char *gen = generator_text(g, core);
-  if (!gen) return;
-  fputs(",\"gen\":", f);
-  json_str(f, gen, 0);
-  free(gen);
-}
-
-static void event_start(run *r) {
-  FILE *f = r->events;
-  const params *p = &r->p;
-  fprintf(f,
-          "{\"type\":\"start\",\"version\":\"%s\",\"rules\":{\"size\":%u,\"cycles\":%u,\"processes\":%u,\"length\":%u,"
-          "\"distance\":%u},\"params\":{\"panel\":%u,\"holdout\":%u,\"list\":%u,\"batch\":%u,\"survivors\":%u,"
-          "\"rounds\":%u,\"screenRounds\":%u,\"benchEvery\":%u,\"benchRounds\":%u,\"initLength\":%u,"
-          "\"screenFactor\":%.17g,\"alpha\":%.17g,\"reintroduce\":%.17g,\"sd\":\"%s\",\"seed\":%" PRIu64
-          ","
-          "\"parents\":\"%s\",\"screenMembers\":%u,\"stage\":%u,\"fill\":%s,\"panelRounds\":%u,\"diversity\":\"%s\",\"panelChoice\":\"%s\",\"screenStop\":%.17g,\"screenCheck\":%.17g,\"average\":\"%s\",\"memberGames\":\"%s\",\"drawSeed\":%" PRIu64 ",\"pushoff\":\"%s\",\"positions\":\"%s\",\"clear\":%.17g,\"genome\":\"%s\",\"minLength\":%u,\"tiePoints\":%.17g},"
-          "\"opponents\":",
-          m42_version(), p->rules.core_size, p->rules.max_cycles, p->rules.max_processes, p->rules.max_length,
-          p->rules.min_distance, r->panel_n, r->hold_n, p->list, p->batch, p->survivors, p->rounds, p->screen_rounds,
-          p->bench_every, p->bench_rounds, p->init_length, p->screen_factor, p->alpha, p->reintroduce,
-          p->sd == SD_SUM ? "sum" : "opponent", p->seed,
-          p->parents == PARENTS_DUEL ? "duel" : "value", p->screen_members, p->stage,
-          p->fill ? "true" : "false", panel_rounds(p), p->distance_panel ? "panel" : "all",
-          p->panel_files[0]                 ? "files"
-          : p->panel_random == PANEL_RANDOM ? "random"
-          : p->panel_random == PANEL_KINDS  ? "kinds"
-                                            : "picked",
-          p->screen_stop, p->screen_check,
-          p->average_panel ? "panel" : "all", p->member_games_none ? "none" : "all", p->draw_seed,
-          p->pareto == 3 ? "pareto-sd" : p->pareto ? "pareto" : "value", p->mirror ? "mirror" : "pmars", p->clear, p->gen ? "gen" : "list", p->min_length, p->tie);
-  json_str(f, p->opponents, 0);
-  fputs(",\"panelFiles\":", f);
-  json_str(f, p->panel_files, 0);
-  fputs(",\"start\":", f);
-  json_str(f, p->start, 0);
-  fputs(",\"startWarriors\":[", f);
-  for (uint32_t i = 0; i < r->start_n; i++) {
-    fputs(i ? ",{\"name\":" : "{\"name\":", f);
-    json_str(f, r->start_name[i], 1);
-    fputs(",\"file\":", f);
-    json_str(f, r->start_file[i], 1);
-    fprintf(f, ",\"family\":\"%s\"}", name_noun(r->start_noun[i]));
-  }
-  fputs("],\"changes\":{", f);
-  for (int k = 0; k < (p->gen ? CH_ALL : CH_COUNT); k++) // a run on generators: the kinds that make structure too
-    fprintf(f, "%s\"%s\":%u", k ? "," : "", genome_change_name(k), p->changes.w[k]);
-  fputc('}', f);
-  for (int k = 0; k < 2; k++) {
-    fputs(k ? ",\"holdout\":[" : ",\"panel\":[", f);
-    const uint32_t n = k ? r->hold_n : r->panel_n;
-    for (uint32_t i = 0; i < n; i++) {
-      const warrior *w = k ? &r->hold[i] : &r->panel[i];
-      fprintf(f, "%s{\"id\":%" PRIu64 ",\"name\":", i ? "," : "", w->id);
-      json_str(f, w->name, 1);
-      fputs(",\"author\":", f);
-      json_str(f, w->author, 1);
-      fputs(",\"file\":", f);
-      json_str(f, w->file, 1);
-      fputs(",\"source\":", f);
-      json_str(f, w->source, 1);
-      fputc('}', f);
-    }
-    fputc(']', f);
-  }
-  fputs("}\n", f);
-}
-
-// The matches of the panel among each other: [a, b, wins, losses, ties, seed]
-// with a the higher id, warrior 0 of the match.
-static void event_panel(run *r) {
-  FILE *f = r->events;
-  fputs("{\"type\":\"panel\",\"scores\":[", f);
-  int first = 1;
-  for (uint32_t a = 0; a < r->panel_n; a++)
-    for (uint32_t b = 0; b < a; b++) {
-      const m42_score s = r->wlt[a * r->cap + b];
-      fprintf(f, "%s[%" PRIu64 ",%" PRIu64 ",%u,%u,%u,%" PRId64 "]", first ? "" : ",", r->panel[a].id, r->panel[b].id,
-              s.wins, s.losses, s.ties, seed_for(r, r->panel[b].id));
-      first = 0;
-    }
-  if (stage_rounds(&r->p) < r->p.rounds) { // --stage: the first stage's results too
-    fputs("],\"scores1\":[", f);
-    first = 1;
-    for (uint32_t a = 0; a < r->panel_n; a++)
-      for (uint32_t b = 0; b < a; b++) {
-        const m42_score s = r->wlt1[a * r->cap + b];
-        fprintf(f, "%s[%" PRIu64 ",%" PRIu64 ",%u,%u,%u]", first ? "" : ",", r->panel[a].id, r->panel[b].id, s.wins,
-                s.losses, s.ties);
-        first = 0;
-      }
-  }
-  fputs("]}\n", f);
-}
-
-// A new member: its results against every warrior in, [other, wins, losses,
-// ties, seed], the new member warrior 0 of each match.
-static void event_enter(run *r, uint32_t slot, double screen, double estimate, uint64_t rival,
-                        const unit *row) {
-  FILE *f = r->events;
-  const warrior *w = r->slot[slot];
-  fprintf(f, "{\"type\":\"enter\",\"batch\":%u,\"id\":%" PRIu64 ",\"name\":", r->batch, w->id);
-  json_str(f, w->name, 0);
-  fputs(",\"parents\":[", f);
-  for (int k = 0, n = 0; k < 2; k++)
-    if (w->parents[k] != NO_ID) fprintf(f, "%s%" PRIu64, n++ ? "," : "", w->parents[k]);
-  fputs("],\"ops\":", f);
-  json_str(f, w->ops, 0);
-  fprintf(f, ",\"length\":%u,\"screen\":%.4f,\"estimate\":%.6f,\"screenPoints\":[", w->g->len, screen, estimate);
-  for (uint32_t k = 0; k < r->panel_n; k++) fprintf(f, "%s%.4f", k ? "," : "", points_t(row[k].s[0], r->p.screen_rounds, r->p.tie));
-  fprintf(f, "],\"style\":{\"kind\":\"%s\",\"copies\":%.6f,\"moved\":%.6f,\"written\":%.6f,\"whole\":%.6f,\"read\":%.6f,"
-          "\"tasks\":%.6f,\"alive\":%.6f,\"measured\":%.6f}",
-          style_kind_name(w->style_kind), w->st.copies, w->st.moved, w->st.written, w->st.whole, w->st.read, w->st.tasks,
-          w->st.alive, w->st.measured);
-  // raceKey: 0 since --race went (#193), as it was without it
-  fprintf(f, ",\"raceKey\":0.000000,\"rival\":%" PRId64 ",\"parentDifference\":%.6f,\"newFamily\":%s,\"origin\":%u,\"code\":",
-          rival == NO_ID ? (int64_t)-1 : (int64_t)rival, w->parent_difference, w->new_family ? "true" : "false",
-          w->origin);
-  write_code(f, w->g, r->p.rules.core_size);
-  fputs(",\"scores\":[", f);
-  int first = 1;
-  for (uint32_t i = 0; i < r->active_n; i++) {
-    const uint32_t o = r->active[i];
-    if (o == slot) continue;
-    if (r->p.member_games_none && o >= r->panel_n) continue; // --member-games none: no games against members
-    const m42_score s = r->wlt[slot * r->cap + o];
-    fprintf(f, "%s[%" PRIu64 ",%u,%u,%u,%" PRId64 "]", first ? "" : ",", r->slot[o]->id, s.wins, s.losses, s.ties,
-            seed_for(r, r->slot[o]->id));
-    first = 0;
-  }
-  fputs("]}\n", f);
-}
-
-// early: decided on the results of the first stage (--stage), the values too
-static void event_leave(run *r, const pushoff_value *v, int early) {
-  fprintf(r->events,
-          "{\"type\":\"leave\",\"batch\":%u,\"id\":%" PRIu64 ",\"avg\":%.6f,\"distance\":%.6f,\"nearest\":%" PRId64
-          ",\"value\":%.6f%s}\n",
-          r->batch, r->slot[v->index]->id, v->avg, v->distance,
-          v->nearest == UINT32_MAX ? (int64_t)-1 : (int64_t)r->slot[v->nearest]->id, v->value,
-          early ? ",\"early\":true" : "");
-}
-
-// The values of everyone in after the batch: [id, avg, distance, nearest,
-// value, panel average].
-static void event_values(run *r) {
-  FILE *f = r->events;
-  fprintf(f, "{\"type\":\"values\",\"batch\":%u,\"values\":[", r->batch);
-  for (uint32_t i = 0; i < r->active_n; i++) {
-    const pushoff_value *v = &r->values[i];
-    fprintf(f, "%s[%" PRIu64 ",%.6f,%.6f,%" PRId64 ",%.6f,%.6f]", i ? "," : "", r->slot[v->index]->id, v->avg,
-            v->distance, v->nearest == UINT32_MAX ? (int64_t)-1 : (int64_t)r->slot[v->nearest]->id, v->value,
-            panel_avg(r, v->index));
-  }
-  fputs("]}\n", f);
 }
 
 // ---------------------------------------------------------------- state

@@ -226,6 +226,65 @@ typedef struct {
   uint32_t seen_n, seen_next;
 } run;
 
+// ---------------------------------------------------------------- scores
+
+// The seed of every match against warrior id: its first position, later
+// rounds from it (semantics doc, 3.2). Never 0: Park-Miller stays at 0, and
+// every round would put the second warrior minDistance from the first. One
+// id in about 7,800 got 0; in pareto30 (17th November 2026) Bitter Robot II
+// learned that position and won 1,125,180 of 1,127,080 rounds against the
+// newcomers. The others keep their seeds.
+static inline int64_t seed_for(const run *r, uint64_t id) {
+  const m42_rules *ru = &r->p.rules;
+  const uint64_t range = ru->core_size - 2 * ru->min_distance + 1;
+  const uint64_t s = rng_mix(r->p.seed * 0x9e3779b97f4a7c15u ^ rng_mix(id + 1)) % range;
+  return (int64_t)(s ? s : 1);
+}
+
+// Points per 100 rounds, a win 3 and a tie `tie`; points() counts a tie 1,
+// as the hill does: the scores against the folder, the holdout, the bench.
+// What selects (the screen, the values, the push-off) counts it --tie-points.
+static inline double points_t(m42_score s, uint32_t rounds, double tie) { return (3.0 * s.wins + tie * s.ties) * 100.0 / rounds; }
+static inline double points(m42_score s, uint32_t rounds) { return points_t(s, rounds, 1); }
+
+// Points per 100 rounds over the rounds the result has (--stage: fewer than
+// p.rounds until a survivor that stays plays the rest).
+static inline double points_of_t(m42_score s, double tie) {
+  const uint32_t n = s.wins + s.losses + s.ties;
+  return n ? points_t(s, n, tie) : 0;
+}
+static inline double points_of(m42_score s) { return points_of_t(s, 1); }
+
+// The rounds of a whole match against a panel warrior (--panel-rounds), and
+// against the warrior in slot o.
+static inline uint32_t panel_rounds(const params *p) { return p->panel_rounds ? p->panel_rounds : p->rounds; }
+
+// The rounds of the first stage of a match, p.rounds without --stage.
+static inline uint32_t stage_rounds(const params *p) { return p->stage && p->stage < p->rounds ? p->stage : p->rounds; }
+
+static inline m42_score add_scores(m42_score a, m42_score b) {
+  return (m42_score){a.wins + b.wins, a.losses + b.losses, a.ties + b.ties};
+}
+
+static inline uint32_t members(const run *r) { return r->active_n - r->panel_n; }
+
+// A distance to the power alpha (--alpha, 1 by default).
+
+static inline double with_alpha(const run *r, double d) { return r->p.alpha == 1 ? d : pow(d, r->p.alpha); }
+
+// A warrior's average against the panel in a matrix of points per 100 rounds
+// (pts, or pts1 of the first stage); a panel warrior's own column does not
+// count.
+static inline double panel_avg_on(const run *r, const double *pts, uint32_t slot) {
+  double s = 0;
+  uint32_t n = 0;
+  for (uint32_t j = 0; j < r->panel_n; j++)
+    if (j != slot) s += pts[slot * r->cap + j], n++;
+  return n ? s / n : 0;
+}
+
+static inline double panel_avg(const run *r, uint32_t slot) { return panel_avg_on(r, r->pts, slot); }
+
 // ---------------------------------------------------------------- the functions of the files
 
 // evolve.c
@@ -236,5 +295,14 @@ void pool_start(pool *p, uint32_t threads, const m42_rules *rules);
 void pool_stop(pool *p);
 void pool_run(pool *p, unit *units, uint32_t n);
 speed pool_speed(pool *p);
+
+// events.c: the events
+void json_str(FILE *f, const char *s, int latin1);
+char *generator_text(const genome *g, uint32_t core);
+void event_start(run *r);
+void event_panel(run *r);
+void event_enter(run *r, uint32_t slot, double screen, double estimate, uint64_t rival, const unit *row);
+void event_leave(run *r, const pushoff_value *v, int early);
+void event_values(run *r);
 
 #endif
