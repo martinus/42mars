@@ -445,7 +445,7 @@ The SD-score sees only rows of scores. What a warrior does to the core, [`tools/
 - read only: cells outside its code that it read and did not write (a scanner);
 - processes.
 
-From those a rough kind: a paper (copies, runs them, 250 processes or more), a moving warrior with few processes (imps, stones that boot), a scanner (reads more than half as many cells as it copies, 50 or more), a warrior that throws copies of its code (stones, clears), one that writes fields without copies, one that damages by increments. The card of every warrior in the dashboard has the line (against the first 3 panel warriors), `node tools/style.mjs <dir>` grades a folder (against our Dwarf, Origami and Seeker), and 42evolve grades every newcomer the same way ([`evolver/style.c`](../evolver/style.c), the same numbers: `test/evolver.test.js` compares them with `tools/style.js` in the WebAssembly engine) for `--niche` (removed in #193, never measured against the hill). On the 1,107 '94nop Koenigstuhl warriors, by the design their `;strategy` line names (the part after the last `->`), 15th November 2026:
+From those a rough kind: a paper (copies, runs them, 250 processes or more), a moving warrior with few processes (imps, stones that boot), a scanner (reads more than half as many cells as it copies, 50 or more), a warrior that throws copies of its code (stones, clears), one that writes fields without copies, one that damages by increments. The card of every warrior in the dashboard has the line (against the first 3 panel warriors), `node tools/style.mjs <dir>` grades a folder (against our Dwarf, Origami and Seeker), `node tools/hill-kinds.mjs <dir>` grades a hill folder once and keeps the kinds in a cache by each file's content hash (in `build/hill-kinds/`, or `--out`; then only a changed or new warrior is measured again), with `--bench <json>` (of `tools/tournament.mjs --bench ... --json`) a bench by the kinds of its opponents (#221; `--hill tiny` for the tiny rules, against Dwarf and the tiny warriors ttb and poke01, a paper and a scanner there: Origami and Seeker assert a core of 8000), and 42evolve grades every newcomer the same way ([`evolver/style.c`](../evolver/style.c), the same numbers: `test/evolver.test.js` compares them with `tools/style.js` in the WebAssembly engine) for `--niche` (removed in #193, never measured against the hill). On the 1,107 '94nop Koenigstuhl warriors, by the design their `;strategy` line names (the part after the last `->`), 15th November 2026:
 
 | Strategy line | paper | moves, few processes | scanner | throws copies | writes fields | other |
 |---|---|---|---|---|---|---|
@@ -455,6 +455,8 @@ From those a rough kind: a paper (copies, runs them, 250 processes or more), a m
 | clear (73) | 9 | 9 | 13 | 41 | 1 | 0 |
 | imp (34) | 9 | 13 | 6 | 5 | 1 | 0 |
 | all 1,107 | 321 | 178 | 219 | 360 | 17 | 12 |
+
+The 436 tiny warriors, `--hill tiny`, 25th November 2026: 10 papers, 166 moving with few processes, 80 scanners, 133 throwing copies, 22 writing fields, 1 by increments, 17 writing little, 7 that do not fit the rules. The 1,107 '94nop warriors take 160 s on this machine under load, the tiny ones 8 s; from the cache 0.2 s.
 
 Papers are found (87%); stones are a stone that moves or one that throws copies (77%); of the scanners, half have found their target by 4,000 instructions and throw bombs like a stone. A warrior that writes fields without copying its code is 17 of 1,107 on the hill: that is the design the lists of the sixth and seventh comparisons were full of (83 of 90 there).
 
