@@ -45,21 +45,20 @@ jobs:
 
   # The tests load the committed 42mars.wasm: this fails when it is not the
   # build of lib/ (also when lib/src/gen-dispatch.mjs changes dispatch.h).
-  # Ubuntu's clang 22.1.2 and clang 22.1.8 gave the same bytes; another
-  # clang version may not.
+  # Another clang version builds other bytes (#203: clang 22 and 23), so CI
+  # builds in Fedora 45, the clang of Martin's machine (23.1.5).
   wasm:
     runs-on: ubuntu-26.04
+    container: registry.fedoraproject.org/fedora:45
     steps:
+      - run: dnf -q -y install clang lld nodejs git
       - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 22
-      - run: sudo apt-get install -y --no-install-recommends clang-22 lld-22
-      - run: CC=clang-22 sh wasm/build.sh
+      - run: sh wasm/build.sh
       - name: the committed files are the build
         run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
           git diff --exit-code --stat -- wasm/42mars.wasm lib/src/dispatch.h || {
-            echo "::error::wasm/42mars.wasm or lib/src/dispatch.h is not what wasm/build.sh builds from lib/ (clang-22): run wasm/build.sh and commit both"
+            echo "::error::wasm/42mars.wasm or lib/src/dispatch.h is not what wasm/build.sh builds from lib/ (Fedora 45's clang): run wasm/build.sh and commit both"
             exit 1
           }
 

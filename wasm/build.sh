@@ -5,7 +5,7 @@
 # Rebuilds wasm/42mars.wasm from lib/42mars.c (the simulator, the assembler
 # and the functions of 42mars.h, one translation unit). Needs Node (for
 # lib/src/gen-dispatch.mjs, which writes dispatch.h) and clang with the wasm32
-# target and wasm-ld (tested with clang 22); no emscripten, no libc.
+# target and wasm-ld (CI: Fedora 45's clang 23.1.5; another version builds other bytes); no emscripten, no libc.
 #   -Os: about 2 to 3% faster than -O3 in V8 (bench, corpus pairs, t20; see
 #     docs/performance-log.md); natively -O3 is faster
 #   -nostdlib, --no-entry: a library module without libc and without main

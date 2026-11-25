@@ -18,7 +18,7 @@ How the repository is laid out, how to build and test it, how to compare it with
 | [`docs/`](.) | The semantics, the plan, [where the speed comes from](performance.md), the [performance log](performance-log.md) with every speed experiment, this guide, the charts ([`images/speed.mjs`](images/speed.mjs) for the README, [`images/performance.mjs`](images/performance.mjs) for `performance.md`) and the logo ([`images/logo.svg`](images/logo.svg)). |
 | [`warriors/`](../warriors) | Sample warriors written for this repository, and Dewdney's Imp and Dwarf. In [`warriors/koenigstuhl/`](../warriors/koenigstuhl): 5,261 warriors of the Koenigstuhl hills, downloaded 12th November 2026, without a license: test material, see its README. In [`warriors/evolved/`](../warriors/evolved): the `best.red` of `42evolve` runs, one folder per hill, with an index. |
 
-No dependencies: Node 20.16 or newer (22.3 or newer on Node 22) for the tests and tools, a C11 compiler for the library, clang 22 with the wasm32 target for the WebAssembly module.
+No dependencies: Node 20.16 or newer (22.3 or newer on Node 22) for the tests and tools, a C11 compiler for the library, clang with the wasm32 target for the WebAssembly module (CI's is Fedora 45's, 23.1.5).
 
 ## Build and test
 
@@ -31,7 +31,7 @@ wasm/build.sh               # after every change in lib/: rebuilds dispatch.h an
 npm run serve               # the visualizer on http://127.0.0.1:8000/
 ```
 
-`wasm/build.sh` is reproducible: two builds give the same bytes, and CI fails when the committed `42mars.wasm` or `dispatch.h` is not what it builds (Ubuntu's clang 22). So commit `42mars.wasm` together with the C change it came from.
+`wasm/build.sh` is reproducible: two builds give the same bytes, and CI fails when the committed `42mars.wasm` or `dispatch.h` is not what it builds (Fedora 45's clang). So commit `42mars.wasm` together with the C change it came from.
 
 On Windows, `build-msvc.bat` builds the same as `make` into `build\`, the static library and the DLL from one object (the DLL's exports are in `lib/42mars.def`, a test checks them against the header), then `set M42_BIN=build` and `node --test test/c-api.test.js test/cli.test.js`. MSVC compiles only the first 16 of the 32 specialized cases of `dispatch.h` (`M42_DISPATCH_16`), with all 32 `cl /O2` took 2 minutes. To check the plain C11 code that MSVC sees, on Linux:
 
