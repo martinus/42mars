@@ -77,7 +77,14 @@ for (let i = 0; i < runDirs.length; i++) {
 }
 // the name of a run: its folder, an island with the folder of its islands before it
 const runName = (dir) => (ISLAND.test(basename(dir)) ? `${basename(resolve(dir, '..'))}/${basename(dir)}` : basename(dir));
-for (const dir of runDirs) if (!existsSync(join(dir, 'events.jsonl'))) console.error(`${dir} has no events.jsonl yet; the dashboard shows the run once 42evolve writes it`);
+// A run of islands makes islands.txt and its island folders after the pick,
+// about a minute after it starts: a server started before lists the folder as
+// one run that never shows anything (#189).
+for (const dir of runDirs) {
+  if (!existsSync(join(dir, 'events.jsonl'))) {
+    console.error(`${dir} has no events.jsonl yet; the dashboard shows the run once 42evolve writes it. A run of islands is listed by its islands once islands.txt is there: start this server again then`);
+  }
+}
 const runDir = runDirs[0] ?? null;
 const types = {
   '.html': 'text/html; charset=utf-8',
