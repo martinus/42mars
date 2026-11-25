@@ -736,8 +736,7 @@ static void test_mirror(void) {
     char err[160];
     CHECK(!gen_check(&x, CORE, err, sizeof err), "%s gave a generator that is not well formed: %s", genome_change_name(kind), err);
   }
-  // loop needs a second parent with a loop, which few random ones have
-  for (int k = 0; k < CH_COUNT; k++) CHECK(applied[k] > (k == CH_LOOP ? 200 : 1000), "%s applied %u times", genome_change_name(k), applied[k]);
+  for (int k = 0; k < CH_COUNT; k++) CHECK(applied[k] > 1000, "%s applied %u times", genome_change_name(k), applied[k]);
   CHECK(refused[CH_INSERT] > 100 && refused[CH_DELETE] > 50 && refused[CH_XINSERT] > 100 && refused[CH_TUNE] > 50, "too few refusals");
   // breeding, with the default mix and with the small steps: the same child and the same names
   genome_mix small = genome_mix_default();
@@ -815,7 +814,7 @@ static void test_structured(void) {
     for (uint32_t i = 0; i < x.n; i++) blocks += x.l[i].kind == GL_REPEAT;
   }
   for (int k = 0; k < CH_ALL; k++)
-    CHECK(applied[k] > (k == CH_UNROLL || k == CH_INDEX || k == CH_FOLD || k == CH_PARAMETER || k == CH_INLINE || k == CH_LOOP ? 100 : 500), "%s applied %u times, refused %u times", genome_change_name(k), applied[k], refused[k]);
+    CHECK(applied[k] > (k == CH_UNROLL || k == CH_INDEX || k == CH_FOLD || k == CH_PARAMETER || k == CH_INLINE ? 100 : 500), "%s applied %u times, refused %u times", genome_change_name(k), applied[k], refused[k]);
   // A change of the structure changes the warrior (a rewrite alone would be
   // skipped as seen). Measured where 42evolve is: on generators that grew
   // from lists by changes that each gave another warrior.

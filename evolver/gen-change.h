@@ -113,10 +113,6 @@ int gen_change(gen *x, const gen *p2, rng *r, uint32_t core_size, uint32_t max_l
 // genome_mix_default(), the changes of a list.
 void gen_breed(gen *child, const gen *p1, const gen *p2, rng *r, uint32_t core_size, uint32_t max_length,
                const genome_mix *mix, char *ops, size_t ops_n);
-// gen_breed() with donors for CH_LOOP, as genome_breed_donors().
-void gen_breed_donors(gen *child, const gen *p1, const gen *p2, const gen *const *donors, uint32_t n, rng *r,
-                      uint32_t core_size, uint32_t max_length, const genome_mix *mix, char *ops,
-                      size_t ops_n);
 
 // Text form for the state file: numbers on one line. gen_load() reads it; 0
 // on success, -1 on a text that is malformed or no well-formed generator.
