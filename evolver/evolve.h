@@ -320,6 +320,7 @@ void set_result(run *r, uint32_t a, uint32_t b, m42_score sa);
 void set_result1(run *r, uint32_t a, uint32_t b, m42_score sa);
 void rebuild_active(run *r);
 void compute_values(run *r);
+void compute_values1(run *r);
 uint32_t free_slot(const run *r);
 void free_warrior(warrior *w);
 uint32_t slot_of_id(const run *r, uint64_t id);
@@ -368,5 +369,8 @@ typedef struct {
 void pick_play(run *r, char **names, uint32_t count, pick_table *out);
 void pick_free(pick_table *t);
 uint32_t pick_choose(run *r, const pick_table *t, char **names, const uint8_t *allowed, uint32_t *picked);
+
+// batch.c: one batch
+void run_batch(run *r);
 
 #endif
