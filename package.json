@@ -33,6 +33,6 @@
     "corpus": "node tools/corpus.mjs"
   },
   "engines": {
-    "node": ">=20"
+    "node": "^20.16.0 || >=22.3.0"
   }
 }

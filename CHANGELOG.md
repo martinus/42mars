@@ -7,6 +7,7 @@ From 1.0.0 on, every change of the interface is listed here: the C library (`lib
 - `42evolve` (`make` builds it, POSIX threads): an evolver on the library, with a list kept by diversity push-off, a dashboard (`ui/evolver.html`, `tools/serve.mjs --run`) and resumable runs ([`docs/evolver.md`](docs/evolver.md), #142). New, and not under the 1.x promise yet: its options and its files may change.
 - `tools/pushoff.mjs` ranks a tournament by diversity push-off.
 - The visualizer plays a match given in `#battle=` (warriors, rules, seed, rounds), the evolver's battle view.
+- The JavaScript demo, the tests and the tools state the Node version they need: 20.16 or newer, 22.3 or newer on Node 22 (`package.json`, #198). Without a compiled module, `assemble()` and `createMarsSync()` read `42mars.wasm` with `process.getBuiltinModule()`, which older versions lack; there, `await compileMars()` first makes them work (checked on 20.11).
 
 ## 1.1.0, 14th November 2026
 

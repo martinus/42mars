@@ -36,9 +36,11 @@ jobs:
         node: [20, 22, 24, 26]
     steps:
       - uses: actions/checkout@v7
+      # Node 20 is 20.16, the oldest that package.json allows (#198); the
+      # job keeps its name "test (20)", a required check of main.
       - uses: actions/setup-node@v7
         with:
-          node-version: ${{ matrix.node }}
+          node-version: ${{ matrix.node == 20 && '20.16' || matrix.node }}
       - run: node --test $(ls test/*.test.js | grep -v '^test/evolver')
 
   # The tests load the committed 42mars.wasm: this fails when it is not the
