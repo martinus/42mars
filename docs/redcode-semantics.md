@@ -338,7 +338,10 @@ At the label position:
 
 - An identifier that is a defined label or FOR counter is a redefinition:
   warning ("label redefined"), and the whole line is dropped (no statement,
-  pending labels stay pending).
+  pending labels stay pending). When an EQU body put it there, only the
+  rest of that body is dropped, as after an error in it, and the rest of the
+  use-site line is read on: with `p1 dat 0` and `e1 equ p1`, the line
+  `e1 dat 5` gives `DAT.F #0, $5`, and `e1 <0` is an error (#208).
 - A number, operator, mode character or other token where a label or opcode
   is expected is an error ("unexpected token").
 
