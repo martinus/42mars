@@ -312,9 +312,11 @@ static inline double panel_avg(const run *r, uint32_t slot) { return panel_avg_o
 
 // ---------------------------------------------------------------- the functions of the files
 
-// evolve.c, for now
+// evolve.c: the command line
 params default_params(void);
 extern volatile sig_atomic_t stop_now; // Ctrl-C: the run ends after the current batch
+
+// run.c: a run, its matrix and values, its steps
 void *xmalloc(size_t n);
 char *read_file(const char *path, size_t *len);
 m42_warrior *make_warrior(const genome *g, const m42_rules *rules);
