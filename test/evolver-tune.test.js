@@ -423,6 +423,30 @@ test('--explorers: the last K islands take no migrants, the others take from all
   refuses(join(tmp, 'explorers-no'), args, refused);
 });
 
+test('without --pushoff, a run says when the push-off is value because pareto does not go with an option, also per island variant (#199)', { skip }, () => {
+  const args = without(TINY, '--pushoff');
+  const said = /--average panel: the push-off is value, pareto does not go with it/;
+  const one = run(join(tmp, 'fallback'), [...args, '--average', 'panel', '--batches', '1']);
+  assert.match(one.stderr, new RegExp(`^42evolve: ${said.source}$`, 'm'));
+  assert.equal(events(join(tmp, 'fallback'))[0].params.pushoff, 'value');
+  // given, or where pareto goes, nothing is said
+  assert.doesNotMatch(run(join(tmp, 'fallback-given'), [...args, '--average', 'panel', '--pushoff', 'value', '--batches', '1']).stderr, /the push-off is value/);
+  assert.doesNotMatch(run(join(tmp, 'fallback-none'), [...args, '--batches', '1']).stderr, /the push-off is value/);
+  // every island has --average panel; islands 1 and 3 say --pushoff value, island 2 does not: only it is named
+  const dir = join(tmp, 'fallback-islands');
+  const isl = run(dir, [...args, '--average', 'panel', '--islands', '3', '--island-variant', '--pushoff value', '--island-variant', '',
+    '--migrate', '0', '--batches', '1']);
+  assert.match(isl.stderr, new RegExp(`^42evolve: --island-variant '', islands 2: ${said.source}$`, 'm'));
+  assert.equal(isl.stderr.match(/the push-off is value/g).length, 1);
+  assert.deepEqual([1, 2, 3].map((i) => events(join(dir, `island-0${i}`))[0].params.pushoff), ['value', 'value', 'value']);
+  // a variant without the option: pareto-sd there, and only the other one is named
+  const dir2 = join(tmp, 'fallback-islands2');
+  const isl2 = run(dir2, [...args, '--islands', '3', '--island-variant', '--average panel', '--island-variant', '', '--migrate', '0', '--batches', '1']);
+  assert.match(isl2.stderr, new RegExp(`^42evolve: --island-variant '--average panel', islands 1, 3: ${said.source}$`, 'm'));
+  assert.equal(isl2.stderr.match(/the push-off is value/g).length, 1);
+  assert.deepEqual([1, 2, 3].map((i) => events(join(dir2, `island-0${i}`))[0].params.pushoff), ['value', 'pareto-sd', 'value']);
+});
+
 test('--optimize: the constants of a warrior, steps confirmed with other seeds, the same on any thread count', { skip }, () => {
   // a stone whose step of 100 bombs 8 cells of a core of 800
   const file = join(tmp, 'badstep.red');

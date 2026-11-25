@@ -3545,6 +3545,7 @@ typedef struct {
   int new_options, stage_given, screen_members_given, diversity_given, panel_rounds_given, fill_given;
   int panel_choice_given, draw_seed_given, positions_given, pushoff_given, genome_given, migrate_given;
   int variant_default; // the variants of new_island_defaults(), not given
+  const char *pushoff_fallback; // the option that made the default push-off value, not pareto-sd (#199)
   uint32_t islands_n, islands_keep, islands_every, islands_rounds; // --islands, --keep, --select-after, --score-rounds
   uint32_t islands_migrate_every;                                   // --migrate
   uint32_t migrate_random, migrate_next, pick_given, to_given;      // --migrate-pick, --migrate-to
@@ -3746,6 +3747,10 @@ static int parse_cli(int argc, char **argv, cli *c) {
   return 0;
 }
 
+// What a new run says when the default push-off pareto-sd does not go with
+// an option given and it takes value instead (#199).
+#define PUSHOFF_FALLBACK "%s: the push-off is value, pareto does not go with it"
+
 // The defaults of a new run that depend on what was given, then what is
 // wrong with its parameters (params_error()), 0 nothing.
 static const char *new_run_defaults(cli *c) {
@@ -3771,7 +3776,11 @@ static const char *new_run_defaults(cli *c) {
   // pareto does not go (params_error() says where)
   if (!c->pushoff_given) {
     p->pareto = 3;
-    if (params_error(p)) p->pareto = 0;
+    if (params_error(p)) {
+      p->pareto = 0;
+      // the caller says so when pareto was what did not go (#199)
+      if (!params_error(p)) c->pushoff_fallback = p->member_games_none ? "--member-games none" : "--average panel";
+    }
   }
   // new runs: --screen-stop 3: it stopped 10,639 of 17,025
   // children of kd1 in the screen, 22% of all rounds, and missed none of the 2,400 survivors (docs/evolver.md)
@@ -3837,6 +3846,12 @@ static int island_variants(int argc, char **argv, const cli *c, params *out) {
               wrong ? "" : " the same for every island");
       rc = 2;
       break;
+    }
+    if (w.pushoff_fallback) { // island i has the variant i mod their number
+      if (c->variant_default) fprintf(stderr, "42evolve: islands %u", k + 1);
+      else fprintf(stderr, "42evolve: --island-variant '%s', islands %u", c->variant[k], k + 1);
+      for (uint32_t i = k + c->variant_n; i < c->islands_n; i += c->variant_n) fprintf(stderr, ", %u", i + 1);
+      fprintf(stderr, ": " PUSHOFF_FALLBACK "\n", w.pushoff_fallback);
     }
     out[k] = w.p;
   }
@@ -3907,6 +3922,8 @@ int main(int argc, char **argv) {
       fprintf(stderr, "42evolve: %s\n", wrong);
       return 2;
     }
+    // islands with variants say it per variant (island_variants())
+    if (c.pushoff_fallback && !c.variant_n && islands_n < 2) fprintf(stderr, "42evolve: " PUSHOFF_FALLBACK "\n", c.pushoff_fallback);
     r.p = c.p;
     params *p = &r.p;
     if (islands_n) {
