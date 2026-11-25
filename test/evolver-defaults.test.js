@@ -97,8 +97,9 @@ test('--member-games none: members never play each other, a screen of the panel 
 
 test('the defaults: the settings of gen-var16-rnd; a panel picked from a round robin; the same on any thread count', { skip }, () => {
   const rules = TINY.slice(0, TINY.indexOf('--panel'));
-  // a new run: generators, a panel of 30 by kinds, batches of 128 (docs/evolver-gen.md)
-  run(join(tmp, 'def-new'), [...rules, '--seed', '5', '--threads', '4', '--batches', '1']);
+  // a new run: generators, a panel of 30 by kinds, batches of 128 (docs/evolver-gen.md); a sample of 60
+  // for the pick, not the 300 of the default: its round robin was 100 of the 120 s of this test (#161)
+  run(join(tmp, 'def-new'), [...rules, '--seed', '5', '--pick-sample', '60', '--threads', '4', '--batches', '1']);
   const fresh = events(join(tmp, 'def-new'))[0];
   const q = fresh.params;
   assert.deepEqual([q.genome, q.panel, q.panelChoice, q.batch, q.survivors, fresh.panel.length], ['gen', 30, 'kinds', 128, 16, 30]);
@@ -129,13 +130,14 @@ test('the defaults: the settings of gen-var16-rnd; a panel picked from a round r
   assert.ok(!one[0].holdout.some((h) => pick.picked.some((x) => x.file === h.file)), 'a picked warrior in the holdout');
   run(join(tmp, 'def1'), [...args, '--threads', '1']);
   assert.deepEqual(stable(events(join(tmp, 'def1'))), stable(one));
-  // the value push-off where pareto does not go
-  run(join(tmp, 'def-avg'), [...args, '--average', 'panel', '--threads', '4']);
+  // the value push-off where pareto does not go; these runs check a default each, without a pick (#161)
+  const quick = [...without(args, '--panel-choice', '--pick-sample'), '--panel-choice', 'random'];
+  run(join(tmp, 'def-avg'), [...quick, '--average', 'panel', '--threads', '4']);
   assert.equal(events(join(tmp, 'def-avg'))[0].params.pushoff, 'value');
   // --screen-stop 3 by default; 0 is off, also for a run that continues
   for (const [extra, stop] of [[['--screen-stop', '0'], 0], [['--screen-stop', '1.5'], 1.5], [['--screen-check', '2'], 0]]) {
     const d = join(tmp, `def-stop-${extra.join('')}`);
-    run(d, [...args, ...extra, '--threads', '2']);
+    run(d, [...quick, ...extra, '--threads', '2']);
     assert.equal(events(d)[0].params.screenStop, stop, extra.join(' '));
   }
   run(join(tmp, 'def4'), ['--screen-stop', '0', '--threads', '2', '--batches', '2']);
