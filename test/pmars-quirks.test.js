@@ -195,6 +195,29 @@ test('scratch buffer: lines after the second ;redcode are not read', () => {
   assert.equal(assemble(';redcode\ndat#1\n;redcode\nxxxxx99\n').ok, false);
 });
 
+test('scratch buffer: the comment of a statement line ends at a 0 byte, that of a comment line does not', () => {
+  // #191: pMARS reads `>41` and `#9567`, then 9567 is 1567 modulo 8000; the
+  // `;` of a comment line stays (pMARS: "Improper placement of ';'").
+  assert.deepEqual(asm('x dat.x}-2,>4\nc00000000001 ;x\n'), ['DAT.X }-2, >41']);
+  assert.deepEqual(asm('x dat#9\nc1234567 ;+1\n'), ['DAT.F #0, #1567']);
+  assert.deepEqual(asm('x dat#9\n   x  ;+1\n'), ['DAT.F #0, #9']);
+  assert.deepEqual(asm('x dat.x}-2,>4\nc00000000001 \\\n;x\n'), ['DAT.X }-2, >41']);
+  assert.equal(assemble('x dat#9\n       ;+1\n').ok, false);
+});
+
+test('scratch buffer: the rest after the last EQU body line of a running FOR block writes nothing', () => {
+  // #191: the rest goes with ` equ spl>(0)` and is only checked; the buffer
+  // still holds the source line, so pMARS reads `>(0)INE` and `>(0)URLINE`.
+  assert.equal(assemble('f6 equ for 2\n equ spl>(0)\nf6 CURLINE\n').ok, false);
+  assert.equal(assemble('f6 equ for 2\n equ spl>(0)\nf6 x1 CURLINE\n').ok, false);
+  // Nothing uppercased either: pMARS names the symbol 'efghij'.
+  assert.match(assemble('f6 equ for 2\n equ spl>(0)\nf6 abcdefghij\n').errors[0].text, /'efghij'/);
+  assert.equal(assemble('lb dat 0\nf6 equ for 2\n equ spl>(0)\nf6 lb12345\n').ok, false);
+  assert.deepEqual(asm('lb dat 0\nf6 equ for 2\n equ spl>(0)\nf6 lb      \n'), ['DAT.F #0, $0', 'SPL.B >0, $0']);
+  // The rest of a ROF from an EQU writes as usual: XXXXXXXXX leaves XX.
+  assert.match(assemble('r equ rof\nfor 1\n spl 0\nr xxxxxxxxx\n spl>(0)\n').errors[0].text, /'XX'/);
+});
+
 // ---- 6. inputs on which pMARS does not terminate still give a result
 
 test('inputs on which pMARS loops forever are assembled', () => {
