@@ -59,8 +59,6 @@ typedef struct {
   double screen_factor, alpha, reintroduce;
   int sd;
   uint64_t seed;
-  double fractions; // probability that a far value is a fraction of the core give or take 20 (genome.h)
-  int prior;                // PRIOR_UNIFORM, or PRIOR_HILL: opcodes, modifiers, modes as often as in the opponents
   int parents;              // PARENTS_VALUE: tournament of two by push-off value; PARENTS_DUEL: by their match
   char start[1024];         // --start: a folder of warriors the first batch starts from, "" random ones
   genome_mix changes;       // --changes: how often each kind of change is drawn
@@ -90,8 +88,6 @@ typedef struct {
 enum { PARENTS_VALUE, PARENTS_DUEL };
 
 enum { PANEL_PICKED, PANEL_RANDOM, PANEL_KINDS }; // --panel-choice
-
-enum { PRIOR_UNIFORM, PRIOR_HILL };
 
 static params default_params(void) {
   params p;
@@ -449,9 +445,6 @@ typedef struct {
 
   warrior *panel, *hold; // p.panel and p.holdout of them (fewer if the folder has fewer)
   uint32_t panel_n, hold_n;
-  char **reserve; // the other warriors of the folder (--prior hill), in the order they come
-  uint32_t reserve_n;
-  genome_style style; // how new instructions are drawn (--fractions, --prior)
   genome *starts;     // --start: the warriors of the folder as genomes
   uint32_t start_n, *start_noun;
   char (*start_name)[64], **start_file;
@@ -960,14 +953,13 @@ static void event_start(run *r) {
           "\"distance\":%u},\"params\":{\"panel\":%u,\"holdout\":%u,\"list\":%u,\"batch\":%u,\"survivors\":%u,"
           "\"rounds\":%u,\"screenRounds\":%u,\"benchEvery\":%u,\"benchRounds\":%u,\"initLength\":%u,"
           "\"screenFactor\":%.17g,\"alpha\":%.17g,\"reintroduce\":%.17g,\"sd\":\"%s\",\"seed\":%" PRIu64
-          ",\"fractions\":%.17g,\"prior\":\"%s\","
+          ","
           "\"parents\":\"%s\",\"screenMembers\":%u,\"stage\":%u,\"fill\":%s,\"panelRounds\":%u,\"diversity\":\"%s\",\"panelChoice\":\"%s\",\"screenStop\":%.17g,\"screenCheck\":%.17g,\"average\":\"%s\",\"memberGames\":\"%s\",\"drawSeed\":%" PRIu64 ",\"pushoff\":\"%s\",\"positions\":\"%s\",\"clear\":%.17g,\"genome\":\"%s\",\"refactor\":%.17g,\"minLength\":%u,\"tiePoints\":%.17g},"
           "\"opponents\":",
           m42_version(), p->rules.core_size, p->rules.max_cycles, p->rules.max_processes, p->rules.max_length,
           p->rules.min_distance, r->panel_n, r->hold_n, p->list, p->batch, p->survivors, p->rounds, p->screen_rounds,
           p->bench_every, p->bench_rounds, p->init_length, p->screen_factor, p->alpha, p->reintroduce,
           p->sd == SD_SUM ? "sum" : "opponent", p->seed,
-          p->fractions, p->prior == PRIOR_HILL ? "hill" : "uniform",
           p->parents == PARENTS_DUEL ? "duel" : "value", p->screen_members, p->stage,
           p->fill ? "true" : "false", panel_rounds(p), p->distance_panel ? "panel" : "all",
           p->panel_files[0]                 ? "files"
@@ -990,18 +982,7 @@ static void event_start(run *r) {
     json_str(f, r->start_file[i], 1);
     fprintf(f, ",\"family\":\"%s\"}", name_noun(r->start_noun[i]));
   }
-  fputs("],\"weights\":{", f);
-  const struct {
-    const char *name;
-    const uint32_t *w;
-    uint32_t n;
-  } tables[] = {{"op", r->style.op, GENOME_OPCODES}, {"mod", r->style.mod, 7}, {"mode", r->style.mode, 8}};
-  for (int t = 0; t < 3; t++) {
-    fprintf(f, "%s\"%s\":[", t ? "," : "", tables[t].name);
-    for (uint32_t i = 0; i < tables[t].n; i++) fprintf(f, "%s%u", i ? "," : "", tables[t].w[i]);
-    fputc(']', f);
-  }
-  fputs("},\"changes\":{", f);
+  fputs("],\"changes\":{", f);
   for (int k = 0; k < (p->gen ? CH_ALL : CH_COUNT); k++) // a run on generators: the kinds that make structure too
     fprintf(f, "%s\"%s\":%u", k ? "," : "", genome_change_name(k), p->changes.w[k]);
   fputc('}', f);
@@ -1131,7 +1112,7 @@ static const param_field param_fields[] = {
     PF('u', panel), PF('u', holdout), PF('u', list), PF('u', batch), PF('u', survivors), PF('u', rounds),
     PF('u', screen_rounds), PF('u', bench_every), PF('u', bench_rounds), PF('u', init_length), PF('g', screen_factor),
     PF('g', alpha), PF('g', reintroduce), PF('d', sd), PF('q', seed), GONE("--select"), GONE("--rotate"),
-    PF('g', fractions), GONE("--race"), GONE(0), PF('d', prior), PF('d', parents), PF('u', screen_members),
+    GONE("--fractions"), GONE("--race"), GONE(0), GONE("--prior"), PF('d', parents), PF('u', screen_members),
     GONE("--noise"), PF('u', stage), PF('d', fill), PF('u', panel_rounds), PF('d', distance_panel), GONE("--niche"),
     GONE("--map-elites"), GONE("--specialists"), GONE("--sharing"), PF('g', screen_stop), PF('g', screen_check),
     GONE("--tune-novel"), PF('d', average_panel), PF('d', member_games_none), GONE("--simple"), PF('q', draw_seed),
@@ -1207,7 +1188,6 @@ static void save_state(run *r) {
   fprintf(f, "changes %s\n", mix);
   for (uint32_t i = 0; i < r->panel_n; i++) fprintf(f, "panel-id %" PRIu64 " %s\n", r->panel[i].id, r->panel[i].file);
   for (uint32_t i = 0; i < r->hold_n; i++) fprintf(f, "holdout %s\n", r->hold[i].file);
-  for (uint32_t i = 0; i < r->reserve_n; i++) fprintf(f, "reserve %s\n", r->reserve[i]);
   fprintf(f, "batch %u\nnext %" PRIu64 "\nbest %" PRIu64 " %.17g\nevents %ld\n", r->batch, r->next_id, r->best_id,
           r->best_holdout, events_size);
   char text[GENOME_SAVE_MAX];
@@ -1297,7 +1277,6 @@ static int load_state(run *r, const char *path) {
   char **panel = xmalloc(len * sizeof *panel / 8 + 8), **hold = xmalloc(len * sizeof *hold / 8 + 8);
   uint64_t *panel_id = xmalloc(len * sizeof *panel_id / 8 + 8);
   uint32_t pn = 0, hn = 0;
-  r->reserve = xmalloc(len * sizeof *r->reserve / 6 + 8);
   params *p = &r->p;
   char *save = 0, **rest = xmalloc(len * sizeof(char *) / 4 + 8);
   uint32_t rn = 0;
@@ -1333,8 +1312,7 @@ static int load_state(run *r, const char *path) {
       int used = 0;
       if (sscanf(line + 9, "%" SCNu64 " %n", &panel_id[pn], &used) != 1 || !used) goto bad;
       panel[pn++] = line + 9 + used;
-    } else if (!strncmp(line, "reserve ", 8)) {
-      r->reserve[r->reserve_n++] = xstrdup(line + 8);
+    } else if (!strncmp(line, "reserve ", 8)) { // the rest of the folder, for --rotate and --prior hill (#193)
     } else if (!strncmp(line, "holdout ", 8)) {
       hold[hn++] = line + 8;
     } else {
@@ -1596,35 +1574,6 @@ static double estimated_distance(const run *r, const unit *row, uint32_t rounds)
   }
   if (best == INFINITY) best = 0;
   return with_alpha(r, best);
-}
-
-// --prior hill: the weights of opcodes, modifiers and modes are how often
-// they occur in all opponents (panel, holdout and the rest of the folder),
-// plus 1 so that none is impossible. Counts only, no code.
-static void count_style(genome_style *st, const m42_warrior *w) {
-  const m42_instruction *c = m42_warrior_code(w);
-  for (uint32_t i = 0; i < m42_warrior_length(w); i++) {
-    if (c[i].opcode < GENOME_OPCODES) st->op[c[i].opcode]++;
-    if (c[i].modifier < 7) st->mod[c[i].modifier]++;
-    if (c[i].a_mode < 8) st->mode[c[i].a_mode]++;
-    if (c[i].b_mode < 8) st->mode[c[i].b_mode]++;
-  }
-}
-
-static void build_style(run *r) {
-  genome_style *st = &r->style;
-  memset(st, 0, sizeof *st);
-  st->fraction = r->p.fractions;
-  if (r->p.prior != PRIOR_HILL) return;
-  for (uint32_t i = 0; i < GENOME_OPCODES; i++) st->op[i] = 1;
-  for (uint32_t i = 0; i < 7; i++) st->mod[i] = 1;
-  for (uint32_t i = 0; i < 8; i++) st->mode[i] = 1;
-  for (uint32_t i = 0; i < r->panel_n; i++) count_style(st, r->panel[i].w);
-  for (uint32_t i = 0; i < r->hold_n; i++) count_style(st, r->hold[i].w);
-  for (uint32_t i = 0; i < r->reserve_n; i++) {
-    warrior *w = load_opponent(r, r->reserve[i], 1);
-    if (w) count_style(st, w->w), m42_warrior_free(w->w), free(w->file), free(w->source), free(w);
-  }
 }
 
 // A candidate's screen score, estimate and key from its row of screen
@@ -1968,12 +1917,12 @@ static void run_batch(run *r) {
         reintro = 1; // always evaluated
         x->keep = 1;
       } else {
-        genome_breed(&x->g, &r->starts[k], &r->starts[(k + 1) % r->start_n], &g, core, p->rules.max_length, &r->style,
+        genome_breed(&x->g, &r->starts[k], &r->starts[(k + 1) % r->start_n], &g, core, p->rules.max_length,
                      &p->changes, x->ops, sizeof x->ops);
       }
       x->noun = r->start_noun[k];
     } else if (members(r) == 0 || (p->fill && members(r) < p->list && !r->start_n)) {
-      genome_random(&x->g, &g, core, random_length(p, &g), &r->style);
+      genome_random(&x->g, &g, core, random_length(p, &g));
       if (p->gen) genome_as_generator(&x->g);
       strcpy(x->ops, "random");
       x->noun = rng_below(&g, NAME_NOUNS); // a new family
@@ -1989,7 +1938,7 @@ static void run_batch(run *r) {
       if (!copy) in_list[in_n++] = h;
     } else {
       const warrior *a = select_parent(r, &g, &x->rival), *b = select_parent(r, &g, 0);
-      genome_breed_donors(&x->g, a->g, b->g, donors, nd, &g, core, p->rules.max_length, &r->style, &p->changes, x->ops,
+      genome_breed_donors(&x->g, a->g, b->g, donors, nd, &g, core, p->rules.max_length, &p->changes, x->ops,
                           sizeof x->ops);
       x->parents[0] = a->id;
       x->noun = a->noun;
@@ -2845,8 +2794,7 @@ static void usage(void) {
           "         [--batch 128] [--survivors N] [--rounds 100] [--screen-rounds 20] [--screen-factor 0.8]\n"
           "         [--bench-every 10] [--bench-rounds 100] [--alpha 1] [--sd opponent|sum]\n"
           "         [--reintroduce 0.02] [--init-length 10] [--seed 1]\n"
-          "         [--fractions p] [--prior uniform|hill]\n"
-          "         [--parents value|duel] [--start <dir>] [--changes name=weight,...]\n"
+                    "         [--parents value|duel] [--start <dir>] [--changes name=weight,...]\n"
           "         [--panel-files a.red,b.red,...] [--screen-members N] [--stage N (screen rounds; 0 none)] [--fill]\n"
           "         [--panel-rounds N] [--diversity all|panel] [--average all|panel] [--member-games all|none]\n"
           "         [--pushoff value|pareto|pareto-age|pareto-sd] [--clear R] [--positions mirror|pmars]\n"
@@ -2907,15 +2855,12 @@ static int run_new(run *r, uint32_t threads, int optimize) {
   }
   load_list(r, &r->panel, &r->panel_n, names, pn, PANEL, 0);
   load_list(r, &r->hold, &r->hold_n, names + pn, hn, HOLDOUT, pn);
-  for (uint32_t i = 0; i < pn + hn; i++) free(names[i]);
-  r->reserve = names; // the rest, for --prior hill
-  r->reserve_n = count - pn - hn;
-  memmove(r->reserve, names + pn + hn, r->reserve_n * sizeof *r->reserve);
+  for (uint32_t i = 0; i < count; i++) free(names[i]);
+  free(names);
   r->next_id = (uint64_t)pn + hn;
   r->best_id = NO_ID;
   r->best_holdout = -1;
   setup_matrix(r);
-  build_style(r);
   load_starts(r);
   return 0;
 }
@@ -2927,7 +2872,6 @@ static int run_resume(run *r) {
   snprintf(state, sizeof state, "%s/state.txt", r->dir);
   snprintf(events, sizeof events, "%s/events.jsonl", r->dir);
   if (load_state(r, state) != 0) return 1;
-  build_style(r);
   load_starts(r);
   const long size = state_events_size(state);
   if (size < 0 || truncate(events, size) != 0) {
@@ -3786,7 +3730,7 @@ typedef struct {
 // --island-variant (a state that used one: load_state()).
 static const char *const removed_options[] = {"--map-elites", "--specialists", "--niche", "--sharing", "--simple",
                                               "--noise", "--difference", "--select", "--rotate", "--race", "--race-keep",
-                                              "--tune-novel", 0};
+                                              "--tune-novel", "--fractions", "--prior", 0};
 
 // Reads the command line into c; 0, or the exit code after a message.
 static int parse_cli(int argc, char **argv, cli *c) {
@@ -3844,10 +3788,6 @@ static int parse_cli(int argc, char **argv, cli *c) {
     else if (!strcmp(a, "--parents")) {
       if (!strcmp(v, "value")) p->parents = PARENTS_VALUE;
       else if (!strcmp(v, "duel")) p->parents = PARENTS_DUEL;
-      else usage();
-    } else if (!strcmp(a, "--prior")) {
-      if (!strcmp(v, "uniform")) p->prior = PRIOR_UNIFORM;
-      else if (!strcmp(v, "hill")) p->prior = PRIOR_HILL;
       else usage();
     } else if (!strcmp(a, "--panel-choice")) {
       c->panel_choice_given = 1;
@@ -3944,10 +3884,6 @@ static int parse_cli(int argc, char **argv, cli *c) {
     else if (!strcmp(a, "--clear")) {
       if (!number || !(d > 0)) usage();
       p->clear = d;
-    }
-    else if (!strcmp(a, "--fractions")) {
-      if (d > 1) usage();
-      p->fractions = d;
     }
     else if (!strcmp(a, "--init-length")) p->init_length = u;
     else if (!strcmp(a, "--min-length")) p->min_length = u;

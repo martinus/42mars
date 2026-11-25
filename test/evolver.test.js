@@ -75,6 +75,8 @@ const REMOVED = [
   { args: ['--race', '3'], option: '--race', at: 18 },
   { args: ['--race-keep', '6'], option: '--race-keep' },
   { args: ['--tune-novel', '1'], option: '--tune-novel', at: 34 },
+  { args: ['--fractions', '0.5'], option: '--fractions', at: 17 },
+  { args: ['--prior', 'hill'], option: '--prior', at: 20 },
 ];
 // and the lines of a state that only they wrote
 const REMOVED_LINES = [
@@ -124,33 +126,7 @@ test('the logged values are the push-off of the logged scores', { skip }, () => 
 
 test('survivors of the screen enter by their screen score', { skip }, () => {
   assert.equal(checkOps(base), 6);
-  assert.equal(base[0].params.fractions, 0);
   checkOrder(base, 'screen');
-});
-
-test('--prior hill: the weights are how often opcodes, modifiers and modes occur in the opponents', { skip }, () => {
-  assert.equal(base[0].params.prior, 'uniform');
-  assert.ok(Object.values(base[0].weights).every((w) => w.every((x) => x === 0)));
-  run(join(tmp, 'prior'), [...TINY, '--prior', 'hill', '--threads', '4', '--batches', '2']);
-  const evs = events(join(tmp, 'prior'));
-  // every warrior of the folder that fits the rules, counted here with the WebAssembly assembler
-  const op = new Array(17).fill(1), mod = new Array(7).fill(1), mode = new Array(8).fill(1);
-  const dir = join(root, 'warriors/koenigstuhl/tiny');
-  for (const f of readdirSync(dir).filter((x) => x.endsWith('.red'))) {
-    const w = assemble(readFileSync(join(dir, f), 'latin1'), { ...RULES, rounds: 40 });
-    if (!w.ok || w.instructions.length > 20 || w.instructions.some((i) => i.op >= 17)) continue;
-    for (const i of w.instructions) op[i.op]++, mod[i.mod]++, mode[i.aMode]++, mode[i.bMode]++;
-  }
-  assert.deepEqual(evs[0].weights, { op, mod, mode });
-  assert.equal(checkValues(evs), 2);
-  // the warriors bred use the modes of the hill: $ is the most common there
-  const count = (es) => {
-    const m = new Array(8).fill(0);
-    for (const e of es.filter((x) => x.type === 'enter')) for (const i of assemble(e.code, RULES).instructions) m[i.aMode]++, m[i.bMode]++;
-    return m[1] / m.reduce((a, b) => a + b, 0);
-  };
-  assert.ok(mode[1] === Math.max(...mode));
-  assert.ok(count(evs) > count(base.filter((e) => e.batch === undefined || e.batch < 2)) + 0.1, 'more $ modes with the prior');
 });
 
 test('--parents duel: a parent beat its rival in their match, the same run on any thread count', { skip }, () => {

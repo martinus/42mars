@@ -82,7 +82,7 @@ static void test_rebuild(void) {
       s[n++] = (slot){SLOT_A, order[i]};
       kept[order[i]] = 1;
     }
-    genome_rebuild(&c, &a, &a, s, n, CORE, &r, 0);
+    genome_rebuild(&c, &a, &a, s, n, CORE, &r);
     CHECK(valid(&c, GENOME_MAX), "rebuild gave an invalid genome");
     for (uint32_t i = 0; i < n; i++) {
       if (s[i].src != SLOT_A) continue;
@@ -119,7 +119,7 @@ static void test_duplicate_and_crossover(void) {
     for (uint32_t i = 0; i < k; i++) s[n++] = (slot){SLOT_B, from + i};
     for (uint32_t i = q; i < len; i++) s[n++] = (slot){SLOT_A, i};
     // duplicate (b == a): copies reference copies inside the block, else the originals
-    genome_rebuild(&c, &a, &a, s, n, CORE, &r, 0);
+    genome_rebuild(&c, &a, &a, s, n, CORE, &r);
     CHECK(valid(&c, GENOME_MAX), "duplicate gave an invalid genome");
     for (uint32_t i = 0; i < k; i++) {
       const uint32_t at = q + i, target = a.g[from + i].a;
@@ -131,7 +131,7 @@ static void test_duplicate_and_crossover(void) {
     // crossover (b another genome): references out of the block become offsets
     tagged(&b, len);
     for (uint32_t i = 0; i < len; i++) b.g[i].b = 5000 + i;
-    genome_rebuild(&c, &a, &b, s, n, CORE, &r, 0);
+    genome_rebuild(&c, &a, &b, s, n, CORE, &r);
     CHECK(valid(&c, GENOME_MAX), "crossover gave an invalid genome");
     m42_instruction code[GENOME_MAX], bcode[GENOME_MAX];
     genome_code(&c, CORE, code);
@@ -154,15 +154,12 @@ static void test_breed(void) {
   m42_instruction code[GENOME_MAX];
   static unsigned char mem[1 << 16];
   const uint32_t limits[] = {1, 5, 20, 100, GENOME_MAX};
-  genome_style half = {0}; // far values near fractions half of the time, opcodes mostly MOV
-  half.fraction = 0.5;
-  half.op[0] = 10, half.op[12] = 1;
   for (int k = 0; k < 5; k++) {
     const uint32_t max = limits[k];
-    genome_random(&p1, &r, CORE, 1 + rng_below(&r, max), 0);
-    genome_random(&p2, &r, CORE, 1 + rng_below(&r, max), 0);
+    genome_random(&p1, &r, CORE, 1 + rng_below(&r, max));
+    genome_random(&p2, &r, CORE, 1 + rng_below(&r, max));
     for (int round = 0; round < 4000; round++) {
-      genome_breed(&c, &p1, rng_below(&r, 2) ? &p2 : 0, &r, CORE, max, k == 2 ? &half : 0, 0, ops, sizeof ops);
+      genome_breed(&c, &p1, rng_below(&r, 2) ? &p2 : 0, &r, CORE, max, 0, ops, sizeof ops);
       CHECK(valid(&c, max), "a child of length %u is invalid (max %u, %s)", c.len, max, ops);
       CHECK(ops[0], "a child without the name of a change");
       genome_code(&c, CORE, code);
@@ -182,10 +179,10 @@ static void test_text(void) {
   char text[GENOME_MAX * 48 + 64], ops[96];
   static char src[GENOME_MAX * 48 + 128];
   m42_instruction code[GENOME_MAX];
-  genome_random(&g, &r, CORE, 8, 0);
-  genome_random(&p2, &r, CORE, 8, 0);
+  genome_random(&g, &r, CORE, 8);
+  genome_random(&p2, &r, CORE, 8);
   for (int round = 0; round < 1500; round++) {
-    genome_breed(&g, &g, &p2, &r, CORE, GENOME_MAX, 0, 0, ops, sizeof ops);
+    genome_breed(&g, &g, &p2, &r, CORE, GENOME_MAX, 0, ops, sizeof ops);
     const size_t len = genome_text(&g, CORE, text, sizeof text);
     CHECK(len < sizeof text, "text cut");
     const int n = snprintf(src, sizeof src, ";redcode-94nop\n;name t\n%s", text);
@@ -212,7 +209,7 @@ static void test_text(void) {
     CHECK(genome_load(&back, saved, CORE, 0) == 0 && genome_hash(&back, CORE) == genome_hash(&g, CORE) &&
               memcmp(back.g, g.g, g.len * sizeof *g.g) == 0,
           "the state form does not read back");
-    if (g.len > 40) genome_random(&g, &r, CORE, 8, 0);
+    if (g.len > 40) genome_random(&g, &r, CORE, 8);
   }
   genome bad;
   CHECK(genome_load(&bad, "2 2 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0", CORE, 0) != 0, "a start past the end loads");
@@ -305,69 +302,6 @@ static void test_names(void) {
   CHECK(strcmp(b, "Crimson Mantis IV") == 0, "fourth name %s", b);
 }
 
-// --fractions: with 1, every value that is neither a reference nor small
-// lies within 20 of 1/2, 1/3, 2/3, 1/4 or 3/4 of the core, and those come
-// up; with 0, most far values are elsewhere.
-static void test_fractions(void) {
-  rng r = rng_seed(13, 14, 15);
-  const uint32_t frac[] = {CORE / 2, CORE / 3, CORE * 2 / 3, CORE / 4, CORE * 3 / 4};
-  for (int k = 0; k < 2; k++) {
-    uint32_t far = 0, near = 0, hits[5] = {0};
-    for (int round = 0; round < 3000; round++) {
-      genome g;
-      genome_style st = {0};
-      st.fraction = k ? 1.0 : 0.0;
-      genome_random(&g, &r, CORE, 10, &st);
-      for (uint32_t i = 0; i < g.len; i++) {
-        const uint32_t v[2] = {g.g[i].aref ? 0 : g.g[i].a, g.g[i].bref ? 0 : g.g[i].b};
-        for (int o = 0; o < 2; o++) {
-          if (v[o] <= 16 || v[o] >= CORE - 16) continue; // a reference or a small value
-          far++;
-          for (int f = 0; f < 5; f++)
-            if (v[o] + 20 >= frac[f] && v[o] <= frac[f] + 20) near++, hits[f]++, f = 5;
-        }
-      }
-    }
-    if (k) {
-      CHECK(far > 1000 && near == far, "--fractions 1: %u of %u far values near a fraction", near, far);
-      for (int f = 0; f < 5; f++) CHECK(hits[f] > far / 20, "fraction %d came up %u times of %u", f, hits[f], far);
-    } else {
-      CHECK(near < far / 10, "--fractions 0: %u of %u far values near a fraction", near, far);
-    }
-  }
-}
-
-// --prior: weights decide the opcodes, modifiers and modes of new
-// instructions and of point changes; a weight 0 never comes up.
-static void test_weights(void) {
-  rng r = rng_seed(16, 17, 18);
-  genome_style st = {0};
-  st.op[0] = 3, st.op[12] = 1;   // MOV and DAT, 3:1
-  st.mod[6] = 1;                 // .I only
-  st.mode[1] = 1, st.mode[2] = 1; // $ and @
-  uint32_t ops[GENOME_OPCODES] = {0}, other = 0;
-  genome p1, c;
-  genome_random(&p1, &r, CORE, 12, &st);
-  char names[96];
-  for (int round = 0; round < 3000; round++) {
-    genome_breed(&c, &p1, &p1, &r, CORE, 40, &st, 0, names, sizeof names);
-    p1 = c.len > 30 ? p1 : c;
-    // a new lineage now and then: one that runs 3000 changes drifts away from
-    // 3:1 by chance (duplicates copy what is there), 2:1 with some seeds
-    if (round % 50 == 49) genome_random(&p1, &r, CORE, 12, &st);
-    for (uint32_t i = 0; i < c.len; i++) {
-      ops[c.g[i].op]++;
-      other += c.g[i].mod != 6 || (c.g[i].am != 1 && c.g[i].am != 2) || (c.g[i].bm != 1 && c.g[i].bm != 2);
-    }
-  }
-  CHECK(other == 0, "%u instructions with a modifier or mode of weight 0", other);
-  CHECK(ops[0] + ops[12] > 0 && ops[0] > 2 * ops[12] && ops[0] < 4 * ops[12], "MOV %u, DAT %u, not about 3:1", ops[0], ops[12]);
-  uint32_t rest = 0;
-  for (int k = 0; k < GENOME_OPCODES; k++)
-    if (k != 0 && k != 12) rest += ops[k];
-  CHECK(rest == 0, "%u instructions with an opcode of weight 0", rest);
-}
-
 // genome_from_code() gives back the same code, with references for the
 // operands that point into it.
 static void test_from_code(void) {
@@ -376,7 +310,7 @@ static void test_from_code(void) {
   m42_instruction code[GENOME_MAX], again[GENOME_MAX];
   uint32_t refs = 0;
   for (int round = 0; round < 2000; round++) {
-    genome_random(&g, &r, CORE, 1 + rng_below(&r, 60), 0);
+    genome_random(&g, &r, CORE, 1 + rng_below(&r, 60));
     genome_code(&g, CORE, code);
     genome_from_code(&back, code, g.len, g.start, CORE);
     CHECK(valid(&back, GENOME_MAX), "an invalid genome from code");
@@ -403,11 +337,11 @@ static void test_changes(void) {
   uint32_t applied[CH_COUNT] = {0};
   for (int round = 0; round < 4000; round++) {
     genome p, q, c;
-    genome_random(&p, &r, CORE, 2 + rng_below(&r, 30), 0);
-    genome_random(&q, &r, CORE, 2 + rng_below(&r, 30), 0);
+    genome_random(&p, &r, CORE, 2 + rng_below(&r, 30));
+    genome_random(&q, &r, CORE, 2 + rng_below(&r, 30));
     const int kind = (int)rng_below(&r, CH_COUNT);
     c = p;
-    if (!genome_change(&c, &q, &r, CORE, 40, 0, kind)) continue;
+    if (!genome_change(&c, &q, &r, CORE, 40, kind)) continue;
     applied[kind]++;
     CHECK(valid(&c, 40), "%s gave an invalid genome", genome_change_name(kind));
     if (kind < CH_RELATED_OPCODE || kind == CH_LOOP) continue; // the four small steps follow; loop copies a block
@@ -473,10 +407,10 @@ static void test_loop(void) {
   uint32_t full = 0;
   for (int round = 0; round < 300; round++) {
     const uint32_t len = round % 10 ? 2 + rng_below(&r, 30) : 40;
-    genome_random(&p, &r, CORE, len, 0);
+    genome_random(&p, &r, CORE, len);
     c = p;
-    CHECK(!genome_change(&c, &none, &r, CORE, 40, 0, CH_LOOP) && memcmp(&c, &p, sizeof c) == 0, "a donor without a loop gave one");
-    CHECK(genome_change(&c, &donor, &r, CORE, 40, 0, CH_LOOP), "round %d: no loop from the Dwarf", round);
+    CHECK(!genome_change(&c, &none, &r, CORE, 40, CH_LOOP) && memcmp(&c, &p, sizeof c) == 0, "a donor without a loop gave one");
+    CHECK(genome_change(&c, &donor, &r, CORE, 40, CH_LOOP), "round %d: no loop from the Dwarf", round);
     CHECK(valid(&c, 40) && c.len == (len + 4 <= 40 ? len + 4 : 40), "round %d: length %u from %u", round, c.len, len);
     full += len == 40;
     m42_instruction code[GENOME_MAX];
@@ -522,8 +456,8 @@ static void test_mix(void) {
   char ops[96];
   uint32_t n_op = 0, n_org = 0, other = 0;
   for (int round = 0; round < 4000; round++) {
-    genome_random(&p, &r, CORE, 2 + rng_below(&r, 20), 0);
-    genome_breed(&c, &p, &p, &r, CORE, 40, 0, &m, ops, sizeof ops);
+    genome_random(&p, &r, CORE, 2 + rng_below(&r, 20));
+    genome_breed(&c, &p, &p, &r, CORE, 40, &m, ops, sizeof ops);
     for (char *t = strtok(ops, " "); t; t = strtok(0, " "))
       if (!strcmp(t, "opcode")) n_op++;
       else if (!strcmp(t, "org")) n_org++;
@@ -533,8 +467,8 @@ static void test_mix(void) {
         other);
   // a kind that never applies: crossover without a second parent leaves the child as it was
   CHECK(genome_mix_parse(&m, "crossover-insert=1") == 0, "crossover-insert=1");
-  genome_random(&p, &r, CORE, 10, 0);
-  genome_breed(&c, &p, 0, &r, CORE, 40, 0, &m, ops, sizeof ops);
+  genome_random(&p, &r, CORE, 10);
+  genome_breed(&c, &p, 0, &r, CORE, 40, &m, ops, sizeof ops);
   CHECK(!ops[0] && !memcmp(&c, &p, sizeof c), "crossover without a second parent changed something: %s", ops);
 }
 
@@ -546,8 +480,6 @@ int main(void) {
   test_hash();
   test_pushoff();
   test_names();
-  test_fractions();
-  test_weights();
   test_from_code();
   test_changes();
   test_loop();

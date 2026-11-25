@@ -281,7 +281,7 @@ int main(int argc, char **argv) {
         const uint32_t at = 1 + (uint32_t)k * children + c;
         rng r = rng_seed(seed, (uint64_t)w * 64 + (uint64_t)k, c);
         kid[at] = parent[w];
-        ok[at] = genome_change(&kid[at], mate, &r, core, rules.max_length, 0, k) ? 1 : 0;
+        ok[at] = genome_change(&kid[at], mate, &r, core, rules.max_length, k) ? 1 : 0;
         if (ok[at] && genome_hash(&kid[at], core) == ph) ok[at] = 2; // the same warrior
       }
     uint32_t nu = 0;

@@ -145,7 +145,7 @@ static void put(slots *o, uint8_t src, uint32_t first, uint32_t count) {
 // ---------------------------------------------------------------- rebuild
 
 void gen_rebuild(gen *child, const gen *a, const gen *b, const slot *s, uint32_t n, uint32_t core, rng *r,
-                 const genome_style *st, const gen_info *info_b) {
+                 const gen_info *info_b) {
   uint32_t map_a[GEN_LINES], map_b[GEN_LINES];
   for (uint32_t i = 0; i < GEN_LINES; i++) map_a[i] = map_b[i] = NONE;
   for (uint32_t i = 0; i < n; i++) {
@@ -172,7 +172,7 @@ void gen_rebuild(gen *child, const gen *a, const gen *b, const slot *s, uint32_t
     const uint32_t idx = s[i].idx;
     gen_line *l = &out.l[i];
     if (s[i].src == SLOT_NEW) {
-      const gene g = genome_random_gene(r, core, n, st);
+      const gene g = genome_random_gene(r, core, n);
       line_from_gene(l, &g);
       continue;
     }
@@ -243,11 +243,11 @@ static int keeps(const gen *x, uint32_t core, uint32_t max_length) {
 }
 
 // x becomes the child made of the slots, when that child keeps the limits.
-static int rebuilt(gen *x, const gen *b, const slots *o, uint32_t core, uint32_t max_length, rng *r, const genome_style *st,
+static int rebuilt(gen *x, const gen *b, const slots *o, uint32_t core, uint32_t max_length, rng *r,
                    const gen_info *info_b) {
   if (o->over || !o->n) return 0;
   gen child;
-  gen_rebuild(&child, x, b, o->s, o->n, core, r, st, info_b);
+  gen_rebuild(&child, x, b, o->s, o->n, core, r, info_b);
   if (!keeps(&child, core, max_length)) return 0;
   x->n = child.n;
   x->start = child.start;
@@ -281,7 +281,7 @@ static uint32_t far_numbers(gen *x, const shape *sh, uint32_t core, uint32_t **a
 
 // An operand changed as genome_mutate_operand() changes one of a list: one
 // of its numbers or labels. The other parts of an expression stay.
-static int change_operand(gen *x, uint32_t line, int k, rng *r, uint32_t core, uint32_t max_length, const genome_style *st) {
+static int change_operand(gen *x, uint32_t line, int k, rng *r, uint32_t core, uint32_t max_length) {
   gen_expr *e = &x->l[line].x[k];
   uint32_t leaf[GEN_TOKENS], n = 0;
   for (uint32_t t = 0; t < e->n; t++)
@@ -297,25 +297,25 @@ static int change_operand(gen *x, uint32_t line, int k, rng *r, uint32_t core, u
     gen_compile_info(x, core, max_length, code, &info);
     if (info.pos[v] != GEN_NONE && info.pos[line] != GEN_NONE) offset = (int64_t)info.pos[v] - info.pos[line];
   }
-  genome_mutate_operand(r, core, x->n, offset, st, &ref, &v);
+  genome_mutate_operand(r, core, x->n, offset, &ref, &v);
   e->kind[t] = ref ? GT_POS : GT_NUM;
   e->v[t] = v;
   return 1;
 }
 
 // A change of the instruction at `line`: CH_OPCODE .. CH_REPLACE.
-static int point_change(gen *x, uint32_t line, int kind, rng *r, uint32_t core, uint32_t max_length, const genome_style *st) {
+static int point_change(gen *x, uint32_t line, int kind, rng *r, uint32_t core, uint32_t max_length) {
   gen_line *l = &x->l[line];
   switch (kind) {
-    case CH_OPCODE: l->op = genome_pick(r, st ? st->op : 0, GENOME_OPCODES); break;
-    case CH_MODIFIER: l->mod = genome_pick(r, st ? st->mod : 0, 7); break;
-    case CH_AMODE: l->am = genome_pick(r, st ? st->mode : 0, 8); break;
-    case CH_BMODE: l->bm = genome_pick(r, st ? st->mode : 0, 8); break;
-    case CH_AOPERAND: return change_operand(x, line, 0, r, core, max_length, st);
-    case CH_BOPERAND: return change_operand(x, line, 1, r, core, max_length, st);
+    case CH_OPCODE: l->op = (uint8_t)rng_below(r, GENOME_OPCODES); break;
+    case CH_MODIFIER: l->mod = (uint8_t)rng_below(r, 7); break;
+    case CH_AMODE: l->am = (uint8_t)rng_below(r, 8); break;
+    case CH_BMODE: l->bm = (uint8_t)rng_below(r, 8); break;
+    case CH_AOPERAND: return change_operand(x, line, 0, r, core, max_length);
+    case CH_BOPERAND: return change_operand(x, line, 1, r, core, max_length);
     case CH_ORG: x->start = rng_below(r, x->n); break;
     default: {
-      const gene g = genome_random_gene(r, core, x->n, st);
+      const gene g = genome_random_gene(r, core, x->n);
       line_from_gene(l, &g);
     }
   }
@@ -419,7 +419,7 @@ int gen_wrap(gen *x, uint32_t first, uint32_t end, uint32_t core) {
   put(&o, SLOT_END, 0, 1);
   put(&o, SLOT_A, end, x->n - end);
   gen child;
-  gen_rebuild(&child, x, x, o.s, o.n, core, 0, 0, 0);
+  gen_rebuild(&child, x, x, o.s, o.n, core, 0, 0);
   if (!index_out(&child, first + 1, end + 1) || !same_warrior(x, &child, core)) return 0;
   set(x, &child);
   return 1;
@@ -487,7 +487,7 @@ int gen_fold_period(gen *x, uint32_t first, uint32_t period, uint32_t core) {
   put(&o, SLOT_A, first + 2 * period, x->n - first - 2 * period);
   if (o.over) return 0;
   gen child;
-  gen_rebuild(&child, x, x, o.s, o.n, core, 0, 0, 0);
+  gen_rebuild(&child, x, x, o.s, o.n, core, 0, 0);
   if (!index_out(&child, first + 1, first + 1 + period)) return 0;
   gen_info info;
   m42_instruction code[GEN_LINES];
@@ -537,7 +537,7 @@ int gen_absorb(gen *x, uint32_t R, uint32_t core) {
   put(&o, SLOT_A, 0, E + 1);
   put(&o, SLOT_A, E + 1 + body, x->n - E - 1 - body);
   gen child;
-  gen_rebuild(&child, x, x, o.s, o.n, core, 0, 0, 0);
+  gen_rebuild(&child, x, x, o.s, o.n, core, 0, 0);
   child.l[R].x[0].v[0] = count->v[0] + 1;
   if (!same_warrior(x, &child, core)) return 0; // they were not the next repetition
   set(x, &child);
@@ -580,7 +580,7 @@ int gen_absorb_front(gen *x, uint32_t R, uint32_t core) {
   put(&o, SLOT_A, 0, R - body);
   put(&o, SLOT_A, R, x->n - R);
   gen child;
-  gen_rebuild(&child, x, x, o.s, o.n, core, 0, 0, 0);
+  gen_rebuild(&child, x, x, o.s, o.n, core, 0, 0);
   const uint32_t at = R - body;
   child.l[at].x[0].v[0] = count->v[0] + 1;
   for (uint32_t j = 0; j < body; j++)
@@ -606,7 +606,7 @@ int gen_merge(gen *x, uint32_t R, uint32_t core) {
   put(&o, SLOT_A, 0, S);
   put(&o, SLOT_A, match[S] + 1, x->n - match[S] - 1);
   gen child;
-  gen_rebuild(&child, x, x, o.s, o.n, core, 0, 0, 0);
+  gen_rebuild(&child, x, x, o.s, o.n, core, 0, 0);
   child.l[R].x[0].v[0] = count->v[0] + second->v[0];
   if (!same_warrior(x, &child, core)) return 0; // the second block did not go on where the first ends
   set(x, &child);
@@ -818,7 +818,7 @@ int gen_extract(gen *x, uint32_t first, uint32_t end, uint32_t core, uint32_t *d
   put(&o, SLOT_A, first, end - first);
   put(&o, SLOT_END, 0, 1);
   gen child;
-  gen_rebuild(&child, x, x, o.s, o.n, core, 0, 0, 0);
+  gen_rebuild(&child, x, x, o.s, o.n, core, 0, 0);
   const uint32_t d = x->n - (end - first) + 1;
   gen_line *call = &child.l[first];
   call->callee = d;
@@ -986,7 +986,7 @@ static void drop_functions(gen *x, uint32_t core) {
     put(&o, SLOT_A, 0, d);
     put(&o, SLOT_A, match[d] + 1, x->n - match[d] - 1);
     gen child;
-    gen_rebuild(&child, x, x, o.s, o.n, core, 0, 0, 0);
+    gen_rebuild(&child, x, x, o.s, o.n, core, 0, 0);
     set(x, &child);
   }
 }
@@ -1006,8 +1006,8 @@ static uint32_t loops_around(const gen *x, const uint32_t *match, uint32_t line,
 }
 
 // A step per repetition: small, or a far value.
-static uint32_t random_step(rng *r, uint32_t core, const genome_style *st) {
-  if (rng_chance(r, 0.5)) return genome_far_value(r, core, st);
+static uint32_t random_step(rng *r, uint32_t core) {
+  if (rng_chance(r, 0.5)) return genome_far_value(r, core);
   const int32_t d = rng_range(r, 1, 8);
   return wrap(rng_below(r, 2) ? d : -d, core);
 }
@@ -1024,12 +1024,11 @@ static int add_step(gen_expr *e, uint32_t level, uint32_t d) {
 }
 
 // A value for an expression of a line with `depth` repeats around it.
-static void random_leaf(const gen *x, rng *r, uint32_t core, const genome_style *st, uint32_t depth, int in_def, uint8_t *kind,
-                        uint32_t *v) {
+static void random_leaf(const gen *x, rng *r, uint32_t core, uint32_t depth, int in_def, uint8_t *kind, uint32_t *v) {
   const uint32_t d = rng_below(r, 100);
   *kind = GT_NUM;
   if (d < 35) {
-    *v = rng_chance(r, 0.6) ? wrap(rng_range(r, -16, 16), core) : genome_far_value(r, core, st);
+    *v = rng_chance(r, 0.6) ? wrap(rng_range(r, -16, 16), core) : genome_far_value(r, core);
   } else if (d < 55) {
     *kind = GT_POS, *v = rng_below(r, x->n);
   } else if (d < 70 && depth) {
@@ -1068,7 +1067,7 @@ static int take(gen *x, const gen *child, uint32_t core, uint32_t max_length) {
 // One more call: the call at line `call` of cand again at a place drawn,
 // with `vary` one number of its arguments changed; x becomes that child when
 // it keeps the limits.
-static int call_again(gen *x, const gen *cand, uint32_t call, rng *r, uint32_t core, uint32_t max_length, const genome_style *st, int vary) {
+static int call_again(gen *x, const gen *cand, uint32_t call, rng *r, uint32_t core, uint32_t max_length, int vary) {
   shape sh;
   shape_of(cand, &sh);
   unit u[GEN_LINES];
@@ -1082,7 +1081,7 @@ static int call_again(gen *x, const gen *cand, uint32_t call, rng *r, uint32_t c
   put(&o, SLOT_A, at, cand->n - at);
   if (o.over) return 0;
   gen child;
-  gen_rebuild(&child, cand, cand, o.s, o.n, core, r, st, 0);
+  gen_rebuild(&child, cand, cand, o.s, o.n, core, r, 0);
   if (vary) {
     gen_line *l = &child.l[at];
     uint32_t *leaf[2 * GEN_TOKENS], ln = 0;
@@ -1093,7 +1092,7 @@ static int call_again(gen *x, const gen *cand, uint32_t call, rng *r, uint32_t c
     if (ln) {
       const uint32_t p = rng_below(r, ln);
       uint8_t ref = 0;
-      genome_mutate_operand(r, core, child.n, 0, st, &ref, leaf[p]);
+      genome_mutate_operand(r, core, child.n, 0, &ref, leaf[p]);
       *kind[p] = ref ? GT_POS : GT_NUM;
     }
   }
@@ -1106,7 +1105,7 @@ static int calls_function(const gen *x, const uint32_t *match, uint32_t i) {
   return x->l[i].kind == GL_CALL && d < x->n && x->l[d].kind == GL_DEF && match[d] < x->n;
 }
 
-static int structure_change(gen *x, const gen *p2, const shape *sh, rng *r, uint32_t core, uint32_t max_length, const genome_style *st,
+static int structure_change(gen *x, const gen *p2, const shape *sh, rng *r, uint32_t core, uint32_t max_length,
                             int kind) {
   gen cand;
   cand.n = 0;
@@ -1137,7 +1136,7 @@ static int structure_change(gen *x, const gen *p2, const shape *sh, rng *r, uint
         if (an) {
           gen_line *l = &cand.l[at[rng_below(r, an)]];
           gen_expr *e = &l->x[rng_below(r, 2)];
-          add_step(e, 0, random_step(r, core, st));
+          add_step(e, 0, random_step(r, core));
         }
       }
       return take(x, &cand, core, max_length);
@@ -1191,7 +1190,7 @@ static int structure_change(gen *x, const gen *p2, const shape *sh, rng *r, uint
       if (!an) return 0;
       static const uint32_t w[6] = {81, 81, 54, 54, 108, 108}; // as genome_mix_default()
       const uint32_t target = at[rng_below(r, an)];
-      if (!point_change(&cand, target, CH_OPCODE + genome_pick(r, w, 6), r, core, max_length, st)) return 0;
+      if (!point_change(&cand, target, CH_OPCODE + genome_pick(r, w, 6), r, core, max_length)) return 0;
       return take(x, &cand, core, max_length);
     }
     case CH_INDEX: { // an operand in a repeat: its step per repetition changes, or it gets one
@@ -1215,14 +1214,14 @@ static int structure_change(gen *x, const gen *p2, const shape *sh, rng *r, uint
         } else if (d < 75) {
           nv = rng_below(r, 2) ? (int64_t)sv * 2 : sv / 2;
         } else {
-          nv = signed_value(random_step(r, core, st), core);
+          nv = signed_value(random_step(r, core), core);
         }
         if (wrap(nv, core) == e->v[t + 1]) return 0;
         e->v[t + 1] = wrap(nv, core);
       } else {
         const uint32_t most = depth < 3 ? depth : 3;
         const uint32_t level = most > 1 && rng_chance(r, 0.25) ? 1 + rng_below(r, most - 1) : 0;
-        if (!add_step(e, level, random_step(r, core, st))) return 0;
+        if (!add_step(e, level, random_step(r, core))) return 0;
       }
       return take(x, &cand, core, max_length);
     }
@@ -1247,12 +1246,12 @@ static int structure_change(gen *x, const gen *p2, const shape *sh, rng *r, uint
         for (uint32_t t = 0; t < e->n; t++)
           if (e->kind[t] < GT_ADD) leaf[ln++] = t;
         const uint32_t t = leaf[rng_below(r, ln)];
-        random_leaf(x, r, core, st, depth, in_def, &leaf_kind, &leaf_v);
+        random_leaf(x, r, core, depth, in_def, &leaf_kind, &leaf_v);
         if (e->kind[t] == leaf_kind && e->v[t] == leaf_v) return 0;
         e->kind[t] = leaf_kind, e->v[t] = leaf_v;
       } else if (d < 80) {
         if (e->n + 2 > GEN_TOKENS) return 0;
-        random_leaf(x, r, core, st, depth, in_def, &leaf_kind, &leaf_v);
+        random_leaf(x, r, core, depth, in_def, &leaf_kind, &leaf_v);
         const uint32_t op = rng_below(r, 100);
         e->kind[e->n] = leaf_kind, e->v[e->n++] = leaf_v;
         e->kind[e->n] = op < 40 ? GT_ADD : op < 60 ? GT_SUB : op < 80 ? GT_MUL : op < 90 ? GT_DIV : GT_MOD, e->v[e->n++] = 0;
@@ -1318,7 +1317,7 @@ static int structure_change(gen *x, const gen *p2, const shape *sh, rng *r, uint
       for (uint32_t j = from; j < from + k; j++)
         if (info.len[u[j].first] != GEN_NONE) wrote += info.len[u[j].first];
       if (!wrote || info.written + wrote > max_length || !gen_extract(&cand, first, end, core, 0)) return 0;
-      return call_again(x, &cand, first, r, core, max_length, st, 0);
+      return call_again(x, &cand, first, r, core, max_length, 0);
     }
     case CH_PARAMETER: { // a number in a function becomes an argument that every call passes, and one call passes another
       struct {
@@ -1347,7 +1346,7 @@ static int structure_change(gen *x, const gen *p2, const shape *sh, rng *r, uint
         if (sh->live[i] && x->l[i].kind == GL_CALL && x->l[i].callee == num[p].d) at[an++] = i;
       gen_expr *e = &cand.l[at[rng_below(r, an)]].x[num[p].j];
       uint8_t ref = 0;
-      genome_mutate_operand(r, core, cand.n, 0, st, &ref, &e->v[0]);
+      genome_mutate_operand(r, core, cand.n, 0, &ref, &e->v[0]);
       e->kind[0] = ref ? GT_POS : GT_NUM;
       return take(x, &cand, core, max_length);
     }
@@ -1355,7 +1354,7 @@ static int structure_change(gen *x, const gen *p2, const shape *sh, rng *r, uint
       for (uint32_t i = 0; i < x->n; i++)
         if (sh->live[i] && calls_function(x, sh->match, i)) at[an++] = i;
       if (!an) return 0;
-      return call_again(x, &cand, at[rng_below(r, an)], r, core, max_length, st, 1);
+      return call_again(x, &cand, at[rng_below(r, an)], r, core, max_length, 1);
     }
     case CH_INLINE: { // a call becomes the function's lines, and one of their instructions changes
       for (uint32_t i = 0; i < x->n; i++)
@@ -1369,7 +1368,7 @@ static int structure_change(gen *x, const gen *p2, const shape *sh, rng *r, uint
       if (!an) return 0;
       static const uint32_t w[6] = {81, 81, 54, 54, 108, 108}; // as genome_mix_default()
       const uint32_t target = at[rng_below(r, an)];
-      if (!point_change(&cand, target, CH_OPCODE + genome_pick(r, w, 6), r, core, max_length, st)) return 0;
+      if (!point_change(&cand, target, CH_OPCODE + genome_pick(r, w, 6), r, core, max_length)) return 0;
       return take(x, &cand, core, max_length);
     }
     case CH_TRANSPLANT: { // a call of the second parent, with its function and what that calls
@@ -1392,7 +1391,7 @@ static int structure_change(gen *x, const gen *p2, const shape *sh, rng *r, uint
       put(&o, SLOT_A, to, x->n - to);
       put_functions(&o, p2, &sh2, in);
       gen_compile_info(p2, core, GEN_LINES, code, &info);
-      return rebuilt(x, p2, &o, core, max_length, r, st, &info);
+      return rebuilt(x, p2, &o, core, max_length, r, &info);
     }
     default: return 0;
   }
@@ -1475,7 +1474,7 @@ int gen_share(gen *x, uint32_t a, uint32_t b, uint32_t lines, uint32_t core) {
   put(&o, SLOT_B, a, 1); // the first call again
   put(&o, SLOT_A, at + lines, y.n - at - lines);
   gen child;
-  gen_rebuild(&child, &y, &y, o.s, o.n, core, 0, 0, 0);
+  gen_rebuild(&child, &y, &y, o.s, o.n, core, 0, 0);
   gen_line *second = &child.l[at];
   for (uint32_t q = 0; q < pairs; q++) second->x[slot[q]].v[0] = pb[q];
   if (!same_warrior(x, &child, core)) return 0;
@@ -1635,7 +1634,7 @@ genome_mix gen_mix_default(void) {
   return m;
 }
 
-int gen_change(gen *x, const gen *p2, rng *r, uint32_t core, uint32_t max_length, const genome_style *st, int kind) {
+int gen_change(gen *x, const gen *p2, rng *r, uint32_t core, uint32_t max_length, int kind) {
   if (max_length > GEN_LINES) max_length = GEN_LINES;
   shape sh, sh2;
   shape_of(x, &sh);
@@ -1647,9 +1646,9 @@ int gen_change(gen *x, const gen *p2, rng *r, uint32_t core, uint32_t max_length
     if (!sh.live_emits) return 0;
     uint32_t line = 0;
     emit_line(x, &sh, rng_below(r, sh.live_emits), &line);
-    return point_change(x, line, kind, r, core, max_length, st);
+    return point_change(x, line, kind, r, core, max_length);
   }
-  if (kind >= CH_COUNT) return structure_change(x, p2, &sh, r, core, max_length, st, kind);
+  if (kind >= CH_COUNT) return structure_change(x, p2, &sh, r, core, max_length, kind);
   switch (kind) {
     case CH_INSERT: {
       if (sh.emits >= max_length) return 0;
@@ -1659,7 +1658,7 @@ int gen_change(gen *x, const gen *p2, rng *r, uint32_t core, uint32_t max_length
       put(&o, SLOT_A, 0, at);
       for (uint32_t i = 0; i < k; i++) put(&o, SLOT_NEW, 0, 1);
       put(&o, SLOT_A, at, x->n - at);
-      return rebuilt(x, x, &o, core, max_length, r, st, 0);
+      return rebuilt(x, x, &o, core, max_length, r, 0);
     }
     case CH_DELETE: {
       const uint32_t s = pick_sequence(&sh, r), count = seq_units(x, &sh, s, u);
@@ -1668,7 +1667,7 @@ int gen_change(gen *x, const gen *p2, rng *r, uint32_t core, uint32_t max_length
       const uint32_t from = u[p].first, to = unit_line(x, &sh, s, u, count, p + k);
       put(&o, SLOT_A, 0, from);
       put(&o, SLOT_A, to, x->n - to);
-      return rebuilt(x, x, &o, core, max_length, r, st, 0);
+      return rebuilt(x, x, &o, core, max_length, r, 0);
     }
     case CH_DUPLICATE: {
       if (sh.emits >= max_length) return 0;
@@ -1680,7 +1679,7 @@ int gen_change(gen *x, const gen *p2, rng *r, uint32_t core, uint32_t max_length
       put(&o, SLOT_A, 0, at);
       put(&o, SLOT_B, first, unit_line(x, &sh, s, u, count, from + k) - first);
       put(&o, SLOT_A, at, x->n - at);
-      return rebuilt(x, x, &o, core, max_length, r, st, 0);
+      return rebuilt(x, x, &o, core, max_length, r, 0);
     }
     case CH_MOVE: {
       const uint32_t s = pick_sequence(&sh, r), count = seq_units(x, &sh, s, u);
@@ -1699,7 +1698,7 @@ int gen_change(gen *x, const gen *p2, rng *r, uint32_t core, uint32_t max_length
         put(&o, SLOT_A, first, end - first);
         put(&o, SLOT_A, at, x->n - at);
       }
-      return rebuilt(x, x, &o, core, max_length, r, st, 0);
+      return rebuilt(x, x, &o, core, max_length, r, 0);
     }
     case CH_XINSERT:
     case CH_XREPLACE: {
@@ -1730,7 +1729,7 @@ int gen_change(gen *x, const gen *p2, rng *r, uint32_t core, uint32_t max_length
       gen_info info2; // where p2's lines are in its warrior, whatever max_length is here
       m42_instruction code[GEN_LINES];
       gen_compile_info(p2, core, GEN_LINES, code, &info2);
-      return rebuilt(x, p2, &o, core, max_length, r, st, &info2);
+      return rebuilt(x, p2, &o, core, max_length, r, &info2);
     }
     case CH_LOOP: { // a loop of the donor p2: the units of its top level that write it, as crossover-insert copies them
       if (!p2) return 0;
@@ -1764,7 +1763,7 @@ int gen_change(gen *x, const gen *p2, rng *r, uint32_t core, uint32_t max_length
       put(&o, SLOT_B, first, lines);
       put(&o, SLOT_A, on, x->n - on);
       put_functions(&o, p2, &sh2, in);
-      return rebuilt(x, p2, &o, core, max_length, r, st, &info2);
+      return rebuilt(x, p2, &o, core, max_length, r, &info2);
     }
     case CH_RELATED_OPCODE: {
       uint32_t cand[GEN_LINES], cn = 0;
@@ -1824,13 +1823,13 @@ int gen_change(gen *x, const gen *p2, rng *r, uint32_t core, uint32_t max_length
 
 // ---------------------------------------------------------------- breeding
 
-void gen_breed(gen *child, const gen *p1, const gen *p2, rng *r, uint32_t core, uint32_t max_length, const genome_style *st,
+void gen_breed(gen *child, const gen *p1, const gen *p2, rng *r, uint32_t core, uint32_t max_length,
                const genome_mix *mix, char *ops, size_t ops_n) {
-  gen_breed_donors(child, p1, p2, 0, 0, r, core, max_length, st, mix, ops, ops_n);
+  gen_breed_donors(child, p1, p2, 0, 0, r, core, max_length, mix, ops, ops_n);
 }
 
 void gen_breed_donors(gen *child, const gen *p1, const gen *p2, const gen *const *donors, uint32_t nd, rng *r, uint32_t core,
-                      uint32_t max_length, const genome_style *st, const genome_mix *mix, char *ops, size_t ops_n) {
+                      uint32_t max_length, const genome_mix *mix, char *ops, size_t ops_n) {
   if (ops_n) ops[0] = 0;
   if (max_length > GEN_LINES) max_length = GEN_LINES;
   const genome_mix def = genome_mix_default();
@@ -1847,7 +1846,7 @@ void gen_breed_donors(gen *child, const gen *p1, const gen *p2, const gen *const
       while (d >= mix->w[kind]) d -= mix->w[kind++];
       const gen *mate = p2;
       if (kind == CH_LOOP) mate = nd ? donors[rng_below(r, nd)] : 0;
-      if (gen_change(child, mate, r, core, max_length, st, kind)) {
+      if (gen_change(child, mate, r, core, max_length, kind)) {
         const char *name = genome_change_name(kind);
         const size_t len = strlen(ops);
         if (len + strlen(name) + 2 <= ops_n) {

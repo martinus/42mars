@@ -41,18 +41,8 @@ typedef struct {
   gen p;
 } genome;
 
-// How new instructions and values are drawn. `fraction`: the probability
-// that a far value is a fraction of the core give or take 20 instead of any
-// value (--fractions). op, mod, mode: weights of the opcodes, modifiers and
-// modes (--prior); all 0 means uniform, which draws exactly as before the
-// weights existed. A null style is all 0.
-typedef struct {
-  double fraction;
-  uint32_t op[GENOME_OPCODES], mod[7], mode[8];
-} genome_style;
-
 // A random genome of len instructions.
-void genome_random(genome *x, rng *r, uint32_t core_size, uint32_t len, const genome_style *style);
+void genome_random(genome *x, rng *r, uint32_t core_size, uint32_t len);
 
 // The instructions of the warrior: references become offsets mod core_size.
 void genome_code(const genome *x, uint32_t core_size, m42_instruction *out);
@@ -88,7 +78,7 @@ typedef struct {
 // duplicated block) or else the value of its offset. New instructions
 // reference anything in the child. The start follows A's start.
 void genome_rebuild(genome *child, const genome *a, const genome *b, const slot *s, uint32_t n, uint32_t core_size,
-                    rng *r, const genome_style *style);
+                    rng *r);
 
 // The kinds of change. genome_breed() draws them by the weights of a
 // genome_mix; 42spectrum makes children with exactly one of them.
@@ -123,8 +113,7 @@ const char *genome_change_name(int kind);
 // kind does not apply (insert at the longest length, crossover without p2,
 // shared-constant with fewer than two far values, ...). CH_LOOP takes its
 // loop from p2, the donor.
-int genome_change(genome *x, const genome *p2, rng *r, uint32_t core_size, uint32_t max_length,
-                  const genome_style *style, int kind);
+int genome_change(genome *x, const genome *p2, rng *r, uint32_t core_size, uint32_t max_length, int kind);
 
 // The parts of a change that the changes of a generator share
 // (gen-change.c), so that both draw the same numbers: one of n choices by
@@ -133,10 +122,9 @@ int genome_change(genome *x, const genome *p2, rng *r, uint32_t core_size, uint3
 // reference stands for (its target less its own index); the length of a
 // block of up to len; the family of an opcode and of a mode (-1: none).
 uint8_t genome_pick(rng *r, const uint32_t *w, uint32_t n);
-uint32_t genome_far_value(rng *r, uint32_t core_size, const genome_style *style); // any value, or a fraction of the core (--fractions)
-gene genome_random_gene(rng *r, uint32_t core_size, uint32_t n, const genome_style *style);
-void genome_mutate_operand(rng *r, uint32_t core_size, uint32_t n, int64_t offset, const genome_style *style,
-                           uint8_t *ref, uint32_t *v);
+uint32_t genome_far_value(rng *r, uint32_t core_size); // any value
+gene genome_random_gene(rng *r, uint32_t core_size, uint32_t n);
+void genome_mutate_operand(rng *r, uint32_t core_size, uint32_t n, int64_t offset, uint8_t *ref, uint32_t *v);
 uint32_t genome_block(rng *r, uint32_t len);
 uint32_t genome_tune(rng *r, uint32_t core_size, uint32_t v); // a far value moved by one step of CH_TUNE
 // A loop of the warrior code[0 .. len) for CH_LOOP: an instruction i that
@@ -181,14 +169,14 @@ size_t genome_mix_text(const genome_mix *m, char *buf, size_t n);
 // times. Writes the names of the changes into ops (space separated, cut at
 // ops_n).
 void genome_breed(genome *child, const genome *p1, const genome *p2, rng *r, uint32_t core_size, uint32_t max_length,
-                  const genome_style *style, const genome_mix *mix, char *ops, size_t ops_n);
+                  const genome_mix *mix, char *ops, size_t ops_n);
 #define GENOME_DONORS_MAX 1024 // the most donors of genome_breed_donors()
 // genome_breed() with donors for CH_LOOP: warriors from elsewhere than the
 // list (its archive, other islands). A CH_LOOP draws one of the n of them;
 // without donors it does not apply. Nothing is drawn for them otherwise, so a
 // mix without CH_LOOP breeds as genome_breed().
 void genome_breed_donors(genome *child, const genome *p1, const genome *p2, const genome *const *donors, uint32_t n,
-                         rng *r, uint32_t core_size, uint32_t max_length, const genome_style *style, const genome_mix *mix,
+                         rng *r, uint32_t core_size, uint32_t max_length, const genome_mix *mix,
                          char *ops, size_t ops_n);
 
 // Text form for the state file: "len start" then 8 numbers per instruction;
