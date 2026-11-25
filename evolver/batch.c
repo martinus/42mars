@@ -66,7 +66,6 @@ typedef struct {
   uint64_t id;
 } candidate;
 
-// Tournament of two: the member with the higher push-off value.
 // Tournament of two members. --parents value: the higher push-off value
 // wins. --parents duel: the one with more points in their match against
 // each other wins (as in YACE, where winners of fights reproduce), a draw

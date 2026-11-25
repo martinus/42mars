@@ -185,9 +185,6 @@ void compute_values1(run *r) {
   pareto_values(r, r->pts1);
 }
 
-// A warrior's average against the panel, points per 100 rounds; a panel
-// warrior's own column does not count.
-
 uint32_t free_slot(const run *r) {
   for (uint32_t i = r->panel_n; i < r->cap; i++)
     if (!r->slot[i]) return i;

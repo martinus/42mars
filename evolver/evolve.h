@@ -294,7 +294,6 @@ static inline m42_score add_scores(m42_score a, m42_score b) {
 static inline uint32_t members(const run *r) { return r->active_n - r->panel_n; }
 
 // A distance to the power alpha (--alpha, 1 by default).
-
 static inline double with_alpha(const run *r, double d) { return r->p.alpha == 1 ? d : pow(d, r->p.alpha); }
 
 // A warrior's average against the panel in a matrix of points per 100 rounds

@@ -238,15 +238,20 @@ static int state_line(run *r, char *line, uint64_t *slot_id, uint32_t *slot_at, 
     if (sscanf(line + 7, "%" SCNu64 " %u %" SCNu64 " %" SCNu64 " %lg %u %u %u %n", &w->id, &w->born,
                &w->parents[0], &w->parents[1], &w->holdout, &w->adjective, &w->noun, &w->earlier, &used) != 8 ||
         w->adjective >= NAME_ADJECTIVES || w->noun >= NAME_NOUNS ||
-        genome_load(w->g, line + 7 + used, p->rules.core_size, 0) != 0)
+        genome_load(w->g, line + 7 + used, p->rules.core_size, 0) != 0) {
+      free_warrior(w); // a member that does not parse is not in a slot
       return -1;
+    }
     w->w = make_warrior(w->g, &p->rules);
     w->origin = w->born; // a state from before the origin has no origin line
     name_text(w->name, sizeof w->name, w->adjective, w->noun, w->earlier);
     uint32_t at = UINT32_MAX;
     for (uint32_t k = 0; k < *slots; k++)
       if (slot_id[k] == w->id) at = slot_at[k];
-    if (at != UINT32_MAX && r->slot[at]) return -1;
+    if (at != UINT32_MAX && r->slot[at]) {
+      free_warrior(w); // its slot is taken
+      return -1;
+    }
     r->slot[at != UINT32_MAX ? at : free_slot(r)] = w;
     *last = w;
   } else if (!strncmp(line, "origin ", 7)) { // after its member line; states before have none
