@@ -96,7 +96,7 @@ waits, go on with the next issue; never build on a guess of the answer.
 
 Read the rule files the change touches first (`.claude/rules/engine.md`, `wasm.md`, `ui.md`, `evolver.md` load when you open matching files). Every new test is proven by the smallest mutation that brings the defect back (`~/gra/CLAUDE.md`, "Making a change"); for C, check that the mutant built (`md5sum` of `42mars.wasm` changed) before reading the result.
 
-If you hand an issue to an agent, its prompt gets the issue's "Done when", and you check the result against it. The agent's report covers what it did, not what it left out.
+If you hand an issue to an agent, its prompt gets the issue's "Done when", and you check the result against it. The agent's report covers what it did, not what it left out. Its brief asks for the test files of the change per commit and the whole suite once at the end (on a loaded machine: CI), and it starts from the `main` it will merge into, so one agent at a time per area: agents that ran whole suites per commit next to each other took 1 to 2.5 hours each, used up the 5-hour token limit, and four parallel branches needed rebases (25th November 2026).
 
 ### 5. Write it down in the same commit
 
@@ -106,7 +106,7 @@ If you hand an issue to an agent, its prompt gets the issue's "Done when", and y
 | `docs/redcode-semantics.md` | any behavior change, and a new early-exit proof (section 3.7) |
 | `.claude/rules/<area>.md` | a rule the next agent needs in that part of the code |
 | `CLAUDE.md` | a way of working, a command, a gotcha that applies everywhere |
-| `docs/plan.md`, `README.md` | speed numbers, test counts, roadmap status |
+| `docs/plan.md`, `README.md` | speed numbers, roadmap status, a new kind of test in the list of `docs/plan.md` |
 
 Grep before adding a rule (`grep -rn <symbol> CLAUDE.md .claude/`): extend the bullet that already covers it.
 
@@ -137,7 +137,7 @@ Issues that ask for runs (a baseline, a new kind of island, a comparison) take
 hours to days of the whole machine. `.claude/rules/evolver.md` has the rules;
 the order of the work:
 
-1. `pgrep -a 42evolve` first. A run already going belongs to Martin or an earlier session: never stop it without asking; the latest `tracking` status says which issue it serves.
+1. `pgrep -a 42evolve` first. A run already going belongs to Martin or an earlier session: never stop it without asking, and never start again a run that stopped (Martin stops runs he no longer needs); the latest `tracking` status says which issue it serves.
 2. Build and merge the code of an experiment (an option, its test, its docs row) as an ordinary PR before the runs start: runs use a binary built from `main`, copied into the scratchpad so a later build does not change it.
 3. Several seeds per arm, started from the same seeds; one experiment on the machine at a time. Start them with a script in the scratchpad (`chrt -i 0 nice -n 19`, a log file, the scores at fixed batches), and wait in the background for the log lines, never with `sleep`.
 4. While runs go, work issues that time nothing: no `perf-experiment`, no A/B timing; tests and code are fine, slower.

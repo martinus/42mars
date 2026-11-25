@@ -26,6 +26,7 @@ import { columnSigmas, paretoFronts, pushoffValues, sdDistance, weakest } from '
 import { kind as styleKind, measureStyle } from '../tools/style.js';
 import { bestRedInfo } from '../tools/progress.js';
 import { builtProgram, prebuilt, program, skip as noCc } from './native.js';
+import { slowdown } from './load.js';
 
 export const root = fileURLToPath(new URL('..', import.meta.url));
 // each test file is its own process, with its own folder
@@ -53,7 +54,7 @@ export const TINY = ['--opponents', join(root, 'warriors/koenigstuhl/tiny'), '--
   '--stage', '0']; // the tests of --stage set it
 
 export function run(dir, args) {
-  const r = spawnSync(evolve, [dir, ...args], { encoding: 'utf8', timeout: 120000 });
+  const r = spawnSync(evolve, [dir, ...args], { encoding: 'utf8', timeout: 120000 * slowdown() });
   assert.equal(r.status, 0, r.stderr);
   return r;
 }

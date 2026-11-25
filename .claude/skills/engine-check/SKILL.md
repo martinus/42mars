@@ -4,7 +4,7 @@ description: Correctness gate for any change to the assembler, the expression ev
 ---
 # Engine check
 
-Setup: `O=${COREWAR_ORACLE:-$HOME/.local/share/corewar-theater}`, `SEED=$(date +%s)` (fresh every time; report it). Steps 1 to 5 are the lines of [gate.txt](gate.txt), about 3 minutes in the background with `in-order.mjs` of this folder; its first lines have the command (CLAUDE.md, "Running long checks"). Add the options under test as lines of a copy.
+Setup: `O=${COREWAR_ORACLE:-$HOME/.local/share/corewar-theater}`, `SEED=$(date +%s)` (fresh every time; report it). Steps 1 to 5 are the lines of [gate.txt](gate.txt), about 3 minutes in the background with `in-order.mjs` of this folder; on a loaded machine (`CLAUDE.md`, "Running long checks") leave out its `npm test`, `make` and pMARS lines without `--pmars-trace`, which CI runs, and report CI's results for them; its first lines have the command (CLAUDE.md, "Running long checks"). Add the options under test as lines of a copy.
 
 1. Builds (anything under `lib/` or the build script changed):
    - `wasm/build.sh && md5sum wasm/42mars.wasm` twice: the sums match. `git status` shows `42mars.wasm` modified exactly when its sources are.
@@ -27,6 +27,6 @@ Setup: `O=${COREWAR_ORACLE:-$HOME/.local/share/corewar-theater}`, `SEED=$(date +
    - C portability: `make test`, `make clean && make CFLAGS='-O2 -std=c11 -pedantic -Wall -Wextra -Werror -DM42_PORTABLE' test`; after pointer or memory changes also `make clean && make CFLAGS='-O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all' test`.
 6. The watch or the glue changed: the `ui-check` skill (`compare.mjs` against main).
 7. Mutation proof for each new test: the smallest change that brings the defect back; for C rebuild and check that `md5sum` of `42mars.wasm` changed; see the test fail for the expected reason; restore, rebuild, `md5sum` back to the original. `node .claude/skills/engine-check/mutate.mjs <mutants.json> [--timeout s] -- <test command>` does that for a list of `{ name, file, old, new }`, rebuilds and checks the md5 for `lib/`, restores, and prints FAILS or SURVIVED per mutant. A mutant whose test stays green: does the test reach the code, and does its fixture tell right from wrong (a paused UI snapshot does not show heat decay, a change in `exec_core()` passes the engine-against-engine comparison). A mutant that shows only `FAILS: exit 1` or a timeout says nothing about the reason: a broken engine made another test of the file hang. Run that mutant again on the one test (`-- sh -c "node --test --test-timeout=40000 --test-name-pattern='<test>' <file> > <scratch>/m.txt 2>&1"`) and read the assertion; `KILLED` means the memory limit, not a result.
-8. Docs: behavior change → semantics doc; speed change → `docs/performance-log.md` (`perf-experiment`); test count → `docs/plan.md`, `README.md`.
+8. Docs: behavior change → semantics doc; speed change → `docs/performance-log.md` (`perf-experiment`); a new kind of test → its topic in the list of `docs/plan.md`.
 
 Report every command with its result line, the seed, each mutation with the observed failure, and every step skipped with the reason.
