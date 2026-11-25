@@ -1649,9 +1649,14 @@ static void statement_line(Asm *a, const Line *line, Stream *s) {
       continue;
     }
     if (d) {
-      // pMARS drops the whole line of a redefined label.
+      // pMARS drops the whole line of a redefined label; one from an EQU
+      // body drops only the body, and the rest of the use-site line is
+      // still read, as after an error there (#208).
       warning(a, c.lineNo, msg3(a, "label '", tok.text, "' redefined, line ignored"));
-      return;
+      const Part *p = cur_part(&c);
+      if (!p || p->space || !p->active) return;
+      c.pos = p->text.n;
+      continue;
     }
     if (a->nPending >= MAX_LABELS) error(a, c.lineNo, msg3(a, "too many labels at '", tok.text, "'"));
     else a->pending[a->nPending++] = tok.text;

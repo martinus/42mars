@@ -231,6 +231,19 @@ test('inputs on which pMARS loops forever are assembled', () => {
 
 // ---- further pMARS behavior found on the way
 
+test('a label redefinition from an EQU body drops only the body; the rest of the line is read', () => {
+  // #208: pMARS warns "Ignored, redefinition of label 'p1'" and goes on after the body
+  assert.deepEqual(asm('p1 dat 0\ne1 equ p1\n e1 dat 5\n'), ['DAT.F #0, $0', 'DAT.F #0, $5']);
+  assert.deepEqual(asm('p1 dat 0\ne1 equ p1\ne1 x dat 5\njmp x\n'), ['DAT.F #0, $0', 'DAT.F #0, $5', 'JMP.B $-1, $0']);
+  // labels before it in the body stay pending: xx is the DAT 5, not discarded
+  const w = assemble('p1 dat 0\ne1 equ xx p1\n e1 dat 5\njmp xx\n');
+  assert.deepEqual(w.instructions.map((i) => formatInstruction(i.op, i.mod, i.aMode, i.aVal, i.bMode, i.bVal, 8000)), ['DAT.F #0, $0', 'DAT.F #0, $5', 'JMP.B $-1, $0']);
+  assert.ok(!w.warnings.some((m) => /discarded/.test(m.text)));
+  assert.equal(assemble('p1 dat 0\ne1 equ p1\n e1 <0\n').ok, false);
+  // without an EQU the whole line goes, as before
+  assert.deepEqual(asm('p1 dat 0\n p1 dat 5\n'), ['DAT.F #0, $0']);
+});
+
 test('a label or EQU value of pass 2 stays apart from a number before it', () => {
   assert.equal(assemble('dat #2x\nx dat 0\n').ok, false);
   assert.equal(assemble('org 2x\nx dat 0\n').ok, false);
