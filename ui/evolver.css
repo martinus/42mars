@@ -186,6 +186,7 @@ body.with-side .bar { grid-column: 1 / -1; }
 .side .dot.on { background: #5dff9a; }
 .side li.stopped .nm { color: var(--muted); }
 .side li.side-part { margin: 8px 6px 3px; padding-top: 6px; border-top: 1px solid var(--line); color: #565c76; font: 9px var(--sans); text-transform: uppercase; letter-spacing: 0.06em; }
+.side li.side-part.side-first { margin-top: 2px; padding-top: 0; border-top: 0; }
 .side-foot { padding: 6px 10px 9px; color: #565c76; font: 10px var(--sans); border-top: 1px solid var(--line); }
 @media (max-width: 1100px) { body.with-side { grid-template-columns: 150px minmax(0, 1fr); } }
 

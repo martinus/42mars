@@ -18,7 +18,11 @@
 // A folder of islands (42evolve --islands) given to --run stands for all its
 // islands, each named <folder>/island-NN.
 // --run takes every folder up to the next option, so `--run ~/42evolve.*`
-// works.
+// works. --watch <path prefix> adds every folder whose path starts with it,
+// so `--watch ~/42evolve.` serves all runs, also those started later.
+// The folders are looked at again at every /runs: a run started after the
+// server, and the islands of a folder that got its islands.txt later, are
+// added at the end of the list (the numbers of the others stay).
 //
 // A run's history longer than COMPACT_FROM bytes goes out compacted (not
 // with --full): without the warriors that left (their enter, complete,
@@ -37,15 +41,16 @@ import { createReadStream, existsSync, readdirSync } from 'node:fs';
 import { createInterface } from 'node:readline';
 import { createServer } from 'node:http';
 import { open, readFile, stat } from 'node:fs/promises';
-import { basename, extname, join, normalize, resolve } from 'node:path';
+import { basename, dirname, extname, join, normalize, resolve } from 'node:path';
 import { bestRedInfo, kindCounts, progressPoint } from './progress.js';
 
 const root = resolve(new URL('..', import.meta.url).pathname);
 const usage = (why) => {
-  console.error(`${why}\nusage: node tools/serve.mjs [port] [--full] [--run <folder of a 42evolve run> ...]`);
+  console.error(`${why}\nusage: node tools/serve.mjs [port] [--full] [--run <folder of a 42evolve run> ...] [--watch <path prefix> ...]`);
   process.exit(2);
 };
-const runDirs = [];
+const runDirs = []; // the runs, numbered in the order they were found; only added to
+const given = [], prefixes = []; // --run, --watch
 let portArg = null, full = false;
 const COMPACT_FROM = Number(process.env.SERVE_COMPACT_FROM ?? 16 << 20); // the tests set it lower
 const KEEP_BATCHES = Number(process.env.SERVE_KEEP_BATCHES ?? 100); // the batch events that go out as they are
@@ -54,7 +59,10 @@ for (const args = process.argv.slice(2); args.length;) {
   const a = args.shift();
   if (a === '--run') {
     if (!args.length || args[0].startsWith('-')) usage('--run needs the folder of a run');
-    while (args.length && !args[0].startsWith('-')) runDirs.push(resolve(args.shift()));
+    while (args.length && !args[0].startsWith('-')) given.push(resolve(args.shift()));
+  } else if (a === '--watch') {
+    if (!args.length || args[0].startsWith('-')) usage('--watch needs the start of the folders\' paths, e.g. ~/42evolve.');
+    while (args.length && !args[0].startsWith('-')) prefixes.push(args[0].endsWith('/') ? `${resolve(args.shift())}/` : resolve(args.shift()));
   } else if (a === '--full') {
     full = true;
   } else if (a.startsWith('-')) {
@@ -67,23 +75,37 @@ for (const args = process.argv.slice(2); args.length;) {
 }
 const port = Number(portArg ?? process.env.PORT ?? 8000);
 if (!Number.isInteger(port) || port < 0 || port > 65535) usage(`not a port: '${portArg ?? process.env.PORT}'`);
-// a folder of islands (42evolve --islands: islands.txt, island-01, ...) stands for its islands
+// A folder of islands (42evolve --islands: islands.txt, island-01, ...) stands
+// for its islands. It makes islands.txt and its island folders after the
+// pick, about a minute after it starts (islands.jsonl comes first): until
+// then it is not listed, else it would be a run that never shows anything
+// (#189). A folder given to --run that has nothing yet is listed as it is,
+// a folder of --watch once it has events.jsonl or islands.txt.
 const ISLAND = /^island-(\d+)$/;
-for (let i = 0; i < runDirs.length; i++) {
-  if (!existsSync(join(runDirs[i], 'islands.txt'))) continue;
-  const islands = readdirSync(runDirs[i]).filter((n) => ISLAND.test(n)).sort().map((n) => join(runDirs[i], n));
-  runDirs.splice(i, 1, ...islands);
-  i += islands.length - 1;
+function runsOf(dir, watched) {
+  if (existsSync(join(dir, 'islands.txt'))) return readdirSync(dir).filter((n) => ISLAND.test(n)).sort().map((n) => join(dir, n));
+  if (existsSync(join(dir, 'islands.jsonl'))) return [];
+  return !watched || existsSync(join(dir, 'events.jsonl')) ? [dir] : [];
 }
+// The folders of --run and --watch as they are now; new runs at the end of runDirs.
+function findRuns() {
+  const dirs = given.flatMap((d) => runsOf(d, false));
+  for (const p of prefixes) {
+    const parent = p.endsWith('/') ? p : dirname(p), start = p.endsWith('/') ? '' : basename(p);
+    let names = [];
+    try {
+      names = readdirSync(parent, { withFileTypes: true }).filter((e) => e.isDirectory() && e.name.startsWith(start)).map((e) => e.name).sort();
+    } catch {} // a parent that is not there (yet)
+    for (const n of names) dirs.push(...runsOf(join(parent, n), true));
+  }
+  for (const d of dirs) if (!runDirs.includes(d)) runDirs.push(d);
+}
+findRuns();
 // the name of a run: its folder, an island with the folder of its islands before it
 const runName = (dir) => (ISLAND.test(basename(dir)) ? `${basename(resolve(dir, '..'))}/${basename(dir)}` : basename(dir));
-// A run of islands makes islands.txt and its island folders after the pick,
-// about a minute after it starts: a server started before lists the folder as
-// one run that never shows anything (#189).
-for (const dir of runDirs) {
-  if (!existsSync(join(dir, 'events.jsonl'))) {
-    console.error(`${dir} has no events.jsonl yet; the dashboard shows the run once 42evolve writes it. A run of islands is listed by its islands once islands.txt is there: start this server again then`);
-  }
+for (const dir of given) {
+  if (!runsOf(dir, false).length) console.error(`${dir}: a run of islands without islands.txt yet; the dashboard lists its islands once 42evolve writes it`);
+  else if (!existsSync(join(dir, 'islands.txt')) && !existsSync(join(dir, 'events.jsonl'))) console.error(`${dir} has no events.jsonl yet; the dashboard shows the run once 42evolve writes it`);
 }
 const runDir = runDirs[0] ?? null;
 const types = {
@@ -320,6 +342,7 @@ async function summary(dir) {
 // applies to the folder: its newest write against its slowest last batch.
 // An island the score dropped (0 in the live line of islands.txt) has stopped.
 async function runList() {
+  findRuns();
   const cs = await Promise.all(runDirs.map(summary));
   const folder = (dir) => (ISLAND.test(basename(dir)) ? resolve(dir, '..') : dir);
   const last = new Map(); // folder -> { mtimeMs, seconds }
@@ -347,6 +370,7 @@ createServer(async (req, res) => {
   const path = decodeURIComponent(url.pathname);
   const run = /^\/run(?:\/(\d+))?\/events$/.exec(path);
   if (run) {
+    if (Number(run[1] ?? 0) >= runDirs.length) findRuns(); // a run that started since the last /runs
     const dir = runDirs[Number(run[1] ?? 0)];
     if (!dir) {
       res.writeHead(404).end('no such run: node tools/serve.mjs --run <folder> ...');
@@ -357,6 +381,7 @@ createServer(async (req, res) => {
     return;
   }
   if (path === '/runs/events') {
+    findRuns();
     eventStream(res);
     runDirs.forEach((dir, i) => follow(req, dir, (event, data) => res.write(sse(event, `${i} ${data}`))));
     return;
@@ -385,12 +410,12 @@ createServer(async (req, res) => {
   }
 }).on('error', (e) => {
   if (e.code !== 'EADDRINUSE') throw e;
-  console.error(`port ${port} is in use, by another server${runDir ? '' : ' (another serve.mjs?)'}: start this one on another port, e.g.\n  node ${process.argv[1]} ${port + 1}${runDirs.length ? ` --run ${runDirs.join(' ')}` : ''}`);
+  console.error(`port ${port} is in use, by another server${runDir ? '' : ' (another serve.mjs?)'}: start this one on another port, e.g.\n  node ${process.argv[1]} ${port + 1}${given.length ? ` --run ${given.join(' ')}` : ''}${prefixes.length ? ` --watch ${prefixes.join(' ')}` : ''}`);
   process.exit(1);
 }).listen(port, '127.0.0.1', () => {
   console.log(`Core War Theater: http://127.0.0.1:${port}/`);
-  if (runDirs.length === 1) console.log(`evolver dashboard of ${runDirs[0]}: http://127.0.0.1:${port}/ui/evolver.html`);
-  if (runDirs.length > 1) {
+  if (runDirs.length === 1 && !prefixes.length) console.log(`evolver dashboard of ${runDirs[0]}: http://127.0.0.1:${port}/ui/evolver.html`);
+  else if (runDirs.length || prefixes.length) {
     console.log(`evolver dashboard of ${runDirs.length} runs, a list on the left to switch: http://127.0.0.1:${port}/ui/evolver.html`);
     console.log(`all ${runDirs.length} runs side by side: http://127.0.0.1:${port}/ui/runs.html`);
   }

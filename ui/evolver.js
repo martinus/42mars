@@ -1640,7 +1640,9 @@ function renderRuns() {
       `best.red ${x.holdout === null ? 'not yet' : `${score} against the holdout${age === null ? '' : `, found ${fmtInt(age)} batches ago (batch ${fmtInt(x.bestBatch)})`}`}`,
       ...(x.running ? [] : ['stopped: no events for 3 batch times']),
     ].join(' · ');
-    const head = i === running && running > 0 ? `<li class="side-part">stopped · ${ordered.length - running}</li>` : '';
+    // two parts, each with its heading, also when one is empty: the running runs, then the stopped ones
+    const head = (i === 0 ? `<li class="side-part side-first">running · ${running || 'none'}</li>` : '')
+      + (i === running ? `<li class="side-part">stopped · ${ordered.length - running}</li>` : '');
     return `${head}<li class="${x.running ? '' : 'stopped'}"><button data-run="${x.index}" class="${x.index === current ? 'on' : ''}" title="${title}">`
       + `<i class="dot${x.running ? ' on' : ''}"></i><span class="nm">${esc(shortName(x.name))}</span><span class="sb">${batch}</span>`
       + `<span class="ag">${age === null ? '' : fmtInt(age)}</span><span class="sc" style="color:${runColor(x.holdout, lo, hi)}">${score}</span></button></li>`;
