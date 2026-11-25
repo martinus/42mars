@@ -233,7 +233,7 @@ const char *genome_change_name(int kind) {
   static const char *const names[CH_ALL] = {
       "opcode", "modifier", "a-mode", "b-mode", "a-operand", "b-operand", "org", "replace", "insert", "delete",
       "duplicate", "move", "crossover-insert", "crossover-replace", "related-opcode", "related-mode", "shared-constant",
-      "tune", "random-loop", "repeat", "count", "fold", "unroll", "index", "expression", "constant", "extract", "parameter", "call", "inline",
+      "tune", "random-loop", "shared-target", "repeat", "count", "fold", "unroll", "index", "expression", "constant", "extract", "parameter", "call", "inline",
       "transplant"};
   return kind >= 0 && kind < CH_ALL ? names[kind] : "?";
 }
@@ -402,6 +402,15 @@ int genome_change(genome *x, const genome *p2, rng *r, uint32_t core, uint32_t m
       if (from >= to) from++;
       const uint32_t v = *operand_at(x, at[from]);
       *operand_at(x, at[to]) = rng_below(r, 2) ? v : wrap(-(int64_t)v, core);
+      return 1;
+    }
+    case CH_SHARED_TARGET: { // as CH_SHARED, the value plus the distance from its instruction to the other one
+      const uint32_t fn = far_operands(x, core, at);
+      if (fn < 2) return 0;
+      const uint32_t to = rng_below(r, fn);
+      uint32_t from = rng_below(r, fn - 1);
+      if (from >= to) from++;
+      *operand_at(x, at[to]) = wrap((int64_t)*operand_at(x, at[from]) + at[from] / 2 - at[to] / 2, core);
       return 1;
     }
     case CH_TUNE: {

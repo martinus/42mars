@@ -90,6 +90,7 @@ enum {
   CH_SHARED,         // a far value set to another far value of the warrior, or its negative
   CH_TUNE,           // a far value moved by up to 2% of its size (at least 4)
   CH_LOOP,           // 2 to 5 new instructions, the last one a jump back to the first (#201)
+  CH_SHARED_TARGET,  // a far value that points at the cell another far value points at (#172)
   CH_COUNT,          // the kinds of a list
   // The kinds that make and change the structure of a generator
   // (gen-change.h); on a list they do not apply.

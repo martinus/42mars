@@ -68,7 +68,7 @@ static void usage(void) {
           "         [--screen-members N] [--screen-stop z | --screen-check z] [--stage N (screen rounds; 0 none)]\n"
           "         [--fill | --no-fill] [--panel-rounds N] [--diversity all|panel] [--average all|panel]\n"
           "         [--member-games all|none] [--pushoff value|pareto|pareto-sd] [--clear R] [--positions mirror|pmars]\n"
-          "         [--genome list|gen] [--min-length N] [--tie-points t]\n"
+          "         [--genome list|gen] [--min-length N] [--tie-points t] [--parsimony]\n"
           "         [--islands N [--select-after B [--keep K]] [--score-rounds R] [--migrate M [--migrate-pick best|random]\n"
           "           [--migrate-to all|random]] [--island-variant \"options\" ...] [--island-panels shared|own] [--explorers K]]\n"
           "         [--size 8000] [--cycles 80000] [--processes 8000] [--length 100] [--distance 100]\n"
@@ -333,6 +333,11 @@ static int parse_cli(int argc, char **argv, cli *c) {
     if (!strcmp(a, "--fill") || !strcmp(a, "--no-fill")) { // the options without a value
       c->p.fill = !strcmp(a, "--fill");
       c->fill_given = 1;
+      c->new_options = 1;
+      continue;
+    }
+    if (!strcmp(a, "--parsimony")) {
+      c->p.parsimony = 1;
       c->new_options = 1;
       continue;
     }

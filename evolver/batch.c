@@ -807,8 +807,42 @@ static void name_newcomer(run *r, warrior *w, const candidate *x, uint32_t s) {
   name_text(w->name, sizeof w->name, w->adjective, w->noun, w->earlier);
 }
 
+// --parsimony (#172, from RedRace): the newcomer in slot s and a member are
+// twins when every game both played with the same seeds ended alike: against
+// each panel warrior, and against each member that was in when the member
+// entered (it played those with their seeds, as the newcomer does; the
+// games of the two against each other do not count). Every match uses the
+// seed of its opponent, so the results compare exactly: the same wins,
+// losses and ties. Of a newcomer and its twins, the longest twin leaves when
+// the newcomer is shorter than it, else the newcomer: returns the slot that
+// leaves, and *stays the id of the one that stays; UINT32_MAX for no twin.
+// Several twins are rare: two members are no twins of each other, unless
+// members left that told them apart when the second one entered.
+static uint32_t parsimony_leaves(const run *r, uint32_t s, uint64_t *stays) {
+  const uint32_t cap = r->cap;
+  uint32_t longest = UINT32_MAX;
+  for (uint32_t i = r->panel_n; i < r->active_n; i++) {
+    const uint32_t m = r->active[i];
+    if (m == s) continue;
+    const uint64_t id = r->slot[m]->id;
+    int twin = 1;
+    for (uint32_t k = 0; k < r->active_n && twin; k++) {
+      const uint32_t o = r->active[k];
+      if (o == s || o == m || (o >= r->panel_n && (r->p.member_games_none || r->slot[o]->id > id))) continue;
+      const m42_score a = r->wlt[s * cap + o], b = r->wlt[m * cap + o];
+      twin = a.wins == b.wins && a.losses == b.losses && a.ties == b.ties;
+    }
+    if (twin && (longest == UINT32_MAX || r->slot[m]->g->len > r->slot[longest]->g->len)) longest = m;
+  }
+  if (longest == UINT32_MAX) return UINT32_MAX;
+  const int newcomer_leaves = r->slot[s]->g->len >= r->slot[longest]->g->len;
+  *stays = r->slot[newcomer_leaves ? longest : s]->id;
+  return newcomer_leaves ? s : longest;
+}
+
 // After survivor i entered in slot s as w: the push-off when the list is
-// over --list; who leaves goes into the archive, unless it is w.
+// over --list, or with --parsimony the longer of two twins; who leaves goes
+// into the archive, unless it is w.
 static void push_off(run *r, batch *b, uint32_t i, uint32_t s, const warrior *w) {
   const params *p = &r->p;
   // --stage: first the push-off on everyone's first-stage results, the same
@@ -824,14 +858,16 @@ static void push_off(run *r, batch *b, uint32_t i, uint32_t s, const warrior *w)
     }
     if (!early) complete_one(r, s);
   }
-  if (members(r) > p->list) {
+  uint64_t stays = NO_ID;
+  const uint32_t twin_out = p->parsimony && !early ? parsimony_leaves(r, s, &stays) : UINT32_MAX;
+  if (members(r) > p->list || twin_out != UINT32_MAX) {
     if (!early) compute_values(r);
     // an early leave is the newcomer, also when another one is weaker on
     // the first stage (it may be a member that is unlucky in those rounds)
-    const int k = early ? (int)value_of(r, s) : pushoff_weakest(r->values, r->active_n, r->keep);
+    const int k = early ? (int)value_of(r, s) : twin_out != UINT32_MAX ? (int)value_of(r, twin_out) : pushoff_weakest(r->values, r->active_n, r->keep);
     const uint32_t out = r->values[k].index;
     warrior *gone = r->slot[out];
-    event_leave(r, &r->values[k], early);
+    event_leave(r, &r->values[k], early, stays);
     if (gone->id == w->id) b->entered--;
     else {
       r->archive[r->archive_next] = *gone->g;

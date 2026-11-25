@@ -279,6 +279,21 @@ static uint32_t far_numbers(gen *x, const shape *sh, uint32_t core, uint32_t **a
   return n;
 }
 
+// The far fields of x, for shared-target: the operands of its live
+// instructions that are one number more than 16 away from 0, and the line of
+// each. On a generator without structure those of the list, in its order.
+static uint32_t far_fields(gen *x, const shape *sh, uint32_t core, uint32_t **at, uint32_t *line) {
+  uint32_t n = 0;
+  for (uint32_t i = 0; i < x->n; i++) {
+    gen_line *l = &x->l[i];
+    if (l->kind != GL_EMIT || !sh->live[i]) continue;
+    for (int k = 0; k < 2; k++)
+      if (l->x[k].n == 1 && l->x[k].kind[0] == GT_NUM && abs(signed_value(l->x[k].v[0], core)) > 16)
+        line[n] = i, at[n++] = &l->x[k].v[0];
+  }
+  return n;
+}
+
 // An operand changed as genome_mutate_operand() changes one of a list: one
 // of its numbers or labels. The other parts of an expression stay.
 static int change_operand(gen *x, uint32_t line, int k, rng *r, uint32_t core, uint32_t max_length) {
@@ -1448,6 +1463,19 @@ int gen_change(gen *x, const gen *p2, rng *r, uint32_t core, uint32_t max_length
       if (keeps(x, core, max_length)) return 1;
       *at[to] = old; // an argument that is a count: the warrior would not be whole
       return 0;
+    }
+    case CH_SHARED_TARGET: { // the cell of another far field: its value plus the distance between the two instructions
+      uint32_t *at[2 * GEN_LINES], line[2 * GEN_LINES];
+      const uint32_t fn = far_fields(x, &sh, core, at, line);
+      if (fn < 2) return 0;
+      const uint32_t to = rng_below(r, fn);
+      uint32_t from = rng_below(r, fn - 1);
+      if (from >= to) from++;
+      gen_info info; // where the lines are: their first instance, in a repeat or a function
+      m42_instruction code[GEN_LINES];
+      gen_compile_info(x, core, max_length, code, &info);
+      *at[to] = wrap((int64_t)*at[from] + info.pos[line[from]] - info.pos[line[to]], core);
+      return 1;
     }
     case CH_TUNE: {
       uint32_t *at[2 * GEN_TOKENS * GEN_LINES];

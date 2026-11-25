@@ -26,7 +26,7 @@ after(cleanup);
 
 // every kind of change of a list, the four small steps too
 const ALL = 'opcode=81,modifier=81,a-mode=54,b-mode=54,a-operand=108,b-operand=108,org=27,replace=27,insert=100,delete=100,duplicate=70,move=70,'
-  + 'crossover-insert=60,crossover-replace=60,related-opcode=40,related-mode=40,shared-constant=40,tune=40,random-loop=40';
+  + 'crossover-insert=60,crossover-replace=60,related-opcode=40,related-mode=40,shared-constant=40,tune=40,random-loop=40,shared-target=40';
 const ARGS = [...TINY, '--changes', ALL];
 // a run without what only a run on generators has
 const STRUCTURE = ['repeat', 'count', 'fold', 'unroll', 'index', 'expression', 'constant', 'extract', 'parameter', 'call', 'inline', 'transplant'];
@@ -126,11 +126,11 @@ test('--genome gen: start warriors, what it refuses, and a state from before it'
   // a state without the field (written before --genome) is a run on lists
   const file = join(tmp, 'start-list', 'state.txt');
   const state = readFileSync(file, 'latin1');
-  const old = state.replace(/^(params .*) 0 0 0 1$/m, '$1'); // and without --refactor, --min-length and --tie-points
+  const old = state.replace(/^(params .*) 0 0 0 1 0$/m, '$1'); // and without --refactor, --min-length, --tie-points and --parsimony
   assert.notEqual(old, state);
   writeFileSync(file, old, 'latin1');
   run(join(tmp, 'start-list'), ['--threads', '2', '--batches', '1']);
-  assert.match(readFileSync(file, 'latin1'), /^params .* 0 0 0 1$/m);
+  assert.match(readFileSync(file, 'latin1'), /^params .* 0 0 0 1 0$/m);
   assert.ok(events(join(tmp, 'start-list')).every((e) => !('gen' in e)));
 });
 
