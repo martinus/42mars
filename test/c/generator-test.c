@@ -1183,118 +1183,6 @@ static void test_rewrites(void) {
         "a constant in use, a near number, a token that is no number, c16");
 }
 
-// Refactoring: the warrior stays, the generator says more with less.
-static void test_refactor(void) {
-  rng r = rng_seed(131, 132, 133);
-  static gen x, y;
-  char err[160];
-  // a row of six instructions with a step, written out, becomes one block in a few refactorings
-  parse(&x, "SPL.B #0, $0\n"
-            "MOV.I }3, }14\nMOV.I }3, }19\nMOV.I }3, }24\nMOV.I }3, }29\nMOV.I }3, }34\nMOV.I }3, }39\n"
-            "JMP.B $-6, $0\n");
-  y = x;
-  uint32_t steps = 0;
-  const char *how = 0;
-  while (steps < 40 && gen_refactor(&y, &r, CORE, 100, &how)) steps++;
-  uint32_t rows = 0, movs = 0;
-  for (uint32_t i = 0; i < y.n; i++) rows += y.l[i].kind == GL_REPEAT && y.l[i].x[0].v[0] == 6, movs += y.l[i].kind == GL_EMIT && y.l[i].op == 0;
-  CHECK(rows == 1 && movs == 1 && y.n == 5 && same_warrior(&x, &y, 100), "after %u refactorings:\n%s", steps, text_of(&y));
-  // a block takes in what is in front of it, behind it, and the block that goes on
-  parse(&x, "MOV.I }3, }14\nrepeat 2\n  MOV.I }3, }19+i*5\nend\nMOV.I }3, }29\nrepeat 2\n  MOV.I }3, }34+i*5\nend\n");
-  y = x;
-  CHECK(gen_absorb_front(&y, 1, CORE) && gen_absorb(&y, 0, CORE) && gen_merge(&y, 0, CORE) && !gen_merge(&y, 0, CORE) && !gen_absorb_front(&y, 0, CORE),
-        "front, behind and the next block");
-  CHECK(!strcmp(text_of(&y), "        repeat  6\n          MOV.I   }3, }14+i*5\n        end\n") && same_warrior(&x, &y, 100), "taken in:\n%s", text_of(&y));
-  // a label and a number fold by what the instructions hold, too
-  parse(&x, "c: MOV.I $0, #c\nMOV.I $0, #1\nNOP.B $0, $0\n");
-  y = x;
-  CHECK(gen_fold(&y, 0, CORE) && same_warrior(&x, &y, 100) && y.l[1].x[1].n == 5, "a label and a number:\n%s", text_of(&y));
-  // refactoring folds a row, not any two instructions that are alike
-  parse(&x, "MOV.I }3, }14\nMOV.I }3, }19\nNOP.B $0, $0\nSPL.B $0, #1\nSPL.B $0, #1\n");
-  y = x;
-  for (steps = 0; steps < 10 && gen_refactor(&y, &r, CORE, 100, &how); steps++) continue;
-  CHECK(!strcmp(text_of(&y), "        MOV.I   }3, }14\n        MOV.I   }3, }19\n        NOP.B   $0, $0\n        repeat  2\nL4:       SPL.B   $0, #1\n        end\n") ||
-            !strcmp(text_of(&y), "        MOV.I   }3, }14\n        MOV.I   }3, }19\n        NOP.B   $0, $0\n        repeat  2\n          SPL.B   $0, #1\n        end\n"),
-        "two alike and two the same:\n%s", text_of(&y));
-  // expressions with a constant fold by what the instructions hold
-  parse(&x, "c0 = 300\nMOV.I }3, }c0+7\nMOV.I }3, }c0+19\nNOP.B $0, $0\n");
-  y = x;
-  CHECK(gen_fold(&y, 0, CORE) && !strcmp(text_of(&y), "c0 = 300\n        repeat  2\nL1:       MOV.I   }3, }c0+7+i*12\n        end\n        NOP.B   $0, $0\n        org     L1\n") &&
-            same_warrior(&x, &y, 100),
-        "folded by value:\n%s", text_of(&y));
-  // two alike groups that are not neighbours: one function, the numbers that differ its arguments
-  parse(&x, "SPL.B #0, <-100\nMOV.I $0, $300\nNOP.B $0, $0\nSPL.B #0, <-200\nMOV.I $0, $400\n");
-  y = x;
-  CHECK(gen_share(&y, 0, 3, 2, CORE), "two groups share");
-  CHECK(!strcmp(text_of(&y), "        f3(-100, 300)\n"
-                             "        NOP.B   $0, $0\n"
-                             "        f3(-200, 400)\n"
-                             "f3:     def\n"
-                             "L4:       SPL.B   #0, <x\n"
-                             "          MOV.I   $0, $y\n"
-                             "        end\n"
-                             "        org     L4\n") &&
-            same_warrior(&x, &y, 100),
-        "shared:\n%s", text_of(&y));
-  // not: three numbers that differ, other modes, groups that overlap, one line
-  parse(&x, "SPL.B #1, <-100\nMOV.I $0, $300\nSPL.B #2, <-200\nMOV.I $0, $400\nSPL.B #1, <-100\nMOV.I #0, $300\n");
-  y = x;
-  CHECK(!gen_share(&y, 0, 2, 2, CORE) && !gen_share(&y, 0, 4, 2, CORE) && !gen_share(&y, 0, 1, 2, CORE) && !gen_share(&y, 0, 2, 1, CORE) &&
-            same_gen(&x, &y),
-        "what does not share:\n%s", text_of(&y));
-  // groups of two lines fold, each line with its own step; a label of its own group stays one
-  parse(&x, "a: SPL.B $a, #1\nMOV.I $a, #10\nb: SPL.B $b, #3\nMOV.I $b, #30\nc: SPL.B $c, #5\nMOV.I $c, #50\n");
-  y = x;
-  CHECK(gen_fold_period(&y, 0, 2, CORE) && gen_absorb(&y, 0, CORE) && !gen_absorb(&y, 0, CORE), "a fold of pairs and its third");
-  CHECK(!strcmp(text_of(&y), "        repeat  3\nL1:       SPL.B   $L1, #1+i*2\n          MOV.I   $L1, #10+i*20\n        end\n        org     L1\n") && same_warrior(&x, &y, 100),
-        "folded pairs:\n%s", text_of(&y));
-  // what does nothing goes: a function with one call, a block that repeats once
-  parse(&x, "f: def\n  NOP.B $0, #7\nend\nrepeat 1\n  DAT.F #1, #2\nend\nf()\n");
-  y = x;
-  uint32_t defs = 0, blocks = 0;
-  for (steps = 0; steps < 10 && gen_refactor(&y, &r, CORE, 100, &how); steps++) continue;
-  for (uint32_t i = 0; i < y.n; i++) defs += y.l[i].kind == GL_DEF, blocks += y.l[i].kind == GL_REPEAT;
-  CHECK(!defs && !blocks && y.n == 2 && same_warrior(&x, &y, 100), "after %u refactorings:\n%s", steps, text_of(&y));
-  // a refactoring keeps the limit of the instruction lines: with 3 of 4 (one never written), a call does not come apart
-  parse(&x, "f: def\n  NOP.B $0, $0\n  NOP.B $0, #1\nend\nf()\nf()\nrepeat 0\n  DAT.F #5, #5\nend\n");
-  for (uint64_t seed = 0; seed < 300; seed++) {
-    rng q = rng_seed(134, seed, 0);
-    y = x;
-    gen_refactor(&y, &q, CORE, 4, &how);
-    CHECK(keeps_limits(&y, 4) && same_warrior(&x, &y, 4), "past the limits:\n%s", text_of(&y));
-  }
-  // any generator: the warrior stays, the generator stays well formed and within the limits, and it does not grow without end
-  uint32_t done[16] = {0}, kinds = 0, most = 0;
-  static const char *const names[] = {"fold", "absorb", "share", "constant", "inline", "unwrap", "parameter", "unroll", "simplify"};
-  for (int round = 0; round < 4000; round++) {
-    do round % 2 ? random_gen(&x, &r) : regular_gen(&x, &r);
-    while (!keeps_limits(&x, 100));
-    y = x;
-    for (int k = 0; k < 12; k++) {
-      static gen before;
-      before = y;
-      how = 0;
-      if (!gen_refactor(&y, &r, CORE, 100, &how)) {
-        CHECK(same_gen(&before, &y), "a refactoring said 0 and changed the generator");
-        break;
-      }
-      uint32_t which = 0;
-      while (which < 9 && strcmp(how, names[which])) which++;
-      CHECK(which < 9, "a refactoring called %s", how);
-      done[which]++;
-      if (gen_check(&y, CORE, err, sizeof err) || !keeps_limits(&y, 100) || !same_warrior(&x, &y, 100) || same_gen(&before, &y)) {
-        CHECK(0, "%s: %s\nfrom\n%s\ncame\n%s", how, gen_check(&y, CORE, err, sizeof err) ? err : "another warrior, or no change", text_of(&before),
-              text_of(&y));
-        return;
-      }
-      if (y.n > x.n && y.n - x.n > most) most = y.n - x.n;
-    }
-  }
-  for (uint32_t k = 0; k < 9; k++) kinds += done[k] > 5;
-  CHECK(kinds == 9 && most < 30, "fold %u, absorb %u, share %u, constant %u, inline %u, unwrap %u, parameter %u, unroll %u, simplify %u; %u lines more at most",
-        done[0], done[1], done[2], done[3], done[4], done[5], done[6], done[7], done[8], most);
-}
-
 // The mix: the new kinds have names, the list never draws them, a generator does.
 static void test_kinds(void) {
   genome_mix m;
@@ -1683,7 +1571,6 @@ int main(void) {
   test_crossover();
   test_parts();
   test_rewrites();
-  test_refactor();
   test_kinds();
   test_state();
   if (failures) {

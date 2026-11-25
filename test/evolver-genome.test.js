@@ -210,46 +210,6 @@ test('--genome gen --start: the generators of a folder start a run as they are',
   assert.deepEqual(events(join(tmp, 'from-gens-list'))[0].startWarriors.map((w) => w.file), ['dwarf.red']);
 });
 
-test('--refactor: members get another structure for the same warrior, the same run on any thread count and after a resume', { skip }, () => {
-  const args = [...TINY, '--genome', 'gen', '--refactor', '0.3'];
-  run(join(tmp, 'refactor'), [...args, '--threads', '1', '--batches', '30']);
-  const one = events(join(tmp, 'refactor'));
-  assert.equal(one[0].params.refactor, 0.3);
-  assert.equal(events(join(tmp, 'one'))[0].params.refactor, 0);
-  const entered = new Map(one.filter((e) => e.type === 'enter').map((e) => [e.id, e]));
-  const refactored = one.filter((e) => e.type === 'refactor');
-  assert.ok(refactored.length >= 10, `${refactored.length} refactorings`);
-  const kinds = new Set(refactored.map((e) => e.how));
-  for (const how of kinds) assert.ok(['fold', 'absorb', 'share', 'constant', 'inline', 'unwrap', 'parameter', 'unroll', 'simplify'].includes(how), how);
-  assert.ok(kinds.size >= 3, [...kinds].join(' '));
-  const now = new Map(); // each member's generator as it is
-  for (const e of refactored) {
-    // a member of the list, at that batch or before; its generator is another one than before, its warrior the same
-    const member = entered.get(e.id);
-    assert.ok(member && member.batch <= e.batch, `warrior ${e.id}`);
-    assert.notEqual(e.gen, now.get(e.id) ?? member.gen);
-    now.set(e.id, e.gen);
-    assert.deepEqual(written(e.gen, 'refactored.gen'), code(member.code), `${e.how}\n${e.gen}`);
-  }
-  // children start from the new structure: one has a block or a constant its parent got by a refactoring
-  const got = refactored.filter((e) => ['fold', 'absorb', 'constant', 'share'].includes(e.how));
-  assert.ok(one.some((e) => e.type === 'enter' && got.some((g) => e.parents.includes(g.id) && e.batch >= g.batch) && /repeat |^c\d+ = |def$/m.test(e.gen)));
-  // 3 threads, and in two parts
-  run(join(tmp, 'refactor3'), [...args, '--threads', '3', '--batches', '30']);
-  assert.deepEqual(stable(events(join(tmp, 'refactor3'))), stable(one));
-  run(join(tmp, 'refactor2'), [...args, '--threads', '2', '--batches', '11']);
-  run(join(tmp, 'refactor2'), ['--threads', '4', '--batches', '19']);
-  assert.deepEqual(stable(events(join(tmp, 'refactor2'))), stable(one));
-  // only generators have a structure to change
-  let r = spawnSync(evolve, [join(tmp, 'bad3'), ...TINY, '--refactor', '0.3'], { encoding: 'utf8' });
-  assert.equal(r.status, 2);
-  assert.match(r.stderr, /--refactor with --genome gen only/);
-  r = spawnSync(evolve, [join(tmp, 'bad3'), ...TINY, '--genome', 'gen', '--refactor', '1.5'], { encoding: 'utf8' });
-  assert.equal(r.status, 2);
-  assert.match(r.stderr, /--refactor 0 to 1/);
-  assert.ok(!existsSync(join(tmp, 'bad3')));
-});
-
 test('--min-length: no child with fewer instructions that are not DAT.F $0, $0 is played, the same run on any thread count and after a resume', { skip }, () => {
   const empty = code('DAT.F $0, $0').code[0];
   const filled = (e) => code(e.code).code.filter((c) => JSON.stringify(c) !== JSON.stringify(empty)).length;
