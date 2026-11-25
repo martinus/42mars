@@ -65,8 +65,8 @@ export const stable = (evs) => evs.filter((e) => e.type !== 'speed' && e.type !=
 
 // The tiny hill with its own limit of 8000 cycles: in the short runs of the
 // tests some things happen only with the longer rounds (children of a new
-// family, more than one kind of style, enough duels between parents, a niche
-// that keeps a member, both of two Dwarfs as start warriors).
+// family, more than one kind of style, enough duels between parents, both of
+// two Dwarfs as start warriors).
 export const CLASSIC = [...without(TINY, '--cycles'), '--cycles', '8000'];
 export const RULES_CLASSIC = { ...RULES, maxCycles: 8000 };
 let classicEvents = null;
@@ -155,26 +155,7 @@ export function checkValues(evs) {
   const played = new Map(); // "a,b" -> rounds of that result
   const slots = start.panel.map((w) => w.id);
   const panel = new Set(slots); // the panel now
-  let checked = 0, duels = 0, lastValues = new Map(), parentDistances = 0, pushoffs = 0, niches = 0, specials = 0, specialParents = 0;
-  // --specialists: per panel warrior the member best against it (the first
-  // in the list on a tie), when ahead of the members' median there by more
-  // than 2 standard errors of its score: [panel id, member id, score, se, median]
-  const specialistsNow = (ids) => {
-    const out = [];
-    for (const o of ids) {
-      if (!panel.has(o)) continue;
-      const ms = ids.filter((m) => !panel.has(m));
-      if (!ms.length) continue;
-      const xs = ms.map((m) => pts.get(`${m},${o}`)).sort((a, b) => a - b);
-      const med = xs.length % 2 ? xs[(xs.length - 1) / 2] : (xs[xs.length / 2 - 1] + xs[xs.length / 2]) / 2;
-      let best = ms[0];
-      for (const m of ms) if (pts.get(`${m},${o}`) > pts.get(`${best},${o}`)) best = m;
-      const x = pts.get(`${best},${o}`), e = se.get(`${best},${o}`);
-      if (x - med > 2 * e) out.push([o, best, x, e, med]);
-    }
-    return out;
-  };
-  let protectedNow = new Set(); // at the start of the batch, for the parents
+  let checked = 0, duels = 0, lastValues = new Map(), parentDistances = 0, pushoffs = 0, roundings = 0;
   let listNow = start.params.list; // --list on a run that continues: event `list`
   // --difference ahead: the SD-score counts only where a warrior scores more; shape: less the shift that makes it
   // smallest; also from a resume on (event `difference`)
@@ -184,23 +165,6 @@ export function checkValues(evs) {
   const origins = new Map(); // id -> the batch its line started, from the enter events
   let paretoLeaves = 0, newLines = 0, olderSecond = 0;
   const paretoed = (v, ids, score, o) => (start.params.pushoff?.startsWith('pareto') ? paretoValues(v, ids, score, panel, origins, start.params.pushoff, { radius: start.params.clear, ...o }) : v);
-  // --sharing c: the average of the push-off value weighted, panel warrior j
-  // by 1 / (members' mean against it + c), a member's column by the mean of
-  // those; the weights of the last 'sharing' event (uniform before the first)
-  let shareW = null, sharings = 0, sharedLeaves = 0, roundings = 0;
-  const share = (v, ids, score) => {
-    if (!shareW) return v;
-    return v.map((x, i) => {
-      let num = 0, den = 0;
-      ids.forEach((b, j) => {
-        if (j === i) return;
-        const w = panel.has(b) ? shareW.w.get(b) : shareW.member;
-        num += w * score[i][j], den += w;
-      });
-      const avg = den > 0 ? num / den : 0;
-      return { ...x, avg, value: avg * (start.params.alpha === 1 ? x.distance : x.distance ** start.params.alpha) };
-    });
-  };
   // --average panel: the average of the push-off value over the panel's
   // columns only, without the own one
   let panelLeaves = 0;
@@ -213,7 +177,6 @@ export function checkValues(evs) {
       return { ...x, avg, value: avg * (start.params.alpha === 1 ? x.distance : x.distance ** start.params.alpha) };
     });
   };
-  const styleOf = new Map(); // id -> kind of style (--niche)
   // the estimate of a newcomer: its screen points against the panel, the
   // SD-score on the panel columns to the nearest warrior in when its batch
   // started, with the standard deviations of then
@@ -263,10 +226,6 @@ export function checkValues(evs) {
       for (const [o, w, l, t] of e.scores) put(e.panel.id, o, w, l, t);
       assert.equal(e.scores.length, slots.filter((x) => x !== null).length - 1, 'a new panel warrior plays everyone in');
     }
-    if (e.type === 'enter' && start.params.specialists && e.rival < 0 && e.parents.length && e.ops !== 'reintroduce') { // a protected parent
-      assert.ok(protectedNow.has(e.parents[0]), `${e.name}: parent ${e.parents[0]} is not protected`);
-      specialParents++;
-    }
     if (e.type === 'enter' && e.rival >= 0) {
       // the first parent won its tournament of two against the rival: by
       // push-off value at the start of the batch, or with --parents duel by
@@ -288,7 +247,6 @@ export function checkValues(evs) {
       if (e.newFamily && e.parents.length) newLines++;
       if (bred && !e.newFamily && e.parents.length === 2 && origins.get(e.parents[1]) < origins.get(e.parents[0])) olderSecond++;
       origins.set(e.id, e.origin);
-      styleOf.set(e.id, e.style?.kind);
       assert.equal(e.screenPoints.length, P);
       // with --screen-members the screen has members too (replayed in their test)
       const screen = e.screenPoints.reduce((a, b) => a + b, 0) / P;
@@ -322,47 +280,33 @@ export function checkValues(evs) {
       }
     }
     if (e.type === 'leave' && !e.early) {
-      // the push-off: the weakest of those that may leave, by tools/diversity.js
-      // on the logged scores; with --niche N not the last N of a kind of style
-      // (not the two kinds of junk), unless that leaves nobody
+      // the push-off: the weakest of those that may leave (not the panel), by
+      // tools/diversity.js on the logged scores
       const ids = slots.filter((x) => x !== null);
       const score = ids.map((a) => ids.map((b) => (a === b ? null : pts.get(`${a},${b}`) ?? (noGames ? 0 : undefined))));
       const columns = start.params.diversity === 'panel' ? ids.map((id) => panel.has(id)) : null;
       const noise = start.params.noise ? { se: ids.map((a) => ids.map((b) => (a === b ? 0 : se.get(`${a},${b}`)))), z: start.params.noise } : {};
       const o = { variant: start.params.sd, alpha: start.params.alpha, columns, difference, ...noise };
-      const v = paretoed(averaged(share(pushoffValues(score, ids.map((_, i) => i), o), ids, score), ids, score), ids, score, o);
-      let keep = new Set(ids.map((id, i) => (panel.has(id) ? i : -1)).filter((i) => i >= 0));
-      if (start.params.niche || start.params.specialists) {
-        const safe = new Set(keep);
-        if (start.params.niche) {
-          const count = new Map();
-          for (const id of ids) if (!panel.has(id)) count.set(styleOf.get(id), (count.get(styleOf.get(id)) ?? 0) + 1);
-          const junk = new Set(['dies at once', 'writes little (scanner, or waits)']);
-          ids.forEach((id, i) => { if (!panel.has(id) && !junk.has(styleOf.get(id)) && count.get(styleOf.get(id)) <= start.params.niche) safe.add(i); });
-        }
-        if (start.params.specialists) for (const [, m] of specialistsNow(ids)) safe.add(ids.indexOf(m));
-        const plain = weakest(v, keep);
-        if (safe.size < ids.length) keep = safe;
-        if (weakest(v, keep) !== plain) niches++, specials++; // the protection changed who left
-      }
+      const v = paretoed(averaged(pushoffValues(score, ids.map((_, i) => i), o), ids, score), ids, score, o);
+      const keep = new Set(ids.map((id, i) => (panel.has(id) ? i : -1)).filter((i) => i >= 0));
       // the weakest, or one whose value equals it up to rounding: a compiler
       // may fuse `num += w * x` into one rounding (arm64, gcc for
-      // x86-64-v3), and the weighted average of --sharing then differs in the
-      // last bits from this replay; near twins have such values (CI of #154)
+      // x86-64-v3), and a sum then differs in the last bits from this
+      // replay; near twins have such values (CI of #154)
       const k = weakest(v, keep), j = ids.indexOf(e.id);
       assert.ok(k === j || (!keep.has(j) && Math.abs(v[j].value - v[k].value) <= 1e-9 * Math.max(1, Math.abs(v[k].value))),
         `batch ${e.batch}: ${e.id} left, the push-off says ${ids[k]}`);
       if (k !== j) roundings++;
-      if (shareW || start.params.average === 'panel') { // the plain average would have pushed out another one
+      if (start.params.average === 'panel') { // the plain average would have pushed out another one
         const plain = pushoffValues(score, ids.map((_, i) => i), { variant: start.params.sd, alpha: start.params.alpha, columns, difference, ...noise });
-        if (ids[weakest(plain, keep)] !== e.id) shareW ? sharedLeaves++ : panelLeaves++;
+        if (ids[weakest(plain, keep)] !== e.id) panelLeaves++;
       }
       if (start.params.pushoff?.startsWith('pareto')) { // the push-off value would have pushed out another one
         const plain = pushoffValues(score, ids.map((_, i) => i), { variant: start.params.sd, alpha: start.params.alpha, columns, ...noise });
         if (ids[weakest(plain, keep)] !== e.id) paretoLeaves++;
       }
       if (difference !== 'abs') { // the plain SD-score would have pushed out another one
-        const both = averaged(share(pushoffValues(score, ids.map((_, i) => i), { variant: start.params.sd, alpha: start.params.alpha, columns, ...noise }), ids, score), ids, score);
+        const both = averaged(pushoffValues(score, ids.map((_, i) => i), { variant: start.params.sd, alpha: start.params.alpha, columns, ...noise }), ids, score);
         if (ids[weakest(both, keep)] !== e.id) differenceLeaves++;
       }
       pushoffs++;
@@ -373,26 +317,6 @@ export function checkValues(evs) {
     }
     if (e.type === 'list') listNow = e.list;
     if (e.type === 'difference') difference = e.difference;
-    if (e.type === 'sharing') { // the weights from the members' means at the end of the batch
-      const ids = slots.filter((x) => x !== null), ms = ids.filter((m) => !panel.has(m));
-      const c = start.params.sharing, w = new Map();
-      for (const o of ids.filter((x) => panel.has(x))) {
-        const mean = ms.length ? ms.reduce((a, m) => a + pts.get(`${m},${o}`), 0) / ms.length : 0;
-        w.set(o, 1 / (mean + c));
-      }
-      assert.deepEqual(e.weights.map((x) => x[0]), [...w.keys()], `sharing after batch ${e.batch}`);
-      e.weights.forEach(([o, x, mean]) => assert.ok(Math.abs(x - w.get(o)) <= 1e-12 && Math.abs(mean - (1 / w.get(o) - c)) < 1e-5, `weight of ${o}: ${x}, not ${w.get(o)}`));
-      const member = [...w.values()].reduce((a, b) => a + b, 0) / w.size;
-      assert.ok(Math.abs(e.member - member) <= 1e-12, `member weight ${e.member}, not ${member}`);
-      shareW = { w: new Map(e.weights.map(([o, x]) => [o, x])), member: e.member };
-      sharings++;
-    }
-    if (e.type === 'specialists') {
-      const ids = slots.filter((x) => x !== null), js = specialistsNow(ids);
-      assert.deepEqual(e.protected.map((x) => x.slice(0, 2)), js.map((x) => x.slice(0, 2)), `specialists after batch ${e.batch}`);
-      e.protected.forEach((x, i) => x.slice(2).forEach((y, k) => assert.ok(Math.abs(y - js[i][2 + k]) < 1e-5, `specialist ${x[1]}`)));
-      protectedNow = new Set(js.map((x) => x[1]));
-    }
     if (e.type === 'values') {
       lastValues = new Map(e.values.map((v) => [v[0], v[4]]));
       // at the end of a batch every pair has all its rounds (--stage: after the complete events)
@@ -403,7 +327,7 @@ export function checkValues(evs) {
       const noise = start.params.noise ? { se: ids.map((a) => ids.map((b) => (a === b ? 0 : se.get(`${a},${b}`)))), z: start.params.noise } : {};
       const columns = start.params.diversity === 'panel' ? ids.map((id) => panel.has(id)) : null; // --diversity panel
       const o = { variant: start.params.sd, alpha: start.params.alpha, columns, difference, ...noise };
-      const js = paretoed(averaged(share(pushoffValues(score, ids.map((_, i) => i), o), ids, score), ids, score), ids, score, o);
+      const js = paretoed(averaged(pushoffValues(score, ids.map((_, i) => i), o), ids, score), ids, score, o);
       assert.deepEqual(e.values.map((v) => v[0]), ids);
       // the sixth number: the average against the panel, without the own column
       e.values.forEach(([id, , , , , pAvg]) => {
@@ -426,11 +350,6 @@ export function checkValues(evs) {
   if (start.params.parents === 'duel') assert.ok(duels > 10, `only ${duels} duels`);
   assert.ok(parentDistances > 0, 'no difference to a parent checked');
   checkValues.pushoffs = pushoffs;
-  checkValues.niches = niches; // push-offs where --niche or --specialists changed who left
-  checkValues.specials = specials;
-  checkValues.specialParents = specialParents; // children of a protected parent
-  checkValues.sharings = sharings;
-  checkValues.sharedLeaves = sharedLeaves; // push-offs where the weights changed who left
   checkValues.roundings = roundings; // push-offs decided between values equal up to rounding
   checkValues.panelLeaves = panelLeaves; // push-offs where --average panel changed who left
   checkValues.differenceLeaves = differenceLeaves; // push-offs where --difference ahead or shape changed who left

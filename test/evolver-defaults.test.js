@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Martin Leitner-Ankerl
 //
 // The evolver (evolver/, #142) on the tiny hill of warriors/koenigstuhl:
-// the defaults (the best run of E5), --diversity panel, --member-games none and --niche: the longer runs of
+// the defaults (the best run of E5), --diversity panel and --member-games none: the longer runs of
 // evolver.test.js in a file of their own, so that the files take about as long (#161). What the evolver's
 // test files share is in test/evolver-common.js; built with cc, or prebuilt in M42_BIN (test/native.js).
 // POSIX only.
@@ -55,39 +55,6 @@ test('--diversity panel --panel-rounds 250: the distance over the panel, longer 
   }
   const bad = spawnSync(evolve, [join(tmp, 'dp-bad'), ...TINY, '--panel-rounds', '20'], { encoding: 'utf8' });
   assert.equal(bad.status, 2);
-});
-
-test('--niche 4: the last 4 members of a kind of style do not leave; the same run on any thread count and after a resume', { skip }, () => {
-  assert.equal(base[0].params.niche, 0);
-  const N = 4, LIST = 10, BATCHES = 10;
-  const args = [...CLASSIC, '--niche', String(N), '--list', String(LIST)];
-  run(join(tmp, 'niche1'), [...args, '--threads', '1', '--batches', String(BATCHES)]);
-  const one = events(join(tmp, 'niche1'));
-  assert.equal(one[0].params.niche, N);
-  assert.equal(checkValues(one), BATCHES);
-  assert.ok(checkValues.niches >= 2, `--niche changed who left in ${checkValues.niches} push-offs`);
-  // replay: the kinds of the members; at each push-off a kind with 2 members
-  // or fewer (not the two kinds of junk) is protected, unless everybody is
-  const junk = new Set(['dies at once', 'writes little (scanner, or waits)']);
-  const kind = new Map(), alive = new Set();
-  let leaves = 0, protectedLeaves = 0;
-  for (const e of one) {
-    if (e.type === 'enter') kind.set(e.id, e.style.kind), alive.add(e.id);
-    if (e.type === 'leave') {
-      const count = new Map();
-      for (const id of alive) count.set(kind.get(id), (count.get(kind.get(id)) ?? 0) + 1);
-      const safe = (id) => !junk.has(kind.get(id)) && count.get(kind.get(id)) <= N;
-      const anyFree = [...alive].some((id) => !safe(id));
-      if (anyFree) assert.ok(!safe(e.id), `${e.id} left, the last ${count.get(kind.get(e.id))} of ${kind.get(e.id)}`);
-      if ([...alive].some(safe)) protectedLeaves++;
-      alive.delete(e.id);
-      leaves++;
-    }
-  }
-  assert.ok(leaves >= 8 && protectedLeaves >= 3, `${leaves} push-offs, ${protectedLeaves} with a protected kind in the list`);
-  run(join(tmp, 'niche-resumed'), [...args, '--threads', '2', '--batches', String(BATCHES >> 1)]);
-  run(join(tmp, 'niche-resumed'), ['--threads', '4', '--batches', String(BATCHES - (BATCHES >> 1))]);
-  assert.deepEqual(stable(events(join(tmp, 'niche-resumed'))), stable(one));
 });
 
 test('--member-games none: members never play each other, a screen of the panel only; the same run on any thread count and after a resume', { skip }, () => {
