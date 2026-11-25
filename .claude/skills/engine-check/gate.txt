@@ -1,20 +1,21 @@
 # Steps 1 to 5 of SKILL.md for in-order.mjs, with O and SEED from the environment:
 #   O=${COREWAR_ORACLE:-$HOME/.local/share/corewar-theater} SEED=$(date +%s) nohup node .claude/skills/engine-check/in-order.mjs .claude/skills/engine-check/gate.txt > <scratchpad>/gate.out 2>&1 &
-# Leaves wasm/42mars.wasm rebuilt and build/ removed.
+# Leaves wasm/42mars.wasm rebuilt (with the local clang: .claude/rules/wasm.md) and build/ removed.
+# in-order.mjs keeps the last lines only: the test commands print their `not ok` lines.
 echo "seed $SEED"
 wasm/build.sh > /dev/null && md5sum wasm/42mars.wasm lib/src/dispatch.h
 wasm/build.sh > /dev/null && md5sum wasm/42mars.wasm lib/src/dispatch.h && git status --short
 mkdir -p build && git show origin/main:wasm/42mars.wasm > build/main.wasm && node bench/wasm-functions.mjs build/main.wasm wasm/42mars.wasm | tail -1
 node bench/native-loops.mjs
 node bench/bench-native.mjs $O/corpus 10
-PMARS_VALIDATE=$O/validate.red npm test
+mkdir -p build && PMARS_VALIDATE=$O/validate.red node --test --test-reporter=tap test/*.test.js > build/gate-npm.tap 2>&1; s=$?; grep -E '^not ok|^# (tests|pass|fail|skipped)' build/gate-npm.tap; exit $s
 node tools/pmars-diff.mjs --pmars $O/bin/pmars --corpus $O/corpus --seed $SEED --pmars-trace $O/bin/pmars-trace
 node tools/pmars-diff.mjs --pmars $O/bin/pmars --corpus $O/corpus --seed $SEED --pmars-trace $O/bin/pmars-trace --watch --only battles,fuzz,multi
 node tools/pmars-diff.mjs --pmars $O/bin/pmars --corpus $O/corpus --seed $SEED --wasm-match
 node tools/tournament.mjs $O/sets/t20 --rounds 100 --seed $SEED --pmars $O/bin/pmars --compare
 node tools/example-check.mjs $O/sets/t20 --pmars $O/bin/pmars --seed $SEED
 make clean
-make -j8 test
+make -j8 test > build-gate-make.out 2>&1; s=$?; grep -E '^not ok|^# (pass|fail)' build-gate-make.out; rm -f build-gate-make.out; exit $s
 node tools/pmars-diff.mjs --pmars $O/bin/pmars --corpus $O/corpus --seed $SEED --cli build/42mars --only cli
 make clean
 make -j8 CFLAGS='-O2 -std=c11 -pedantic -Wall -Wextra -Werror -DM42_PORTABLE' test
