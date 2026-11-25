@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Martin Leitner-Ankerl
 //
 // The evolver (evolver/, #142) on the tiny hill of warriors/koenigstuhl:
-// --select value with --rotate, --screen-check and --screen-stop. What the evolver's test files share is in
+// --screen-check and --screen-stop. What the evolver's test files share is in
 // test/evolver-common.js; built with cc, or prebuilt in M42_BIN
 // (test/native.js). POSIX only.
 
@@ -22,45 +22,6 @@ import { setup, cleanup, tmp, evolve, skip, RULES, TINY, run, events, without, s
 
 before(setup);
 after(cleanup);
-
-test('--select value --rotate 2: survivors by estimated value, a panel that changes, the same run on any thread count', { skip }, () => {
-  const args = [...TINY, '--select', 'value', '--rotate', '2', '--survivors', '8'];
-  run(join(tmp, 'rot1'), [...args, '--threads', '1', '--batches', '6']);
-  const one = events(join(tmp, 'rot1'));
-  assert.equal(one[0].params.select, 'value');
-  assert.equal(one[0].params.rotate, 2);
-  // rotations before batches 2 and 4, each of the oldest panel warrior
-  const rot = one.filter((e) => e.type === 'rotate');
-  assert.deepEqual(rot.map((e) => e.batch), [2, 4]);
-  assert.deepEqual(rot.map((e) => e.out), one[0].panel.slice(0, 2).map((p) => p.id));
-  assert.equal(checkValues(one), 6);
-  assert.equal(checkOps(one), 6);
-  checkOrder(one, 'estimate');
-  // and that is another order than the screen's in some batch
-  const enters = one.filter((e) => e.type === 'enter');
-  assert.ok(enters.some((e, i) => i && enters[i - 1].batch === e.batch && enters[i - 1].screen < e.screen - 1e-4), 'estimate and screen agree everywhere');
-  // the new panel warriors' matches play the same in the WebAssembly engine
-  const code = new Map(one[0].panel.map((w) => [w.id, w.source]));
-  for (const e of one) {
-    if (e.type === 'enter') code.set(e.id, `;name x\n${e.code}`);
-    if (e.type === 'rotate') code.set(e.panel.id, e.panel.source);
-  }
-  const m = createMarsSync(RULES);
-  let replayed = 0;
-  for (const e of rot) {
-    const members = e.scores.filter(([o]) => !one[0].panel.some((p) => p.id === o));
-    assert.ok(members.length > 0);
-    for (const [o, w, l, t, seed] of [e.scores[0], ...members.slice(0, 3)]) {
-      const r = m.runMatch([assemble(e.panel.source, RULES), assemble(code.get(o), RULES)], { seed, rounds: one[0].params.rounds });
-      assert.deepEqual([r.warriors[0].wins, r.warriors[0].losses, r.warriors[0].ties], [w, l, t], `${e.panel.name} against ${o}`);
-      replayed++;
-    }
-  }
-  assert.ok(replayed >= 6);
-  run(join(tmp, 'rot-resumed'), [...args, '--threads', '3', '--batches', '3']);
-  run(join(tmp, 'rot-resumed'), ['--threads', '2', '--batches', '3']);
-  assert.deepEqual(stable(events(join(tmp, 'rot-resumed'))), stable(one));
-});
 
 test('--screen-check 3 is the run without it and logs every bound; --screen-stop 3 stops those children; the same run on any thread count and after a resume', { skip }, () => {
   const BATCHES = 8;
@@ -127,6 +88,4 @@ test('--screen-check 3 is the run without it and logs every bound; --screen-stop
   run(join(tmp, 'sc-resumed'), [...args, '--screen-stop', '3', '--threads', '2', '--batches', String(BATCHES >> 1)]);
   run(join(tmp, 'sc-resumed'), ['--threads', '4', '--batches', String(BATCHES - (BATCHES >> 1))]);
   assert.deepEqual(stable(events(join(tmp, 'sc-resumed'))), stable(stop));
-  // not with --race
-  assert.notEqual(spawnSync(evolve, [join(tmp, 'sc-race'), ...args, '--screen-stop', '3', '--race', '5', '--batches', '1'], { encoding: 'utf8' }).status, 0);
 });

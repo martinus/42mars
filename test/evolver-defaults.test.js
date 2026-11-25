@@ -132,8 +132,8 @@ test('the defaults: the settings of gen-var16-rnd; a panel picked from a round r
   // the value push-off where pareto does not go
   run(join(tmp, 'def-avg'), [...args, '--average', 'panel', '--threads', '4']);
   assert.equal(events(join(tmp, 'def-avg'))[0].params.pushoff, 'value');
-  // --screen-stop 3 where it goes: not with --race; 0 is off, also for a run that continues
-  for (const [extra, stop] of [[['--race', '3'], 0], [['--screen-stop', '0'], 0], [['--screen-stop', '1.5'], 1.5], [['--screen-check', '2'], 0]]) {
+  // --screen-stop 3 by default; 0 is off, also for a run that continues
+  for (const [extra, stop] of [[['--screen-stop', '0'], 0], [['--screen-stop', '1.5'], 1.5], [['--screen-check', '2'], 0]]) {
     const d = join(tmp, `def-stop-${extra.join('')}`);
     run(d, [...args, ...extra, '--threads', '2']);
     assert.equal(events(d)[0].params.screenStop, stop, extra.join(' '));

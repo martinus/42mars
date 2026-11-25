@@ -70,6 +70,10 @@ const REMOVED = [
   { args: ['--simple'], option: '--simple', at: 37 },
   { args: ['--noise', '1'], option: '--noise', at: 23 },
   { args: ['--difference', 'ahead'], option: '--difference', at: 39 },
+  { args: ['--select', 'value'], option: '--select', at: 15 },
+  { args: ['--rotate', '2'], option: '--rotate', at: 16 },
+  { args: ['--race', '3'], option: '--race', at: 18 },
+  { args: ['--race-keep', '6'], option: '--race-keep' },
 ];
 
 test('a removed option is refused on the command line, in an island variant, and in the state of a run that used it (#193)', { skip }, () => {
@@ -105,41 +109,8 @@ test('the logged values are the push-off of the logged scores', { skip }, () => 
 
 test('survivors of the screen enter by their screen score', { skip }, () => {
   assert.equal(checkOps(base), 6);
-  assert.equal(base[0].params.select, 'screen');
   assert.equal(base[0].params.fractions, 0);
   checkOrder(base, 'screen');
-});
-
-test('--race 3: the first screen rounds for all, the rest for the best, the same run on any thread count', { skip }, () => {
-  const args = [...TINY, '--race', '3', '--race-keep', '6'];
-  run(join(tmp, 'race1'), [...args, '--threads', '1', '--batches', '5']);
-  const one = events(join(tmp, 'race1'));
-  assert.equal(one[0].params.race, 3);
-  assert.equal(one[0].params.raceKeep, 6);
-  for (const b of one.filter((e) => e.type === 'batch')) {
-    assert.equal(b.raced, Math.min(6, b.evaluated), `batch ${b.batch}`);
-    // the ones that went on were the best after the first 3 rounds
-    for (const e of one.filter((x) => x.type === 'enter' && x.batch === b.batch)) assert.ok(e.raceKey >= b.raceDropped - 1e-6, `${e.name}: ${e.raceKey} < ${b.raceDropped}`);
-  }
-  assert.equal(checkValues(one), 5);
-  checkOrder(one, 'screen');
-  // the logged screen points are all 10 screen rounds, also after the race
-  const st = one[0], m = createMarsSync(RULES);
-  const sources = new Map(st.panel.map((w) => [w.id, w.source]));
-  let replayed = 0;
-  for (const e of one.filter((x) => x.type === 'enter' && x.batch > 0).slice(0, 6)) {
-    const a = assemble(`;name x\n${e.code}`, RULES);
-    for (const k of [0, 3, 7]) {
-      const p = st.panel[k];
-      const r = m.runMatch([a, assemble(sources.get(p.id), RULES)], { seed: e.scores.find((x) => x[0] === p.id)[4], rounds: st.params.screenRounds });
-      const pts = ((3 * r.warriors[0].wins + r.warriors[0].ties) * 100) / st.params.screenRounds;
-      assert.ok(Math.abs(pts - e.screenPoints[k]) < 1e-3, `${e.name} against ${p.name}: ${pts}, logged ${e.screenPoints[k]}`);
-      replayed++;
-    }
-  }
-  assert.equal(replayed, 18);
-  run(join(tmp, 'race4'), [...args, '--threads', '4', '--batches', '5']);
-  assert.deepEqual(stable(events(join(tmp, 'race4'))), stable(one));
 });
 
 test('--prior hill: the weights are how often opcodes, modifiers and modes occur in the opponents', { skip }, () => {
