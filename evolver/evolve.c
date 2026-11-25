@@ -1282,6 +1282,8 @@ static int load_state(run *r, const char *path) {
   char *save = 0, **rest = xmalloc(len * sizeof(char *) / 4 + 8);
   uint32_t rn = 0;
   int ok = 0, refused = 0;
+  uint64_t *slot_id = 0; // the slot lines, freed also on the way out through bad
+  uint32_t *slot_at = 0, slots = 0;
   // the lines that need the matrix come after the opponents are loaded
   char *line = strtok_r(text, "\n", &save);
   if (!line || strcmp(line, "42evolve-state 1") != 0) goto bad;
@@ -1341,8 +1343,8 @@ static int load_state(run *r, const char *path) {
   }
   setup_matrix(r);
   warrior *last = 0;
-  uint64_t *slot_id = xmalloc(r->cap * sizeof *slot_id);
-  uint32_t *slot_at = xmalloc(r->cap * sizeof *slot_at), slots = 0;
+  slot_id = xmalloc(r->cap * sizeof *slot_id);
+  slot_at = xmalloc(r->cap * sizeof *slot_at);
   for (uint32_t i = 0; i < rn; i++) {
     line = rest[i];
     if (!strncmp(line, "slot ", 5)) { // before the member lines; states before them have none
@@ -1425,12 +1427,12 @@ static int load_state(run *r, const char *path) {
       goto bad;
     }
   }
-  free(slot_id);
-  free(slot_at);
   rebuild_active(r);
   compute_values(r);
   ok = 1;
 bad:
+  free(slot_id);
+  free(slot_at);
   free(text);
   free(panel);
   free(panel_id);
