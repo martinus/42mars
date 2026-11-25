@@ -229,7 +229,9 @@ lib/                the C library, the only thing you need to embed
 cli/42mars.c        the pMARS-compatible command line program
 examples/           example.c, a complete program on the library; parallel.c, a match on several threads
 wasm/               the JavaScript demo: 42mars.wasm, 42mars.js (JS interface), 42mars.d.ts; build.sh
-evolver/            42evolve, the evolver: a list kept by diversity push-off, on all cores
+evolver/            42evolve, the evolver: a list kept by diversity push-off, on all cores; evolve.c
+                    the command line, run.c a run, batch.c one batch, pool.c, events.c, state.c,
+                    panel.c, islands.c, optimize.c, evolve.h what they share; the genomes, 42spectrum, 42gen
 ui/                 Core War Theater, the visualizer, and the evolver's dashboard (plain ES modules, no build step)
 tools/              Node tools: asm, corpus, tournament, pushoff, serve, run-report, style, and the comparisons with pMARS
 bench/              speed measurements and A/B timing

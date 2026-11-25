@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 Martin Leitner-Ankerl
 //
-// The evolver dashboard: reads the events of a 42evolve run (evolver/evolve.c)
+// The evolver dashboard: reads the events of a 42evolve run (evolver/)
 // and shows the list as it changes. Data comes live from
 // `node tools/serve.mjs --run <folder>` (/run/events), from ?log=<url> of an
 // events.jsonl, or from an events.jsonl dropped on the page. A click on a
