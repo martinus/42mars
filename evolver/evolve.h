@@ -321,9 +321,9 @@ void set_result1(run *r, uint32_t a, uint32_t b, m42_score sa);
 void rebuild_active(run *r);
 void compute_values(run *r);
 uint32_t free_slot(const run *r);
+void free_warrior(warrior *w);
 uint32_t slot_of_id(const run *r, uint64_t id);
 void setup_matrix(run *r);
-void load_list(run *r, warrior **list, uint32_t *n, char **names, uint32_t count, int kind, uint64_t first_id);
 
 // pool.c: the thread pool
 void pool_start(pool *p, uint32_t threads, const m42_rules *rules);
@@ -347,5 +347,26 @@ long state_events_size(const char *path);
 int names_loop(const char *mix);
 void islands_save(const islands *I);
 int islands_load(islands *I);
+
+// panel.c: the opponent folder, the panel, the holdout, the start warriors
+char **opponent_files(run *r, uint32_t *count);
+void load_starts(run *r);
+void load_list(run *r, warrior **list, uint32_t *n, char **names, uint32_t count, int kind, uint64_t first_id);
+void pick_panel(run *r, char **names, uint32_t count);
+void event_pick(run *r);
+
+// The round robin of a panel pick: the sample's points against each other,
+// each one's average, the strongest first, the candidates and (kinds) their
+// kind of style. Played once; pick_choose() chooses panels from it.
+typedef struct {
+  uint32_t n, want, nc;
+  int kinds;
+  double *pts, *sigma, *avg;
+  uint32_t *order;
+  int *kind;
+} pick_table;
+void pick_play(run *r, char **names, uint32_t count, pick_table *out);
+void pick_free(pick_table *t);
+uint32_t pick_choose(run *r, const pick_table *t, char **names, const uint8_t *allowed, uint32_t *picked);
 
 #endif
