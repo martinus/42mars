@@ -19,12 +19,13 @@ import { paretoFronts, pushoffValues, sdDistance, weakest } from '../tools/diver
 import { kind as styleKind, measureStyle } from '../tools/style.js';
 import { bestRedInfo } from '../tools/progress.js';
 import { setup, cleanup, root, tmp, evolve, unit, spectrum, skip, RULES, TINY, run, events, without, stable, base, checkValues, checkOrder, checkOps, checkEarly, mirrored, CLASSIC, RULES_CLASSIC, classic } from './evolver-common.js';
+import { slowdown } from './load.js';
 
 before(setup);
 after(cleanup);
 
 test('genome and push-off in C', { skip }, () => {
-  const r = spawnSync(unit, { encoding: 'utf8', timeout: 120000 });
+  const r = spawnSync(unit, { encoding: 'utf8', timeout: 120000 * slowdown() });
   assert.equal(r.status, 0, r.stderr);
   assert.equal(r.stdout.trim(), 'ok');
 });

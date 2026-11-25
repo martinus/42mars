@@ -18,6 +18,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { assemble, evaluate } from '../wasm/42mars.js';
 import { recorded } from './recorded.js';
+import { slowdown } from './load.js';
 
 const check = recorded('asm-c.json');
 
@@ -252,7 +253,7 @@ for (const [name, src, text] of UNBOUNDED) {
     const ms = performance.now() - t;
     assert.equal(w.ok, false);
     assert.ok(w.errors.some((e) => e.text === text), JSON.stringify(w.errors.slice(0, 3)));
-    assert.ok(ms < 3000, `${ms.toFixed(0)} ms`);
+    assert.ok(ms < 3000 * slowdown(), `${ms.toFixed(0)} ms, bound ${(3000 * slowdown()).toFixed(0)} ms`);
   });
 }
 
@@ -263,7 +264,7 @@ test('continued lines take linear time', () => {
   const w = assemble('a\\\n'.repeat(500000));
   const ms = performance.now() - t;
   assert.deepEqual(w.errors.map((e) => e.text), ["unexpected '\\'"]);
-  assert.ok(ms < 3000, `${ms.toFixed(0)} ms`);
+  assert.ok(ms < 3000 * slowdown(), `${ms.toFixed(0)} ms, bound ${(3000 * slowdown()).toFixed(0)} ms`);
 });
 
 test('an exception inside wasm does not break later calls', () => {
