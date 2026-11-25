@@ -210,7 +210,7 @@ Nobody writes a function: `extract` makes one from lines that evolved, `call` an
 - **`--start`** takes the `.gen` files of its folder too, generators as `42gen` reads them: the `best.gen` of other runs enter with their structure, so that a run can mix what several runs found.
 - **Events** carry the generator's text next to the code (`"gen"`), `best.gen` is the generator of `best.red`, and the state file has the generator's numbers (`gen_save()`).
 - **`--changes`** takes the new names, with `--genome gen` only. Without `--changes` a run on generators draws the weights of a list and `repeat` 30, `count` 40, `fold` 30, `unroll` 15, `index` 40, `expression` 40, `constant` 40, `extract` 20, `parameter` 20, `call` 25, `inline` 10, `transplant` 15: a quarter of the changes. A first guess, not measured.
-- **Refused with `--genome gen` at first:** `--tune-novel`, which writes into the list's operands. Later it tunes the numbers and constants of the generator. (`--optimize` takes a warrior file and stays a list.)
+- **Refused with `--genome gen` at first:** `--tune-novel`, which wrote into the list's operands (removed in #193). (`--optimize` takes a warrior file and stays a list.)
 - **The dashboard** shows the generator's text above the code (step 4). No parser in JavaScript: the text comes from the events.
 
 ## Steps and gates

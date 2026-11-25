@@ -56,7 +56,7 @@ test('the same seed gives the same run on 1 and 4 threads, and after a resume', 
 test('a run folder takes no new evolution options', { skip }, () => {
   const r = spawnSync(evolve, [join(tmp, 'one'), '--rounds', '50'], { encoding: 'utf8' });
   assert.equal(r.status, 2);
-  assert.match(r.stderr, /only --threads, --batches, --seconds, --changes, --reintroduce, --list \(larger\), --tune-novel, --screen-stop and --screen-check go/);
+  assert.match(r.stderr, /only --threads, --batches, --seconds, --changes, --reintroduce, --list \(larger\), --screen-stop and --screen-check go/);
   assert.equal(spawnSync(evolve, [join(tmp, 'none')], { encoding: 'utf8' }).status, 2); // no --opponents
 });
 
@@ -74,6 +74,11 @@ const REMOVED = [
   { args: ['--rotate', '2'], option: '--rotate', at: 16 },
   { args: ['--race', '3'], option: '--race', at: 18 },
   { args: ['--race-keep', '6'], option: '--race-keep' },
+  { args: ['--tune-novel', '1'], option: '--tune-novel', at: 34 },
+];
+// and the lines of a state that only they wrote
+const REMOVED_LINES = [
+  { line: 'tuned 30 1 1 0 0 0 0 0 0 0 0 0', option: '--tune-novel' }, // the warrior it tuned, waiting for the next batch
 ];
 
 test('a removed option is refused on the command line, in an island variant, and in the state of a run that used it (#193)', { skip }, () => {
@@ -100,6 +105,16 @@ test('a removed option is refused on the command line, in an island variant, and
     assert.equal(r.status, 1, option);
     assert.equal(r.stderr, `42evolve: ${dir}: ${option} was removed after 1.1.0 (#193)\n`);
     assert.equal(readFileSync(join(dir, 'events.jsonl'), 'latin1'), readFileSync(join(tmp, 'one', 'events.jsonl'), 'latin1'));
+  }
+  // the lines of a state that only a removed option wrote
+  for (const [k, { line, option }] of REMOVED_LINES.entries()) {
+    const dir = join(tmp, `removed-line-${k}`);
+    mkdirSync(dir);
+    copyFileSync(join(tmp, 'one', 'events.jsonl'), join(dir, 'events.jsonl'));
+    writeFileSync(join(dir, 'state.txt'), state.replace(/^end$/m, `${line}\nend`));
+    const r = spawnSync(evolve, [dir, '--batches', '1'], { encoding: 'utf8' });
+    assert.equal(r.status, 1, option);
+    assert.equal(r.stderr, `42evolve: ${dir}: ${option} was removed after 1.1.0 (#193)\n`);
   }
 });
 

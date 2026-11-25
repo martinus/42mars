@@ -216,8 +216,8 @@ export function checkValues(evs) {
     }
     if (e.type === 'enter') {
       // the origin of its line: a new family, or no parents in the list when it was bred (random, back from the
-      // archive, tuned, a start warrior), start a new one; else the older line of its parents
-      const bred = e.parents.length && e.ops !== 'reintroduce' && e.ops !== 'tuned' && e.parents.every((p) => origins.has(p));
+      // archive, a start warrior), start a new one; else the older line of its parents
+      const bred = e.parents.length && e.ops !== 'reintroduce' && e.parents.every((p) => origins.has(p));
       const expect = e.newFamily || !bred ? e.batch : Math.min(...e.parents.map((p) => origins.get(p)));
       if (e.newFamily || !e.parents.length || bred) assert.equal(e.origin, expect, `origin of ${e.id}`);
       if (e.newFamily && e.parents.length) newLines++;

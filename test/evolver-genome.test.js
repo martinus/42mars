@@ -113,21 +113,15 @@ test('--genome gen: start warriors, what it refuses, and a state from before it'
   let r = spawnSync(evolve, [join(tmp, 'bad'), ...ARGS, '--genome', 'tree'], { encoding: 'utf8' });
   assert.equal(r.status, 2);
   assert.match(r.stderr, /--genome list\|gen/);
-  r = spawnSync(evolve, [join(tmp, 'bad'), ...ARGS, '--genome', 'gen', '--tune-novel', '2'], { encoding: 'utf8' });
-  assert.equal(r.status, 2);
-  assert.match(r.stderr, /--tune-novel not with --genome gen/);
   assert.ok(!existsSync(join(tmp, 'bad')));
   // --genome list is the default
   run(join(tmp, 'named-list'), [...ARGS, '--genome', 'list', '--threads', '2', '--batches', '1']);
   const named = events(join(tmp, 'named-list'));
   assert.equal(named[0].params.genome, 'list');
   assert.ok(named.some((e) => e.type === 'enter') && named.every((e) => !('gen' in e)));
-  // a folder keeps its kind of genome, and --tune-novel does not come later
+  // a folder keeps its kind of genome
   r = spawnSync(evolve, [join(tmp, 'start-gen'), '--genome', 'list', '--batches', '1'], { encoding: 'utf8' });
   assert.equal(r.status, 2);
-  r = spawnSync(evolve, [join(tmp, 'start-gen'), '--tune-novel', '2', '--batches', '1'], { encoding: 'utf8' });
-  assert.equal(r.status, 2);
-  assert.match(r.stderr, /--tune-novel not with --genome gen/);
   assert.equal(events(join(tmp, 'start-gen')).filter((e) => e.type === 'resume').length, 0);
   // a state without the field (written before --genome) is a run on lists
   const file = join(tmp, 'start-list', 'state.txt');
