@@ -313,6 +313,7 @@ static inline double panel_avg(const run *r, uint32_t slot) { return panel_avg_o
 // ---------------------------------------------------------------- the functions of the files
 
 // evolve.c, for now
+params default_params(void);
 extern volatile sig_atomic_t stop_now; // Ctrl-C: the run ends after the current batch
 void *xmalloc(size_t n);
 char *read_file(const char *path, size_t *len);
@@ -326,6 +327,12 @@ uint32_t free_slot(const run *r);
 void free_warrior(warrior *w);
 uint32_t slot_of_id(const run *r, uint64_t id);
 void setup_matrix(run *r);
+void run_pool(run *r, uint32_t threads);
+int run_new(run *r, uint32_t threads, int optimize);
+int run_resume(run *r);
+int run_open(run *r, int resume, uint32_t threads);
+void run_first(run *r);
+void run_step(run *r);
 
 // pool.c: the thread pool
 void pool_start(pool *p, uint32_t threads, const m42_rules *rules);
@@ -376,5 +383,12 @@ void run_batch(run *r);
 
 // optimize.c: the constant optimizer
 int optimize(run *r, const char *file);
+
+// islands.c: --islands
+int islands_new(const params *base, const params *variant, const char *const *variant_text, uint32_t variant_n,
+                const char *dir, uint32_t n, uint32_t keep, uint32_t every, uint32_t rounds, uint32_t migrate,
+                uint32_t migrate_random, uint32_t migrate_next, uint32_t explorers, int own_panels, uint32_t threads,
+                uint32_t batches, double seconds);
+int islands_resume(const char *dir, uint32_t threads, uint32_t batches, double seconds);
 
 #endif
