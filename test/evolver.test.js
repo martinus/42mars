@@ -64,6 +64,9 @@ test('a run folder takes no new evolution options', { skip }, () => {
 // option's place in the params line of a state (none: it is in another line)
 const REMOVED = [
   { args: ['--map-elites'], option: '--map-elites', at: 29 },
+  { args: ['--niche', '2'], option: '--niche', at: 28 },
+  { args: ['--specialists'], option: '--specialists', at: 30 },
+  { args: ['--sharing', '20'], option: '--sharing', at: 31 },
 ];
 
 test('a removed option is refused on the command line, in an island variant, and in the state of a run that used it (#193)', { skip }, () => {

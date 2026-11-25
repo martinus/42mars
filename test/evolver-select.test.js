@@ -114,7 +114,7 @@ test('--simple: a candidate plays the panel in checkpoints and stops when it can
   run(join(tmp, 'simple-resumed'), ['--threads', '4', '--batches', String(BATCHES - (BATCHES >> 1))]);
   assert.deepEqual(stable(events(join(tmp, 'simple-resumed'))), stable(one));
   // refused with what it replaces
-  for (const extra of [['--race', '5'], ['--select', 'value'], ['--specialists'], ['--niche', '2'], ['--rotate', '2'], ['--sd', 'sum'], ['--sharing', '20'], ['--parents', 'duel'], ['--screen-members', '3'], ['--diversity', 'all']]) {
+  for (const extra of [['--race', '5'], ['--select', 'value'], ['--rotate', '2'], ['--sd', 'sum'], ['--parents', 'duel'], ['--screen-members', '3'], ['--diversity', 'all']]) {
     const r = spawnSync(evolve, [join(tmp, 'simple-no'), ...args, ...extra, '--batches', '1'], { encoding: 'utf8' });
     assert.notEqual(r.status, 0, `--simple with ${extra.join(' ')}`);
   }
