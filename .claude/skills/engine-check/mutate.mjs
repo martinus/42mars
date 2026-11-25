@@ -20,7 +20,9 @@
 // "FAILS: <the not ok lines>", "SURVIVED" or "KILLED" (a signal that is not
 // the timeout's, e.g. the memory limit: no result, run that mutant again
 // with a smaller test), and exits 1 when one survived or was killed, or a
-// file or 42mars.wasm did not come back.
+// file or 42mars.wasm did not come back. First the command runs without a
+// mutant: when it fails by itself, every mutant would look caught, so it
+// stops there (#220: a test that failed alone made a mutant "FAILS").
 
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
@@ -56,6 +58,15 @@ const build = () => spawnSync('sh', ['wasm/build.sh'], { stdio: 'ignore' }).stat
 const base = md5();
 let bad = false;
 let rebuilt = false;
+
+{
+  const r = spawnSync(run[0], run.slice(1), { encoding: 'utf8', timeout: timeout * 1000, maxBuffer: 1 << 28 });
+  if (r.status !== 0) {
+    const failed = (r.stdout ?? '').split('\n').filter((l) => l.startsWith('not ok'));
+    console.log(`== without a mutant: FAILS${failed.length ? `: ${failed.join(' | ')}` : r.error?.code === 'ETIMEDOUT' ? ` (timeout ${timeout} s)` : `: exit ${r.status}`}: the command fails by itself, no mutant can say anything`);
+    process.exit(1);
+  }
+}
 
 for (const m of mutants) {
   const original = readFileSync(m.file, 'latin1');
