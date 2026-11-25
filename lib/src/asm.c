@@ -561,6 +561,7 @@ typedef struct {
   // the scratch buffer of pMARS (semantics doc, "The scratch buffer")
   u8 *scratch;
   u32 scratchCap;
+  int scratchOff; // the rest of a FOR block's last EQU body line writes nothing
   // symbols: open addressing, a power of two
   Sym *syms;
   u32 symCap, symN;
@@ -729,6 +730,7 @@ static Str js_trim(const Asm *a, Str s) {
 // ---- scratch buffer: bytes past the written end read as 0
 
 static void scratch_write(Asm *a, Str text, u32 at, int terminate) {
+  if (a->scratchOff) return;
   const u32 need = at + text.n + 1;
   if (need > a->scratchCap) {
     u32 c = a->scratchCap ? a->scratchCap : 256;
@@ -751,6 +753,7 @@ static Str scratch_string(const Asm *a) {
 
 // Writes s uppercased at the start of the scratch buffer, with a 0 byte.
 static void scratch_write_upper(Asm *a, Str s) {
+  if (a->scratchOff) return;
   scratch_write(a, s, 0, 1);
   if (s.n && a->scratchCap > s.n) for (u32 i = 0; i < s.n; i++) a->scratch[i] = (u8)upper(a->scratch[i]);
 }
@@ -904,6 +907,9 @@ static void read_source(Asm *a, Str src, Lines *out) {
     if (!body.n) continue;
     if (body.p[0] != ';') {
       const int semi = find_byte(body, ';');
+      // The comment's `;` becomes a 0 byte in the scratch buffer (not in a
+      // comment line).
+      if (semi >= 0) scratch_write(a, (Str){0, 0}, (u32)(body.p - copy) + (u32)semi, 1);
       push_line(a, out, semi < 0 ? body : slice(body, 0, (u32)semi), lineNo, 0);
       continue;
     }
@@ -1133,14 +1139,16 @@ static const Line *stream_next(Asm *a, Stream *s) {
     // The last body line of the EQU a running FOR block came from: pMARS
     // takes it without the rest of the use-site line and only checks the
     // rest (rest_ok()), unless the line ends the block with ROF, which
-    // checks it too.
+    // checks it too. That check writes nothing into the scratch buffer.
     const Line head = {l->parts, l->restAt, l->lineNo, 0, 0, l->held};
     if (block_delta(a, &head, 0) != -1) {
       Line *h = aalloc(&a->A, sizeof(Line));
       if (!h) return 0;
       *h = head;
       Cursor rest = {l->parts + l->restAt, l->n - l->restAt, 0, 0, l->lineNo, 0};
+      a->scratchOff = 1;
       rest_ok(a, &rest, 0, s);
+      a->scratchOff = 0;
       l = h;
     }
   }

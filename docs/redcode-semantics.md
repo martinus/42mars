@@ -403,14 +403,26 @@ Writes, in program order:
    the logical line (position 0 for a new logical line, the position of the
    removed `\` for a continued one), all its characters including CR and LF,
    then a 0 byte. Then the CR or LF that ends the content is replaced by a 0
-   byte. Reading stops at the second `;redcode` line. At the end of the file
-   the first byte becomes 0.
+   byte. In a logical line that is not a comment line (its first character
+   after whitespace is not `;`), the `;` that starts its comment becomes a 0
+   byte too, so the comment never follows glued text (`x dat#9`, then a last
+   line `c1234567 ;+1`, gives `DAT#9567 `, which is `#1567`). The `;` of a
+   comment line stays, and pMARS rejects a statement text that runs into it
+   ("Improper placement of ';'"; here a bad expression). Reading stops at
+   the second `;redcode` line. At the end of the file the first byte
+   becomes 0.
 2. Pass 1, every identifier it reads, anywhere: labels, opcodes, keywords,
    EQU names, operands, FOR counts, assert expressions, lines of EQU and FOR
    bodies each time they are expanded, and the identifiers passed over while
    a block with count <= 0 is skipped: the identifier uppercased, then a 0
    byte. Not written: the `assert` keyword of an `;assert` line, other
-   comment lines, and EQU bodies when they are defined.
+   comment lines, EQU bodies when they are defined, and the rest of the
+   use-site line that goes with the last body line of the EQU a running FOR
+   block came from (see "FOR and ROF from an EQU"): it is checked, but
+   nothing of it is written, also not what its one-line EQU names expand
+   to. (With `f6 equ for 2`, ` equ spl>(0)`, the last line `f6 CURLINE` gives
+   `SPL>(0)INE`, the bytes of the source line.) The rest of a `ROF` or of a
+   `FOR` with count 0 from an EQU is written as usual.
 3. Pass 1, a label, FOR counter or `CURLINE` replaced by a number in an
    operand: the number text, a space if one is added to the statement text,
    then a 0 byte.
@@ -429,6 +441,9 @@ so the statement text is `DAT#99`.
 
 pMARS keeps the buffer between the warriors of one run. The engine starts
 every assembly with a fresh buffer, which is exact for the first warrior.
+
+The comment's 0 byte and the unwritten rest were found with the random
+sources of `tools/pmars-diff.mjs` (#191).
 
 #### EQU
 
