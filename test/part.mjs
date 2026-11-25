@@ -8,9 +8,9 @@
 // Every file is in exactly one part, a new one too. The files go by their
 // time, the longest first, each to the part with the least time so far;
 // the times are the seconds of each file's tests under ASan and UBSan on
-// CI, summed from the durations of its tests in one run (45608326769, 25th
-// November 2026; evolver-tune and evolver-defaults estimated after #161
-// split the one and shortened the other), and a file not listed counts 20.
+// CI, summed from the durations of its tests in one run (45612371768,
+// 25th November 2026, after #161 split evolver-tune.test.js and shortened
+// the defaults test), and a file not listed counts 20.
 // On 4 cores the files run 3 at a time and slow each other: these sums,
 // not the times of a file alone on 32 threads (which made one native part
 // 110 s of tests and the other 61 s). A wrong time makes the parts uneven,
@@ -20,17 +20,17 @@ import { readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 export const SECONDS = {
-  'test/evolver-defaults.test.js': 60.0,
-  'test/evolver-tune.test.js': 50.0,
-  'test/evolver-gen.test.js': 40.2,
-  'test/evolver-migrate.test.js': 37.0,
-  'test/evolver-genome.test.js': 35.6,
-  'test/evolver.test.js': 28.1,
-  'test/evolver-pareto.test.js': 20.8,
-  'test/evolver-average.test.js': 15.8,
-  'test/evolver-screen.test.js': 11.4,
+  'test/evolver-migrate.test.js': 75.2,
+  'test/evolver-defaults.test.js': 66.8,
+  'test/evolver-tune.test.js': 52.1,
+  'test/evolver-genome.test.js': 45.7,
+  'test/evolver-gen.test.js': 45.1,
+  'test/evolver.test.js': 42.4,
+  'test/evolver-screen.test.js': 22.2,
+  'test/evolver-pareto.test.js': 19.9,
+  'test/evolver-average.test.js': 14.4,
   'test/c-api.test.js': 1.0,
-  'test/cli.test.js': 0.8,
+  'test/cli.test.js': 0.5,
 };
 
 // The files of `make test`, in the order of the Makefile's list.
