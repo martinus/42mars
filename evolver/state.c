@@ -377,7 +377,7 @@ void islands_save(const islands *I) {
   fprintf(f, "42evolve-islands 1\nislands %u %u %u %u %u %" PRIu64 " %.17g %u\nlive", I->n, I->keep, I->every, I->selected,
           I->next_score, I->seed, I->best, I->rounds);
   for (uint32_t i = 0; i < I->n; i++) fprintf(f, " %u", I->live[i]);
-  fprintf(f, "\nmigrate %u %u %u\nexplorers %u\n", I->migrate, I->migrate_random, I->migrate_next, I->explorers);
+  fprintf(f, "\nmigrate %u %u %u\nexplorers %u\ndesigns %u\n", I->migrate, I->migrate_random, I->migrate_next, I->explorers, I->designs);
   fclose(f);
   if (rename(tmp, path) != 0) {
     fprintf(stderr, "42evolve: cannot write %s\n", path);
@@ -411,6 +411,7 @@ int islands_load(islands *I) {
       if (fscanf(f, "%u", &b) == 1) later |= b;
     }
   if (ok && fscanf(f, " explorers %u", &I->explorers) != 1) I->explorers = 0; // a state from before --explorers
+  if (ok && fscanf(f, " designs %u", &I->designs) != 1) I->designs = 3; // a state from before --score-designs: its default from now on
   fclose(f);
   if (!ok) {
     fprintf(stderr, "42evolve: %s is not a state of islands\n", path);

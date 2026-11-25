@@ -39,7 +39,8 @@ test('--islands: runs in one process with the same panel and holdout, in rounds;
   const args = [...without(TINY, '--panel-choice'), '--panel-choice', 'picked', '--pick-sample', '40',
     '--average', 'panel', '--list', '16', '--survivors', '8'];
   // islands alike and without migration, so that an island is the run alone
-  const isl = ['--islands', String(N), '--select-after', String(EVERY), '--keep', String(KEEP), '--score-rounds', String(SCORE), '--migrate', '0', '--island-variant', ''];
+  // designs of 1 member and more: many, most of them not among the four of their island
+  const isl = ['--islands', String(N), '--select-after', String(EVERY), '--keep', String(KEEP), '--score-rounds', String(SCORE), '--score-designs', '1', '--migrate', '0', '--island-variant', ''];
   const rdir = join(tmp, 'isl');
   run(rdir, [...args, ...isl, '--threads', '2', '--batches', String(BATCHES)]);
   const rootEvents = (dir) => events(dir, 'islands.jsonl');
@@ -72,14 +73,55 @@ test('--islands: runs in one process with the same panel and holdout, in rounds;
     const ev = all[x.island - 1], upTo = ev.slice(0, ev.findIndex((e) => e.type === 'batch' && e.batch === EVERY - 1) + 1);
     const vals = upTo.filter((e) => e.type === 'values').at(-1).values.filter((v) => !ev[0].panel.some((p) => p.id === v[0]));
     const top = [...vals].sort((a, b) => b[5] - a[5] || vals.indexOf(a) - vals.indexOf(b)).slice(0, 3).map((v) => v[0]);
-    assert.deepEqual(x.warriors.filter((w) => w.tag !== 'best').map((w) => w.id), top, `island ${x.island}: its members best against the panel`);
+    assert.deepEqual(x.warriors.filter((w) => /^p\d$/.test(w.tag)).map((w) => w.id), top, `island ${x.island}: its members best against the panel`);
     const benched = upTo.filter((e) => e.type === 'bench').sort((a, b) => b.avg - a.avg)[0];
     assert.deepEqual(x.warriors.filter((w) => w.tag === 'best').map((w) => w.id), benched ? [benched.id] : [], `island ${x.island}: its best.red`);
-    assert.equal(x.score, Math.max(...x.warriors.map((w) => w.score)));
+    assert.equal(x.score, Math.max(...x.warriors.filter((w) => w.tag !== 'design').map((w) => w.score)), 'a design does not count for the island');
     for (const w of x.warriors) assert.equal(w.score, x.warriors.find((y) => y.id === w.id).score, `island ${x.island}: ${w.id} scored once`);
     twice += x.warriors.length - new Set(x.warriors.map((w) => w.id)).size;
   }
   assert.ok(twice >= 1, 'no warrior was both best.red and one of the three');
+  // #220: every warrior's points and wins per opponent, in the order of files, once per island (at the first place
+  // of a warrior that is there twice), their mean is its score; and the best member of each design (family noun and
+  // kind of style) with --score-designs members (1 here), the best against the panel first; a design does not count
+  // for its island's score
+  assert.equal(re[0].scoreDesigns, 1);
+  let designs = 0, played = 0;
+  for (const s of [s1, s2]) {
+    for (const x of s.islands) {
+      const had = new Set();
+      for (const w of x.warriors) {
+        if (!w.points) {
+          assert.ok(had.has(w.id), `island ${x.island}, batch ${s.batch}: ${w.tag} ${w.id} without points, and not before`);
+          continue;
+        }
+        assert.ok(!had.has(w.id), `island ${x.island}, batch ${s.batch}: ${w.id} played twice`);
+        had.add(w.id);
+        assert.deepEqual([w.points.length, w.wins.length], [s.files.length, s.files.length]);
+        w.points.forEach((p, o) => assert.ok(p >= 3 * w.wins[o] && p - 2 * w.wins[o] <= SCORE, `${w.id} against ${s.files[o]}: ${p} points, ${w.wins[o]} wins`));
+        const mean = (w.points.reduce((a, b) => a + b, 0) * 100) / SCORE / s.files.length;
+        assert.ok(Math.abs(mean - w.score) < 1e-3, `${w.id}: score ${w.score}, mean of its points ${mean}`);
+        assert.ok(typeof w.code === 'string' && w.code.length > 0);
+      }
+      const ev = all[x.island - 1], upTo = ev.slice(0, ev.findIndex((e) => e.type === 'batch' && e.batch === s.batch - 1) + 1);
+      const vals = upTo.filter((e) => e.type === 'values').at(-1).values.filter((v) => !ev[0].panel.some((p) => p.id === v[0]));
+      const entered = new Map(upTo.filter((e) => e.type === 'enter').map((e) => [e.id, e]));
+      const groups = new Map();
+      for (const v of vals) {
+        const e = entered.get(v[0]), key = `${e.name.split(' ')[1]} ${e.style.kind}`;
+        const g = groups.get(key) ?? { best: v, members: 0, noun: e.name.split(' ')[1], kind: e.style.kind };
+        if (v[5] > g.best[5]) g.best = v;
+        g.members++;
+        groups.set(key, g);
+      }
+      const want = [...groups.values()].filter((g) => g.members >= 1).sort((a, b) => b.best[5] - a.best[5]).map((g) => [g.best[0], g.noun, g.kind, g.members]);
+      const got = x.warriors.filter((w) => w.tag === 'design');
+      assert.deepEqual(got.map((w) => [w.id, w.noun, w.kind, w.members]), want, `island ${x.island}, batch ${s.batch}: the designs`);
+      designs += got.length;
+      played += got.filter((w) => w.points).length;
+    }
+  }
+  assert.ok(designs >= 2 && played >= 1, `${designs} designs, ${played} of them not among the four`);
   // the KEEP best islands go on, the other stops where it was scored
   const ranked = [...s1.islands].sort((a, b) => b.score - a.score || a.island - b.island);
   assert.deepEqual(s1.kept, ranked.slice(0, KEEP).map((x) => x.island).sort());
@@ -109,6 +151,13 @@ test('--islands: runs in one process with the same panel and holdout, in rounds;
     assert.deepEqual(stable(rootEvents(dir)).map((e) => ({ ...e, threads: 0 })), stable(re).map((e) => ({ ...e, threads: 0 })));
     assert.equal(readFileSync(join(dir, 'best.red'), 'latin1'), red);
   };
+  // --score-designs 0: the four of each island only
+  // (stopped before the score: the option is in islands.txt)
+  run(join(tmp, 'isl-d0'), [...without(args), ...without(isl, '--score-designs', '--keep'), '--keep', '0', '--score-designs', '0', '--threads', '4', '--batches', '2']);
+  run(join(tmp, 'isl-d0'), ['--threads', '4', '--batches', String(EVERY - 1)]);
+  const d0 = rootEvents(join(tmp, 'isl-d0'));
+  assert.equal(d0[0].scoreDesigns, 0);
+  assert.deepEqual(d0.find((e) => e.type === 'score').islands.map((x) => x.warriors.map((w) => w.tag)), s1.islands.map((x) => x.warriors.filter((w) => w.tag !== 'design').map((w) => w.tag)));
   run(join(tmp, 'isl-resumed'), [...args, ...isl, '--threads', '3', '--batches', '3']);
   run(join(tmp, 'isl-resumed'), ['--threads', '1', '--batches', '3']); // past the selection at 4
   run(join(tmp, 'isl-resumed'), ['--threads', '4', '--batches', '3']);

@@ -241,6 +241,7 @@ typedef struct {
   char dir[1000]; // shorter than a run's, for /island-NN
   uint32_t n, keep, every, selected, next_score;
   uint32_t rounds;     // --score-rounds: of each match of a score
+  uint32_t designs;    // --score-designs D: a score also plays the best member of every design with D members or more, 0 none
   uint32_t migrate;    // --migrate M: every M batches each island plays the best member of every other one, 0 never
   uint32_t migrate_random, migrate_next; // --migrate-pick random: a member drawn, not the best; --migrate-to (MIGRATE_*)
   uint32_t explorers;  // --explorers K: the last K islands take no migrants (the others may take from them)
@@ -393,9 +394,9 @@ int optimize(run *r, const char *file);
 
 // islands.c: --islands
 int islands_new(const params *base, const params *variant, const char *const *variant_text, uint32_t variant_n,
-                const char *dir, uint32_t n, uint32_t keep, uint32_t every, uint32_t rounds, uint32_t migrate,
-                uint32_t migrate_random, uint32_t migrate_next, uint32_t explorers, int own_panels, uint32_t threads,
-                uint32_t batches, double seconds);
+                const char *dir, uint32_t n, uint32_t keep, uint32_t every, uint32_t rounds, uint32_t designs,
+                uint32_t migrate, uint32_t migrate_random, uint32_t migrate_next, uint32_t explorers, int own_panels,
+                uint32_t threads, uint32_t batches, double seconds);
 int islands_resume(const char *dir, uint32_t threads, uint32_t batches, double seconds);
 
 #endif

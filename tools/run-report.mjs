@@ -173,7 +173,7 @@ function report(run) {
     const scores = run.scores.map((s) => {
       const i = s.islands.find((y) => y.island === x.island);
       if (!i) return null;
-      const top = [...i.warriors].sort((a, b) => b.score - a.score)[0];
+      const top = i.warriors.filter((w) => w.tag !== 'design').sort((a, b) => b.score - a.score)[0]; // the island's score: a design does not count (#220)
       return { batch: s.batch, score: i.score, tag: top?.tag, ...(lookup(x.island, top?.id) ?? { id: top?.id }) };
     }).filter(Boolean);
     const best = scores.reduce((b, s) => (!b || s.score > b.score ? s : b), null);
