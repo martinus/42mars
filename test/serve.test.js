@@ -302,6 +302,34 @@ test('runs that start after the server are added at the end: --watch and the isl
   assert.deepEqual([JSON.parse(got[0].data).name, JSON.parse(got[1].data).run], ['w-isl/island-02', 'i2']);
 });
 
+test('/run/<n>/scores: the events score of the folder of an island, and the kinds of the opponents from the cache of tools/hill-kinds.mjs', { timeout: 15000 }, async () => {
+  const isl = join(dir, 'scored'), hill = `serve-test-${process.pid}`;
+  mkdirSync(join(isl, 'island-01'), { recursive: true });
+  writeFileSync(join(isl, 'island-01', 'events.jsonl'), '{"type":"start"}\n');
+  writeFileSync(join(isl, 'islands.txt'), '42evolve-islands 1\n');
+  const sc = (batch) => JSON.stringify({ type: 'score', batch, rounds: 10, opponents: 2, files: ['a.red', 'b.red'], islands: [] });
+  writeFileSync(join(isl, 'islands.jsonl'), `{"type":"islands","opponents":"some/where/${hill}"}\n{"type":"pick"}\n${sc(100)}\n${sc(200)}\n{"type":"score","batch":3`);
+  const single = join(isl, 'plain'); // a run that is no island, in a folder of islands
+  mkdirSync(single, { recursive: true });
+  writeFileSync(join(single, 'events.jsonl'), '{"type":"start"}\n');
+  const url = await serve(['--run', isl, single]);
+  const get = async (n) => (await fetch(`${url}/run/${n}/scores`)).json();
+  // no cache of the kinds: none; a line being written is left out
+  assert.deepEqual(await get(0), { scores: [JSON.parse(sc(100)), JSON.parse(sc(200))], opponents: `some/where/${hill}`, kinds: null });
+  // the cache of tools/hill-kinds.mjs for that folder (94nop: the hill for a folder not named after one)
+  const cache = join(root, 'build', 'hill-kinds', `94nop-${hill}.json`);
+  mkdirSync(join(root, 'build', 'hill-kinds'), { recursive: true });
+  writeFileSync(cache, JSON.stringify({ warriors: { 'a.red': { kind: 'copies itself with many processes (paper)' }, 'b.red': { kind: null } } }));
+  try {
+    assert.deepEqual((await get(0)).kinds, { 'a.red': 'paper', 'b.red': '' });
+  } finally {
+    rmSync(cache);
+  }
+  // a run that is no island has no scores; a run that does not exist is not found
+  assert.deepEqual(await get(1), { scores: [], opponents: null, kinds: null });
+  assert.equal((await fetch(`${url}/run/9/scores`)).status, 404);
+});
+
 test('a wrong option or port is refused with the usage', () => {
   const r = (args) => spawnSync(process.execPath, [join(root, 'tools/serve.mjs'), ...args], { encoding: 'utf8', timeout: 10000 });
   for (const [args, why] of [

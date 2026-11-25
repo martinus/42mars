@@ -81,7 +81,7 @@ main {
 .tabs { display: flex; gap: 2px; padding: 8px 10px 6px; }
 .tabs button { background: none; border: 0; border-bottom: 2px solid transparent; border-radius: 0; padding: 2px 8px; font: 600 12px var(--sans); letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); }
 .tabs button.on { color: var(--text); border-bottom-color: var(--accent); }
-.tab-ops, .tab-about { overflow: auto; flex: 1; padding: 0 13px 12px; font: 12px/1.5 var(--sans); color: #c3c8dc; }
+.tab-ops, .tab-about, .tab-designs { overflow: auto; flex: 1; padding: 0 13px 12px; font: 12px/1.5 var(--sans); color: #c3c8dc; }
 .tab-about h3 { margin: 12px 0 4px; font: 600 11px var(--sans); text-transform: uppercase; letter-spacing: 0.12em; color: #aeb4cc; }
 .tab-about p { margin: 0 0 6px; }
 .tab-about b { color: var(--text); }
@@ -202,3 +202,23 @@ body.with-side .bar { grid-column: 1 / -1; }
   .chips { display: none; }
   .card { width: auto; left: 12px; }
 }
+
+/* the tab Designs (#222) */
+.designs-table { width: 100%; border-collapse: collapse; font: 12px var(--sans); }
+.designs-table th { color: var(--muted); font-weight: 400; text-align: right; padding: 3px 5px; white-space: nowrap; }
+.designs-table td { text-align: right; padding: 3px 5px; border-bottom: 1px solid #151827; white-space: nowrap; }
+.designs-table th:first-child, .designs-table td:first-child { text-align: left; }
+.designs-table tbody tr { cursor: pointer; }
+.designs-table tbody tr:hover { background: #131729; }
+.designs-table tr.pick-a td:first-child { box-shadow: inset 3px 0 #ffc53d; }
+.designs-table tr.pick-b td:first-child { box-shadow: inset 3px 0 #36d6ff; }
+.designs-table .new { color: #5dff9a; font-weight: 600; }
+.designs-table svg { vertical-align: middle; }
+.designs-compare { margin-top: 12px; font: 12px/1.5 var(--sans); }
+.designs-compare b.a { color: #ffc53d; }
+.designs-compare b.b { color: #36d6ff; }
+.designs-compare .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.designs-compare ol { margin: 4px 0 0; padding-left: 18px; color: #aab1c9; }
+body.designs-big .ticker-panel { position: fixed; z-index: 20; inset: 64px 12px 12px 12px; background: var(--panel); box-shadow: 0 20px 60px #000c; }
+.tab-designs { position: relative; }
+.designs-big-button { position: absolute; right: 13px; top: 8px; padding: 1px 9px; font-size: 11px; }

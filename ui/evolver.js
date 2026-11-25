@@ -10,8 +10,9 @@
 // the number.
 
 import { assemble, compileMars, createMarsSync } from '../wasm/42mars.js';
-import { describe, measureStyle } from '../tools/style.js';
+import { describe, measureStyle, shortKind } from '../tools/style.js';
 import { kindCounts, progressPoint } from '../tools/progress.js';
+import { compareDesigns, designTable } from '../tools/designs.js';
 
 const $ = (id) => document.getElementById(id);
 // The font of everything drawn but code: proportional, as the page's (evolver.css --sans).
@@ -1513,6 +1514,13 @@ function wire() {
     });
   }
   document.addEventListener('click', (e) => {
+    if (e.target.closest('#designs-big')) document.body.classList.toggle('designs-big'), renderDesigns();
+    const row = e.target.closest('tr[data-design]'); // the tab Designs: two picked, a third replaces the second
+    if (row) {
+      const k = row.dataset.design;
+      designPick = designPick.includes(k) ? designPick.filter((x) => x !== k) : designPick.length < 2 ? [...designPick, k] : [designPick[0], k];
+      renderDesigns();
+    }
     const a = e.target.closest('a[data-id]');
     if (a) select(Number(a.dataset.id));
     const b = e.target.closest('button[data-battle]');
@@ -1541,6 +1549,7 @@ function wire() {
     for (const t of document.querySelectorAll('.ticker-panel .tab')) t.hidden = !t.classList.contains(b.dataset.tab);
     chartsDirty = true; // a chart that was hidden has its size only now
     if (b.dataset.tab === 'tab-ops') renderOps();
+    if (b.dataset.tab === 'tab-designs') loadDesigns();
     if (b.dataset.tab === 'tab-about') renderAbout();
   });
   $('ops').addEventListener('click', (e) => {
@@ -1561,6 +1570,7 @@ function wire() {
   window.addEventListener('keydown', (e) => { // Esc: the arena back to its place, else no warrior selected
     if (e.key !== 'Escape') return;
     if (document.body.classList.contains('arena-big')) document.body.classList.remove('arena-big');
+    else if (document.body.classList.contains('designs-big')) document.body.classList.remove('designs-big');
     else select(null);
   });
   let depth = 0;
@@ -1613,6 +1623,82 @@ function applyPending(now) {
   S.version = (S.version ?? 0) + 1;
   if (autoPick) pickBest();
   if (selected !== null) renderCard();
+}
+
+// The tab Designs (#222): the designs of the islands' folder at its last
+// score against the whole opponent folder (42evolve --score-designs), from
+// /run/<n>/scores: per design its islands, members, best score and that best
+// warrior's score against each kind of hill warrior (where
+// tools/hill-kinds.mjs has a cache), with a line of its best score over the
+// scores. A click picks a design, a second one another: the two side by
+// side, where each is better and the best-of bound. Loaded when the tab
+// opens, again every minute while it is open.
+let designsData = null, designPick = [], designsTimer = null;
+const DESIGN_KINDS = ['paper', 'mover', 'scanner', 'stone', 'fields', 'little'];
+async function loadDesigns() {
+  clearTimeout(designsTimer);
+  const el = $('designs');
+  if (el.hidden) return;
+  if (new URLSearchParams(location.search).has('log') || !runs.length) {
+    el.innerHTML = '<p>The designs come from the scores of a run of islands, served by <code>node tools/serve.mjs --run &lt;folder&gt;</code>.</p>';
+    return;
+  }
+  try {
+    designsData = await (await fetch(`/run/${current}/scores`)).json();
+  } catch {
+    designsData = null;
+  }
+  renderDesigns();
+  designsTimer = setTimeout(loadDesigns, 60000);
+}
+
+function sparkline(history, lo, hi) {
+  if (history.length < 2) return '';
+  const w = 70, h = 16, x0 = history[0].batch, x1 = history.at(-1).batch;
+  const pts = history.map((p) => `${(((p.batch - x0) / Math.max(1, x1 - x0)) * (w - 2) + 1).toFixed(1)},${(h - 1 - ((p.score - lo) / Math.max(1e-9, hi - lo)) * (h - 2)).toFixed(1)}`).join(' ');
+  return `<svg width="${w}" height="${h}"><polyline points="${pts}" fill="none" stroke="#ffc53d" stroke-width="1.3"/></svg>`;
+}
+
+function renderDesigns() {
+  const el = $('designs'), d = designsData;
+  if (!d || !d.scores?.length) {
+    el.innerHTML = `<h2>Designs <small>the best member of each design, scored against the whole opponent folder</small></h2><p>No score yet: a run of islands scores its islands every <code>--select-after</code> batches${d && !d.scores ? '' : ''}; a run that is no island has none.</p>`;
+    return;
+  }
+  const last = d.scores.at(-1), rows = designTable(d.scores, d.kinds);
+  if (!rows.length) {
+    el.innerHTML = `<h2>Designs</h2><p>The score of batch ${fmtInt(last.batch)} has no designs: the run is from before <code>--score-designs</code> (#220), or ran with <code>--score-designs 0</code>.</p>`;
+    return;
+  }
+  const kinds = d.kinds ? DESIGN_KINDS.filter((k) => rows.some((r) => r.kinds[k])) : [];
+  const counts = {};
+  if (d.kinds) for (const f of last.files) counts[d.kinds[f] ?? ''] = (counts[d.kinds[f] ?? ''] ?? 0) + 1;
+  const all = rows.flatMap((r) => r.history.map((h) => h.score)), lo = Math.min(...all), hi = Math.max(...all);
+  const cell = (v, ref) => (v === undefined ? '<td>–</td>' : `<td style="color:${rampColor(v, ref.lo, ref.hi)}">${f1(v)}</td>`);
+  const range = Object.fromEntries(kinds.map((k) => {
+    const vs = rows.map((r) => r.kinds[k]?.mean).filter((v) => v !== undefined);
+    return [k, { lo: Math.min(...vs), hi: Math.max(...vs) }];
+  }));
+  const pickClass = (key) => (designPick[0] === key ? 'pick-a' : designPick[1] === key ? 'pick-b' : '');
+  const big = document.body.classList.contains('designs-big');
+  let html = `<button id="designs-big" class="designs-big-button" title="${big ? 'back to its place (Esc)' : 'the designs over the whole page (Esc: back)'}">${big ? '⤡ smaller' : '⤢ larger'}</button><h2>Designs <small>batch <b>${fmtInt(last.batch)}</b>: the best member of each design (family and kind of style) against the <b>${fmtInt(last.opponents)}</b> warriors of the folder, ${last.rounds} rounds each${d.kinds ? ', and against each kind of them' : ' · <code>node tools/hill-kinds.mjs &lt;folder&gt;</code> adds the kinds'} · <span class="new">new</span>: not in the score before · click two rows to compare them</small></h2>`;
+  html += `<table class="designs-table"><thead><tr><th>design</th><th>islands</th><th>members</th><th>best</th><th>over the scores</th>${kinds.map((k) => `<th title="${counts[k] ?? 0} warriors of the folder">vs ${k}</th>`).join('')}</tr></thead><tbody>`;
+  for (const r of rows) {
+    html += `<tr data-design="${esc(r.key)}" class="${pickClass(r.key)}"><td>${r.isNew ? '<span class="new">new</span> ' : ''}<b>${esc(r.noun)}</b> ${esc(shortKind(r.kind))}</td><td>${r.islands.join(' ')}</td><td>${r.members}</td><td><b>${f1(r.best.score)}</b></td><td>${sparkline(r.history, lo, hi)}</td>${kinds.map((k) => cell(r.kinds[k]?.mean, range[k])).join('')}</tr>`;
+  }
+  html += '</tbody></table>';
+  const [a, b] = designPick.map((k) => rows.find((r) => r.key === k));
+  if (a && b) {
+    const c = compareDesigns(a, b, last.files, last.rounds, d.kinds);
+    if (c) {
+      const kindText = (m) => Object.entries(m).sort((x, y) => y[1] - x[1]).map(([k, n]) => `${n} ${k || 'not measured'}`).join(', ') || 'none';
+      const list = (rows, first, second) => rows.slice(0, 8).map((r) => `<li>${esc(r.file.replace(/\.red$/, ''))}${r.kind ? ` <span style="color:#7f86a0">${r.kind}</span>` : ''}: ${f1(r[first])} against ${f1(r[second])}</li>`).join('');
+      html += `<div class="designs-compare"><b class="a">${esc(a.noun)} ${esc(shortKind(a.kind))}</b> (${esc(a.best.name ?? `#${a.best.id}`)}, ${f1(a.best.score)}) and <b class="b">${esc(b.noun)} ${esc(shortKind(b.kind))}</b> (${esc(b.best.name ?? `#${b.best.id}`)}, ${f1(b.best.score)}): the better of the two against each opponent averages <b>${f1(c.bound)}</b>, the bound for a warrior made of both.
+        <div class="cols"><div><b class="a">${a.noun}</b> better by more than 10 against <b>${c.aBetter.length}</b> (${kindText(c.aKinds)})<ol>${list(c.aBetter, 'a', 'b')}</ol></div>
+        <div><b class="b">${b.noun}</b> better by more than 10 against <b>${c.bBetter.length}</b> (${kindText(c.bKinds)})<ol>${list(c.bBetter, 'b', 'a')}</ol></div></div></div>`;
+    }
+  } else html += '<p class="designs-compare" style="color:#7f86a0">Pick two designs to see where each is better.</p>';
+  el.innerHTML = html;
 }
 
 // The runs of the server (tools/serve.mjs --run a b ...): with more than one,
@@ -1750,6 +1836,8 @@ function caughtUp() {
 function switchRun(i) {
   if (i === current && source) return;
   current = i;
+  designsData = null, designPick = [];
+  if (!$('designs').hidden) loadDesigns();
   source?.close();
   catchingUp = true; // from here the old picture stays until the new run's history is in
   clearRun();
