@@ -67,6 +67,7 @@ const REMOVED = [
   { args: ['--niche', '2'], option: '--niche', at: 28 },
   { args: ['--specialists'], option: '--specialists', at: 30 },
   { args: ['--sharing', '20'], option: '--sharing', at: 31 },
+  { args: ['--simple'], option: '--simple', at: 37 },
 ];
 
 test('a removed option is refused on the command line, in an island variant, and in the state of a run that used it (#193)', { skip }, () => {
@@ -568,10 +569,6 @@ test('--start: the first batch starts from the warriors of a folder', { skip }, 
   assert.deepEqual([b0.filter((e) => e.type === 'enter' && e.ops === 'start').length, b0.filter((e) => e.type === 'enter').length], [n, n]);
   assert.equal(b0.filter((e) => e.type === 'leave').length, n - 8);
   assert.equal(checkValues(mv), 2);
-  // --simple: nobody stops in the first batch, the list is empty; every start warrior enters
-  run(join(tmp, 'start-many-simple'), [...without(TINY, '--list', '--diversity', '--screen-stop'), '--list', '8', '--simple', '--start', many, '--threads', '2', '--batches', '1']);
-  const sv = events(join(tmp, 'start-many-simple'));
-  assert.equal(sv.filter((e) => e.type === 'enter' && e.batch === 0 && e.ops === 'start').length, n);
 });
 
 test('42spectrum: every child of every change counted once, the same result on any thread count', { skip }, () => {

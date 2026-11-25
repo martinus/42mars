@@ -130,8 +130,8 @@ test('the defaults: the settings of gen-var16-rnd; a panel picked from a round r
   run(join(tmp, 'def1'), [...args, '--threads', '1']);
   assert.deepEqual(stable(events(join(tmp, 'def1'))), stable(one));
   // the value push-off where pareto does not go
-  run(join(tmp, 'def-simple'), [...args, '--simple', '--threads', '4']);
-  assert.equal(events(join(tmp, 'def-simple'))[0].params.pushoff, 'value');
+  run(join(tmp, 'def-avg'), [...args, '--average', 'panel', '--threads', '4']);
+  assert.equal(events(join(tmp, 'def-avg'))[0].params.pushoff, 'value');
   // --screen-stop 3 where it goes: not with --race; 0 is off, also for a run that continues
   for (const [extra, stop] of [[['--race', '3'], 0], [['--screen-stop', '0'], 0], [['--screen-stop', '1.5'], 1.5], [['--screen-check', '2'], 0]]) {
     const d = join(tmp, `def-stop-${extra.join('')}`);
@@ -141,11 +141,4 @@ test('the defaults: the settings of gen-var16-rnd; a panel picked from a round r
   run(join(tmp, 'def4'), ['--screen-stop', '0', '--threads', '2', '--batches', '2']);
   const off = events(join(tmp, 'def4')).find((e) => e.type === 'screen-options');
   assert.deepEqual([off.batch, off.screenStop, off.screenCheck], [1, 0, 0]);
-  // --simple needs a z: refused with --screen-stop 0, from the start and on a run that continues
-  const bad = spawnSync(evolve, [join(tmp, 'def-simple0'), ...args, '--simple', '--screen-stop', '0'], { encoding: 'utf8' });
-  assert.equal(bad.status, 2);
-  assert.match(bad.stderr, /--simple needs --screen-stop or --screen-check above 0/);
-  const later = spawnSync(evolve, [join(tmp, 'def-simple'), '--screen-stop', '0', '--batches', '2'], { encoding: 'utf8' });
-  assert.equal(later.status, 2);
-  assert.match(later.stderr, /--simple needs --screen-stop or --screen-check above 0/);
 });

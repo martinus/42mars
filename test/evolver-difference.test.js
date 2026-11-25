@@ -48,8 +48,8 @@ test('--difference ahead: the SD-score only where a warrior scores more; from th
   assert.equal(evs.filter((e) => e.type === 'difference').length, 1);
   assert.equal(checkValues(evs), 6 + 1 + 6 + 2);
   assert.ok(checkValues.differenceLeaves >= 1, `ahead changed who left in ${checkValues.differenceLeaves} push-offs`);
-  // refused with --simple (--diversity panel, which --simple needs), and a value other than abs and ahead
-  for (const [bad, why] of [[['--simple', '--diversity', 'panel'], /--difference ahead not with --simple/], [['--difference', 'sideways'], /usage/]]) {
+  // refused: a value other than abs, ahead and shape
+  for (const [bad, why] of [[['--difference', 'sideways'], /usage/]]) {
     const r = spawnSync(evolve, [join(tmp, 'ahead-bad'), ...args, ...bad, '--batches', '1'], { encoding: 'utf8' });
     assert.equal(r.status, 2, bad.join(' '));
     assert.match(r.stderr, why);
@@ -84,7 +84,7 @@ test('--difference shape: the SD-score less the shift that makes it smallest; wi
   const k = evs.findIndex((e) => e.type === 'difference');
   assert.deepEqual([evs[k].difference, evs[k].batch, evs[k + 1].type], ['shape', 6, 'values']);
   assert.equal(checkValues(evs), 6 + 1 + 6 + 2);
-  for (const [bad, why] of [[['--simple', '--diversity', 'panel'], /--difference shape not with --simple/], [['--pushoff', 'pareto'], /--difference shape with --pushoff pareto-sd only/]]) {
+  for (const [bad, why] of [[['--pushoff', 'pareto'], /--difference shape with --pushoff pareto-sd only/]]) {
     const r = spawnSync(evolve, [join(tmp, 'shape-bad'), ...without(args, '--pushoff'), ...bad, '--batches', '1'], { encoding: 'utf8' });
     assert.equal(r.status, 2, bad.join(' '));
     assert.match(r.stderr, why);
