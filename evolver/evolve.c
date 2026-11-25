@@ -6,7 +6,7 @@
 //
 //   42evolve <run folder> --opponents <dir> [options]   a new run
 //   42evolve <run folder> [--threads N] [--batches N] [--seconds S]
-//            [--changes name=weight,...] [--reintroduce p] [--list N (larger)] [--tune-novel N]
+//            [--changes name=weight,...] [--reintroduce p] [--list N (larger)]
 //            [--screen-stop z | --screen-check z]
 //                                                       continue a run
 //
@@ -80,7 +80,6 @@ typedef struct {
   int panel_random;         // --panel-choice: PANEL_PICKED (pick_panel()), PANEL_RANDOM drawn with the seed, PANEL_KINDS
   double screen_stop;       // --screen-stop z: a child stops its screen when z standard errors cannot get it past (0 off)
   double screen_check;      // --screen-check z: plays the whole screen, logs what --screen-stop z would have done
-  uint32_t tune_novel;      // --tune-novel N: every N batches the constants of the most novel survivor that left, 0 never
   uint32_t pick_sample;     // --pick-sample: warriors of the round robin of pick_panel(), 0 PICK_SAMPLE
   int gen;                  // --genome gen: a warrior's genome is a generator (generator.h), not the list of its instructions
   double refactor;          // --refactor p: each batch a member's generator gets another structure for the same warrior with probability p
@@ -482,15 +481,11 @@ typedef struct {
   double *pts1;
   uint8_t *keep;      // panel slots never leave
   uint32_t list_grow;         // --list on a run that continues: the list grows to this before the matrix is made, 0 not
-  genome tuned;               // --tune-novel: a tuned warrior, the first candidate of the next batch when tuned_ready
-  int tuned_ready;
-  uint64_t tuned_from;        // the survivor it was tuned from
   genome *migr;               // --migrate: the best members of the other islands, played first in the next batch
   uint64_t *migr_id;
   uint32_t *migr_noun, migr_n;
   genome *donor;              // the change loop (#182): the best member of each other island before this round
   uint32_t donor_n, donor_cap;
-  uint32_t tuned_noun;
   double *sigma;
   pushoff_value *values;
   uint32_t *active, active_n;
@@ -966,7 +961,7 @@ static void event_start(run *r) {
           "\"rounds\":%u,\"screenRounds\":%u,\"benchEvery\":%u,\"benchRounds\":%u,\"initLength\":%u,"
           "\"screenFactor\":%.17g,\"alpha\":%.17g,\"reintroduce\":%.17g,\"sd\":\"%s\",\"seed\":%" PRIu64
           ",\"fractions\":%.17g,\"prior\":\"%s\","
-          "\"parents\":\"%s\",\"screenMembers\":%u,\"stage\":%u,\"fill\":%s,\"panelRounds\":%u,\"diversity\":\"%s\",\"panelChoice\":\"%s\",\"screenStop\":%.17g,\"screenCheck\":%.17g,\"tuneNovel\":%u,\"average\":\"%s\",\"memberGames\":\"%s\",\"drawSeed\":%" PRIu64 ",\"pushoff\":\"%s\",\"positions\":\"%s\",\"clear\":%.17g,\"genome\":\"%s\",\"refactor\":%.17g,\"minLength\":%u,\"tiePoints\":%.17g},"
+          "\"parents\":\"%s\",\"screenMembers\":%u,\"stage\":%u,\"fill\":%s,\"panelRounds\":%u,\"diversity\":\"%s\",\"panelChoice\":\"%s\",\"screenStop\":%.17g,\"screenCheck\":%.17g,\"average\":\"%s\",\"memberGames\":\"%s\",\"drawSeed\":%" PRIu64 ",\"pushoff\":\"%s\",\"positions\":\"%s\",\"clear\":%.17g,\"genome\":\"%s\",\"refactor\":%.17g,\"minLength\":%u,\"tiePoints\":%.17g},"
           "\"opponents\":",
           m42_version(), p->rules.core_size, p->rules.max_cycles, p->rules.max_processes, p->rules.max_length,
           p->rules.min_distance, r->panel_n, r->hold_n, p->list, p->batch, p->survivors, p->rounds, p->screen_rounds,
@@ -979,7 +974,7 @@ static void event_start(run *r) {
           : p->panel_random == PANEL_RANDOM ? "random"
           : p->panel_random == PANEL_KINDS  ? "kinds"
                                             : "picked",
-          p->screen_stop, p->screen_check, p->tune_novel,
+          p->screen_stop, p->screen_check,
           p->average_panel ? "panel" : "all", p->member_games_none ? "none" : "all", p->draw_seed,
           p->pareto == 3 ? "pareto-sd" : p->pareto == 2 ? "pareto-age" : p->pareto ? "pareto" : "value", p->mirror ? "mirror" : "pmars", p->clear, p->gen ? "gen" : "list", p->refactor, p->min_length, p->tie);
   json_str(f, p->opponents, 0);
@@ -1139,7 +1134,7 @@ static const param_field param_fields[] = {
     PF('g', fractions), GONE("--race"), GONE(0), PF('d', prior), PF('d', parents), PF('u', screen_members),
     GONE("--noise"), PF('u', stage), PF('d', fill), PF('u', panel_rounds), PF('d', distance_panel), GONE("--niche"),
     GONE("--map-elites"), GONE("--specialists"), GONE("--sharing"), PF('g', screen_stop), PF('g', screen_check),
-    PF('u', tune_novel), PF('d', average_panel), PF('d', member_games_none), GONE("--simple"), PF('q', draw_seed),
+    GONE("--tune-novel"), PF('d', average_panel), PF('d', member_games_none), GONE("--simple"), PF('q', draw_seed),
     GONE("--difference"), PF('d', pareto), PF('d', mirror), PF('g', clear), PF('d', gen), PF('g', refactor),
     PF('u', min_length), PF('g', tie)};
 #define PARAM_FIELDS (sizeof param_fields / sizeof *param_fields)
@@ -1235,10 +1230,6 @@ static void save_state(run *r) {
   if (r->best_g_set) { // the warrior of best.red
     genome_save(&r->best_g, text, sizeof text);
     fprintf(f, "best-genome %s\n", text);
-  }
-  if (r->tuned_ready) { // --tune-novel: the warrior the next batch starts with
-    genome_save(&r->tuned, text, sizeof text);
-    fprintf(f, "tuned %" PRIu64 " %u %s\n", r->tuned_from, r->tuned_noun, text);
   }
   for (uint32_t i = 0; i < NAME_ADJECTIVES * NAME_NOUNS; i++)
     if (r->names[i]) fprintf(f, "names %u %u\n", i, r->names[i]);
@@ -1411,12 +1402,10 @@ static int load_state(run *r, const char *path) {
     } else if (!strncmp(line, "best-genome ", 12)) { // the warrior of best.red
       if (genome_load(&r->best_g, line + 12, p->rules.core_size, 0) != 0) goto bad;
       r->best_g_set = 1;
-    } else if (!strncmp(line, "tuned ", 6)) { // --tune-novel: the warrior the next batch starts with
-      int used = 0;
-      if (sscanf(line + 6, "%" SCNu64 " %u %n", &r->tuned_from, &r->tuned_noun, &used) != 2 || r->tuned_noun >= NAME_NOUNS ||
-          genome_load(&r->tuned, line + 6 + used, p->rules.core_size, 0) != 0)
-        goto bad;
-      r->tuned_ready = 1;
+    } else if (!strncmp(line, "tuned ", 6)) { // the warrior --tune-novel tuned for the next batch: it waits there
+      fprintf(stderr, "42evolve: %s: --tune-novel was removed after 1.1.0 (#193)\n", r->dir);
+      refused = 1;
+      goto bad;
     } else if (!strncmp(line, "archive ", 8)) {
       int used = 0;
       if (r->archive_n >= ARCHIVE_MAX ||
@@ -1762,12 +1751,12 @@ static void screen_more(run *r, const candidate *c, uint32_t B, const uint32_t *
 
 // Event `parents`: how far the children of each first parent got in this
 // batch, [id, bred, evaluated, past the screen, stayed]; not those that came
-// back from the archive or were tuned.
+// back from the archive.
 static void event_parents(run *r, const candidate *c, uint32_t B) {
   uint64_t *pid = xmalloc(B * sizeof *pid);
   uint32_t (*pn)[4] = xmalloc(B * sizeof *pn), np = 0;
   for (uint32_t i = 0; i < B; i++) {
-    if (c[i].parents[0] == NO_ID || !strcmp(c[i].ops, "reintroduce") || !strcmp(c[i].ops, "tuned")) continue;
+    if (c[i].parents[0] == NO_ID || !strcmp(c[i].ops, "reintroduce")) continue;
     uint32_t k = 0;
     while (k < np && pid[k] != c[i].parents[0]) k++;
     if (k == np) pid[np++] = c[i].parents[0];
@@ -1915,20 +1904,6 @@ static double row_difference(const run *r, uint32_t a, uint32_t b) {
   return n ? s / n : 0;
 }
 
-typedef void (*opt_start_fn)(run *r, void *ctx, uint32_t nconst, const m42_warrior *w, double avg);
-static uint32_t opt_search(run *r, genome *g_io, uint32_t passes, opt_start_fn on_start, void *ctx, FILE *log, double *avg0,
-                           double *avg1, m42_warrior **out);
-
-// --tune-novel N: the constants of a new design are not tuned yet, and it
-// loses on them before its idea counts against members that have been tuned
-// for thousands of batches. Every N batches, the survivor of the screen that
-// entered and left again with the largest SD-score to the list (by its screen
-// against the panel) gets the search of --optimize, 2 passes at most; with a
-// step confirmed, it is the first candidate of the next batch (ops `tuned`).
-// --optimize gained nothing on warriors that evolution had tuned, and took a
-// stone with a bad step from 12.5 to 70.9 against its panel.
-#define TUNE_PASSES 2
-
 static void run_batch(run *r) {
   const params *p = &r->p;
   const uint32_t B = p->batch, P = r->panel_n;
@@ -1984,13 +1959,6 @@ static void run_batch(run *r) {
       const uint64_t h = genome_hash(&x->g, core);
       for (uint32_t j = 0; j < in_n && !copy; j++) copy = in_list[j] == h;
       if (!copy) in_list[in_n++] = h;
-    } else if (i == 0 && r->tuned_ready && members(r)) { // --tune-novel: the warrior tuned after the last batch
-      x->g = r->tuned;
-      x->parents[0] = r->tuned_from;
-      x->noun = r->tuned_noun;
-      strcpy(x->ops, "tuned"); // not "tune", the change of a constant by a small step
-      reintro = 1; // always evaluated
-      r->tuned_ready = 0;
     } else if (members(r) == 0 && r->start_n) {
       // the start warriors as they are, then mutants of them
       const uint32_t k = i % r->start_n;
@@ -2309,21 +2277,6 @@ static void run_batch(run *r) {
   }
   for (uint32_t i = 0; i < sn; i++)
     if (slot_of[i] != UINT32_MAX) sv[i]->reached = 3;
-  if (p->tune_novel && (r->batch + 1) % p->tune_novel == 0) { // --tune-novel
-    int k = -1;
-    for (uint32_t i = 0; i < sn; i++)
-      if (sv[i]->reached == 2 && (k < 0 || sv[i]->dist > sv[k]->dist)) k = (int)i;
-    if (k >= 0) {
-      genome g = sv[k]->g;
-      double a0, a1;
-      const uint32_t steps = opt_search(r, &g, TUNE_PASSES, 0, 0, 0, &a0, &a1, 0);
-      fprintf(r->events, "{\"type\":\"tune\",\"batch\":%u,\"from\":%" PRIu64 ",\"distance\":%.6f,\"steps\":%u,\"avg\":%.6f,"
-              "\"tuned\":%.6f,\"code\":", r->batch, sv[k]->id, sv[k]->dist, steps, a0, a1);
-      write_code(r->events, &g, core);
-      fputs("}\n", r->events);
-      if (steps) r->tuned = g, r->tuned_ready = 1, r->tuned_from = sv[k]->id, r->tuned_noun = sv[k]->noun;
-    }
-  }
   compute_values(r);
   event_values(r);
 
@@ -2698,6 +2651,8 @@ static double opt_holdout(run *r, const m42_warrior *w) {
   return r->hold_n ? s / r->hold_n : 0;
 }
 
+typedef void (*opt_start_fn)(run *r, void *ctx, uint32_t nconst, const m42_warrior *w, double avg);
+
 // The search on genome g, changed in place to the best found: at most
 // `passes` passes over its constants. on_start (if any) gets the number of
 // constants, the warrior and its average against the panel before the first
@@ -2901,11 +2856,11 @@ static void usage(void) {
           "         [--nemesis-every N] [--explorers K]]\n"
           "         [--draw-seed S]\n"
                     "         [--panel-choice picked|random|kinds] [--pick-sample 300] [--no-fill]\n"
-          "         [--screen-stop z | --screen-check z] [--tune-novel N]\n"
+          "         [--screen-stop z | --screen-check z]\n"
           "         [--size 8000] [--cycles 80000] [--processes 8000] [--length 100] [--distance 100]\n"
           "         [--threads N] [--batches N] [--seconds S]\n"
           "       42evolve <run folder> [--threads N] [--batches N] [--seconds S] [--changes ...] [--reintroduce p] [--list N]\n"
-          "         [--tune-novel N] [--screen-stop z | --screen-check z]   (continue a run)\n"
+          "         [--screen-stop z | --screen-check z]   (continue a run)\n"
           "       42evolve <folder> --optimize <warrior.red> --opponents <dir> [--panel N | --panel-files ...]\n"
           "         [--rounds 100] [--holdout 100] [--bench-rounds 100] [--seed 1] [--threads N]   (its constants)\n");
   exit(2);
@@ -3474,7 +3429,6 @@ static void island_restart(islands *I, uint32_t k) {
     r->slot[s] = 0;
   }
   r->archive_n = r->archive_next = 0;
-  r->tuned_ready = 0;
   rebuild_active(r);
   compute_values(r);
 }
@@ -3792,7 +3746,6 @@ static const char *params_error(const params *p) {
     return "--pushoff pareto not with --average panel or --member-games none";
   if (p->clear > 0 && !p->pareto) return "--clear with --pushoff pareto, pareto-age or pareto-sd only";
   if (p->screen_stop > 0 && p->screen_check > 0) return "--screen-stop or --screen-check, not both";
-  if (p->tune_novel && p->gen) return "--tune-novel not with --genome gen: it changes the operands of a list";
   if (!p->gen && structure_kinds(&p->changes)) return STRUCTURE_NEEDS_GEN;
   if (p->refactor < 0 || p->refactor > 1) return "--refactor 0 to 1";
   if (p->refactor > 0 && !p->gen) return "--refactor with --genome gen only";
@@ -3813,7 +3766,6 @@ typedef struct {
   double new_stop, new_check; // --screen-stop, --screen-check, also for a run that continues
   double new_reintroduce;     // --reintroduce, also for a run that continues
   uint32_t new_list;          // --list, also for a run that continues (it only grows)
-  int64_t new_tune;           // --tune-novel, also for a run that continues
   int new_options, stage_given, screen_members_given, diversity_given, panel_rounds_given, fill_given;
   int panel_choice_given, draw_seed_given, positions_given, pushoff_given, genome_given, migrate_given;
   int variant_default; // the variants of new_island_defaults(), not given
@@ -3833,14 +3785,14 @@ typedef struct {
 // The options removed after 1.1.0 (#193): refused with a message, also in an
 // --island-variant (a state that used one: load_state()).
 static const char *const removed_options[] = {"--map-elites", "--specialists", "--niche", "--sharing", "--simple",
-                                              "--noise", "--difference", "--select", "--rotate", "--race", "--race-keep", 0};
+                                              "--noise", "--difference", "--select", "--rotate", "--race", "--race-keep",
+                                              "--tune-novel", 0};
 
 // Reads the command line into c; 0, or the exit code after a message.
 static int parse_cli(int argc, char **argv, cli *c) {
   memset(c, 0, sizeof *c);
   c->p = default_params();
   c->new_stop = c->new_check = c->new_reintroduce = -1;
-  c->new_tune = -1;
   c->islands_rounds = 100;
   for (int i = 1; i < argc; i++) {
     const char *a = argv[i];
@@ -3966,7 +3918,6 @@ static int parse_cli(int argc, char **argv, cli *c) {
     else if (!strcmp(a, "--panel")) p->panel = u;
     else if (!strcmp(a, "--holdout")) p->holdout = u;
     else if (!strcmp(a, "--list")) p->list = c->new_list = u;
-    else if (!strcmp(a, "--tune-novel")) p->tune_novel = u, c->new_tune = u;
     else if (!strcmp(a, "--batch")) p->batch = u;
     else if (!strcmp(a, "--survivors")) p->survivors = u;
     else if (!strcmp(a, "--rounds")) p->rounds = u;
@@ -4017,7 +3968,7 @@ static int parse_cli(int argc, char **argv, cli *c) {
     else if (!strcmp(a, "--distance")) p->rules.min_distance = u;
     else usage();
     if (!run_option && strcmp(a, "--changes") && strcmp(a, "--screen-stop") && strcmp(a, "--screen-check") &&
-        strcmp(a, "--reintroduce") && strcmp(a, "--list") && strcmp(a, "--tune-novel"))
+        strcmp(a, "--reintroduce") && strcmp(a, "--list"))
       c->new_options = 1; // these go with a run that continues
   }
   return 0;
@@ -4137,7 +4088,6 @@ int main(int argc, char **argv) {
   const int changes_given = c.changes_given, new_options = c.new_options;
   const double new_stop = c.new_stop, new_check = c.new_check, new_reintroduce = c.new_reintroduce;
   const uint32_t new_list = c.new_list;
-  const int64_t new_tune = c.new_tune;
   const uint32_t islands_n = c.islands_n, islands_keep = c.islands_keep, islands_every = c.islands_every;
   const uint32_t islands_rounds = c.islands_rounds;
   uint32_t islands_migrate_every = c.islands_migrate_every;
@@ -4152,7 +4102,7 @@ int main(int argc, char **argv) {
     char isl[1100];
     snprintf(isl, sizeof isl, "%s/islands.txt", dir);
     if (access(isl, F_OK) == 0) { // a run of islands that continues
-      if (new_options || islands_option || changes_given || new_stop >= 0 || new_check > 0 || new_reintroduce >= 0 || new_list || new_tune >= 0) {
+      if (new_options || islands_option || changes_given || new_stop >= 0 || new_check > 0 || new_reintroduce >= 0 || new_list) {
         fprintf(stderr, "42evolve: %s has islands; only --threads, --batches and --seconds go with it\n", dir);
         return 2;
       }
@@ -4167,16 +4117,12 @@ int main(int argc, char **argv) {
     if (new_options) {
       fprintf(stderr,
               "42evolve: %s has a run; only --threads, --batches, --seconds, --changes, --reintroduce, --list (larger), "
-              "--tune-novel, --screen-stop and --screen-check go with it\n",
+              "--screen-stop and --screen-check go with it\n",
               dir);
       return 2;
     }
     r.list_grow = new_list;
     if (run_resume(&r) != 0) return 1;
-    if (r.p.gen && new_tune > 0) {
-      fprintf(stderr, "42evolve: --tune-novel not with --genome gen: it changes the operands of a list\n");
-      return 2;
-    }
     if (!r.p.gen && changes_given && structure_kinds(&new_changes)) {
       fprintf(stderr, "42evolve: " STRUCTURE_NEEDS_GEN "\n");
       return 2;
@@ -4196,8 +4142,8 @@ int main(int argc, char **argv) {
         fprintf(stderr, "42evolve: --islands 1..%d, --keep fewer than the islands and with --select-after, not with --optimize\n", ISLANDS_MAX);
         return 2;
       }
-      if (islands_migrate_every && (islands_n < 2 || p->tune_novel)) {
-        fprintf(stderr, "42evolve: --migrate with 2 islands or more, and not with --tune-novel\n");
+      if (islands_migrate_every && islands_n < 2) {
+        fprintf(stderr, "42evolve: --migrate with 2 islands or more\n");
         return 2;
       }
       if (c.own_panels && (islands_n < 2 || p->panel_files[0] || p->panel_random == PANEL_RANDOM)) {
@@ -4243,17 +4189,10 @@ int main(int argc, char **argv) {
         const int rc = island_variants(argc, argv, &c, variants);
         if (rc) return rc;
       }
-      for (uint32_t k = 0; k < c.variant_n; k++)
-        if (islands_migrate_every && variants[k].tune_novel) {
-          fprintf(stderr, "42evolve: --migrate with 2 islands or more, and not with --tune-novel\n");
-          return 2;
-        }
       // new runs of islands: every 5 batches a member drawn from an island drawn (gen-var16-rnd); --migrate 0: none
-      int tune = p->tune_novel != 0;
-      for (uint32_t k = 0; k < c.variant_n; k++) tune |= variants[k].tune_novel != 0;
-      if (!c.migrate_given && islands_n >= 2 && !tune) islands_migrate_every = 5;
-      if ((c.explorers || c.leaf_restart) && !islands_migrate_every) { // also where --tune-novel turned it off
-        fprintf(stderr, "42evolve: --explorers and --leaf-restart need migration (not with --migrate 0 or --tune-novel)\n");
+      if (!c.migrate_given && islands_n >= 2) islands_migrate_every = 5;
+      if ((c.explorers || c.leaf_restart) && !islands_migrate_every) {
+        fprintf(stderr, "42evolve: --explorers and --leaf-restart need migration (not with --migrate 0)\n");
         return 2;
       }
       if (!c.pick_given) c.migrate_random = c.migrate_next != MIGRATE_TREE; // a tree: the best climbs
@@ -4289,10 +4228,6 @@ int main(int argc, char **argv) {
     }
     if (new_list) // the list grew (load_state()); children fill the new places
       fprintf(r.events, "{\"type\":\"list\",\"batch\":%u,\"list\":%u,\"fill\":false}\n", r.batch, r.p.list);
-    if (new_tune >= 0) { // how often the most novel survivor that left gets tuned, from now on
-      r.p.tune_novel = (uint32_t)new_tune;
-      fprintf(r.events, "{\"type\":\"tune-novel\",\"batch\":%u,\"tuneNovel\":%u}\n", r.batch, r.p.tune_novel);
-    }
     if (new_reintroduce >= 0) { // how often a warrior of the archive comes back, from now on
       r.p.reintroduce = new_reintroduce;
       fprintf(r.events, "{\"type\":\"reintroduce\",\"batch\":%u,\"reintroduce\":%.17g}\n", r.batch, r.p.reintroduce);

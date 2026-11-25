@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Martin Leitner-Ankerl
 //
 // The evolver (evolver/, #142) on the tiny hill of warriors/koenigstuhl:
-// --tune-novel, --optimize, --islands. What the evolver's test files share is in
+// --optimize, --islands. What the evolver's test files share is in
 // test/evolver-common.js; built with cc, or prebuilt in M42_BIN
 // (test/native.js). POSIX only.
 
@@ -32,49 +32,6 @@ function refuses(dir, base, cases) {
 
 before(setup);
 after(cleanup);
-
-test('--tune-novel 1: the most novel survivor that left is tuned, and comes back first in the next batch; the same run on any thread count and after a resume', { skip }, () => {
-  // seeded with the stone whose step of 100 bombs 8 cells: its children have a constant to tune
-  const seeds = join(tmp, 'tn-seeds');
-  mkdirSync(seeds, { recursive: true });
-  writeFileSync(join(seeds, 'badstep.red'), ';redcode\n;name bad step\nstep equ 100\nloop add.ab #step, bomb\nmov.i bomb, @bomb\njmp loop\nbomb dat #0, #step\n');
-  const args = [...TINY.slice(0, TINY.indexOf('--panel')), '--panel', '12', '--holdout', '8', '--batch', '24', '--rounds', '60', '--screen-rounds', '10',
-    '--panel-rounds', '60', '--list', '6', '--survivors', '6', '--seed', '3', '--start', seeds, '--tune-novel', '1', '--changes', 'insert=1,delete=1,a-operand=1',
-    '--screen-members', '0', '--diversity', 'all', '--no-fill', '--panel-choice', 'random', '--stage', '0', '--positions', 'pmars', '--genome', 'list'];
-  run(join(tmp, 'tn1'), [...args, '--threads', '1', '--batches', '8']);
-  const evs = events(join(tmp, 'tn1'));
-  assert.equal(evs[0].params.tuneNovel, 1);
-  let tuned = 0, back = 0;
-  for (const t of evs.filter((e) => e.type === 'tune')) {
-    // the survivor: entered in that batch and left in it, the largest distance (estimate / screen, alpha 1)
-    const left = new Set(evs.filter((e) => e.type === 'leave' && e.batch === t.batch).map((e) => e.id));
-    const went = evs.filter((e) => e.type === 'enter' && e.batch === t.batch && left.has(e.id) && e.screen > 0);
-    const dist = (e) => e.estimate / e.screen;
-    const max = Math.max(...went.map(dist));
-    const from = went.find((e) => e.id === t.from);
-    assert.ok(from && Math.abs(dist(from) - t.distance) < 1e-3 * Math.max(1, t.distance) && dist(from) >= max - 1e-3 * Math.max(1, max), `batch ${t.batch}: ${t.from}`);
-    if (!t.steps) continue;
-    tuned++;
-    assert.ok(t.tuned > t.avg, `${t.avg} to ${t.tuned}`);
-    // the first candidate of the next batch: bred as `tuned`, entered with the tuned code if it passed the screen
-    const next = evs.find((e) => e.type === 'batch' && e.batch === t.batch + 1);
-    if (!next) continue;
-    assert.equal(next.ops.tuned?.[0], 1, `batch ${t.batch + 1}`);
-    const e = evs.find((x) => x.type === 'enter' && x.batch === t.batch + 1 && x.ops === 'tuned');
-    if (e) {
-      assert.deepEqual([e.code, e.parents[0]], [t.code, t.from]);
-      back++;
-    }
-  }
-  assert.ok(tuned >= 2 && back >= 1, `${tuned} tuned, ${back} entered`);
-  assert.equal(checkValues(evs), 8);
-  // a resume while a tuned warrior waits for the next batch
-  const cut = evs.find((e) => e.type === 'tune' && e.steps).batch + 1;
-  run(join(tmp, 'tn-resumed'), [...args, '--threads', '2', '--batches', String(cut)]);
-  assert.match(readFileSync(join(tmp, 'tn-resumed', 'state.txt'), 'latin1'), /^tuned /m);
-  run(join(tmp, 'tn-resumed'), ['--threads', '4', '--batches', String(8 - cut)]);
-  assert.deepEqual(stable(events(join(tmp, 'tn-resumed'))), stable(evs));
-});
 
 test('--islands: runs in one process with the same panel and holdout, in rounds; the best go on after their scores against the folder; the same on any thread count and after a resume', { skip }, () => {
   const N = 3, EVERY = 4, KEEP = 2, BATCHES = 9, SCORE = 5;
@@ -243,9 +200,9 @@ test('--migrate: every M batches each island plays the best member of every othe
   run(resumed, [...args(40), ...isl, '--threads', '3', '--batches', '3']);
   run(resumed, ['--threads', '1', '--batches', '4']);
   [1, 2, 3].forEach((i) => assert.deepEqual(stable(events(join(resumed, `island-0${i}`))), stable(big.all[i - 1]), `island ${i}`));
-  // without islands, with one, or with --tune-novel: refused
-  for (const extra of [['--migrate', '2'], ['--islands', '1', '--migrate', '2'], [...isl, '--tune-novel', '1']]) {
-    const r = spawnSync(evolve, [join(tmp, 'mig-no'), ...(extra.includes('--tune-novel') ? TINY : args(40)), ...extra, '--batches', '1'], { encoding: 'utf8', timeout: 60000 });
+  // without islands, or with one: refused
+  for (const extra of [['--migrate', '2'], ['--islands', '1', '--migrate', '2']]) {
+    const r = spawnSync(evolve, [join(tmp, 'mig-no'), ...args(40), ...extra, '--batches', '1'], { encoding: 'utf8', timeout: 60000 });
     assert.equal(r.status, 2, extra.join(' '));
   }
   assert.ok(!existsSync(join(tmp, 'mig-no')));
@@ -360,7 +317,6 @@ test('--island-variant: islands with their own settings, each the run alone with
     [['--island-variant', '--screen-rounds 50'], /--screen-rounds at most --rounds/],
     [['--island-variant', '', '--island-variant', '', '--island-variant', '', '--island-variant', ''], /at most once per island/],
     [['--island-variant', 'elsewhere'], /usage/],
-    [['--island-variant', '--tune-novel 1', '--migrate', '2'], /not with --tune-novel/],
   ];
   refuses(join(tmp, 'var-no'), [...args, '--islands', '3'], refused);
   // a variant without --islands
@@ -497,7 +453,6 @@ test('--migrate-to tree --leaf-restart: each island takes the best of its childr
     [['--islands', '2', '--migrate-to', 'tree'], /--migrate-to tree with 3 islands or more/],
     [['--islands', '7', '--migrate-to', 'tree', '--island-variant', '--leaf-restart 4'], /an option of the islands the same/],
     [['--islands', '7', '--migrate-to', 'tree', '--leaf-restart', '4', '--start', join(root, 'warriors')], /--leaf-restart and --nemesis-every not with --start/],
-    [['--islands', '7', '--migrate-to', 'tree', '--leaf-restart', '4', '--tune-novel', '1'], /need migration \(not with --migrate 0 or --tune-novel\)/],
     [['--leaf-restart', '4'], /usage/],
   ];
   refuses(join(tmp, 'tree-no'), args, refused);
@@ -618,12 +573,11 @@ test('--explorers: the last K islands take no migrants, the others take from all
   // no core, no migration, a tree, nemesis islands, --keep, in a variant, without --islands: refused
   const refused = [
     [['--islands', '3', '--explorers', '3'], /--explorers fewer than the islands/],
-    [['--islands', '3', '--explorers', '1', '--migrate', '0'], /need migration \(not with --migrate 0 or --tune-novel\)/],
+    [['--islands', '3', '--explorers', '1', '--migrate', '0'], /need migration \(not with --migrate 0\)/],
     [['--islands', '3', '--explorers', '1', '--migrate-to', 'tree'], /not with --migrate-to tree/],
     [['--islands', '3', '--explorers', '1', '--select-after', '2', '--nemesis-every', '2'], /not with --migrate-to tree, --nemesis-every/],
     [['--islands', '3', '--explorers', '1', '--select-after', '2', '--keep', '2'], /--nemesis-every or --keep/],
     [['--islands', '3', '--island-variant', '--explorers 1'], /an option of the islands the same/],
-    [['--islands', '3', '--explorers', '1', '--tune-novel', '1'], /need migration \(not with --migrate 0 or --tune-novel\)/],
     [['--explorers', '1'], /usage/],
   ];
   refuses(join(tmp, 'explorers-no'), args, refused);
