@@ -47,7 +47,7 @@ import { availableParallelism } from 'node:os';
 import { basename, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Worker, isMainThread, parentPort, workerData } from 'node:worker_threads';
-import { RunDigest, bestRedInfo, lineOf, opcodesOf } from './progress.js';
+import { RunDigest, bestRedInfo, familyOf, lineOf, opcodesOf } from './progress.js';
 import { shortKind } from './style.js';
 
 const HOLD = 10; // the batches a new design holds a place among the 3 best (RunDigest)
@@ -64,7 +64,8 @@ async function digestFile(file) {
   const cuts = RunDigest.CUTS.map((c) => Buffer.from(c));
   const fh = await open(file, 'r').catch((e) => (e.code === 'ENOENT' ? null : Promise.reject(e))); // an island 42evolve has not written yet
   if (!fh) return digest.result();
-  let buf = Buffer.allocUnsafe(Number(process.env.RUN_REPORT_BUFFER ?? 1 << 20)), have = 0, at = 0; // the tests set it lower
+  const size = Number(process.env.RUN_REPORT_BUFFER); // the tests set it lower
+  let buf = Buffer.allocUnsafe(Number.isInteger(size) && size > 0 ? size : 1 << 20), have = 0, at = 0;
   const line = (s, e) => {
     if (buf[s] !== 123 || e - s < 12) return; // {
     const q = buf.indexOf(34, s + 9); // the " after the type
@@ -139,7 +140,7 @@ async function readRun(dir, jobs) {
   const name = /^island-\d+$/.test(basename(dir)) ? `${basename(resolve(dir, '..'))}/${basename(dir)}` : basename(dir); // as tools/serve.mjs names it
   const isFolder = existsSync(join(dir, 'islands.txt'));
   const islands = isFolder
-    ? readdirSync(dir).filter((n) => /^island-\d+$/.test(n)).sort().map((n) => ({ island: Number(n.slice(7)), dir: join(dir, n) }))
+    ? readdirSync(dir).filter((n) => /^island-\d+$/.test(n)).map((n) => ({ island: Number(n.slice(7)), dir: join(dir, n) })).sort((a, b) => a.island - b.island)
     : [{ island: 0, dir }];
   const live = /^live((?: \d)*)$/m.exec(isFolder ? readFileSync(join(dir, 'islands.txt'), 'utf8') : '')?.[1].trim().split(' ').map(Number) ?? [];
   for (const x of islands) x.live = live[x.island - 1] !== 0;
@@ -293,13 +294,18 @@ function text(r, o) {
   return out.join('\n');
 }
 
+// The warriors a migrate event sent, for a step whose source is not known.
+const candidates = (s) => s.from.map(([i, id]) => `${islandName(i)} #${id}`).join(', ');
+
 function lineText(r, full) {
   const steps = r.line, out = [];
   const first = steps[0], last = steps.at(-1);
   const counts = new Map();
   for (const s of steps.slice(1)) for (const op of (s.ops ?? '').split(' ').filter(Boolean)) counts.set(op, (counts.get(op) ?? 0) + 1);
   const crossings = steps.filter((s, k) => k && s.island !== steps[k - 1].island).length;
-  const origin = first.missing ? `warrior #${first.id}${first.island ? ` of ${islandName(first.island)}` : ''}, not in the events` : `${first.ops} ${first.name} in batch ${first.batch}${first.island ? ` of ${islandName(first.island)}` : ''}`;
+  const origin = !first.missing ? `${first.ops} ${first.name} in batch ${first.batch}${first.island ? ` of ${islandName(first.island)}` : ''}`
+    : first.id === null ? `a warrior of ${candidates(first)}, ${first.ambiguous ? 'not sure which' : 'none known with its code'}`
+    : `warrior #${first.id}${first.island ? ` of ${islandName(first.island)}` : ''}, not in the events`;
   out.push(`The line of best.red (${last.name}): ${steps.length - 1} steps back to ${origin}${crossings ? `, ${crossings} from another island` : ''}.`);
   out.push(`  changes on the line: ${[...counts].sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k} ${v}`).join(', ') || 'none'}`);
   // without --full: the first step, the last 3, and each that changed the opcodes or the island
@@ -313,6 +319,7 @@ function lineText(r, full) {
     if (!keep[k]) return void skipped++;
     const plus = skipped ? `+${skipped}` : '';
     skipped = 0;
+    if (s.missing && s.id === null) return void out.push(`  ${lpad('?', 6)}${lpad(plus, 5)}  ${s.ambiguous ? 'one of' : 'none known of'} ${candidates(s)}`);
     if (s.missing) return void out.push(`  ${lpad('?', 6)}${lpad(plus, 5)}  ${pad(islandName(s.island), 10)}${lpad(s.id, 7)}  not in the events`);
     out.push(`  ${lpad(s.batch, 6)}${lpad(plus, 5)}  ${pad(islandName(s.island), 10)}${lpad(s.id, 7)}  ${pad(short(s.name, nw), nw)}${lpad(f1(s.panelAvg), 7)}  ${pad(shortKind(s.kind) || '–', 11)}${pad(short(s.ops ?? '', 23), 24)}${ops(s.opcodes)}`);
   });
@@ -335,7 +342,7 @@ function compareText(rs) {
       name: r.name, islands: r.islands.length, score,
       panel: Math.max(-1, ...hist.map((h) => h.best)), holdout: Math.max(-1, ...hist.map((h) => h.holdout)),
       design: top.designs[0], members: top.members.length,
-      families: new Set(top.members.map((w) => `${w.island} ${w.name.split(' ')[1]}`)).size,
+      families: new Set(top.members.map((w) => `${w.island} ${familyOf(w.name)}`)).size,
       kinds: new Set(top.members.map((w) => shortKind(w.kind))).size,
     };
   });
@@ -374,7 +381,7 @@ async function bench(rs, o) {
     const t0 = performance.now();
     const scores = await benchMany(warriors, opponents, opts);
     console.error(`${r.name}: ${warriors.length} warriors against ${scores[0]?.opponents ?? 0} opponents, ${o.rounds} rounds each, ${((performance.now() - t0) / 1000).toFixed(1)} s`);
-    out.push({ name: r.name, rounds: o.rounds, opponents: o.opponents, warriors: warriors.map((w, k) => ({ what: w.what, island: w.island, id: w.id, name: w.name, ...scores[k] })) });
+    out.push({ name: r.name, isFolder: r.isFolder, rounds: o.rounds, opponents: o.opponents, warriors: warriors.map((w, k) => ({ what: w.what, island: w.island, id: w.id, name: w.name, ...scores[k] })) });
   }
   return out;
 }
@@ -383,7 +390,7 @@ function benchText(b) {
   const out = [`${b.name} against the ${b.warriors[0]?.opponents ?? 0} warriors of ${b.opponents}, ${b.rounds} rounds each:`];
   const nw = Math.min(28, Math.max(4, ...b.warriors.map((w) => (w.name ?? '').length)));
   out.push(`${pad('island', 10)}${pad('warrior', 10)}${lpad('id', 7)}  ${pad('name', nw)}${lpad('score', 7)}`);
-  for (const w of b.warriors) out.push(`${pad(w.island ? islandName(w.island) : w.what === 'best.red' ? 'folder' : 'run', 10)}${pad(w.what, 10)}${lpad(w.id ?? '–', 7)}  ${pad(short(w.name ?? '', nw), nw)}${lpad(f1(w.per100), 7)}`);
+  for (const w of b.warriors) out.push(`${pad(w.island ? islandName(w.island) : b.isFolder ? 'folder' : 'run', 10)}${pad(w.what, 10)}${lpad(w.id ?? '–', 7)}  ${pad(short(w.name ?? '', nw), nw)}${lpad(f1(w.per100), 7)}`);
   const islands = new Map();
   for (const w of b.warriors) if (w.island) islands.set(w.island, Math.max(islands.get(w.island) ?? -1, w.per100));
   if (islands.size > 1) out.push(`the best of each island: ${[...islands].map(([i, s]) => `${islandName(i)} ${f1(s)}`).join(', ')}`);
