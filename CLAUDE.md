@@ -32,7 +32,7 @@ npm run serve                              # http://127.0.0.1:8000/, no build st
 build/42evolve <run> --opponents warriors/koenigstuhl/94nop --seconds 600   # after make; then:
 node tools/serve.mjs --run <run> [<run> ...]   # dashboard: ui/evolver.html (a list on the left switches runs), side by side: ui/runs.html
 node tools/run-report.mjs <run> [<run> ...]    # the status of runs in the terminal; --bench --opponents <dir> scores them
-wasm/build.sh                              # after every change under lib/src/; md5 must repeat
+wasm/build.sh                              # after every change under lib/src/, with clang 22 (.claude/rules/wasm.md); md5 must repeat
 node tools/asm.mjs warriors/dwarf.red      # pMARS-style listing
 node tools/tournament.mjs $O/sets/t20 --rounds 100 --pmars $O/bin/pmars --compare
 node tools/tournament.mjs $O/corpus --bench warriors/seeker.red   # one warrior against a folder
