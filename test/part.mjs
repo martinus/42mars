@@ -8,9 +8,9 @@
 // Every file is in exactly one part, a new one too. The files go by their
 // time, the longest first, each to the part with the least time so far;
 // the times are the seconds of each file's tests under ASan and UBSan on
-// CI, summed from the durations of its tests in one run (45612371768,
-// 25th November 2026, after #161 split evolver-tune.test.js and shortened
-// the defaults test), and a file not listed counts 20.
+// CI, summed from the durations of its tests in one run (45866686861, its
+// second attempt with the library object cached, 26th November 2026, after
+// #161 split the long files), and a file not listed counts 20.
 // On 4 cores the files run 3 at a time and slow each other: these sums,
 // not the times of a file alone on 32 threads (which made one native part
 // 110 s of tests and the other 61 s). A wrong time makes the parts uneven,
@@ -20,29 +20,29 @@ import { readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 export const SECONDS = {
-  'test/evolver-panel.test.js': 32.9,
-  'test/evolver-genome.test.js': 29.1,
-  'test/evolver-gen.test.js': 28.7,
-  'test/evolver-structure.test.js': 28.1,
-  'test/evolver-nospl-islands.test.js': 27.3,
-  'test/evolver-tune.test.js': 24.9,
-  'test/evolver-migrate.test.js': 23.7,
-  'test/evolver-defaults.test.js': 22.5,
-  'test/evolver-islands.test.js': 22.3,
-  'test/evolver-pareto.test.js': 20.8,
-  'test/evolver-nospl.test.js': 19.6,
-  'test/evolver-average.test.js': 19.3,
-  'test/evolver-screen.test.js': 18.3,
-  'test/evolver-survivors.test.js': 17.5,
-  'test/evolver-migrate-pick.test.js': 17.1,
-  'test/evolver-variant.test.js': 15.9,
-  'test/evolver-explorers.test.js': 15.8,
-  'test/evolver.test.js': 34.7,
-  'test/evolver-report.test.js': 9.2,
-  'test/evolver-parsimony.test.js': 8.0,
-  'test/evolver-replace-parent.test.js': 5.8,
+  'test/evolver-panel.test.js': 52.2,
+  'test/evolver-explorers.test.js': 51.2,
+  'test/evolver-gen.test.js': 48.6,
+  'test/evolver-islands.test.js': 44.4,
+  'test/evolver-migrate-pick.test.js': 42.4,
+  'test/evolver-pareto.test.js': 37.6,
+  'test/evolver-genome.test.js': 37.1,
+  'test/evolver-defaults.test.js': 35.9,
+  'test/evolver-nospl.test.js': 31.2,
+  'test/evolver-nospl-islands.test.js': 29.9,
+  'test/evolver-tune.test.js': 28.9,
+  'test/evolver-migrate.test.js': 28.6,
+  'test/evolver-structure.test.js': 26.6,
+  'test/evolver.test.js': 24.0,
+  'test/evolver-variant.test.js': 23.4,
+  'test/evolver-average.test.js': 17.7,
+  'test/evolver-screen.test.js': 13.4,
+  'test/evolver-survivors.test.js': 13.2,
+  'test/evolver-report.test.js': 10.4,
+  'test/evolver-parsimony.test.js': 8.2,
+  'test/evolver-replace-parent.test.js': 5.4,
   'test/c-api.test.js': 1.0,
-  'test/cli.test.js': 0.6,
+  'test/cli.test.js': 0.9,
 };
 
 // The files of `make test`, in the order of the Makefile's list.

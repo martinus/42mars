@@ -63,9 +63,10 @@ jobs:
           }
 
   # make test under ASan and UBSan, its test files in four parts at the same
-  # time (test/part.mjs, about 80 s of tests each, 45 to 50 s of a job): the
-  # instrumented programs are about 3.5 times as slow (333 s of tests in one
-  # job, 18th November 2026).
+  # time (test/part.mjs, about 150 s of test time each, 3 files at a time on
+  # the 4 cores: 55 to 73 s of tests and 13 to 20 s of building the programs
+  # in a job, 26th November 2026): the instrumented programs are about 3.5
+  # times as slow (333 s of tests in one job, 18th November 2026).
   sanitizers:
     name: sanitizers (${{ matrix.part }})
     runs-on: ubuntu-latest
