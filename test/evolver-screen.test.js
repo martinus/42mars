@@ -20,7 +20,7 @@ import { kind as styleKind, measureStyle } from '../tools/style.js';
 import { bestRedInfo } from '../tools/progress.js';
 import { setup, cleanup, tmp, evolve, skip, RULES, TINY, run, events, without, stable, base, checkValues, checkOrder, checkOps } from './evolver-common.js';
 
-before(setup);
+before(() => setup({ base: false })); // no test here reads the base run
 after(cleanup);
 
 test('--screen-check 3 is the run without it and logs every bound; --screen-stop 3 stops those children; the same run on any thread count and after a resume', { skip }, () => {

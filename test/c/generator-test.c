@@ -10,7 +10,8 @@
 // numbers; on any generator a child keeps the limits; references follow
 // the lines; with the mask of --no-spl no child has SPL; the state form
 // reads back.
-// Prints "ok" and exits 0, or names the first failures and exits 1.
+// Prints "ok" and exits 0, or names the first failures and exits 1; the
+// names of tests as arguments run only those (main()).
 //
 //   cc -O2 -Ilib -Ievolver -o generator-test test/c/generator-test.c evolver/generator.c evolver/gen-change.c evolver/genome.c lib/42mars.c -lm
 
@@ -793,7 +794,7 @@ static void test_structured(void) {
   rng r = rng_seed(91, 92, 93);
   static gen x, p2, before;
   char err[160];
-  uint32_t applied[CH_ALL] = {0}, refused[CH_ALL] = {0}, same[CH_ALL] = {0}, blocks = 0;
+  uint32_t applied[CH_ALL] = {0}, refused[CH_ALL] = {0}, blocks = 0;
   for (int round = 0; round < 90000; round++) {
     const uint32_t max = round % 7 < 5 ? 100 : 20;
     do round / CH_ALL % 2 ? random_gen(&x, &r) : regular_gen(&x, &r);
@@ -817,10 +818,16 @@ static void test_structured(void) {
   }
   for (int k = 0; k < CH_ALL; k++)
     CHECK(applied[k] > (k == CH_UNROLL || k == CH_INDEX || k == CH_FOLD || k == CH_PARAMETER || k == CH_INLINE ? 100 : 500), "%s applied %u times, refused %u times", genome_change_name(k), applied[k], refused[k]);
-  // A change of the structure changes the warrior (a rewrite alone would be
-  // skipped as seen). Measured where 42evolve is: on generators that grew
-  // from lists by changes that each gave another warrior.
-  memset(applied, 0, sizeof applied);
+  CHECK(blocks > 10000, "only %u blocks in the children", blocks);
+}
+
+// A change of the structure changes the warrior (a rewrite alone would be
+// skipped as seen). Measured where 42evolve is: on generators that grew
+// from lists by changes that each gave another warrior.
+static void test_structured_rates(void) {
+  rng r = rng_seed(94, 95, 96);
+  static gen x, p2, before;
+  uint32_t applied[CH_ALL] = {0}, same[CH_ALL] = {0};
   const genome_mix mix = gen_mix_default();
   uint32_t total = 0;
   for (int k = 0; k < CH_ALL; k++) total += mix.w[k];
@@ -845,8 +852,13 @@ static void test_structured(void) {
     CHECK(applied[k] > 300 && same[k] * 4 < applied[k], "%s left the warrior as it was %u of %u times", genome_change_name(k), same[k], applied[k]);
   if (getenv("GEN_RATES"))
     for (int k = 0; k < CH_ALL; k++) fprintf(stderr, "%-18s applied %6u, the same warrior %5.1f%%\n", genome_change_name(k), applied[k], 100.0 * same[k] / (applied[k] ? applied[k] : 1));
-  CHECK(blocks > 10000, "only %u blocks in the children", blocks);
-  // a long line of children stays within the limits
+}
+
+// a long line of children stays within the limits
+static void test_structured_line(void) {
+  rng r = rng_seed(97, 98, 99);
+  static gen x, p2;
+  char err[160];
   do random_gen(&x, &r);
   while (!keeps_limits(&x, 100));
   genome_mix all = gen_mix_default();
@@ -1631,29 +1643,59 @@ static void test_state(void) {
 #undef STATE
 }
 
-int main(void) {
-  test_repeat();
-  test_labels();
-  test_functions();
-  test_counts();
-  test_arithmetic();
-  test_start();
-  test_limits();
-  test_errors();
-  test_text();
-  test_list();
-  test_random();
-  test_bytes();
-  test_check();
-  test_mirror();
-  test_structured();
-  test_rebuild();
-  test_crossover();
-  test_parts();
-  test_rewrites();
-  test_kinds();
-  test_forbid();
-  test_state();
+// The tests by name: `generator-test` runs all, `generator-test repeat
+// labels` only those, `generator-test --list` prints the names
+// (test/evolver-gen.test.js runs them in groups at the same time, #161: all
+// in one process took 43 s under ASan on CI).
+static const struct {
+  const char *name;
+  void (*run)(void);
+} TESTS[] = {
+    {"repeat", test_repeat},
+    {"labels", test_labels},
+    {"functions", test_functions},
+    {"counts", test_counts},
+    {"arithmetic", test_arithmetic},
+    {"start", test_start},
+    {"limits", test_limits},
+    {"errors", test_errors},
+    {"text", test_text},
+    {"list", test_list},
+    {"random", test_random},
+    {"bytes", test_bytes},
+    {"check", test_check},
+    {"mirror", test_mirror},
+    {"structured", test_structured},
+    {"structured_rates", test_structured_rates},
+    {"structured_line", test_structured_line},
+    {"rebuild", test_rebuild},
+    {"crossover", test_crossover},
+    {"parts", test_parts},
+    {"rewrites", test_rewrites},
+    {"kinds", test_kinds},
+    {"forbid", test_forbid},
+    {"state", test_state},
+};
+
+int main(int argc, char **argv) {
+  const int n = (int)(sizeof TESTS / sizeof TESTS[0]);
+  if (argc == 2 && !strcmp(argv[1], "--list")) {
+    for (int i = 0; i < n; i++) puts(TESTS[i].name);
+    return 0;
+  }
+  for (int a = 1; a < argc; a++) {
+    int i = 0;
+    while (i < n && strcmp(argv[a], TESTS[i].name)) i++;
+    if (i == n) {
+      fprintf(stderr, "no test %s\n", argv[a]);
+      return 2;
+    }
+  }
+  for (int i = 0; i < n; i++) {
+    int chosen = argc == 1;
+    for (int a = 1; a < argc && !chosen; a++) chosen = !strcmp(argv[a], TESTS[i].name);
+    if (chosen) TESTS[i].run();
+  }
   if (failures) {
     fprintf(stderr, "%d failures\n", failures);
     return 1;
