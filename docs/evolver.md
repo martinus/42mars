@@ -743,3 +743,27 @@ The joins, written by hand from the two warriors' code in the run's events: line
 Both joins score below both parts. They play like a weaker paper: against scanners and stones, where the Kernel scores 156 and 171, they drop to the paper's level or below. The paper's processes take the cycles, and the Kernel, one of many processes, no longer does its work in time. Against single opponents the join beats the better of its parts by more than 10 points per 100 rounds 29 times and is below the weaker part by as much 239 times; its mean, 107.1, is below even the mean of the two parts (120.5). The best-of bound (146.9, 149 in #223 with other seeds) is no estimate of a join.
 
 Verdict: the change `join` is not built (#223 closed as not planned). A combination of two designs would need a share of the processes for each, which one `SPL` does not give: a paper splits until its share swamps the other part. If that comes back, it is a different change (the second part started only after the first has made its processes, or a paper whose copy carries the Kernel), and the hand test above is its baseline.
+
+## The push-off's survivors and a child in its parent's place: `tiny-pv-dc16`
+
+`tiny-pv-dc16` (26th November 2026) is `tiny-own16` (16 islands, panels of their own, `--migrate 5 --migrate-to random`, seed 201, the `--changes` of #196) with `--survivors-by pushoff` and `--replace-parent`. It was stopped at batch 1,510, about 14 s a batch next to another run. Against the 429 warriors of the folder (100 rounds), best island / mean of the 16 / worst island:
+
+| batch | `tiny-own16` | `tiny-pv-dc16` |
+|---|---|---|
+| 250 | 148.6 / 142.8 / 137.6 | 118.6 / 107.6 / 97.2 |
+| 500 | 154.5 / 151.6 / 148.5 | 119.2 / 114.1 / 110.7 |
+| 750 | 157.3 / 154.7 / 152.4 | 139.0 / 119.2 / 113.2 |
+| 1000 | 159.5 / 156.6 / 153.0 | 144.3 / 133.1 / 116.4 |
+| 1250 | 159.3 / 157.0 / 153.0 | 145.9 / 137.3 / 117.0 |
+| 1500 | 160.1 / 157.9 / 153.7 | **147.4** / 140.0 / 117.2 |
+
+Diversity ran the run's course, and that did not pay: 13 points behind at the end, 35 behind at batch 250. The islands stayed at 113 to 120 for 500 to 1,100 batches each. Each one then jumped to 139 to 147 within 50 to 150 batches, when one design came in by migration: `SPL`, `SPL`, then 14 `MOV.I` that write fields and scan (kinds scanner and writes fields; the Adder family, from island 3 at batch 475). best.red, Quantum Hamster (147.4), is one of them. At batch 1,500, 13 islands have it on top. The 3 that do not stayed at 117 to 122, with an `SPL #`, `DJN #` loop on top: islands 1, 12 and 15. Of all members, 47% start with `SPL`, `SPL`, 16% with `SPL`, `MOV`, and 10% with the `SPL #`, `DJN #` loop (21% at batch 1,000).
+
+The duels:
+- About half of all leaves were duels: 57% in the first 250 batches, 42% in the last.
+- The child won 33% of them at first and 14 to 15% at the end, as the lists matured.
+- 6 of the 16 islands found more than 37 new designs each (a family or kind of style among the 3 best of an island for 10 batches). The other 10 found 5 to 11 each, most of them before batch 300. In `tiny-own16` almost every island ended with stones.
+
+The child in its parent's place keeps lines alive but does not make them climb. A design climbs on an island only once a better one comes in from outside. The baseline converges on stones in 250 batches and gets there first.
+
+`dc16-p100` continues the 16 lists of batch 1,342 to 1,363, island by island, with one panel of 100 and no games among members (`--start` with folders `island-NN`).
