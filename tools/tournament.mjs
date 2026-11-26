@@ -176,6 +176,8 @@ function parseArgs(argv) {
     else if (a === '--permute') o.permute = true;
     else if (a === '--icws88') o.icws88 = true;
     else if (a === '--progress') o.progress = true;
+    else if (a === '--help' || a === '-h') o.help = true;
+    else if (a.startsWith('-')) o.unknown = a; // not a file: --help was read as one and failed in statSync
     else o.files.push(a);
   }
   return o;
@@ -424,16 +426,20 @@ export async function benchMany(warriors, opponents, o) {
   return out;
 }
 
+const USAGE = 'usage: node tools/tournament.mjs <dir or .red files...> [--rounds N] [--jobs N] [--seed N] [--size N --cycles N --processes N --length N --distance N --read-limit N --write-limit N] [--pmars path [--compare]] [--native-input file] [--matrix] [--json file] [--bench warrior.red] [--permute] [--icws88] [--progress]';
+
 // The options of parseArgs without arguments.
 export const defaultOptions = () => parseArgs([]);
 
 async function main() {
   const o = parseArgs(process.argv.slice(2));
+  if (o.help) { console.log(USAGE); return; }
+  if (o.unknown) { console.error(`unknown option ${o.unknown}\n${USAGE}`); process.exit(2); }
   await compileMars(); // the assembler is in 42mars.wasm
   const all = collectFiles(o.files);
   if (o.bench) all.unshift(o.bench);
   if (all.length < 2) {
-    console.error('usage: node tools/tournament.mjs <dir or .red files...> [--rounds N] [--jobs N] [--pmars path [--compare]] [--matrix] [--json file] [--bench warrior.red] [--permute] [--icws88] [--progress]');
+    console.error(USAGE);
     process.exit(2);
   }
   const { files, codes, names, asA, asB } = loadWarriors(o, all.map((file) => ({ file })), (k, why) => {

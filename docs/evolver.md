@@ -109,13 +109,13 @@ The arena loads `ui/index.html?embed&paused&speed=9#battle=...`, which carries b
 ## The status of a run: `tools/run-report.mjs`
 
 ```sh
-node tools/run-report.mjs ~/42evolve.a [~/42evolve.b ...] [--full] [--json]
+node tools/run-report.mjs ~/42evolve.a [~/42evolve.b ...] [--full] [--json] [--at 50,150,950]
 node tools/run-report.mjs ~/42evolve.a --bench --opponents warriors/koenigstuhl/94nop [--rounds 100] [--jobs N]
 ```
 
 What took many commands per look, from the run folders alone (a run folder or a folder of islands; no games without `--bench`):
 
-- **The islands**: per island its last batch and list, the best against the whole opponent folder at each score of `islands.jsonl` (the best of best.red and the 3 best by panel average; up to 8 of the scores, the last one is the score now), the best of all scores and its batch, the best member against the panel now and the best against the holdout so far. `*` marks an island the score stopped.
+- **The islands**: per island its last batch and list, the best against the whole opponent folder at each score of `islands.jsonl` (the best of best.red and the 3 best by panel average; up to 8 of the scores, the last one is the score now; `--at` the scores of the batches given, `–` where there is none, to compare runs at the same batches), the best of all scores and its batch, the best member against the panel now and the best against the holdout so far, and under the islands the best and the mean of each score. `*` marks an island the score stopped.
 - **The 3 best by panel average of each island now**: name (its noun is the family), kind of style (a word for each kind of `tools/style.js`) and opcodes, then the opcode sequences most of them share and on how many islands: one design that took every island shows at once.
 - **New designs**: a family or kind of style the first time it holds a place among the 3 best of an island for 10 batches in a row, with the batch it came in (without `--full` the last 6). Without the 10 batches the list is noise: the 3 best are often tied with others, and an island of 6,500 batches had 150 families there for a batch or two.
 - **The line of best.red**: its first parents back to a random or start warrior, across islands (a migrant goes on in the island it came from: of the warriors of its `migrate` event, the first with its code that was a member then, as 42evolve plays them; a step `?` where none is known, or where one before it is not known and may have had the same code), the changes that made each step and how often each kind of change is on the line. Without `--full` only the steps that changed the opcodes or the island, and the last 3.
@@ -766,4 +766,14 @@ The duels:
 
 The child in its parent's place keeps lines alive but does not make them climb. A design climbs on an island only once a better one comes in from outside. The baseline converges on stones in 250 batches and gets there first.
 
-`dc16-p100` continues the 16 lists of batch 1,342 to 1,363, island by island, with one panel of 100 and no games among members (`--start` with folders `island-NN`).
+**One panel of 100 and no games among members: `tiny-p100-none16`.** The same settings with `--island-panels shared --panel 100 --panel-choice kinds --pick-sample 1000 --member-games none --pushoff pareto-sd` and the variants `""` and `"--screen-rounds 8"`, stopped at batch 262. Each batch took about 50 s against 14 s, since every survivor plays 100 panel warriors for 500 rounds. Against the hill it went as `tiny-pv-dc16` went: best / mean 104.3 / 96.5 at batch 150 (110.5 / 96.6) and 118.2 / 108.5 at batch 250 (118.6 / 107.6). The island leaders had four kinds of style (scanner, stone, mover, writes fields), but one design: from batch 100 on, 46 to 59% of all members started with `SPL #`, `DJN #y, <z` (a `SPL 0` that floods a self-looping `DJN`, which decrements the core), and so did 14 of the 16 leaders. Those two instructions alone, the rest turned to `DAT 0, 0`, scored 74 to 84 against the hill. The whole warriors scored 102 to 109, so evolution refined the loop and did not leave it. Without games among members, a design is never punished for being common. The panel average rewards this cheap loop with its many ties, and the SD-score keeps a few `MOV`/`MOV` field writers without making them better.
+
+**The lists of `tiny-pv-dc16` on one panel of 100 without member games: `dc16-p100`.** Island NN started from the 80 members of `tiny-pv-dc16`'s island NN after its batch 1,342 to 1,363 (`--start` with folders `island-NN`, the members as `.gen` files), with the settings of `tiny-p100-none16`. Stopped at batch 134:
+
+| batch | best | mean | worst |
+|---|---|---|---|
+| start (`tiny-pv-dc16`, 1,500) | 147.4 | 140.0 | 117.2 |
+| 50 | 147.2 | 145.7 | 142.6 |
+| 100 | 147.7 | 146.3 | 143.7 |
+
+The islands that had kept the `SPL`/`DJN` loop on top caught up within 50 batches, and the mean rose by 6. The best did not move: 0.3 points in 134 batches, with every island between 143.7 and 147.7. Two thirds of all members start with `SPL`, `SPL` (66%, 6% with the `SPL #`/`DJN #` loop). The large panel spreads the best design over all islands, but it does not lift it: on the tiny hill these settings top out at about 147, 13 points under `tiny-own16`.

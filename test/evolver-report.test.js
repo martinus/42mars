@@ -327,3 +327,23 @@ test('shortKind: a word of its own for every kind of style', () => {
   for (const [k, w] of kinds.map((x, i) => [x, words[i]])) assert.match(w, /^[a-z]+$/, k);
   assert.equal(shortKind(undefined), '');
 });
+
+test('run-report --at: the scores of those batches in that order, – where an island has none, and the best and the mean of the islands', { skip }, () => {
+  const d = islandRun();
+  const r = report(d, '--at', '6,99,3');
+  assert.equal(r.status, 0, r.stderr);
+  const scores = new Map(events(d, 'islands.jsonl').filter((e) => e.type === 'score').map((s) => [s.batch, s.islands.map((i) => i.score)]));
+  const lines = r.stdout.split('\n');
+  assert.deepEqual(lines.find((l) => l.startsWith('island ')).trim().split(/\s+/).slice(3, 6), ['b6', 'b99', 'b3']);
+  for (const k of [1, 2]) {
+    const row = lines.find((l) => l.startsWith(`island-0${k} `)).trim().split(/\s+/);
+    assert.deepEqual(row.slice(3, 6), [scores.get(6)[k - 1].toFixed(1), '–', scores.get(3)[k - 1].toFixed(1)], `island ${k}`);
+  }
+  const summary = (name) => lines.find((l) => l.startsWith(`${name} `)).trim().split(/\s+/).slice(1);
+  const mean = (v) => v.reduce((a, b) => a + b, 0) / v.length;
+  assert.deepEqual(summary('best'), [Math.max(...scores.get(6)).toFixed(1), '–', Math.max(...scores.get(3)).toFixed(1)]);
+  assert.deepEqual(summary('mean'), [mean(scores.get(6)).toFixed(1), '–', mean(scores.get(3)).toFixed(1)]);
+  const bad = report(d, '--at', '3,x');
+  assert.equal(bad.status, 2);
+  assert.match(bad.stderr, /--at needs batches/);
+});
