@@ -36,6 +36,8 @@ test('the parts are about even, and the tables name only files that exist', () =
     const t = (list) => list.reduce((s, f) => s + time(f), 0);
     for (let n = 2; n <= 8; n++) {
       const p = parts(n, files(), table), sums = p.map(t), top = Math.max(...sums), k = sums.indexOf(top);
+      // with two parts at the top (up to rounding) no single move makes the longest part shorter
+      if (sums.filter((x) => Math.abs(x - top) < 1e-6).length > 1) continue;
       // no single file that moves from the longest part to another, or swaps with one there, makes it shorter
       for (let q = 0; q < n; q++) {
         if (q === k) continue;
