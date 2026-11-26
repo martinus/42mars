@@ -49,7 +49,7 @@ test('--no-spl: no newcomer of a run on lists or on generators has SPL, every ki
   run(join(tmp, 'nospl-list'), [...list, '--no-spl', '--threads', '1', '--batches', String(B)]);
   const one = events(join(tmp, 'nospl-list'));
   assert.equal(one[0].params.noSpl, true);
-  assert.match(readFileSync(join(tmp, 'nospl-list', 'state.txt'), 'latin1'), /^params .* 1 0$/m); // --no-spl, then --survivors-by
+  assert.match(readFileSync(join(tmp, 'nospl-list', 'state.txt'), 'latin1'), /^params .* 1 0 0$/m); // --no-spl, then --survivors-by and --replace-parent
   assert.ok(enters(one).length >= 400, `${enters(one).length} newcomers`);
   assert.ok(allEntered(one));
   assert.deepEqual(withSpl(one).map((e) => e.id), []);

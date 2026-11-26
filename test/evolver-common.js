@@ -173,8 +173,42 @@ export function checkValues(evs) {
     if (longest === null) return null;
     return lengths.get(fresh) >= lengths.get(longest) ? [fresh, longest] : [longest, fresh];
   };
-  const noTwin = () => { // the newcomer stayed without a leave: it has no twin
+  // the values of everyone in now, by tools/diversity.js on the logged scores
+  const valuesNow = () => {
+    const ids = slots.filter((x) => x !== null);
+    const score = ids.map((a) => ids.map((b) => (a === b ? null : pts.get(`${a},${b}`) ?? (noGames ? 0 : undefined))));
+    const columns = start.params.diversity === 'panel' ? ids.map((id) => panel.has(id)) : null;
+    const o = { variant: start.params.sd, alpha: start.params.alpha, columns };
+    return { ids, score, columns, v: paretoed(averaged(pushoffValues(score, ids.map((_, i) => i), o), ids, score), ids, score, o) };
+  };
+  const panelAverage = (id) => {
+    const others = [...panel].filter((p) => p !== id);
+    return others.reduce((sum, p) => sum + pts.get(`${id},${p}`), 0) / others.length;
+  };
+  // --replace-parent: when the newcomer's nearest is its first parent, a member, the one of the two with the lower
+  // average against the panel leaves (the newcomer when equal): [who leaves, who stays], null for no duel, 'unsure'
+  // when another warrior is as near as the parent up to rounding
+  const firstParent = new Map();
+  let parentDuels = 0, duelChecks = 0, childWon = 0, duelUnsure = 0;
+  const duelRule = () => {
+    const p = firstParent.get(fresh);
+    if (p === undefined || panel.has(p) || !slots.includes(p)) return null;
+    const { ids, score, columns, v } = valuesNow();
+    const i = ids.indexOf(fresh), near = (x, y) => Math.abs(x - y) <= 1e-9 * Math.max(1, Math.abs(y));
+    const toParent = sdDistance(score, ids.map((_, j) => j), i, ids.indexOf(p), start.params.sd, columns);
+    if (ids[v[i].nearest] !== p) return near(toParent, v[i].distance) ? 'unsure' : null;
+    if (ids.some((x, j) => j !== i && x !== p && near(sdDistance(score, ids.map((_, k) => k), i, j, start.params.sd, columns), toParent))) return 'unsure';
+    return panelAverage(fresh) > panelAverage(p) ? [p, fresh] : [fresh, p];
+  };
+  const noDuel = (why) => {
+    if (!start.params.replaceParent || fresh === null) return;
+    const rule = duelRule();
+    if (rule === 'unsure') duelUnsure++;
+    else assert.equal(rule, null, `batch ${why}: ${fresh} is nearest to its parent ${firstParent.get(fresh)} and did not duel it`), duelChecks++;
+  };
+  const noTwin = () => { // the newcomer stayed without a leave: it has no twin, and no duel with its parent
     if (start.params.parsimony && fresh !== null) assert.equal(twinRule(), null, `${fresh} has a twin and stayed`), twinChecks++;
+    noDuel('stayed');
     fresh = null;
   };
   let listNow = start.params.list; // --list on a run that continues: event `list`
@@ -242,6 +276,7 @@ export function checkValues(evs) {
     if (e.type === 'enter') {
       lengths.set(e.id, e.length);
       fresh = e.id;
+      if (e.parents.length) firstParent.set(e.id, e.parents[0]);
       // the origin of its line: a new family, or no parents in the list when it was bred (random, back from the
       // archive, a start warrior), start a new one; else the older line of its parents
       const bred = e.parents.length && e.ops !== 'reintroduce' && e.parents.every((p) => origins.has(p));
@@ -283,7 +318,18 @@ export function checkValues(evs) {
       }
     }
     if (e.type === 'leave' && e.early) fresh = null;
-    if (e.type === 'leave' && !e.early && start.params.parsimony) {
+    if (e.type === 'leave' && !e.early && start.params.replaceParent) {
+      // the duel goes first: before the twins and the push-off, also while the list is not full
+      if (e.duel !== undefined) {
+        const rule = duelRule();
+        if (rule === 'unsure') duelUnsure++;
+        else assert.deepEqual([e.id, e.duel], rule, `batch ${e.batch}: ${e.id} left in a duel with ${e.duel}, the rule says ${rule}`);
+        if (e.duel === fresh) childWon++;
+        parentDuels++;
+        fresh = null;
+      } else noDuel(e.batch);
+    } else assert.equal(e.duel, undefined, 'a duel without --replace-parent');
+    if (e.type === 'leave' && !e.early && e.duel === undefined && start.params.parsimony) {
       const rule = twinRule();
       if (e.twin !== undefined) {
         assert.deepEqual([e.id, e.twin], rule, `batch ${e.batch}: ${e.id} left as the twin of ${e.twin}, the rule says ${rule}`);
@@ -292,7 +338,7 @@ export function checkValues(evs) {
       twinChecks++;
       fresh = null;
     } else assert.equal(e.twin, undefined, 'a twin without --parsimony');
-    if (e.type === 'leave' && !e.early && e.twin === undefined) {
+    if (e.type === 'leave' && !e.early && e.twin === undefined && e.duel === undefined) {
       // the push-off: the weakest of those that may leave (not the panel), by
       // tools/diversity.js on the logged scores
       const ids = slots.filter((x) => x !== null);
@@ -322,6 +368,7 @@ export function checkValues(evs) {
     if (e.type === 'leave') {
       assert.ok(!panel.has(e.id), `panel warrior ${e.id} left`);
       slots[slots.indexOf(e.id)] = null;
+      fresh = null; // its rules were checked at this leave
     }
     if (e.type === 'list') listNow = e.list;
     if (e.type === 'values') {
@@ -363,6 +410,10 @@ export function checkValues(evs) {
   checkValues.olderSecond = olderSecond; // crossovers that took the older line of the second parent
   checkValues.twinLeaves = twinLeaves; // --parsimony: leaves of the longer of two twins
   checkValues.twinChecks = twinChecks; // --parsimony: newcomers checked for twins
+  checkValues.parentDuels = parentDuels; // --replace-parent: duels of a newcomer and its first parent
+  checkValues.childWon = childWon; // of those, the newcomer stayed
+  checkValues.duelChecks = duelChecks; // newcomers checked to be not nearest to their parent
+  checkValues.duelUnsure = duelUnsure; // newcomers as near to their parent as to another one, up to rounding
   return checked;
 }
 
