@@ -2,8 +2,9 @@
 // Copyright (c) 2026 Martin Leitner-Ankerl
 //
 // The evolver (evolver/, #142) on the tiny hill of warriors/koenigstuhl:
-// --no-spl (#185), runs and islands where no warrior has SPL, so that the
-// SPL/MOV backbone cannot grow. What the evolver's test files share is in
+// --no-spl (#185), runs where no warrior has SPL, so that the SPL/MOV
+// backbone cannot grow; on generators and islands in
+// evolver-nospl-islands.test.js. What the evolver's test files share is in
 // test/evolver-common.js; built with cc, or prebuilt in M42_BIN
 // (test/native.js). POSIX only.
 
@@ -38,8 +39,8 @@ const ALL = [...without(ARGS, '--rounds', '--panel-rounds'), '--rounds', '10', '
 const allEntered = (evs) => evs.filter((e) => e.type === 'batch').every((e) => e.survivors === e.evaluated &&
   evs.filter((x) => x.type === 'enter' && x.batch === e.batch).length === e.evaluated);
 
-test('--no-spl: no newcomer of a run on lists or on generators has SPL, every kind of change drawn; the same run on any thread count and after a resume', { skip }, () => {
-  const B = 14;
+const B = 14;
+test('--no-spl: no newcomer of a run on lists has SPL, every kind of change drawn; the same run on any thread count and after a resume', { skip }, () => {
   const list = [...ALL, '--changes', changes(LIST_KINDS)];
   run(join(tmp, 'spl-list'), [...list, '--threads', '4', '--batches', '4']);
   const control = events(join(tmp, 'spl-list'));
@@ -59,16 +60,6 @@ test('--no-spl: no newcomer of a run on lists or on generators has SPL, every ki
   run(join(tmp, 'nospl-resumed'), [...list, '--no-spl', '--threads', '2', '--batches', String(B >> 1)]);
   run(join(tmp, 'nospl-resumed'), ['--threads', '3', '--batches', String(B - (B >> 1))]);
   assert.deepEqual(stable(events(join(tmp, 'nospl-resumed'))), stable(one));
-
-  // generators: every kind of a list and of the structure
-  const gen = [...without(ALL, '--genome'), '--genome', 'gen', '--changes', changes([...LIST_KINDS, ...GEN_KINDS]), '--no-spl'];
-  run(join(tmp, 'nospl-gen'), [...gen, '--threads', '4', '--batches', String(B)]);
-  const g = events(join(tmp, 'nospl-gen'));
-  assert.ok(enters(g).length >= 400, `${enters(g).length} newcomers`);
-  assert.ok(allEntered(g));
-  assert.deepEqual(withSpl(g).map((e) => e.id), []);
-  const gs = kindsOf(g);
-  for (const k of [...LIST_KINDS, ...GEN_KINDS, 'random', 'reintroduce']) assert.ok(gs.has(k), `no newcomer by ${k}`);
 });
 
 test('--no-spl: a start warrior with SPL is left out with a message; a folder of only such warriors is refused', { skip }, () => {
@@ -93,39 +84,4 @@ test('--no-spl: a start warrior with SPL is left out with a message; a folder of
   const refused = spawnSync(evolve, [join(tmp, 'nospl-refused'), ...ARGS, '--no-spl', '--start', only, '--batches', '1'], { encoding: 'utf8', timeout: 120000 });
   assert.notEqual(refused.status, 0);
   assert.match(refused.stderr, /no warrior in .* fits the rules and has no SPL \(--no-spl\)/);
-});
-
-const ISLANDS = [...ARGS, '--changes', changes(LIST_KINDS), '--islands', '4', '--migrate', '1', '--threads', '4', '--batches', '8'];
-const island = (dir, i) => events(join(dir, `island-0${i}`));
-
-test('--no-spl as an --island-variant: on the explorers they take no migrants, the others take from them; else from islands with --no-spl only', { skip }, () => {
-  // one variant per island: the last two are the explorers and have --no-spl
-  const ex = join(tmp, 'nospl-explorers');
-  run(ex, [...ISLANDS, '--explorers', '2', '--island-variant', '', '--island-variant', '', '--island-variant', '--no-spl', '--island-variant', '--no-spl']);
-  const isl = [1, 2, 3, 4].map((i) => island(ex, i));
-  assert.deepEqual(isl.map((e) => e[0].params.noSpl), [false, false, true, true]);
-  const from = (evs) => evs.filter((e) => e.type === 'migrate').flatMap((e) => e.from.map(([i]) => i));
-  assert.deepEqual([from(isl[2]), from(isl[3])], [[], []]);
-  for (const k of [2, 3]) assert.deepEqual(withSpl(isl[k]).map((e) => e.id), [], `island ${k + 1}`);
-  assert.ok(withSpl(isl[0]).length + withSpl(isl[1]).length > 0, 'SPL on the islands without --no-spl');
-  assert.ok([...from(isl[0]), ...from(isl[1])].some((i) => i >= 3), 'the core takes from the explorers');
-
-  // half the islands with --no-spl and no explorers: they take migrants, from each other only, from one island
-  // drawn or from all
-  for (const to of ['random', 'all']) {
-    const half = join(tmp, `nospl-half-${to}`);
-    run(half, [...ISLANDS, '--migrate-to', to, '--island-variant', '', '--island-variant', '--no-spl']);
-    const h = [1, 2, 3, 4].map((i) => island(half, i));
-    assert.deepEqual(h.map((e) => e[0].params.noSpl), [false, true, false, true]);
-    assert.deepEqual(from(h[1]).filter((i) => i !== 4), [], to);
-    assert.deepEqual(from(h[3]).filter((i) => i !== 2), [], to);
-    assert.ok(from(h[1]).length > 0 && from(h[3]).length > 0, 'the islands with --no-spl take from each other');
-    for (const k of [1, 3]) {
-      assert.deepEqual(withSpl(h[k]).map((e) => e.id), [], `island ${k + 1}, ${to}`);
-      assert.ok(enters(h[k]).some((e) => e.ops === 'migrant'), `island ${k + 1} took migrants in`);
-    }
-    assert.ok(withSpl(h[0]).length + withSpl(h[2]).length > 0, 'SPL on the islands without --no-spl');
-    const core = [...from(h[0]), ...from(h[2])];
-    assert.ok(core.some((i) => i % 2 === 1) && core.some((i) => i % 2 === 0), 'the others take from both kinds');
-  }
 });

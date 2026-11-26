@@ -9,11 +9,12 @@
 
 import { after, before, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
+import { execFile, spawnSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { promisify } from 'node:util';
 import { assemble } from '../wasm/42mars.js';
 import { builtProgram, lines, prebuilt, program, skip as noCc } from './native.js';
 
@@ -48,10 +49,28 @@ const warrior = (source, options = {}) => {
   return { start: w.start, code: w.instructions.map((c) => [c.op, c.mod, c.aMode, c.aVal, c.bMode, c.bVal]) };
 };
 
-test('generators in C', { skip }, () => {
-  const r = spawnSync(unit, { encoding: 'utf8', timeout: 300000 });
-  assert.equal(r.status, 0, r.stderr);
-  assert.equal(r.stdout.trim(), 'ok');
+// The tests of generator-test.c in three processes at the same time, the
+// long ones dealt first to the group with the least so far: in one process
+// they took 43 s under ASan on CI, the longest of any test (#161). Seconds
+// under ASan here; a test not listed counts 0.5.
+const UNIT_SECONDS = { structured_rates: 8.6, rewrites: 6.1, forbid: 4.8, structured: 4.6, random: 4.2, structured_line: 3.5, mirror: 1.9, bytes: 1.0 };
+test('generators in C', { skip }, async () => {
+  const names = lines(spawnSync(unit, ['--list'], { encoding: 'utf8' }).stdout).trim().split('\n');
+  assert.ok(names.length > 20 && names.includes('structured'), names.join(' '));
+  const groups = [[], [], []].map((names) => ({ names, seconds: 0 }));
+  const time = (n) => UNIT_SECONDS[n] ?? 0.5;
+  for (const n of [...names].sort((a, b) => time(b) - time(a))) {
+    const g = groups.reduce((best, x) => (x.seconds < best.seconds ? x : best));
+    g.names.push(n);
+    g.seconds += time(n);
+  }
+  const results = await Promise.all(groups.map((g) => promisify(execFile)(unit, g.names, { encoding: 'utf8', timeout: 300000 }).catch((e) => e)));
+  for (const [i, r] of results.entries()) {
+    assert.equal(r.code ?? 0, 0, `${groups[i].names.join(' ')}: ${r.stderr}`);
+    assert.equal(r.stdout.trim(), 'ok');
+  }
+  // a wrong name is refused, not skipped
+  assert.equal(spawnSync(unit, ['no-such-test'], { encoding: 'utf8' }).status, 2);
 });
 
 test('42gen: a decoy and a boot from a generator are the warrior written by hand', { skip }, () => {

@@ -4,7 +4,8 @@
 // The evolver (evolver/, #142) on the tiny hill of warriors/koenigstuhl:
 // --genome gen, a run whose genomes are generators (docs/evolver-gen.md).
 // With the changes of a list it is the run on lists, event for event; the
-// events and best.gen carry the generators. What the evolver's test files
+// events and best.gen carry the generators; the changes that make structure
+// are in evolver-structure.test.js. What the evolver's test files
 // share is in test/evolver-common.js; built with cc, or prebuilt in M42_BIN
 // (test/native.js). POSIX only.
 
@@ -132,56 +133,6 @@ test('--genome gen: start warriors, what it refuses, and a state from before it'
   run(join(tmp, 'start-list'), ['--threads', '2', '--batches', '1']);
   assert.match(readFileSync(file, 'latin1'), /^params .* 0 0 0 1 0 0 0 0$/m);
   assert.ok(events(join(tmp, 'start-list')).every((e) => !('gen' in e)));
-});
-
-test('--genome gen: the changes that make structure, the same run on any thread count and after a resume', { skip }, () => {
-  // without --changes a run on generators draws them: a quarter of the changes
-  run(join(tmp, 'default-gen'), [...TINY, '--genome', 'gen', '--threads', '2', '--batches', '1']);
-  const changes = events(join(tmp, 'default-gen'))[0].changes;
-  assert.deepEqual(STRUCTURE.map((name) => changes[name]), [30, 40, 30, 15, 40, 40, 40, 20, 20, 25, 10, 15]);
-  assert.equal(changes.insert, 100);
-  assert.ok(!('repeat' in events(join(tmp, 'one'))[0].changes)); // a run on lists has no such kinds
-  // with more of them, to see every kind in a short run
-  const more = [...TINY, '--genome', 'gen', '--changes', `${ALL},repeat=150,count=150,fold=150,unroll=80,index=150,expression=150,constant=150,extract=150,parameter=150,call=150,inline=80,transplant=100`];
-  run(join(tmp, 'structure'), [...more, '--threads', '1', '--batches', '30']);
-  const one = events(join(tmp, 'structure'));
-  const enters = one.filter((e) => e.type === 'enter');
-  const ops = new Set(enters.flatMap((e) => e.ops.split(' ')));
-  const kinds = STRUCTURE.filter((name) => ops.has(name));
-  assert.ok(kinds.length >= 8 && ops.has('extract') && (ops.has('call') || ops.has('parameter') || ops.has('inline')),
-    `kinds that made a warrior that entered: ${kinds.join(' ')}`);
-  const blocks = enters.filter((e) => /^\S*\s+repeat /m.test(e.gen)), constants = enters.filter((e) => /^c\d+ = /m.test(e.gen));
-  const functions = enters.filter((e) => /^f\d+:\s+def$/m.test(e.gen) && /^\S*\s+f\d+\(/m.test(e.gen));
-  assert.ok(blocks.length >= 5 && constants.length >= 3 && functions.length >= 3,
-    `${blocks.length} warriors with a block, ${constants.length} with a constant, ${functions.length} with a function and a call, of ${enters.length}`);
-  // the generator of each is the generator of its code, within the rules
-  for (const e of [...blocks, ...constants, ...functions]) {
-    assert.deepEqual(written(e.gen, 'structure.gen'), code(e.code), e.gen);
-    assert.ok(e.length <= RULES.maxLength && e.gen.split('\n').filter((l) => /^\S*\s+[A-Z]{3}\./.test(l)).length <= RULES.maxLength, e.gen);
-  }
-  // a block that writes more instructions than its lines
-  assert.ok(blocks.some((e) => e.length > e.gen.split('\n').filter((l) => /^\S*\s+[A-Z]{3}\./.test(l)).length));
-  // 3 threads, and in two parts
-  run(join(tmp, 'structure3'), [...more, '--threads', '3', '--batches', '30']);
-  assert.deepEqual(stable(events(join(tmp, 'structure3'))), stable(one));
-  run(join(tmp, 'structure2'), [...more, '--threads', '2', '--batches', '13']);
-  run(join(tmp, 'structure2'), ['--threads', '4', '--batches', '17']);
-  assert.deepEqual(stable(events(join(tmp, 'structure2'))), stable(one));
-  // a list has no such changes: not for a new run, not for one that continues
-  let r = spawnSync(evolve, [join(tmp, 'bad2'), ...TINY, '--changes', 'insert=1,fold=1'], { encoding: 'utf8' });
-  assert.equal(r.status, 2);
-  assert.match(r.stderr, /--changes with a kind of generators \(repeat to transplant\) needs --genome gen/);
-  assert.ok(!existsSync(join(tmp, 'bad2')));
-  r = spawnSync(evolve, [join(tmp, 'one'), '--changes', 'insert=1,constant=1', '--batches', '1'], { encoding: 'utf8' });
-  assert.equal(r.status, 2);
-  assert.match(r.stderr, /needs --genome gen/);
-  assert.equal(events(join(tmp, 'one')).filter((e) => e.type === 'resume').length, 0);
-  r = spawnSync(evolve, [join(tmp, 'bad2'), ...TINY, '--genome', 'gen', '--changes', 'folds=1'], { encoding: 'utf8' });
-  assert.equal(r.status, 2);
-  assert.match(r.stderr, /^and with --genome gen: repeat count fold unroll index expression constant extract parameter call inline transplant$/m);
-  // a run on generators takes them later too
-  run(join(tmp, 'default-gen'), ['--changes', 'insert=1,constant=1,repeat=1', '--threads', '2', '--batches', '1']);
-  assert.equal(events(join(tmp, 'default-gen')).filter((e) => e.type === 'changes')[0].changes, 'insert=1,repeat=1,constant=1');
 });
 
 test('--genome gen --start: the generators of a folder start a run as they are', { skip }, () => {

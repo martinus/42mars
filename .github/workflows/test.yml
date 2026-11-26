@@ -164,7 +164,8 @@ jobs:
       - uses: ./.github/actions/lib-object
         with:
           flags: o3
-      - run: make -j4 CFLAGS='-O3 -Wall -Wextra -Werror'
+      # only the program: the tournament runs on wasm, example-check builds its own (#161: all of make took 10 to 18 s)
+      - run: make -j4 CFLAGS='-O3 -Wall -Wextra -Werror' build/42mars
       - name: compare with pMARS
         run: |
           set -e
