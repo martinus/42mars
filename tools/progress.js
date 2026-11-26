@@ -75,11 +75,13 @@ function hashOf(s) {
 const NUMBER = Object.fromEntries(['id', 'batch', 'members', 'avg'].map((k) => [k, new RegExp(`"${k}":(-?[\\d.]+(?:e[-+]?\\d+)?)`)]));
 
 // The opcodes and the hash of a warrior of RunDigest, from its code, which
-// it then forgets (the code of a member is in RunDigest.alive).
+// it then forgets (the code of a member is in RunDigest.alive). A brief
+// enter line (42evolve --events brief, #187: a newcomer that left in its
+// batch) has no code: no opcodes, no hash.
 function finish(w) {
   if (w.opcodes === null) {
-    w.opcodes = opcodesOf(w.code);
-    w.hash = hashOf(w.code);
+    w.opcodes = w.code === undefined ? '' : opcodesOf(w.code);
+    w.hash = w.code === undefined ? '' : hashOf(w.code);
     w.code = null;
   }
   return w;

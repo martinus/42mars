@@ -36,7 +36,7 @@ function handle(r, e) {
       r.panelIds.add(e.panel.id);
       break;
     case 'enter':
-      r.members.set(e.id, { id: e.id, name: e.name ?? `e${e.id}`, code: e.code, panelAvg: null });
+      r.members.set(e.id, { id: e.id, name: e.name ?? `e${e.id}`, code: e.code ?? '', panelAvg: null }); // a brief line has no code (#187)
       r.alive.add(e.id);
       break;
     case 'leave':

@@ -58,7 +58,7 @@ void event_start(run *r) {
           "\"rounds\":%u,\"screenRounds\":%u,\"benchEvery\":%u,\"benchRounds\":%u,\"initLength\":%u,"
           "\"screenFactor\":%.17g,\"alpha\":%.17g,\"reintroduce\":%.17g,\"sd\":\"%s\",\"seed\":%" PRIu64
           ","
-          "\"parents\":\"%s\",\"screenMembers\":%u,\"stage\":%u,\"fill\":%s,\"panelRounds\":%u,\"diversity\":\"%s\",\"panelChoice\":\"%s\",\"screenStop\":%.17g,\"screenCheck\":%.17g,\"average\":\"%s\",\"memberGames\":\"%s\",\"drawSeed\":%" PRIu64 ",\"pushoff\":\"%s\",\"positions\":\"%s\",\"clear\":%.17g,\"genome\":\"%s\",\"minLength\":%u,\"tiePoints\":%.17g,\"parsimony\":%s,\"noSpl\":%s,\"survivorsBy\":\"%s\",\"replaceParent\":%s},"
+          "\"parents\":\"%s\",\"screenMembers\":%u,\"stage\":%u,\"fill\":%s,\"panelRounds\":%u,\"diversity\":\"%s\",\"panelChoice\":\"%s\",\"screenStop\":%.17g,\"screenCheck\":%.17g,\"average\":\"%s\",\"memberGames\":\"%s\",\"drawSeed\":%" PRIu64 ",\"pushoff\":\"%s\",\"positions\":\"%s\",\"clear\":%.17g,\"genome\":\"%s\",\"minLength\":%u,\"tiePoints\":%.17g,\"parsimony\":%s,\"noSpl\":%s,\"survivorsBy\":\"%s\",\"replaceParent\":%s,\"events\":\"%s\"},"
           "\"opponents\":",
           m42_version(), p->rules.core_size, p->rules.max_cycles, p->rules.max_processes, p->rules.max_length,
           p->rules.min_distance, r->panel_n, r->hold_n, p->list, p->batch, p->survivors, p->rounds, p->screen_rounds,
@@ -74,7 +74,7 @@ void event_start(run *r) {
           p->average_panel ? "panel" : "all", p->member_games_none ? "none" : "all", p->draw_seed,
           p->pareto == 3 ? "pareto-sd" : p->pareto ? "pareto" : "value", p->mirror ? "mirror" : "pmars", p->clear, p->gen ? "gen" : "list", p->min_length, p->tie,
           p->parsimony ? "true" : "false", p->no_spl ? "true" : "false",
-          p->survivors_by ? "pushoff" : "strength", p->replace_parent ? "true" : "false");
+          p->survivors_by ? "pushoff" : "strength", p->replace_parent ? "true" : "false", p->events_brief ? "brief" : "full");
   json_str(f, p->opponents, 0);
   fputs(",\"panelFiles\":", f);
   json_str(f, p->panel_files, 0);
@@ -145,10 +145,49 @@ void event_panel(run *r) {
 // push-off from its screen (pushoff_keys()): [front, 0 the first; average
 // against the panel; against the members of the screen; SD-score to the
 // nearest warrior], else 0.
+// --events brief (#187): the place of a line of the batch in memory, for
+// run_batch(); brief: the enter line for a newcomer that leaves in the batch.
+void mark_line(run *r, long start, uint64_t id, char *brief) {
+  if (r->marks_n == r->marks_cap) {
+    r->marks_cap = r->marks_cap ? 2 * r->marks_cap : 256;
+    struct event_mark *m = xmalloc(r->marks_cap * sizeof *m);
+    if (r->marks_n) memcpy(m, r->marks, r->marks_n * sizeof *m);
+    free(r->marks);
+    r->marks = m;
+  }
+  r->marks[r->marks_n++] = (struct event_mark){start, ftell(r->events), id, brief};
+}
+
+// The brief enter line of a newcomer (--events brief): what the operators,
+// the lineage and the ticker need, without its matches, screen points, code
+// and generator; avg: its average against the panel when it entered.
+static char *brief_enter(const run *r, const warrior *w, double screen, double estimate, double avg) {
+  char *text = 0;
+  size_t n = 0;
+  FILE *f = open_memstream(&text, &n);
+  if (!f) {
+    fprintf(stderr, "42evolve: out of memory\n");
+    exit(1);
+  }
+  fprintf(f, "{\"type\":\"enter\",\"batch\":%u,\"id\":%" PRIu64 ",\"name\":", r->batch, w->id);
+  json_str(f, w->name, 0);
+  fputs(",\"parents\":[", f);
+  for (int k = 0, c = 0; k < 2; k++)
+    if (w->parents[k] != NO_ID) fprintf(f, "%s%" PRIu64, c++ ? "," : "", w->parents[k]);
+  fputs("],\"ops\":", f);
+  json_str(f, w->ops, 0);
+  fprintf(f, ",\"length\":%u,\"screen\":%.4f,\"estimate\":%.6f,\"style\":{\"kind\":\"%s\"},\"newFamily\":%s,\"origin\":%u,"
+             "\"panelAvg\":%.4f,\"brief\":true}\n",
+          w->g->len, screen, estimate, style_kind_name(w->style_kind), w->new_family ? "true" : "false", w->origin, avg);
+  fclose(f);
+  return text;
+}
+
 void event_enter(run *r, uint32_t slot, double screen, double estimate, uint64_t rival,
                         const unit *row, const double *pick) {
   FILE *f = r->events;
   const warrior *w = r->slot[slot];
+  const long start = r->buffering ? ftell(f) : 0;
   fprintf(f, "{\"type\":\"enter\",\"batch\":%u,\"id\":%" PRIu64 ",\"name\":", r->batch, w->id);
   json_str(f, w->name, 0);
   fputs(",\"parents\":[", f);
@@ -181,6 +220,7 @@ void event_enter(run *r, uint32_t slot, double screen, double estimate, uint64_t
     first = 0;
   }
   fputs("]}\n", f);
+  if (r->buffering) mark_line(r, start, w->id, brief_enter(r, w, screen, estimate, panel_avg(r, slot)));
 }
 
 // early: decided on the results of the first stage (--stage), the values too
@@ -190,6 +230,17 @@ void event_enter(run *r, uint32_t slot, double screen, double estimate, uint64_t
 // --replace-parent the id of the winner of the duel of a newcomer and its
 // first parent; NO_ID when not.
 void event_leave(run *r, const pushoff_value *v, int early, uint64_t twin, uint64_t parent_duel) {
+  const warrior *w = r->slot[v->index];
+  if (r->buffering && w->kind == MEMBER && w->born == r->batch) { // a newcomer of this batch: run_batch() writes it brief
+    if (r->gone_n == r->gone_cap) {
+      r->gone_cap = r->gone_cap ? 2 * r->gone_cap : 256;
+      uint64_t *g = xmalloc(r->gone_cap * sizeof *g);
+      if (r->gone_n) memcpy(g, r->gone, r->gone_n * sizeof *g);
+      free(r->gone);
+      r->gone = g;
+    }
+    r->gone[r->gone_n++] = w->id;
+  }
   fprintf(r->events,
           "{\"type\":\"leave\",\"batch\":%u,\"id\":%" PRIu64 ",\"avg\":%.6f,\"distance\":%.6f,\"nearest\":%" PRId64
           ",\"value\":%.6f%s",

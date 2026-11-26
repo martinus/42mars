@@ -34,7 +34,7 @@ test('the defaults of a new run: the settings of gen-var16-rnd, generators, a pa
   run(join(tmp, 'def-new'), [...rules, '--seed', '5', '--pick-sample', '60', '--threads', '4', '--batches', '1']);
   const fresh = events(join(tmp, 'def-new'))[0];
   const q = fresh.params;
-  assert.deepEqual([q.genome, q.panel, q.panelChoice, q.batch, q.survivors, fresh.panel.length], ['gen', 30, 'kinds', 128, 16, 30]);
+  assert.deepEqual([q.genome, q.panel, q.panelChoice, q.batch, q.survivors, fresh.panel.length, q.events], ['gen', 30, 'kinds', 128, 16, 30, 'brief']);
 });
 
 test('the defaults of islands: half exploit, half explore, every 5 batches a member drawn from an island drawn', { skip }, () => {

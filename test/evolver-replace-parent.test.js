@@ -37,7 +37,7 @@ test('--replace-parent: a newcomer nearest to its first parent duels it by the a
   run(join(tmp, 'duel1'), [...args, '--threads', '1', '--batches', String(B)]);
   const one = events(join(tmp, 'duel1'));
   assert.equal(one[0].params.replaceParent, true);
-  assert.match(readFileSync(join(tmp, 'duel1', 'state.txt'), 'latin1'), /^params .* 0 1$/m); // --survivors-by, then this
+  assert.match(readFileSync(join(tmp, 'duel1', 'state.txt'), 'latin1'), /^params .* 0 1 0$/m); // --survivors-by, this, then --events
   checkDuels(one, 10);
   checkOps(one);
   run(join(tmp, 'duel-resumed'), [...args, '--threads', '2', '--batches', String(B >> 1)]);
