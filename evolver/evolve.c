@@ -71,7 +71,8 @@ static void usage(void) {
           "         [--genome list|gen] [--min-length N] [--tie-points t] [--parsimony] [--no-spl]\n"
           "         [--survivors-by strength|pushoff] [--replace-parent]\n"
           "         [--islands N [--select-after B [--keep K]] [--score-rounds R] [--score-designs 3]\n"
-          "           [--migrate M [--migrate-pick best|random] [--migrate-to all|random]] [--island-variant \"options\" ...] [--island-panels shared|own] [--explorers K]]\n"
+          "           [--migrate M [--migrate-pick best|random] [--migrate-to all|random]] [--island-variant \"options\" ...] [--island-panels shared|own] [--explorers K]\n"
+          "           [--groups K [--group-every 10] [--group-slots panel/3] [--group-hall slots/2]]]\n"
           "         [--size 8000] [--cycles 80000] [--processes 8000] [--length 100] [--distance 100]\n"
           "         [--threads N] [--batches N] [--seconds S]\n"
           "       42evolve <run folder> [--threads N] [--batches N] [--seconds S] [--changes ...] [--reintroduce p] [--list N]\n"
@@ -143,6 +144,8 @@ typedef struct {
   uint32_t migrate_random, migrate_next, pick_given, to_given;      // --migrate-pick, --migrate-to
   int own_panels;                                                   // --island-panels own
   uint32_t explorers;                                               // --explorers
+  uint32_t groups, group_every, group_slots, group_hall;            // --groups, --group-every, --group-slots, --group-hall (#183)
+  int group_option;                                                 // one of the last three given
   int islands_option;
   const char *variant[ISLANDS_MAX]; // --island-variant, in their order
   uint32_t variant_n;
@@ -313,6 +316,11 @@ static void option_number(cli *c, const char *a, int number, double d, uint32_t 
   else if (!strcmp(a, "--score-designs")) c->islands_designs = u, c->islands_option = 1;
   else if (!strcmp(a, "--migrate")) c->islands_migrate_every = u, c->islands_option = c->migrate_given = 1;
   else if (!strcmp(a, "--explorers")) c->explorers = u, c->islands_option = 1;
+  else if (!strcmp(a, "--groups")) c->groups = u, c->islands_option = 1;
+  else if (!strncmp(a, "--group-", 8) && u == UINT32_MAX) usage(); // the three below keep the value plus 1
+  else if (!strcmp(a, "--group-every")) c->group_every = u + 1, c->islands_option = c->group_option = 1; // these three: 0 not given
+  else if (!strcmp(a, "--group-slots")) c->group_slots = u + 1, c->islands_option = c->group_option = 1;
+  else if (!strcmp(a, "--group-hall")) c->group_hall = u + 1, c->islands_option = c->group_option = 1;
   else if (!strcmp(a, "--size")) p->rules.core_size = u;
   else if (!strcmp(a, "--cycles")) p->rules.max_cycles = u;
   else if (!strcmp(a, "--processes")) p->rules.max_processes = u;
@@ -466,6 +474,7 @@ static int island_variants(int argc, char **argv, const cli *c, params *out) {
                    w.islands_keep != c->islands_keep || w.islands_every != c->islands_every ||
                    w.islands_rounds != c->islands_rounds || w.islands_designs != c->islands_designs || w.islands_migrate_every != c->islands_migrate_every ||
                    w.migrate_random != c->migrate_random || w.migrate_next != c->migrate_next || w.own_panels != c->own_panels || w.explorers != c->explorers ||
+                   w.groups != c->groups || w.group_every != c->group_every || w.group_slots != c->group_slots || w.group_hall != c->group_hall ||
                    w.optimize_file != c->optimize_file))
       differs = "--batches, --seconds, --optimize or an option of the islands";
     if (wrong || differs) {
@@ -512,6 +521,21 @@ static int new_islands(int argc, char **argv, cli *c, const params *p, uint32_t 
     fprintf(stderr, "42evolve: --explorers fewer than the islands, not with --keep\n");
     return 2;
   }
+  group_options g = {c->groups, c->group_every ? c->group_every - 1 : 10, c->group_slots ? c->group_slots - 1 : p->panel / 3 < 255 ? p->panel / 3 : 255, 0};
+  g.hall = c->group_hall ? c->group_hall - 1 : g.slots / 2;
+  if (c->group_option && !c->groups) {
+    fprintf(stderr, "42evolve: --group-every, --group-slots and --group-hall with --groups\n");
+    return 2;
+  }
+  if (c->groups && (c->groups < 2 || islands_n % c->groups || islands_keep || c->explorers)) {
+    fprintf(stderr, "42evolve: --groups K: 2 or more that divide --islands, not with --keep or --explorers\n");
+    return 2;
+  }
+  if (c->groups && (!g.every || !g.slots || g.slots + 2 > p->panel || g.slots > 255 || g.hall > g.slots)) {
+    fprintf(stderr, "42evolve: --group-every 1 or more, --group-slots 1 to the panel less 2 (%u) and at most 255, --group-hall at most the slots\n",
+            p->panel >= 2 ? p->panel - 2 : 0);
+    return 2;
+  }
   if ((c->pick_given || c->to_given) && c->migrate_given && !islands_migrate_every) {
     fprintf(stderr, "42evolve: --migrate-pick and --migrate-to not with --migrate 0\n");
     return 2;
@@ -543,7 +567,7 @@ static int new_islands(int argc, char **argv, cli *c, const params *p, uint32_t 
   signal(SIGTERM, on_signal);
   return islands_new(p, variants, c->variant, c->variant_n, dir, islands_n, islands_keep, islands_every, islands_rounds,
                      c->islands_designs, islands_migrate_every, c->migrate_random, c->migrate_next, c->explorers,
-                     c->own_panels, threads, batches, seconds);
+                     c->own_panels, &g, threads, batches, seconds);
 }
 
 // A run that continues: what the command line changes from now on, each

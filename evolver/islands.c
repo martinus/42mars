@@ -43,7 +43,13 @@ static int island_start(islands *I, uint32_t i, uint32_t batch) {
   r->p.seed = I->seed + i;
   island_name(I, i, r);
   r->pool = I->root.pool;
-  if (run_new(r, r->pool->threads, 0) != 0 || run_open(r, 0, r->pool->threads) != 0) return 1;
+  if (run_new(r, r->pool->threads, 0) != 0) return 1;
+  if (I->groups && r->panel_n < I->group_slots + 2) { // --groups: before its events and state
+    fprintf(stderr, "42evolve: --group-slots %u: island %u has a panel of %u, it needs the slots and 2 more\n", I->group_slots, i + 1,
+            r->panel_n);
+    return 2;
+  }
+  if (run_open(r, 0, r->pool->threads) != 0) return 1;
   r->batch = batch;
   run_first(r);
   I->live[i] = 1;
@@ -290,9 +296,16 @@ static void islands_score(islands *I) {
 // before its batches), so a run is the same on any thread count and after a
 // resume. Event `migrate`: [island, id].
 
+// --groups K (#183): island k is in group k K / n, the islands of a group
+// one after the other.
+static uint32_t group_of(const islands *I, uint32_t k) { return I->groups ? k * I->groups / I->n : 0; }
+
 // --no-spl (#185): an island with it takes migrants only from islands with
-// it, so that no SPL comes in; the others take from every island.
-static int takes_from(const islands *I, uint32_t k, uint32_t j) { return !I->is[k]->p.no_spl || I->is[j]->p.no_spl; }
+// it, so that no SPL comes in; the others take from every island. With
+// --groups only from its own group.
+static int takes_from(const islands *I, uint32_t k, uint32_t j) {
+  return (!I->is[k]->p.no_spl || I->is[j]->p.no_spl) && group_of(I, k) == group_of(I, j);
+}
 
 static void islands_migrate(islands *I, uint32_t k) {
   run *r = I->is[k];
@@ -335,6 +348,153 @@ static void islands_migrate(islands *I, uint32_t k) {
   fputs("]}\n", r->events);
 }
 
+// --groups K: the islands are K groups, and migrants stay in their group.
+// Every --group-every batches the last --group-slots S panel slots of every
+// island get foes, warriors of the other groups (event `rotate` of each one
+// that changes, replace_panel()). S - H of them are the best members (by
+// average against the panel of their island) of the other groups in turn:
+// the best of the next group, the best of the group after it, ..., then the
+// second best of each, and so on. H (--group-hall) are drawn from the
+// island's hall of fame, the foes that left its slots (the latest HALL_MAX),
+// none that is chosen already; while the hall has fewer, those slots take
+// more of the best. A foe chosen again keeps its slot and is not played
+// again. Every choice is made before any slot changes, from the islands as
+// the round before left them, so a run is the same on any thread count and
+// after a resume. Until the first foes the slots hold hill warriors. Each
+// island's state is saved after its foes and islands.txt after all of them:
+// a run killed hard in between (SIGINT and SIGTERM end only after a batch)
+// does the foes again on its resume, from halls that already have the foes
+// that left, as a score in that place is played again.
+typedef struct {
+  genome g;
+  char name[64];
+  uint32_t island; // from 1, 0: none chosen
+  uint64_t id;
+} foe_pick;
+
+typedef struct {
+  const warrior *w;
+  uint32_t island; // from 0
+  double avg;
+} foe_cand;
+
+static int is_foe(const warrior *w, const foe_pick *f) { return f->island && w->foe_island == f->island && w->foe_id == f->id; }
+
+// The hall of fame of r gets the foe w (a copy), the oldest leaves when it is full.
+static void hall_add(run *r, const warrior *w) {
+  for (uint32_t h = 0; h < r->hall_n; h++)
+    if (r->hall[h].foe_island == w->foe_island && r->hall[h].foe_id == w->foe_id) return;
+  if (!r->hall) r->hall = xmalloc(HALL_MAX * sizeof *r->hall);
+  if (r->hall_n == HALL_MAX) {
+    free(r->hall[0].g);
+    memmove(r->hall, r->hall + 1, (HALL_MAX - 1) * sizeof *r->hall);
+    r->hall_n--;
+  }
+  warrior *h = &r->hall[r->hall_n++];
+  memset(h, 0, sizeof *h);
+  h->g = xmalloc(sizeof *h->g);
+  *h->g = *w->g;
+  snprintf(h->name, sizeof h->name, "%s", w->name);
+  h->foe_island = w->foe_island, h->foe_id = w->foe_id;
+}
+
+static void take_member(foe_pick *f, const foe_cand *x) {
+  f->g = *x->w->g;
+  snprintf(f->name, sizeof f->name, "%s", x->w->name);
+  f->island = x->island + 1, f->id = x->w->id;
+}
+
+static void take_hall(foe_pick *f, const warrior *h) {
+  f->g = *h->g;
+  snprintf(f->name, sizeof f->name, "%s", h->name);
+  f->island = h->foe_island, f->id = h->foe_id;
+}
+
+static void islands_foes(islands *I) {
+  const uint32_t K = I->groups, S = I->group_slots, n = I->n;
+  foe_cand *best = xmalloc((size_t)K * S * sizeof *best);
+  uint32_t *bn = xmalloc(K * sizeof *bn);
+  memset(bn, 0, K * sizeof *bn);
+  for (uint32_t j = 0; j < n; j++) { // the S best members of each group, the best first (on a tie the earlier island, then slot)
+    if (!I->live[j]) continue;
+    const run *o = I->is[j];
+    foe_cand *b = best + (size_t)group_of(I, j) * S;
+    uint32_t *c = &bn[group_of(I, j)];
+    for (uint32_t a = o->panel_n; a < o->active_n; a++) {
+      const foe_cand x = {o->slot[o->active[a]], j, panel_avg(o, o->active[a])};
+      uint32_t at = *c < S ? (*c)++ : S;
+      if (at == S && !(x.avg > b[S - 1].avg)) continue;
+      if (at == S) at = S - 1;
+      for (; at > 0 && b[at - 1].avg < x.avg; at--) b[at] = b[at - 1];
+      b[at] = x;
+    }
+  }
+  foe_pick *pick = xmalloc((size_t)n * S * sizeof *pick);
+  memset(pick, 0, (size_t)n * S * sizeof *pick);
+  for (uint32_t k = 0; k < n; k++) {
+    if (!I->live[k]) continue;
+    const run *r = I->is[k];
+    foe_pick *f = pick + (size_t)k * S;
+    const uint32_t g = group_of(I, k), want_hall = I->group_hall < S ? I->group_hall : S;
+    const foe_cand *in_turn[256]; // the best of the other groups in turn, at most S
+    uint32_t nb = 0;
+    for (uint32_t rank = 0; rank < S && nb < S; rank++)
+      for (uint32_t t = 1; t < K && nb < S; t++) {
+        const uint32_t h = (g + t) % K;
+        if (rank < bn[h]) in_turn[nb++] = &best[(size_t)h * S + rank];
+      }
+    uint32_t taken = 0, from_hall = 0;
+    for (uint32_t b = 0; b < nb && b < S - want_hall; b++) take_member(&f[taken++], in_turn[b]);
+    uint32_t order[HALL_MAX]; // the hall, shuffled
+    for (uint32_t h = 0; h < r->hall_n; h++) order[h] = h;
+    rng d = rng_seed(I->seed, 0x666f6573u + r->batch, k); // "foes"
+    for (uint32_t h = r->hall_n; h > 1; h--) {
+      const uint32_t q = rng_below(&d, h), x = order[h - 1];
+      order[h - 1] = order[q], order[q] = x;
+    }
+    for (uint32_t h = 0; h < r->hall_n && from_hall < want_hall && taken < S; h++) {
+      const warrior *x = &r->hall[order[h]];
+      int dup = 0;
+      for (uint32_t q = 0; q < taken; q++) dup |= is_foe(x, &f[q]);
+      if (dup) continue;
+      take_hall(&f[taken++], x);
+      from_hall++;
+    }
+    for (uint32_t b = S - want_hall; b < nb && taken < S; b++) { // the hall had fewer: more of the best
+      int dup = 0;
+      for (uint32_t q = 0; q < taken; q++) dup |= f[q].island == in_turn[b]->island + 1 && f[q].id == in_turn[b]->w->id;
+      if (!dup) take_member(&f[taken++], in_turn[b]);
+    }
+  }
+  free(best), free(bn);
+  for (uint32_t k = 0; k < n; k++) {
+    if (!I->live[k]) continue;
+    run *r = I->is[k];
+    foe_pick *f = pick + (size_t)k * S;
+    const uint32_t first = r->panel_n - S;
+    uint8_t placed[256] = {0}, kept[256] = {0}; // a chosen foe that is in a slot already stays there
+    for (uint32_t t = 0; t < S; t++)
+      for (uint32_t q = 0; q < S; q++)
+        if (!kept[q] && !placed[t] && is_foe(&r->panel[first + q], &f[t])) kept[q] = placed[t] = 1;
+    uint32_t q = 0, changed = 0;
+    for (uint32_t t = 0; t < S; t++) {
+      if (placed[t] || !f[t].island) continue;
+      while (q < S && kept[q]) q++;
+      if (q == S) break;
+      warrior *old = &r->panel[first + q];
+      if (old->foe_island) hall_add(r, old);
+      warrior nw;
+      foe_warrior(r, &nw, &f[t].g, r->next_id++, f[t].island, f[t].id, f[t].name);
+      replace_panel(r, first + q, &nw);
+      kept[q] = 1;
+      changed++;
+    }
+    if (changed) event_values(r); // the values the next batch starts from
+    save_state(r);
+  }
+  free(pick);
+}
+
 // Batches in rounds until the limits: in a round every live island plays
 // its next batch, all at the same time, each on a thread of its own with its
 // matches in the one pool (the serial parts of a batch, the push-off,
@@ -352,6 +512,7 @@ static void islands_migrate(islands *I, uint32_t k) {
 // Whether island k takes migrants before its batch b: every --migrate
 // batches, not an explorer.
 static int island_takes_migrants(const islands *I, uint32_t k, uint32_t b) {
+  if (I->groups && I->groups == I->n) return 0; // --groups: one island in each group, nobody to take from
   return I->migrate && b && b % I->migrate == 0 && k < I->n - I->explorers;
 }
 
@@ -393,6 +554,12 @@ static void islands_loop(islands *I, uint32_t batches, double seconds) {
     if (I->every && lo >= I->next_score) { // every live island is there
       islands_score(I);
       I->next_score += I->every;
+      islands_save(I);
+      continue;
+    }
+    if (I->groups && lo >= I->next_foes) { // --groups: the foes, every live island is there
+      islands_foes(I);
+      I->next_foes += I->group_every;
       islands_save(I);
       continue;
     }
@@ -473,11 +640,13 @@ static int island_panels(islands *I, run *root, const params *base) {
 int islands_new(const params *base, const params *variant, const char *const *variant_text, uint32_t variant_n,
                        const char *dir, uint32_t n, uint32_t keep, uint32_t every, uint32_t rounds, uint32_t designs,
                        uint32_t migrate, uint32_t migrate_random, uint32_t migrate_next, uint32_t explorers,
-                       int own_panels, uint32_t threads, uint32_t batches, double seconds) {
+                       int own_panels, const group_options *groups, uint32_t threads, uint32_t batches, double seconds) {
   static islands I;
   snprintf(I.dir, sizeof I.dir, "%s", dir);
   I.n = n, I.keep = keep, I.every = every, I.next_score = every, I.seed = base->seed, I.best = -1, I.rounds = rounds, I.designs = designs;
   I.migrate = migrate, I.migrate_random = migrate_random, I.migrate_next = migrate_next, I.explorers = explorers;
+  I.groups = groups->k, I.group_every = groups->every, I.group_slots = groups->slots, I.group_hall = groups->hall;
+  I.next_foes = groups->every;
   if (mkdir(dir, 0777) != 0 && errno != EEXIST) {
     fprintf(stderr, "42evolve: cannot make %s\n", dir);
     return 1;
@@ -517,6 +686,7 @@ int islands_new(const params *base, const params *variant, const char *const *va
   json_str(root->events, p.panel_files, 0);
   fprintf(root->events, ",\"islandPanels\":\"%s\",\"explorers\":%u,\"scoreDesigns\":%u", own_panels ? "own" : "shared", explorers,
           designs);
+  if (I.groups) fprintf(root->events, ",\"groups\":%u,\"groupEvery\":%u,\"groupSlots\":%u,\"groupHall\":%u", I.groups, I.group_every, I.group_slots, I.group_hall);
   fputs(",\"variants\":[", root->events);
   for (uint32_t k = 0; k < variant_n; k++) {
     if (k) fputc(',', root->events);
@@ -539,8 +709,10 @@ int islands_new(const params *base, const params *variant, const char *const *va
       snprintf(r->p.start, sizeof r->p.start, "%s", own);
   }
   if (own_panels && island_panels(&I, root, base) != 0) return 1;
-  for (uint32_t i = 0; i < n; i++)
-    if (island_start(&I, i, 0) != 0) return 1;
+  for (uint32_t i = 0; i < n; i++) {
+    const int rc = island_start(&I, i, 0);
+    if (rc) return rc;
+  }
   islands_save(&I);
   fprintf(stderr, "42evolve: %s, %u islands, %u panel and %u holdout warriors, %u threads\n", dir, n, I.is[0]->panel_n,
           I.is[0]->hold_n, threads);

@@ -35,6 +35,7 @@
 #include "style.h"
 
 #define ARCHIVE_MAX 256
+#define HALL_MAX 64 // --groups: the hall of fame of an island
 #define SEEN_MAX 16384 // hashes of the latest candidates, to skip repeats
 #define NO_ID UINT64_MAX
 
@@ -106,6 +107,8 @@ typedef struct {
   style st;                 // members: the numbers behind it, when it entered
   double holdout; // members: average against the holdout warriors, -1 not measured
   char ops[128]; // the names of the changes, space separated: 6 of at most 17 characters
+  uint32_t foe_island; // panel: a foe of --groups (#183), a member of island foe_island (from 1) whose id was foe_id there; 0 a hill warrior
+  uint64_t foe_id;
 } warrior;
 
 // ---------------------------------------------------------------- thread pool
@@ -214,6 +217,11 @@ typedef struct {
   pushoff_value *values;
   uint32_t *active, active_n;
 
+  // --groups (#183): the foes that left the panel's foe slots, the latest
+  // HALL_MAX; some of the slots are drawn from them (islands.c)
+  warrior *hall; // genome, name, foe_island and foe_id of each
+  uint32_t hall_n;
+
   uint32_t batch;
   uint64_t next_id;
   double best_holdout;
@@ -247,6 +255,8 @@ typedef struct {
   uint32_t migrate;    // --migrate M: every M batches each island plays the best member of every other one, 0 never
   uint32_t migrate_random, migrate_next; // --migrate-pick random: a member drawn, not the best; --migrate-to (MIGRATE_*)
   uint32_t explorers;  // --explorers K: the last K islands take no migrants (the others may take from them)
+  uint32_t groups;     // --groups K: islands in K groups that play each other (#183), 0 none
+  uint32_t group_every, group_slots, group_hall, next_foes; // --group-every, --group-slots, --group-hall; the batch of the next foes
   uint64_t seed;
   uint8_t live[ISLANDS_MAX];
   run *is[ISLANDS_MAX];
@@ -330,6 +340,8 @@ extern volatile sig_atomic_t stop_now; // Ctrl-C: the run ends after the current
 void *xmalloc(size_t n);
 char *read_file(const char *path, size_t *len);
 m42_warrior *make_warrior(const genome *g, const m42_rules *rules);
+void foe_warrior(const run *r, warrior *w, const genome *g, uint64_t id, uint32_t island, uint64_t foe_id, const char *name);
+void replace_panel(run *r, uint32_t i, const warrior *foe);
 void set_result(run *r, uint32_t a, uint32_t b, m42_score sa);
 void set_result1(run *r, uint32_t a, uint32_t b, m42_score sa);
 void rebuild_active(run *r);
@@ -397,10 +409,14 @@ void run_batch(run *r);
 int optimize(run *r, const char *file);
 
 // islands.c: --islands
+// --groups K, --group-every E, --group-slots S, --group-hall H (#183)
+typedef struct {
+  uint32_t k, every, slots, hall;
+} group_options;
 int islands_new(const params *base, const params *variant, const char *const *variant_text, uint32_t variant_n,
                 const char *dir, uint32_t n, uint32_t keep, uint32_t every, uint32_t rounds, uint32_t designs,
                 uint32_t migrate, uint32_t migrate_random, uint32_t migrate_next, uint32_t explorers, int own_panels,
-                uint32_t threads, uint32_t batches, double seconds);
+                const group_options *groups, uint32_t threads, uint32_t batches, double seconds);
 int islands_resume(const char *dir, uint32_t threads, uint32_t batches, double seconds);
 
 #endif

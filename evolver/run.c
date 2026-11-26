@@ -48,6 +48,102 @@ m42_warrior *make_warrior(const genome *g, const m42_rules *rules) {
   return w;
 }
 
+// A panel warrior that is a foe of --groups (#183): the member foe_id of
+// island `island` (from 1) with the genome g and its name, here with the id
+// `id`. Its file says where it came from, its source is its code.
+void foe_warrior(const run *r, warrior *w, const genome *g, uint64_t id, uint32_t island, uint64_t foe_id, const char *name) {
+  memset(w, 0, sizeof *w);
+  w->id = id;
+  w->kind = PANEL;
+  snprintf(w->name, sizeof w->name, "%s", name);
+  snprintf(w->author, sizeof w->author, "island %u", island);
+  char head[96], text[GENOME_MAX * 48 + 64];
+  const int n = snprintf(head, sizeof head, "island-%02u #%" PRIu64, island, foe_id);
+  w->file = xmalloc((size_t)n + 1);
+  memcpy(w->file, head, (size_t)n + 1);
+  genome_text(g, r->p.rules.core_size, text, sizeof text);
+  const size_t len = strlen(name) + strlen(text) + 32;
+  w->source = xmalloc(len);
+  snprintf(w->source, len, ";name %s\n;author island %u\n%s", name, island, text);
+  w->g = xmalloc(sizeof *w->g);
+  *w->g = *g;
+  w->w = make_warrior(g, &r->p.rules);
+  w->parents[0] = w->parents[1] = NO_ID;
+  w->holdout = w->parent_difference = -1;
+  w->style_kind = -1;
+  w->foe_island = island;
+  w->foe_id = foe_id;
+}
+
+// Panel slot i gets the warrior foe (copied: its strings and genome become
+// the run's), the warrior there before is freed. Everybody in plays it
+// again: a panel warrior --panel-rounds, a member as many rounds as it has
+// against the rest of the panel (with --stage the first stage apart, so that
+// a newcomer that has only those compares as before), with the seed of the
+// new id. Then the values; event `rotate`, as --rotate wrote it (the
+// dashboard reads it): the new panel warrior, the id it replaced (out),
+// where it came from and its results (with --stage those of the first
+// stage too, scores1).
+void replace_panel(run *r, uint32_t i, const warrior *foe) {
+  warrior *x = &r->panel[i];
+  const uint64_t out = x->id;
+  free(x->w), free(x->g), free(x->file), free(x->source);
+  *x = *foe;
+  const params *p = &r->p;
+  const uint32_t whole = panel_rounds(p), s1 = stage_rounds(p), staged = s1 < p->rounds;
+  const uint32_t other = i == 0 ? 1 : 0; // a panel slot whose rounds a member has
+  unit *u = xmalloc(2 * (r->active_n + 1) * sizeof *u);
+  uint32_t *opp = xmalloc((r->active_n + 1) * sizeof *opp), *parts = xmalloc((r->active_n + 1) * sizeof *parts), n = 0, m = 0;
+  const int64_t seed = seed_for(r, x->id);
+  for (uint32_t k = 0; k < r->active_n; k++) {
+    const uint32_t o = r->active[k];
+    if (o == i) continue;
+    uint32_t played = whole;
+    if (o >= r->panel_n) {
+      const m42_score sc = r->wlt[o * r->cap + other];
+      played = sc.wins + sc.losses + sc.ties;
+    }
+    // the warrior with the higher slot plays first, with the seed of the lower one (run_first(), complete_one())
+    const warrior *a = o > i ? r->slot[o] : x, *b = o > i ? x : r->slot[o];
+    const int64_t sd = o > i ? seed : seed_for(r, r->slot[o]->id);
+    const uint32_t first = staged && played > s1 ? s1 : played;
+    u[n++] = (unit){a->w, b->w, sd, 0, first, {{0}}, 0, 0};
+    if (played > first) u[n++] = (unit){a->w, b->w, sd, first, played - first, {{0}}, 0, 0};
+    parts[m] = played > first ? 2 : 1;
+    opp[m++] = o;
+  }
+  pool_run(r->pool, u, n);
+  FILE *f = r->events;
+  fprintf(f, "{\"type\":\"rotate\",\"batch\":%u,\"out\":%" PRIu64 ",\"from\":[%u,%" PRIu64 "],\"panel\":{\"id\":%" PRIu64 ",\"name\":",
+          r->batch, out, x->foe_island, x->foe_id, x->id);
+  json_str(f, x->name, 1);
+  fputs(",\"author\":", f);
+  json_str(f, x->author, 1);
+  fputs(",\"file\":", f);
+  json_str(f, x->file, 1);
+  fputs(",\"source\":", f);
+  json_str(f, x->source, 1);
+  fputs("},\"scores\":[", f);
+  for (uint32_t k = 0, at = 0; k < m; at += parts[k++]) {
+    const uint32_t o = opp[k], hi = o > i ? o : i, lo = o > i ? i : o;
+    const m42_score whole_s = parts[k] == 2 ? add_scores(u[at].s[0], u[at + 1].s[0]) : u[at].s[0];
+    set_result(r, hi, lo, whole_s);
+    if (staged) set_result1(r, hi, lo, u[at].s[0]);
+    const m42_score mine = r->wlt[i * r->cap + o];
+    fprintf(f, "%s[%" PRIu64 ",%u,%u,%u,%" PRId64 "]", k ? "," : "", r->slot[o]->id, mine.wins, mine.losses, mine.ties, u[at].seed);
+  }
+  if (staged) { // --stage: the first stage's results too, as event_panel()
+    fputs("],\"scores1\":[", f);
+    for (uint32_t k = 0; k < m; k++) {
+      const m42_score s = r->wlt1[i * r->cap + opp[k]];
+      fprintf(f, "%s[%" PRIu64 ",%u,%u,%u]", k ? "," : "", r->slot[opp[k]]->id, s.wins, s.losses, s.ties);
+    }
+  }
+  fputs("]}\n", f);
+  free(u), free(opp), free(parts);
+  compute_values(r);
+}
+
 void set_result(run *r, uint32_t a, uint32_t b, m42_score sa) {
   const uint32_t c = r->cap;
   m42_score sb = {sa.losses, sa.wins, sa.ties};
