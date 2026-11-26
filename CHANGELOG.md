@@ -9,6 +9,7 @@ From 1.0.0 on, every change of the interface is listed here: the C library (`lib
 - `42evolve --changes random-loop=<weight>`: a loop of 2 to 5 new instructions in one step, weight 0 by default (#201). `42spectrum --changes name,...` plays only those kinds of change.
 - `42evolve --changes shared-target=<weight>`: a far value set to point at the cell another far value points at, weight 0 by default; `42evolve --parsimony`: of a newcomer and a member with the same results the longer one leaves, off by default; the event `leave` names the twin that stays (#172).
 - `42evolve --no-spl`: no warrior of the run has `SPL`; a change that would make one is drawn again, a start warrior with one is left out, and as an `--island-variant` such an island takes migrants only from islands with it. Off by default; the start event has `noSpl` (#185).
+- `42evolve --survivors-by pushoff`: the survivors of the screen by their estimated place in the pareto push-off instead of their screen score; the start event has `survivorsBy`, the event `enter` with it `pick`. Off by default.
 - `tools/pushoff.mjs` ranks a tournament by diversity push-off.
 - The evolver's dashboard has a tab Designs: the designs of a run of islands at its last score, against each kind of hill warrior, two side by side with their best-of bound; `tools/serve.mjs` serves `/run/<n>/scores` for it, `tools/designs.js` computes it (#222).
 - `tools/hill-kinds.mjs`: the kind of style of every warrior of a hill folder, cached by content hash, and a bench of `tools/tournament.mjs --json` by those kinds (#221).

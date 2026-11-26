@@ -77,6 +77,7 @@ typedef struct {
   double tie;               // --tie-points t: what a tie counts in the screen, the values and the push-off (a win 3); scores against the hill stay 3/1/0
   int parsimony;            // --parsimony: of a newcomer and a member with the same results (twins), the longer one leaves (#172)
   int no_spl;               // --no-spl: no SPL in a warrior of the run (#185): a change that would make one is drawn again
+  int survivors_by;         // --survivors-by pushoff: the survivors of the screen by their estimated place in the push-off, not their screen score
 } params;
 
 enum { PARENTS_VALUE, PARENTS_DUEL };
@@ -301,6 +302,8 @@ static inline m42_score add_scores(m42_score a, m42_score b) {
 static inline uint32_t members(const run *r) { return r->active_n - r->panel_n; }
 
 // A distance to the power alpha (--alpha, 1 by default).
+#define PARETO_STEP 10.0 // a front of the pareto push-off in a member's value: 10 (fronts - front) + crowding (run.c)
+
 static inline double with_alpha(const run *r, double d) { return r->p.alpha == 1 ? d : pow(d, r->p.alpha); }
 
 // A warrior's average against the panel in a matrix of points per 100 rounds
@@ -353,7 +356,7 @@ void json_str(FILE *f, const char *s, int latin1);
 char *generator_text(const genome *g, uint32_t core);
 void event_start(run *r);
 void event_panel(run *r);
-void event_enter(run *r, uint32_t slot, double screen, double estimate, uint64_t rival, const unit *row);
+void event_enter(run *r, uint32_t slot, double screen, double estimate, uint64_t rival, const unit *row, const double *pick);
 void event_leave(run *r, const pushoff_value *v, int early, uint64_t twin);
 void event_values(run *r);
 

@@ -55,7 +55,8 @@ typedef struct {
   int skip;
   double screen;   // average against the panel in the screen rounds
   double estimate; // screen * (SD-score to the nearest warrior in, on the panel columns)^alpha
-  double key;      // what the survivors are picked by: screen or estimate
+  double key;      // what the survivors are picked by: the screen score, with --survivors-by pushoff pushoff_keys()
+  double pick[4];  // --survivors-by pushoff: front (0 the first), average against the panel, against the members, SD-score
   double dist;     // the SD-score to the nearest warrior in, from the screen (estimated_distance())
   int out;         // --screen-stop: stopped
   int would_stop;  // --screen-check: --screen-stop would have stopped it
@@ -189,8 +190,9 @@ static void score_screen(const run *r, candidate *x, const unit *row, uint32_t q
 // standard deviation sqrt(s2 (F - n) / (F n)): the rounds still to come and
 // the error of x itself. hi and lo are x plus and minus z of those. A child
 // stops when hi is below the threshold of the survivors (known before the
-// screen), or, when the survivors are the best by screen score, below the
-// p.survivors-th largest lo of the children still in: that many others end
+// screen), or, when the survivors are the best by screen score (not with
+// --survivors-by pushoff), below the p.survivors-th largest lo of the
+// children still in: that many others end
 // above it but with a chance of a z-error each. z 3: a bound fails in 0.13%
 // of cases. The children of a batch are about half fatal or identical to
 // their parent (the mutation spectrum), and a fatal one is far below.
@@ -236,7 +238,7 @@ static uint32_t screen_decide(const run *r, candidate *c, uint32_t B, const unit
     sorted[on++] = lo[i];
   }
   double cut = -INFINITY; // the p.survivors-th largest lo
-  if (on > p->survivors && p->survivors > 0) {
+  if (on > p->survivors && p->survivors > 0 && !p->survivors_by) {
     qsort(sorted, on, sizeof *sorted, by_double_down);
     cut = sorted[p->survivors - 1];
   }
@@ -637,10 +639,81 @@ static void play_screen(run *r, batch *b) {
   }
 }
 
+// --survivors-by pushoff: the SD-score of a screen row to the nearest
+// warrior in, on the panel columns, as estimated_distance() but each
+// difference d with the noise of the row's points there taken out,
+// sqrt(max(0, d^2 - se^2)) with se their standard error (about d when d is
+// large, near 0 for noise alone): a row of 20 rounds looks more different
+// than it is (when newcomers entered on their first 20 rounds, 48% stayed
+// on that noise for a batch, 15th November 2026).
+static double screen_distance(const run *r, const unit *row, uint32_t rounds) {
+  double best = INFINITY;
+  for (uint32_t i = 0; i < r->active_n; i++) {
+    const uint32_t o = r->active[i];
+    double num = 0, den = 0, sum = 0;
+    for (uint32_t k = 0; k < r->panel_n; k++) {
+      if (k == o) continue;
+      const m42_score sc = row[k].s[0];
+      const double v = round_variance(sc, rounds, r->p.tie) / rounds, x = points_t(sc, rounds, r->p.tie) - r->pts[o * r->cap + k];
+      const double d = x * x > v ? sqrt(x * x - v) : 0;
+      if (r->p.sd == SD_SUM) num += d, den += r->sigma[k];
+      else if (r->sigma[k] > 0) sum += d / r->sigma[k];
+    }
+    const double dist = r->p.sd == SD_SUM ? (den > 0 ? num / den : 0) : sum;
+    if (dist < best) best = dist;
+  }
+  return best == INFINITY ? 0 : best;
+}
+
+// --survivors-by pushoff: the key of every candidate past the threshold is
+// its estimated place in the pareto push-off, the same objectives from its
+// screen: its average against the panel, against the members of the screen,
+// and (pareto-sd) screen_distance(). The front it would be on is the one
+// after the worst front of the members that dominate it, the first when none
+// does; on one front the farther from its nearest warrior goes first. So a
+// child that plays unlike every member gets in before a stronger one that
+// plays like one, as the push-off would decide after its full matches.
+static void pushoff_keys(run *r, batch *b) {
+  const params *p = &r->p;
+  const uint32_t P = r->panel_n, Q = b->Q, n = r->active_n - P, m = p->pareto == 3 ? 3 : 2;
+  // r->values: the members' values and the panel columns' standard deviations of the end of the last batch
+  double *mo = xmalloc(3 * (n ? n : 1) * sizeof *mo);
+  long *level = xmalloc((n ? n : 1) * sizeof *level), top = 0; // floor(value / PARETO_STEP): fronts - front
+  for (uint32_t j = 0; j < n; j++) {
+    const pushoff_value *v = &r->values[P + j];
+    const uint32_t a = v->index;
+    double e = 0;
+    for (uint32_t q = P; q < r->active_n; q++)
+      if (r->active[q] != a) e += r->pts[a * r->cap + r->active[q]];
+    mo[3 * j] = panel_avg(r, a), mo[3 * j + 1] = n > 1 ? e / (n - 1) : 0, mo[3 * j + 2] = v->distance;
+    level[j] = (long)floor(v->value / PARETO_STEP);
+    if (level[j] > top) top = level[j];
+  }
+  for (uint32_t i = 0; i < b->B; i++) {
+    candidate *x = &b->c[i];
+    if (x->skip || x->out || x->screen < b->threshold) continue;
+    const unit *row = b->u + b->screen_at[i];
+    double o[3] = {0, 0, 0};
+    for (uint32_t k = 0; k < P; k++) o[0] += points_t(row[k].s[0], x->played, p->tie);
+    for (uint32_t k = P; k < Q; k++) o[1] += points_t(row[k].s[0], x->played, p->tie);
+    o[0] = P ? o[0] / P : 0, o[1] = Q > P ? o[1] / (Q - P) : 0, o[2] = screen_distance(r, row, x->played);
+    long lv = top;
+    for (uint32_t j = 0; j < n; j++) {
+      int all = 1, one = 0;
+      for (uint32_t k = 0; k < m; k++) all &= mo[3 * j + k] >= o[k], one |= mo[3 * j + k] > o[k];
+      if (all && one && level[j] - 1 < lv) lv = level[j] - 1;
+    }
+    x->key = (double)lv * 1e6 + (o[2] < 1e6 - 1 ? o[2] : 1e6 - 1);
+    x->pick[0] = (double)(top - lv), x->pick[1] = o[0], x->pick[2] = o[1], x->pick[3] = o[2];
+  }
+  free(mo), free(level);
+}
+
 // The survivors: those at the threshold or above, the best of them by key.
-static void choose_survivors(const run *r, batch *b) {
+static void choose_survivors(run *r, batch *b) {
   const params *p = &r->p;
   candidate *c = b->c;
+  if (p->survivors_by) pushoff_keys(r, b);
   candidate **sv = xmalloc(b->B * sizeof *sv);
   uint32_t sn = 0;
   // --start: every start warrior enters in the first batch (the screen does not stop it), the
@@ -905,7 +978,7 @@ static void enter_survivors(run *r, batch *b) {
     rebuild_active(r);
     measure_style(r, w);
     name_newcomer(r, w, x, s);
-    event_enter(r, s, x->screen, x->estimate, x->rival, b->u + at);
+    event_enter(r, s, x->screen, x->estimate, x->rival, b->u + at, r->p.survivors_by ? x->pick : 0);
     b->entered++;
     push_off(r, b, i, s, w);
   }

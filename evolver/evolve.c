@@ -69,6 +69,7 @@ static void usage(void) {
           "         [--fill | --no-fill] [--panel-rounds N] [--diversity all|panel] [--average all|panel]\n"
           "         [--member-games all|none] [--pushoff value|pareto|pareto-sd] [--clear R] [--positions mirror|pmars]\n"
           "         [--genome list|gen] [--min-length N] [--tie-points t] [--parsimony] [--no-spl]\n"
+          "         [--survivors-by strength|pushoff]\n"
           "         [--islands N [--select-after B [--keep K]] [--score-rounds R] [--score-designs 3]\n"
           "           [--migrate M [--migrate-pick best|random] [--migrate-to all|random]] [--island-variant \"options\" ...] [--island-panels shared|own] [--explorers K]]\n"
           "         [--size 8000] [--cycles 80000] [--processes 8000] [--length 100] [--distance 100]\n"
@@ -111,6 +112,7 @@ static const char *params_error(const params *p) {
   if (p->pareto && (p->average_panel || p->member_games_none))
     return "--pushoff pareto not with --average panel or --member-games none";
   if (p->clear > 0 && !p->pareto) return "--clear with --pushoff pareto or pareto-sd only";
+  if (p->survivors_by && !p->pareto) return "--survivors-by pushoff with --pushoff pareto or pareto-sd only";
   if (p->screen_stop > 0 && p->screen_check > 0) return "--screen-stop or --screen-check, not both";
   if (!p->gen && structure_kinds(&p->changes)) return STRUCTURE_NEEDS_GEN;
   if (p->min_length > p->rules.max_length) return "--min-length at most --length";
@@ -215,6 +217,10 @@ static int option_text(cli *c, const char *a, const char *v, double d, int *rc) 
       return 1;
     }
     else if (!strcmp(v, "pareto-sd")) p->pareto = 3;
+    else usage();
+  } else if (!strcmp(a, "--survivors-by")) {
+    if (!strcmp(v, "strength")) p->survivors_by = 0;
+    else if (!strcmp(v, "pushoff")) p->survivors_by = 1;
     else usage();
   } else if (!strcmp(a, "--migrate-pick")) {
     if (!strcmp(v, "best")) c->migrate_random = 0;

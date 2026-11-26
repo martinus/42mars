@@ -58,7 +58,7 @@ void event_start(run *r) {
           "\"rounds\":%u,\"screenRounds\":%u,\"benchEvery\":%u,\"benchRounds\":%u,\"initLength\":%u,"
           "\"screenFactor\":%.17g,\"alpha\":%.17g,\"reintroduce\":%.17g,\"sd\":\"%s\",\"seed\":%" PRIu64
           ","
-          "\"parents\":\"%s\",\"screenMembers\":%u,\"stage\":%u,\"fill\":%s,\"panelRounds\":%u,\"diversity\":\"%s\",\"panelChoice\":\"%s\",\"screenStop\":%.17g,\"screenCheck\":%.17g,\"average\":\"%s\",\"memberGames\":\"%s\",\"drawSeed\":%" PRIu64 ",\"pushoff\":\"%s\",\"positions\":\"%s\",\"clear\":%.17g,\"genome\":\"%s\",\"minLength\":%u,\"tiePoints\":%.17g,\"parsimony\":%s,\"noSpl\":%s},"
+          "\"parents\":\"%s\",\"screenMembers\":%u,\"stage\":%u,\"fill\":%s,\"panelRounds\":%u,\"diversity\":\"%s\",\"panelChoice\":\"%s\",\"screenStop\":%.17g,\"screenCheck\":%.17g,\"average\":\"%s\",\"memberGames\":\"%s\",\"drawSeed\":%" PRIu64 ",\"pushoff\":\"%s\",\"positions\":\"%s\",\"clear\":%.17g,\"genome\":\"%s\",\"minLength\":%u,\"tiePoints\":%.17g,\"parsimony\":%s,\"noSpl\":%s,\"survivorsBy\":\"%s\"},"
           "\"opponents\":",
           m42_version(), p->rules.core_size, p->rules.max_cycles, p->rules.max_processes, p->rules.max_length,
           p->rules.min_distance, r->panel_n, r->hold_n, p->list, p->batch, p->survivors, p->rounds, p->screen_rounds,
@@ -73,7 +73,8 @@ void event_start(run *r) {
           p->screen_stop, p->screen_check,
           p->average_panel ? "panel" : "all", p->member_games_none ? "none" : "all", p->draw_seed,
           p->pareto == 3 ? "pareto-sd" : p->pareto ? "pareto" : "value", p->mirror ? "mirror" : "pmars", p->clear, p->gen ? "gen" : "list", p->min_length, p->tie,
-          p->parsimony ? "true" : "false", p->no_spl ? "true" : "false");
+          p->parsimony ? "true" : "false", p->no_spl ? "true" : "false",
+          p->survivors_by ? "pushoff" : "strength");
   json_str(f, p->opponents, 0);
   fputs(",\"panelFiles\":", f);
   json_str(f, p->panel_files, 0);
@@ -140,8 +141,12 @@ void event_panel(run *r) {
 
 // A new member: its results against every warrior in, [other, wins, losses,
 // ties, seed], the new member warrior 0 of each match.
+// pick: with --survivors-by pushoff the newcomer's estimated place in the
+// push-off from its screen (pushoff_keys()): [front, 0 the first; average
+// against the panel; against the members of the screen; SD-score to the
+// nearest warrior], else 0.
 void event_enter(run *r, uint32_t slot, double screen, double estimate, uint64_t rival,
-                        const unit *row) {
+                        const unit *row, const double *pick) {
   FILE *f = r->events;
   const warrior *w = r->slot[slot];
   fprintf(f, "{\"type\":\"enter\",\"batch\":%u,\"id\":%" PRIu64 ",\"name\":", r->batch, w->id);
@@ -153,7 +158,9 @@ void event_enter(run *r, uint32_t slot, double screen, double estimate, uint64_t
   json_str(f, w->ops, 0);
   fprintf(f, ",\"length\":%u,\"screen\":%.4f,\"estimate\":%.6f,\"screenPoints\":[", w->g->len, screen, estimate);
   for (uint32_t k = 0; k < r->panel_n; k++) fprintf(f, "%s%.4f", k ? "," : "", points_t(row[k].s[0], r->p.screen_rounds, r->p.tie));
-  fprintf(f, "],\"style\":{\"kind\":\"%s\",\"copies\":%.6f,\"moved\":%.6f,\"written\":%.6f,\"whole\":%.6f,\"read\":%.6f,"
+  fputc(']', f);
+  if (pick) fprintf(f, ",\"pick\":[%.0f,%.17g,%.17g,%.17g]", pick[0], pick[1], pick[2], pick[3]);
+  fprintf(f, ",\"style\":{\"kind\":\"%s\",\"copies\":%.6f,\"moved\":%.6f,\"written\":%.6f,\"whole\":%.6f,\"read\":%.6f,"
           "\"tasks\":%.6f,\"alive\":%.6f,\"measured\":%.6f}",
           style_kind_name(w->style_kind), w->st.copies, w->st.moved, w->st.written, w->st.whole, w->st.read, w->st.tasks,
           w->st.alive, w->st.measured);

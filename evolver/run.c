@@ -86,7 +86,6 @@ static void panel_average_values(run *r, const double *pts) {
   }
 }
 
-#define PARETO_STEP 10.0
 #define PARETO_END 5.0
 // --clear R: clearing (Petrowski 1996). On the fronts a copy of a strong
 // member that scores a bit better on one objective stays: in pareto-sd lists
