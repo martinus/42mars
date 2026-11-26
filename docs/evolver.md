@@ -757,12 +757,12 @@ Verdict: the change `join` is not built (#223 closed as not planned). A combinat
 | 1250 | 159.3 / 157.0 / 153.0 | 145.9 / 137.3 / 117.0 |
 | 1500 | 160.1 / 157.9 / 153.7 | **147.4** / 140.0 / 117.2 |
 
-Diversity ran the run's course, and that did not pay: 13 points behind at the end, 35 behind at batch 250. The islands stayed at 113 to 120 for 500 to 1,100 batches each. Each one then jumped to 139 to 147 within 50 to 150 batches, when one design came in by migration: `SPL`, `SPL`, then 14 `MOV.I` that write fields and scan (kinds scanner and writes fields; the Adder family, from island 3 at batch 475). best.red, Quantum Hamster (147.4), is one of them. At batch 1,500, 13 islands have it on top. The 3 that do not stayed at 117 to 122, with an `SPL #`, `DJN #` loop on top: islands 1, 12 and 15. Of all members, 47% start with `SPL`, `SPL`, 16% with `SPL`, `MOV`, and 10% with the `SPL #`, `DJN #` loop (21% at batch 1,000).
+The diversity did not pay: 13 points behind at the end, 35 behind at batch 250. The islands stayed at 113 to 120 for 500 to 1,100 batches each. Each one then jumped to 139 to 147 within 50 to 150 batches, when one design came in by migration: `SPL`, `SPL`, then 14 `MOV.I` that write fields and scan (kinds scanner and writes fields; the Adder family, from island 3 at batch 475). best.red, Quantum Hamster (147.4), is one of them. At batch 1,500, 13 islands have it on top. The 3 that do not stayed at 117 to 122, with an `SPL #`, `DJN #` loop on top: islands 1, 12 and 15. Of all members, 47% start with `SPL`, `SPL`, 16% with `SPL`, `MOV`, and 10% with the `SPL #`, `DJN #` loop (21% at batch 1,000).
 
 The duels:
 - About half of all leaves were duels: 57% in the first 250 batches, 42% in the last.
 - The child won 33% of them at first and 14 to 15% at the end, as the lists matured.
-- 6 of the 16 islands found more than 37 new designs each (a family or kind of style among the 3 best of an island for 10 batches). The other 10 found 5 to 11 each, most of them before batch 300. In `tiny-own16` almost every island ended with stones.
+- New designs (a family or kind of style among the 3 best of an island for 10 batches): 7 islands found 39 to 57 each and island 12 found 27. The other 8 found 5 to 11, most of them before batch 300. In `tiny-own16` almost every island ended with stones.
 
 The child in its parent's place keeps lines alive but does not make them climb. A design climbs on an island only once a better one comes in from outside. The baseline converges on stones in 250 batches and gets there first.
 
