@@ -1991,6 +1991,33 @@ that changes, 16 + 48 is nearly free (5 s more of `cl`, +19% on the '94
 hill, -2% on the '88 hill against 1.0.0), and 32 + 96 is the best the
 runner showed below 2 minutes of `cl`.
 
+### The wasm module from clang 23 against the one from clang 22: the same speed (26th November 2026, #218)
+
+#217 moved the committed `42mars.wasm` from Ubuntu's clang 22 to Fedora
+45's clang 23.1.5, with no change of the source (`git diff 36cc8a6 main --
+lib` is empty). `node bench/ab-wasm.mjs` with A the module of 36cc8a6 and
+B the one of `main` (f8fde5a), alternating, a fresh process per run, on an
+idle machine. The hill pairs are new measures of `ab-wasm` (the inputs of
+the native A/B, with early ties), so that a wasm A/B covers the '94 hills
+too. M instructions/s or seconds, median (range):
+
+| Measure | clang 22 | clang 23 | |
+|---|---|---|---|
+| 94nop pairs | 221.4 (213.7–222.4) | 221.6 (219.0–222.5) | +0.1% |
+| pspace pairs | 209.0 (208.3–209.7) | 208.9 (202.4–210.2) | -0.0% |
+| tiny pairs | 185.2 (183.1–185.6) | 184.9 (182.8–185.8) | -0.2% |
+| 88 pairs | 296.8 (293.5–298.8) | 298.8 (284.5–300.0) | +0.7% |
+| bench, 15 runs | 253.7 (240.1–256.1) | 252.2 (243.3–254.6) | -0.6% |
+| corpus pairs, 15 runs | 260.0 (258.6–261.6) | 259.8 (256.8–262.6) | -0.1% |
+| t20, s | 3.98 (3.92–4.01) | 4.01 (3.91–4.05) | +0.8% |
+| t80 `--jobs 16`, s | 3.79 (3.79–3.82) | 3.85 (3.78–4.05) | +1.6% |
+| t80 `--jobs 31`, s | 3.37 (3.35–3.39) | 3.34 (3.31–3.37) | -0.9% |
+
+7 runs (t80: 5); bench and pairs were -1.9% and -1.5% in 7 runs and were
+run again with 15. Every range overlaps the other build's. Verdict: clang
+23 is as fast as clang 22 for the wasm build; nothing to change. (The user
+`systemd` took one core during the runs, the same for A and B.)
+
 ## Ideas from other simulators
 
 exMARS (Martin Ankerl, 2003, based on exhaust and pMARS) and the exMARS fork

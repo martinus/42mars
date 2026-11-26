@@ -8,9 +8,12 @@
 // measure and build.
 //
 //   node bench/ab-wasm.mjs <A.wasm> <B.wasm> [--runs 7] [--t80-runs 5]
-//        [--only bench,pairs,t20,t80j16,t80j31]
+//        [--only 94nop,pspace,tiny,88,bench,pairs,t20,t80j16,t80j31]
 //
 // Measures (O = $COREWAR_ORACLE or ~/.local/share/corewar-theater):
+//   94nop, pspace, tiny, 88  random pairs of the Koenigstuhl hill with its
+//           settings and early ties, the inputs of the native A/B (first
+//           table of the sixth round in docs/performance-log.md)   M instructions/s
 //   bench   bench/bench.mjs $O/corpus --wasm-match           M instructions/s
 //   pairs   bench/bench-pairs.mjs $O/corpus                  M instructions/s
 //   t20     tools/tournament.mjs $O/sets/t20 --jobs 1        seconds
@@ -31,10 +34,10 @@ const argv = process.argv.slice(2);
 const opt = (name, dflt) => { const i = argv.indexOf(`--${name}`); return i >= 0 ? argv.splice(i, 2)[1] : dflt; };
 const RUNS = Number(opt('runs', 7));
 const T80_RUNS = Number(opt('t80-runs', 5));
-const ONLY = opt('only', 'bench,pairs,t20,t80j16,t80j31').split(',');
+const ONLY = opt('only', '94nop,pspace,tiny,88,bench,pairs,t20,t80j16,t80j31').split(',');
 const [A, B] = argv;
 if (!A || !B) {
-  console.error('usage: node bench/ab-wasm.mjs <A.wasm> <B.wasm> [--runs 7] [--t80-runs 5] [--only bench,pairs,t20,t80j16,t80j31]');
+  console.error('usage: node bench/ab-wasm.mjs <A.wasm> <B.wasm> [--runs 7] [--t80-runs 5] [--only 94nop,pspace,tiny,88,bench,pairs,t20,t80j16,t80j31]');
   process.exit(2);
 }
 
@@ -46,7 +49,15 @@ const restore = () => writeFileSync(WASM, original);
 process.on('SIGINT', () => { restore(); process.exit(130); });
 
 const tool = (name) => join(root, name);
+const hill = (dir, pairs, rounds, ...settings) => ({
+  runs: RUNS, unit: 'M/s', re: /^([\d.]+)M instructions\/s/m,
+  args: [tool('bench/bench-pairs.mjs'), join(root, 'warriors/koenigstuhl', dir), '--pairs', String(pairs), '--rounds', String(rounds), ...settings, '--early-tie'],
+});
 const MEASURES = {
+  '94nop': hill('94nop', 300, 20),
+  pspace: hill('pspace-top50', 200, 20),
+  tiny: hill('tiny', 600, 200, '--size', '800', '--processes', '800', '--cycles', '8000', '--length', '20', '--distance', '20'),
+  88: hill('88', 200, 20),
   bench: { runs: RUNS, args: [tool('bench/bench.mjs'), join(O, 'corpus'), '--wasm-match'], unit: 'M/s', re: /^([\d.]+)M instructions\/s/m },
   pairs: { runs: RUNS, args: [tool('bench/bench-pairs.mjs'), join(O, 'corpus')], unit: 'M/s', re: /^([\d.]+)M instructions\/s/m },
   t20: { runs: RUNS, args: [tool('tools/tournament.mjs'), join(O, 'sets/t20'), '--rounds', '100', '--seed', '1', '--jobs', '1', '--engine', 'wasm'], unit: 's', re: /^engine \(wasm\): ([\d.]+) s/m },
