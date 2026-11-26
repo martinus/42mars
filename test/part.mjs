@@ -10,7 +10,9 @@
 // the times are the seconds of each file's tests under ASan and UBSan on
 // CI, summed from the durations of its tests in one run (45866686861, its
 // second attempt with the library object cached, 26th November 2026, after
-// #161 split the long files), and a file not listed counts 20.
+// #161 split the long files; evolver-panel.test.js split again later, its
+// time shared by the times of its tests alone), and a file not listed
+// counts 20.
 // On 4 cores the files run 3 at a time and slow each other: these sums,
 // not the times of a file alone on 32 threads (which made one native part
 // 110 s of tests and the other 61 s). With `native` the times of the
@@ -23,7 +25,8 @@ import { readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 export const SECONDS = {
-  'test/evolver-panel.test.js': 52.2,
+  'test/evolver-picked.test.js': 32.4,
+  'test/evolver-panel.test.js': 19.8,
   'test/evolver-explorers.test.js': 51.2,
   'test/evolver-gen.test.js': 48.6,
   'test/evolver-islands.test.js': 44.4,
@@ -51,7 +54,8 @@ export const SECONDS = {
 // The same for the native build: run 45877686519, its second attempt, the
 // three parts on ubuntu-latest (26th November 2026).
 export const NATIVE = {
-  'test/evolver-panel.test.js': 24.7,
+  'test/evolver-picked.test.js': 15.3,
+  'test/evolver-panel.test.js': 9.4,
   'test/evolver-migrate-pick.test.js': 21.7,
   'test/evolver-defaults.test.js': 21.4,
   'test/evolver-islands.test.js': 20.4,
