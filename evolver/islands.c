@@ -532,6 +532,11 @@ int islands_new(const params *base, const params *variant, const char *const *va
       r->p = variant[i % variant_n];
       snprintf(r->p.panel_files, sizeof r->p.panel_files, "%s", p.panel_files);
     }
+    char own[1100]; // --start with a folder island-NN in it: island NN starts from that folder
+    struct stat st;
+    snprintf(own, sizeof own, "%s/island-%02u", base->start, i + 1);
+    if (base->start[0] && strlen(own) < sizeof r->p.start && stat(own, &st) == 0 && S_ISDIR(st.st_mode))
+      snprintf(r->p.start, sizeof r->p.start, "%s", own);
   }
   if (own_panels && island_panels(&I, root, base) != 0) return 1;
   for (uint32_t i = 0; i < n; i++)
