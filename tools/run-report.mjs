@@ -4,7 +4,7 @@
 //
 // The status of 42evolve runs in one command, from their folders alone:
 //
-//   node tools/run-report.mjs <run> [<run> ...] [--full] [--json]
+//   node tools/run-report.mjs <run> [<run> ...] [--full] [--json] [--at b,b,...]
 //        [--bench --opponents <dir> [--rounds 100] [--jobs N]]
 //
 // A run is a run folder or a folder of islands (42evolve --islands). For
@@ -12,8 +12,10 @@
 //   - per island: its batches and members, the best against the whole
 //     opponent folder at each score (islands.jsonl: the best of best.red and
 //     the 3 best by panel average, up to 8 of the scores, the last one is
-//     the score now), the best of all scores and its batch, the best
-//     average against the panel now and the best against the holdout;
+//     the score now; --at: the scores of those batches, to compare runs at
+//     the same batches), the best of all scores and its batch, the best
+//     average against the panel now and the best against the holdout, and
+//     below the islands the best and the mean of each score;
 //   - the families on top: the 3 best members of each island by panel
 //     average, with name (the noun is the family), kind of style
 //     (tools/style.js) and opcodes, and the designs (opcode sequences) that
@@ -51,7 +53,7 @@ import { RunDigest, bestRedInfo, familyOf, lineOf, opcodesOf } from './progress.
 import { shortKind } from './style.js';
 
 const HOLD = 10; // the batches a new design holds a place among the 3 best (RunDigest)
-const USAGE = 'usage: node tools/run-report.mjs <run folder or folder of islands> [...] [--full] [--json] [--bench --opponents <dir> [--rounds 100] [--jobs N]]';
+const USAGE = 'usage: node tools/run-report.mjs <run folder or folder of islands> [...] [--full] [--json] [--at b,b,...] [--bench --opponents <dir> [--rounds 100] [--jobs N]]';
 
 // ------------------------------------------------------------------ reading
 
@@ -255,12 +257,18 @@ function text(r, o) {
   // the islands
   out.push('');
   const scored = [...new Set(r.islands.flatMap((x) => x.scores.map((s) => s.batch)))].sort((a, b) => a - b);
-  const cols = sample(scored, 8);
-  if (scored.length) out.push(`Against the ${r.scoreOpponents} warriors of the folder (${r.scoreRounds} rounds), the best of best.red and the 3 best by panel average, at ${cols.length < scored.length ? `${cols.length} of the ${scored.length} scores` : 'each score'}:`);
+  const cols = o.at ?? sample(scored, 8);
+  const which = o.at ? `the batches of --at (${scored.length} scores)` : cols.length < scored.length ? `${cols.length} of the ${scored.length} scores` : 'each score';
+  if (scored.length) out.push(`Against the ${r.scoreOpponents} warriors of the folder (${r.scoreRounds} rounds), the best of best.red and the 3 best by panel average, at ${which}:`);
   out.push(`${pad('island', 10)}${lpad('batch', 6)}${lpad('list', 5)}${cols.map((c) => lpad(`b${c}`, 7)).join('')}${scored.length ? `  ${pad('best (batch)', 14)}` : ''}${lpad('panel', 7)}${lpad('holdout', 9)}`);
   for (const x of r.islands) {
     const at = new Map(x.scores.map((s) => [s.batch, s.score]));
     out.push(`${pad(islandName(x.island) + (x.live ? '' : '*'), 10)}${lpad(x.batch, 6)}${lpad(x.members, 5)}${cols.map((c) => lpad(f1(at.get(c)), 7)).join('')}${scored.length ? `  ${pad(x.best ? `${f1(x.best.score)} (${x.best.batch})` : '–', 14)}` : ''}${lpad(f1(x.panel), 7)}${lpad(f1(x.holdout?.avg), 9)}`);
+  }
+  if (r.islands.length > 1 && scored.length) { // the best and the mean of the islands scored at each column
+    const of = (c) => r.islands.map((x) => x.scores.find((s) => s.batch === c)?.score).filter((v) => v !== undefined);
+    const row = (name, f) => `${pad(name, 10)}${lpad('', 11)}${cols.map((c) => lpad(of(c).length ? f1(f(of(c))) : '–', 7)).join('')}`;
+    out.push(row('best', (v) => Math.max(...v)), row('mean', (v) => v.reduce((a, b) => a + b, 0) / v.length));
   }
   if (r.islands.some((x) => !x.live)) out.push('* stopped by the score');
   // the families on top
@@ -404,7 +412,7 @@ function parseArgs(argv) {
     console.error(`${why}\n${USAGE}`);
     process.exit(2);
   };
-  const o = { runs: [], full: false, json: false, bench: false, opponents: null, rounds: 100, jobs: availableParallelism() };
+  const o = { runs: [], full: false, json: false, at: null, bench: false, opponents: null, rounds: 100, jobs: availableParallelism() };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     const value = () => (i + 1 < argv.length && !argv[i + 1].startsWith('--') ? argv[++i] : usage(`${a} needs a value`));
@@ -414,6 +422,10 @@ function parseArgs(argv) {
     };
     if (a === '--full') o.full = true;
     else if (a === '--json') o.json = true;
+    else if (a === '--at') {
+      o.at = value().split(',').map(Number);
+      if (!o.at.every((b) => Number.isInteger(b) && b >= 0)) usage('--at needs batches, comma separated: --at 50,150,950');
+    }
     else if (a === '--bench') o.bench = true;
     else if (a === '--opponents') o.opponents = value();
     else if (a === '--rounds') o.rounds = count();

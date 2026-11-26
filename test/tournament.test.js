@@ -3,7 +3,7 @@
 
 import { after, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -210,4 +210,14 @@ test('tournament: --bench plays one warrior against each of the set, like its ro
   const sum = bench.results.reduce((s, r) => s + 3 * r.a[0] + r.a[2], 0);
   assert.equal(bench.total.score, sum);
   assert.match(text, new RegExp(`^total +${((100 * sum) / (20 * 5)).toFixed(1)} `, 'm'));
+});
+
+test('tournament: --help prints the usage, an unknown option is refused instead of read as a file', () => {
+  const tool = (...args) => spawnSync(process.execPath, [join(root, 'tools/tournament.mjs'), ...args], { encoding: 'utf8' });
+  const help = tool('--help');
+  assert.equal(help.status, 0);
+  assert.match(help.stdout, /^usage: node tools\/tournament\.mjs/);
+  const wrong = tool(join(root, 'warriors'), '--round', '5');
+  assert.equal(wrong.status, 2);
+  assert.match(wrong.stderr, /^unknown option --round\nusage:/);
 });
