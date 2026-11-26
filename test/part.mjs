@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 Martin Leitner-Ankerl
 //
-// node test/part.mjs <k>/<n>: the test files of part k of n of the tests of
+// node test/part.mjs <k>/<n> [native]: the test files of part k of n of the tests of
 // the C programs (those of `make test`: test/c-api.test.js,
 // test/cli.test.js, test/evolver*.test.js), for CI jobs that run them at
 // the same time (#161): `make test TESTS="$(node test/part.mjs 1/3)"`.
@@ -13,8 +13,11 @@
 // #161 split the long files), and a file not listed counts 20.
 // On 4 cores the files run 3 at a time and slow each other: these sums,
 // not the times of a file alone on 32 threads (which made one native part
-// 110 s of tests and the other 61 s). A wrong time makes the parts uneven,
-// it does not leave a file out.
+// 110 s of tests and the other 61 s). With `native` the times of the
+// native build on ubuntu-latest, 3 parts (NATIVE: the files weigh
+// differently there, the C generator tests 43 s under ASan and 2 s natively;
+// on the ASan times macOS ran 55 s of tests in one part and 23 s in the
+// other). A wrong time makes the parts uneven, it does not leave a file out.
 
 import { readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -45,6 +48,34 @@ export const SECONDS = {
   'test/cli.test.js': 0.9,
 };
 
+// The same for the native build: run 45877686519, its second attempt, the
+// three parts on ubuntu-latest (26th November 2026).
+export const NATIVE = {
+  'test/evolver-panel.test.js': 24.7,
+  'test/evolver-migrate-pick.test.js': 21.7,
+  'test/evolver-defaults.test.js': 21.4,
+  'test/evolver-islands.test.js': 20.4,
+  'test/evolver-explorers.test.js': 20.0,
+  'test/evolver-tune.test.js': 18.2,
+  'test/evolver-migrate.test.js': 17.5,
+  'test/evolver-nospl-islands.test.js': 16.2,
+  'test/evolver.test.js': 15.7,
+  'test/evolver-nospl.test.js': 14.9,
+  'test/evolver-genome.test.js': 14.2,
+  'test/evolver-pareto.test.js': 13.3,
+  'test/evolver-gen.test.js': 12.8,
+  'test/evolver-structure.test.js': 10.4,
+  'test/evolver-survivors.test.js': 8.3,
+  'test/evolver-variant.test.js': 7.7,
+  'test/evolver-average.test.js': 7.3,
+  'test/evolver-screen.test.js': 7.0,
+  'test/evolver-report.test.js': 5.7,
+  'test/evolver-replace-parent.test.js': 3.1,
+  'test/evolver-parsimony.test.js': 3.0,
+  'test/c-api.test.js': 0.6,
+  'test/cli.test.js': 0.1,
+};
+
 // The files of `make test`, in the order of the Makefile's list.
 export function files(dir = fileURLToPath(new URL('.', import.meta.url))) {
   const evolver = readdirSync(dir).filter((f) => /^evolver.*\.test\.js$/.test(f)).sort().map((f) => `test/${f}`);
@@ -52,8 +83,8 @@ export function files(dir = fileURLToPath(new URL('.', import.meta.url))) {
 }
 
 // parts[i]: the files of part i + 1 of n, each in the order of files().
-export function parts(n, list = files()) {
-  const time = (f) => SECONDS[f] ?? 20;
+export function parts(n, list = files(), table = SECONDS) {
+  const time = (f) => table[f] ?? 20;
   const out = Array.from({ length: n }, () => ({ files: [], seconds: 0 }));
   for (const f of [...list].sort((a, b) => time(b) - time(a) || (a < b ? -1 : 1))) {
     const p = out.reduce((best, x) => (x.seconds < best.seconds ? x : best));
@@ -89,9 +120,10 @@ export function parts(n, list = files()) {
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const m = /^(\d+)\/(\d+)$/.exec(process.argv[2] ?? '');
   const k = m ? Number(m[1]) : 0, n = m ? Number(m[2]) : 0;
-  if (!m || n < 1 || k < 1 || k > n) {
-    console.error('usage: node test/part.mjs <k>/<n>, 1 <= k <= n');
+  const build = process.argv[3];
+  if (!m || n < 1 || k < 1 || k > n || (build !== undefined && build !== 'native') || process.argv.length > 4) {
+    console.error('usage: node test/part.mjs <k>/<n> [native], 1 <= k <= n');
     process.exit(2);
   }
-  console.log(parts(n)[k - 1].join(' '));
+  console.log(parts(n, files(), build ? NATIVE : SECONDS)[k - 1].join(' '));
 }
