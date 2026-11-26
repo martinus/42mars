@@ -118,7 +118,8 @@ export function paretoValues(v, ids, score, panel, origins, third, clear = null)
   const obj = ms.map((i) => {
     const pc = ids.map((b, j) => j).filter((j) => panel.has(ids[j]) && j !== i);
     const mc = ms.filter((j) => j !== i);
-    const o = [pc.reduce((t, j) => t + score[i][j], 0) / pc.length, mc.length ? mc.reduce((t, j) => t + score[i][j], 0) / mc.length : 0];
+    // the average against the other members: not with --member-games none (clear.noGames), where it is 0 for all
+    const o = [pc.reduce((t, j) => t + score[i][j], 0) / pc.length, ...(clear?.noGames ? [] : [mc.length ? mc.reduce((t, j) => t + score[i][j], 0) / mc.length : 0])];
     return third === 'pareto-sd' ? [...o, v[i].distance] : o;
   });
   const front = [], crowd = [];
@@ -216,7 +217,7 @@ export function checkValues(evs) {
   // against the other members, with pareto-sd the SD-score to the nearest; 10 (fronts - front) + min(crowding, 5)
   const origins = new Map(); // id -> the batch its line started, from the enter events
   let paretoLeaves = 0, newLines = 0, olderSecond = 0;
-  const paretoed = (v, ids, score, o) => (start.params.pushoff?.startsWith('pareto') ? paretoValues(v, ids, score, panel, origins, start.params.pushoff, { radius: start.params.clear, ...o }) : v);
+  const paretoed = (v, ids, score, o) => (start.params.pushoff?.startsWith('pareto') ? paretoValues(v, ids, score, panel, origins, start.params.pushoff, { radius: start.params.clear, noGames, ...o }) : v);
   // --average panel: the average of the push-off value over the panel's
   // columns only, without the own one
   let panelLeaves = 0;
@@ -465,10 +466,11 @@ export function checkEarly(evs) {
   // first stage, and none, or its nearest no weaker
   const firstStage = () => {
     const ids = slots.filter((x) => x !== null);
-    const score = ids.map((a) => ids.map((b) => (a === b ? null : p1.get(`${a},${b}`))));
+    const noGames = par.memberGames === 'none'; // members never play each other: 0 between them, as in the matrix
+    const score = ids.map((a) => ids.map((b) => (a === b ? null : p1.get(`${a},${b}`) ?? (noGames ? 0 : undefined))));
     const columns = par.diversity === 'panel' ? ids.map((id) => P.has(id)) : null;
     const v = pushoffValues(score, ids.map((_, i) => i), { variant: par.sd, alpha: par.alpha, columns });
-    if (par.pushoff?.startsWith('pareto')) return { ids, v: paretoValues(v, ids, score, P, origins, par.pushoff, { radius: par.clear, variant: par.sd, columns }) };
+    if (par.pushoff?.startsWith('pareto')) return { ids, v: paretoValues(v, ids, score, P, origins, par.pushoff, { radius: par.clear, variant: par.sd, columns, noGames }) };
     if (par.average !== 'panel') return { ids, v };
     return { ids, v: v.map((x, i) => { // --average panel: the average over the panel's columns
       const row = score[i].filter((_, j) => j !== i && P.has(ids[j])), avg = row.reduce((p, q) => p + q, 0) / row.length;
