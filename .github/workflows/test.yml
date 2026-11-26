@@ -62,18 +62,20 @@ jobs:
             exit 1
           }
 
-  # make test under ASan and UBSan, its test files in four parts at the same
-  # time (test/part.mjs, about 150 s of test time each, 3 files at a time on
-  # the 4 cores: 55 to 73 s of tests and 13 to 20 s of building the programs
-  # in a job, 26th November 2026): the instrumented programs are about 3.5
-  # times as slow (333 s of tests in one job, 18th November 2026).
+  # make test under ASan and UBSan, its test files in eight parts at the same
+  # time (test/part.mjs). The parts are CPU-bound, 3 files at a time on the 4
+  # cores: in four parts each held about 150 s of test time, 50 to 82 s of
+  # tests and 8 to 13 s of building the programs in a job, and only more
+  # parts made them shorter (#161, 26th November 2026). The instrumented
+  # programs are about 3.5 times as slow (333 s of tests in one job, 18th
+  # November 2026).
   sanitizers:
     name: sanitizers (${{ matrix.part }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        part: [1, 2, 3, 4]
+        part: [1, 2, 3, 4, 5, 6, 7, 8]
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -83,7 +85,7 @@ jobs:
         with:
           flags: asan
           cc: clang
-      - run: make -j4 CC=clang CFLAGS='-O1 -g -fno-omit-frame-pointer -fsanitize=address,undefined -fno-sanitize-recover=all -Wall -Wextra -Werror' LDFLAGS='-fsanitize=address,undefined' test TESTS="$(node test/part.mjs ${{ matrix.part }}/4)"
+      - run: make -j4 CC=clang CFLAGS='-O1 -g -fno-omit-frame-pointer -fsanitize=address,undefined -fno-sanitize-recover=all -Wall -Wextra -Werror' LDFLAGS='-fsanitize=address,undefined' test TESTS="$(node test/part.mjs ${{ matrix.part }}/8)"
 
   # 42mars against pMARS 0.9.5 (#91), built from its source archive and run
   # as a program only. The clean room (CLAUDE.md): nobody reads the files of
@@ -204,9 +206,10 @@ jobs:
           flags: portable
       - run: make -j4 CFLAGS='-O2 -std=c11 -pedantic -Wall -Wextra -Werror -DM42_PORTABLE' all test-lib
 
-  # make test in two parts at the same time (test/part.mjs; 63 s of tests in
-  # one job on ubuntu-latest, 69 s on macOS, 20th November 2026); part 1 also
-  # makes the archive. Windows has one part.
+  # make test in parts at the same time (test/part.mjs): three on
+  # ubuntu-latest and macOS, two on arm64 (in two parts 60 and 87 s a job on
+  # ubuntu-latest, 75 and 81 s on macOS, 51 and 56 s on arm64, #161, 26th
+  # November 2026); part 1 also makes the archive. Windows has one part.
   native:
     name: native (${{ matrix.os }}, ${{ matrix.part }})
     runs-on: ${{ matrix.os }}
@@ -214,10 +217,14 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, windows-latest]
-        part: [1, 2]
+        part: [1, 2, 3]
         exclude:
+          - os: ubuntu-24.04-arm
+            part: 3
           - os: windows-latest
             part: 2
+          - os: windows-latest
+            part: 3
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -229,7 +236,7 @@ jobs:
           flags: o3
       - name: make test
         if: runner.os != 'Windows'
-        run: make -j4 CFLAGS='-O3 -Wall -Wextra -Werror' test TESTS="$(node test/part.mjs ${{ matrix.part }}/2)"
+        run: make -j4 CFLAGS='-O3 -Wall -Wextra -Werror' test TESTS="$(node test/part.mjs ${{ matrix.part }}/${{ matrix.os == 'ubuntu-24.04-arm' && 2 || 3 }})"
       - name: make dist
         if: runner.os != 'Windows' && matrix.part == 1
         run: make dist
