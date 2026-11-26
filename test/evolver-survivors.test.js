@@ -95,7 +95,7 @@ test('--survivors-by pushoff: the survivors of the screen by their estimated pla
   run(join(tmp, 'pick1'), [...args, '--threads', '1', '--batches', String(B)]);
   const one = events(join(tmp, 'pick1'));
   assert.equal(one[0].params.survivorsBy, 'pushoff');
-  assert.match(readFileSync(join(tmp, 'pick1', 'state.txt'), 'latin1'), /^params .* 0 0 1$/m); // --parsimony, --no-spl, then this
+  assert.match(readFileSync(join(tmp, 'pick1', 'state.txt'), 'latin1'), /^params .* 0 0 1 0$/m); // --parsimony, --no-spl, this, then --replace-parent
   assert.equal(checkValues(one), B);
   const c = checkPicks(one);
   assert.ok(c.checked >= 2 * B, `${c.checked} fronts replayed, ${c.ambiguous} too close to call`);

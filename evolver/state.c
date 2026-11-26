@@ -30,7 +30,7 @@ static const param_field param_fields[] = {
     GONE("--tune-novel"), PF('d', average_panel), PF('d', member_games_none), GONE("--simple"), PF('q', draw_seed),
     GONE("--difference"), PF('d', pareto), PF('d', mirror), PF('g', clear), PF('d', gen), GONE("--refactor"),
     PF('u', min_length), PF('g', tie), PF('d', parsimony), PF('d', no_spl),
-    PF('d', survivors_by)};
+    PF('d', survivors_by), PF('d', replace_parent)};
 #define PARAM_FIELDS (sizeof param_fields / sizeof *param_fields)
 
 static void save_params(FILE *f, const params *p) {

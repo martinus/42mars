@@ -916,9 +916,33 @@ static uint32_t parsimony_leaves(const run *r, uint32_t s, uint64_t *stays) {
   return newcomer_leaves ? s : longest;
 }
 
-// After survivor i entered in slot s as w: the push-off when the list is
-// over --list, or with --parsimony the longer of two twins; who leaves goes
-// into the archive, unless it is w.
+// --replace-parent (deterministic crowding, Mahfoud 1992): when the nearest
+// warrior of the newcomer in slot s (by the push-off's SD-score, over
+// everyone in) is its first parent, a member, the two duel on their whole
+// results: the one with the lower average against the panel leaves, the
+// newcomer when they are equal. A child that plays like its parent then
+// competes with it alone and takes its place when it is better: the
+// distance that kept a lone design in the list goes to its child, where in
+// the push-off a near copy took it from both of them, and the copy left
+// (94-squid-pv, 26th November 2026: 42 of 878 children of non-papers above
+// their parent stayed past their batch). Returns the slot that leaves, and
+// *stays the id of the winner; UINT32_MAX for no duel.
+static uint32_t parent_duel(run *r, uint32_t s, uint64_t *stays) {
+  const warrior *w = r->slot[s];
+  if (w->parents[0] == NO_ID) return UINT32_MAX;
+  const uint32_t ps = slot_of_id(r, w->parents[0]);
+  if (ps == UINT32_MAX || r->slot[ps]->kind != MEMBER || r->keep[ps]) return UINT32_MAX;
+  compute_values(r);
+  if (r->values[value_of(r, s)].nearest != ps) return UINT32_MAX;
+  const int child_wins = panel_avg(r, s) > panel_avg(r, ps);
+  *stays = r->slot[child_wins ? s : ps]->id;
+  return child_wins ? ps : s;
+}
+
+// After survivor i entered in slot s as w: with --replace-parent the duel
+// with its first parent, else the push-off when the list is over --list,
+// or with --parsimony the longer of two twins; who leaves goes into the
+// archive, unless it is w.
 static void push_off(run *r, batch *b, uint32_t i, uint32_t s, const warrior *w) {
   const params *p = &r->p;
   // --stage: first the push-off on everyone's first-stage results, the same
@@ -934,16 +958,20 @@ static void push_off(run *r, batch *b, uint32_t i, uint32_t s, const warrior *w)
     }
     if (!early) complete_one(r, s);
   }
-  uint64_t stays = NO_ID;
-  const uint32_t twin_out = p->parsimony && !early ? parsimony_leaves(r, s, &stays) : UINT32_MAX;
-  if (members(r) > p->list || twin_out != UINT32_MAX) {
+  uint64_t stays = NO_ID, winner = NO_ID;
+  const uint32_t duel_out = p->replace_parent && !early ? parent_duel(r, s, &winner) : UINT32_MAX;
+  const uint32_t twin_out = p->parsimony && !early && duel_out == UINT32_MAX ? parsimony_leaves(r, s, &stays) : UINT32_MAX;
+  if (members(r) > p->list || twin_out != UINT32_MAX || duel_out != UINT32_MAX) {
     if (!early) compute_values(r);
     // an early leave is the newcomer, also when another one is weaker on
     // the first stage (it may be a member that is unlucky in those rounds)
-    const int k = early ? (int)value_of(r, s) : twin_out != UINT32_MAX ? (int)value_of(r, twin_out) : pushoff_weakest(r->values, r->active_n, r->keep);
+    const int k = early                        ? (int)value_of(r, s)
+                  : duel_out != UINT32_MAX ? (int)value_of(r, duel_out)
+                  : twin_out != UINT32_MAX ? (int)value_of(r, twin_out)
+                                           : pushoff_weakest(r->values, r->active_n, r->keep);
     const uint32_t out = r->values[k].index;
     warrior *gone = r->slot[out];
-    event_leave(r, &r->values[k], early, stays);
+    event_leave(r, &r->values[k], early, stays, winner);
     if (gone->id == w->id) b->entered--;
     else {
       r->archive[r->archive_next] = *gone->g;
