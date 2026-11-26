@@ -215,3 +215,25 @@ test('--explorers: the last K islands take no migrants, the others take from all
   ];
   refuses(join(tmp, 'explorers-no'), args, refused);
 });
+
+test('--start with a folder island-NN in it: island NN starts from that folder, the others from the folder itself', { skip }, () => {
+  const start = join(tmp, 'island-starts');
+  mkdirSync(join(start, 'island-02'), { recursive: true });
+  copyFileSync(join(root, 'warriors', 'imp.red'), join(start, 'imp.red'));
+  copyFileSync(join(root, 'warriors', 'dwarf.red'), join(start, 'island-02', 'dwarf.red'));
+  const args = [...TINY, '--start', start, '--islands', '3', '--migrate', '0', '--island-variant', ''];
+  const dir = join(tmp, 'island-starts-run');
+  run(dir, [...args, '--threads', '2', '--batches', '2']);
+  const all = [1, 2, 3].map((i) => events(join(dir, `island-0${i}`)));
+  assert.deepEqual(all.map((ev) => ev[0].params.start ?? ev[0].start), [start, join(start, 'island-02'), start]);
+  assert.deepEqual(all.map((ev) => ev[0].startWarriors.map((w) => w.name)), [['Imp'], ['Dwarf'], ['Imp']]);
+  all.forEach((ev, k) => {
+    const first = ev.filter((e) => e.type === 'enter' && e.batch === 0);
+    assert.ok(first.some((e) => e.ops === 'start') && first.every((e) => e.ops === 'start' || !e.ops.includes('random')), `island ${k + 1}`);
+  });
+  // the same stopped and continued on another thread count
+  const again = join(tmp, 'island-starts-resumed');
+  run(again, [...args, '--threads', '3', '--batches', '1']);
+  run(again, ['--threads', '1', '--batches', '1']);
+  all.forEach((ev, k) => assert.deepEqual(stable(events(join(again, `island-0${k + 1}`))), stable(ev), `island ${k + 1}`));
+});
