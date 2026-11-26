@@ -667,8 +667,8 @@ static double screen_distance(const run *r, const unit *row, uint32_t rounds) {
 
 // --survivors-by pushoff: the key of every candidate past the threshold is
 // its estimated place in the pareto push-off, the same objectives from its
-// screen: its average against the panel, against the members of the screen,
-// and (pareto-sd) screen_distance(). The front it would be on is the one
+// screen: its average against the panel, against the members of the screen
+// (not with --member-games none), and (pareto-sd) screen_distance(). The front it would be on is the one
 // after the worst front of the members that dominate it, the first when none
 // does; on one front the farther from its nearest warrior goes first. So a
 // child that plays unlike every member gets in before a stronger one that
@@ -700,7 +700,10 @@ static void pushoff_keys(run *r, batch *b) {
     long lv = top;
     for (uint32_t j = 0; j < n; j++) {
       int all = 1, one = 0;
-      for (uint32_t k = 0; k < m; k++) all &= mo[3 * j + k] >= o[k], one |= mo[3 * j + k] > o[k];
+      for (uint32_t k = 0; k < m; k++) {
+        if (k == 1 && p->member_games_none) continue; // no games among members: not an objective (pareto_values())
+        all &= mo[3 * j + k] >= o[k], one |= mo[3 * j + k] > o[k];
+      }
       if (all && one && level[j] - 1 < lv) lv = level[j] - 1;
     }
     x->key = (double)lv * 1e6 + (o[2] < 1e6 - 1 ? o[2] : 1e6 - 1);

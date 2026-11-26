@@ -109,8 +109,9 @@ static const char *params_error(const params *p) {
   if (p->member_games_none && (!p->average_panel || !p->distance_panel || p->parents == PARENTS_DUEL || p->screen_members))
     return "--member-games none only with --average panel and --diversity panel, not with --parents duel or "
            "--screen-members";
-  if (p->pareto && (p->average_panel || p->member_games_none))
-    return "--pushoff pareto not with --average panel or --member-games none";
+  if (p->pareto && p->average_panel && !p->member_games_none)
+    return "--pushoff pareto not with --average panel, unless with --member-games none";
+  if (p->pareto == 1 && p->member_games_none) return "--member-games none with --pushoff pareto-sd, not pareto";
   if (p->clear > 0 && !p->pareto) return "--clear with --pushoff pareto or pareto-sd only";
   if (p->survivors_by && !p->pareto) return "--survivors-by pushoff with --pushoff pareto or pareto-sd only";
   if (p->screen_stop > 0 && p->screen_check > 0) return "--screen-stop or --screen-check, not both";
@@ -405,7 +406,7 @@ static const char *new_run_defaults(cli *c) {
     if (params_error(p)) {
       p->pareto = 0;
       // the caller says so when pareto was what did not go (#199)
-      if (!params_error(p)) c->pushoff_fallback = p->member_games_none ? "--member-games none" : "--average panel";
+      if (!params_error(p)) c->pushoff_fallback = "--average panel";
     }
   }
   // new runs: --screen-stop 3: it stopped 10,639 of 17,025

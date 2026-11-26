@@ -122,7 +122,8 @@ static void clear_members(const run *r, const double *pts, uint8_t *cleared) {
 
 // --pushoff pareto: instead of average * distance, the members' value is
 // their place in NSGA-II's order (Deb et al. 2002) on two objectives: the
-// average against the panel and the average against the other members.
+// average against the panel and the average against the other members
+// (with --member-games none, where that is 0 for all, the first alone).
 // pareto-sd adds the SD-score to the nearest warrior (diversity as an
 // objective, Mouret and Doncieux 2012): on long30's list of 18th November
 // 32 of 80 were on the first front with it, 78 with the age of the line
@@ -135,7 +136,10 @@ static void pareto_values(run *r, const double *pts) {
   if (!r->p.pareto) return;
   const uint32_t P = r->panel_n, n = r->active_n > P ? r->active_n - P : 0;
   if (!n) return;
-  const uint32_t m = r->p.pareto == 3 ? 3 : 2; // pareto-sd: the SD-score too
+  // the average against the other members, unless members play no members (--member-games none: 0 for all);
+  // pareto-sd: the SD-score too
+  const int mg = !r->p.member_games_none;
+  const uint32_t m = 1 + (uint32_t)mg + (r->p.pareto == 3);
   double *obj = xmalloc(3 * n * sizeof *obj), *crowd = xmalloc(n * sizeof *crowd);
   uint32_t *front = xmalloc(n * sizeof *front), *at = xmalloc(n * sizeof *at), won = 0;
   uint8_t *cleared = xmalloc(n);
@@ -150,9 +154,10 @@ static void pareto_values(run *r, const double *pts) {
     double e = 0;
     for (uint32_t q = P; q < r->active_n; q++)
       if (r->active[q] != a) e += pts[a * r->cap + r->active[q]];
-    obj[m * j] = panel_avg_on(r, pts, a);
-    obj[m * j + 1] = n > 1 ? e / (n - 1) : 0;
-    if (r->p.pareto == 3) obj[m * j + 2] = r->values[P + at[j]].distance; // farther from the nearest is better
+    double *o = obj + m * j;
+    *o++ = panel_avg_on(r, pts, a);
+    if (mg) *o++ = n > 1 ? e / (n - 1) : 0;
+    if (r->p.pareto == 3) *o = r->values[P + at[j]].distance; // farther from the nearest is better
   }
   // the fronts of the winners, then those of the cleared ones behind them
   pareto_fronts(obj, won, m, front, crowd);

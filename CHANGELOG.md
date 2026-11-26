@@ -11,6 +11,7 @@ From 1.0.0 on, every change of the interface is listed here: the C library (`lib
 - `42evolve --no-spl`: no warrior of the run has `SPL`; a change that would make one is drawn again, a start warrior with one is left out, and as an `--island-variant` such an island takes migrants only from islands with it. Off by default; the start event has `noSpl` (#185).
 - `42evolve --survivors-by pushoff`: the survivors of the screen by their estimated place in the pareto push-off instead of their screen score; the start event has `survivorsBy`, the event `enter` with it `pick`. Off by default.
 - `42evolve --replace-parent`: a newcomer whose nearest warrior is its first parent duels it, the one with the lower average against the panel leaves; the start event has `replaceParent`, the event `leave` of a duel `duel`, the winner. Off by default.
+- `42evolve --member-games none` goes with `--pushoff pareto-sd`, on the average against the panel and the SD-score, and a new run with it takes pareto-sd by default (value before); `--pushoff pareto` with it is refused.
 - `tools/pushoff.mjs` ranks a tournament by diversity push-off.
 - The evolver's dashboard has a tab Designs: the designs of a run of islands at its last score, against each kind of hill warrior, two side by side with their best-of bound; `tools/serve.mjs` serves `/run/<n>/scores` for it, `tools/designs.js` computes it (#222).
 - `tools/hill-kinds.mjs`: the kind of style of every warrior of a hill folder, cached by content hash, and a bench of `tools/tournament.mjs --json` by those kinds (#221).

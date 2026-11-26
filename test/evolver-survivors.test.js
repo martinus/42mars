@@ -29,6 +29,8 @@ after(cleanup);
 // mattered, those whose front the SD-score changed.
 function checkPicks(evs) {
   const start = evs[0], tie = start.params.tiePoints, three = start.params.pushoff === 'pareto-sd';
+  const noGames = start.params.memberGames === 'none'; // no average against the other members: it is 0 for all
+  const objectives = (o) => (three ? (noGames ? [o[0], o[2]] : o) : o.slice(0, 2));
   const pts = new Map(), panel = new Set(start.panel.map((w) => w.id));
   const put = (a, b, w, l, t) => {
     pts.set(`${a},${b}`, ((3 * w + tie * t) * 100) / (w + l + t));
@@ -47,7 +49,7 @@ function checkPicks(evs) {
         const ms = [...members].map((id) => {
           const v = values.get(id), others = [...members].filter((q) => q !== id);
           const o = [v[5], others.length ? others.reduce((s, q) => s + pts.get(`${id},${q}`), 0) / others.length : 0, v[2]];
-          return { id, o: three ? o : o.slice(0, 2), level: Math.floor(v[4] / 10) };
+          return { id, o: objectives(o), level: Math.floor(v[4] / 10) };
         });
         snap = { batch: e.batch, ms, top: Math.max(0, ...ms.map((m) => m.level)) };
       }
@@ -63,7 +65,7 @@ function checkPicks(evs) {
         const plain = e.screen > 0 ? e.estimate / e.screen : Infinity; // the estimate is the screen score times it
         assert.ok(d >= 0 && d <= plain + 1e-9, `${e.id}: SD-score ${d}, the plain one ${plain}`);
         if (d < plain - 1e-6) lower++;
-        const o = three ? [p, m, d] : [p, m];
+        const o = objectives([p, m, d]);
         let level = snap.top, level2 = snap.top, unsure = false;
         for (const x of snap.ms) {
           if (x.o.some((v, k) => v !== o[k] && near(v, o[k]))) unsure = true;
@@ -134,4 +136,26 @@ test('--survivors-by pushoff: the survivors of the screen by their estimated pla
     assert.notEqual(r.status, 0, extra.join(' '));
     assert.match(r.stderr, why);
   }
+});
+
+test('--member-games none with --pushoff pareto-sd: the push-off and the pick on the average against the panel and the SD-score alone, with --replace-parent; the default push-off there', { skip }, () => {
+  const B = 12;
+  const args = [...without(TINY, '--pushoff', '--diversity', '--average', '--list'), '--pushoff', 'pareto-sd', '--diversity', 'panel', '--average', 'panel',
+    '--member-games', 'none', '--survivors-by', 'pushoff', '--replace-parent', '--list', '16', '--survivors', '8'];
+  run(join(tmp, 'none-sd'), [...args, '--threads', '2', '--batches', String(B)]);
+  const evs = events(join(tmp, 'none-sd'));
+  assert.deepEqual([evs[0].params.memberGames, evs[0].params.pushoff, evs[0].params.screenMembers], ['none', 'pareto-sd', 0]);
+  // every value replayed on two objectives (checkValues: no games among members, the fronts without their average)
+  assert.equal(checkValues(evs), B);
+  assert.ok(checkValues.paretoLeaves > 0 && checkValues.parentDuels > 0, `${checkValues.paretoLeaves} push-offs that pareto decided, ${checkValues.parentDuels} duels`);
+  const c = checkPicks(evs);
+  assert.ok(c.checked >= 2 * B, `${c.checked} fronts replayed, ${c.ambiguous} too close to call`);
+  // a new run with --member-games none takes pareto-sd now, without the message of #199
+  const d = run(join(tmp, 'none-default'), [...without(args.filter((x) => x !== '--replace-parent'), '--pushoff', '--survivors-by'), '--batches', '1']);
+  assert.equal(events(join(tmp, 'none-default'))[0].params.pushoff, 'pareto-sd');
+  assert.doesNotMatch(d.stderr, /the push-off is value/);
+  // pareto without the SD-score would have the average against the panel alone
+  const r = spawnSync(evolve, [join(tmp, 'none-pareto'), ...without(args, '--pushoff', '--survivors-by'), '--pushoff', 'pareto', '--batches', '1'], { encoding: 'utf8' });
+  assert.notEqual(r.status, 0);
+  assert.match(r.stderr, /--member-games none with --pushoff pareto-sd, not pareto/);
 });
