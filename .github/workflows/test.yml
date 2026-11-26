@@ -26,144 +26,69 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # The account runs 20 jobs at a time and there are 26: the long ones come
-  # first, so that the short ones (wasm, the Node versions, portable) are
-  # the ones that wait for a runner (#161).
-
-  # make test in parts at the same time (test/part.mjs): three on
-  # ubuntu-latest and macOS, two on arm64 (in two parts 60 and 87 s a job on
-  # ubuntu-latest, 75 and 81 s on macOS, 51 and 56 s on arm64, #161, 26th
-  # November 2026); part 1 also makes the archive. Windows has one part.
-  native:
-    name: native (${{ matrix.os }}, ${{ matrix.part }})
-    runs-on: ${{ matrix.os }}
+  # The JavaScript and the library on every Node version, two in each job
+  # (the account runs 20 jobs at a time, #161). The evolver's tests
+  # (test/evolver*.test.js) test the C program: the native jobs run them on
+  # the programs make builds, and the sanitizers under ASan and UBSan.
+  test:
+    # "test (20)" and "test (22)" are required checks of main: the names stay
+    name: test (${{ matrix.node }})
+    runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, windows-latest]
-        part: [1, 2, 3]
-        exclude:
-          - os: ubuntu-24.04-arm
-            part: 3
-          - os: windows-latest
-            part: 2
-          - os: windows-latest
-            part: 3
+        include:
+          - node: 20
+            then: 24
+          - node: 22
+            then: 26
     steps:
       - uses: actions/checkout@v7
+      # Node 20 is 20.16, the oldest that package.json allows (#198)
       - uses: actions/setup-node@v7
         with:
-          node-version: 22
-      - uses: ./.github/actions/lib-object
-        if: runner.os != 'Windows'
+          node-version: ${{ matrix.node == 20 && '20.16' || matrix.node }}
+      - run: node --test $(ls test/*.test.js | grep -v '^test/evolver')
+      - uses: actions/setup-node@v7
         with:
-          flags: o3
-      - name: make test
-        if: runner.os != 'Windows'
-        run: make -j4 CFLAGS='-O3 -Wall -Wextra -Werror' test TESTS="$(node test/part.mjs ${{ matrix.part }}/${{ matrix.os == 'ubuntu-24.04-arm' && 2 || 3 }})"
-      - name: make dist
-        if: runner.os != 'Windows' && matrix.part == 1
-        run: make dist
-      # The archive as a user gets it (#94): unpacked elsewhere, its 42mars
-      # plays two warriors, and examples/example.c builds against it through
-      # pkg-config and runs on its shared library.
-      - name: the archive works when unpacked
-        if: runner.os != 'Windows' && matrix.part == 1
-        run: |
-          a="$RUNNER_TEMP/archive"
-          mkdir -p "$a"
-          tar -xzf build/42mars-*.tar.gz -C "$a"
-          d="$(echo "$a"/42mars-*)"
-          test "$("$d/bin/42mars" -b -r 10 -F 4000 warriors/dwarf.red warriors/imp.red | tail -1)" = "Results: 2 0 8"
-          export PKG_CONFIG_PATH="$d/lib/pkgconfig"
-          cc -O2 -o "$a/example" examples/example.c $(pkg-config --define-prefix --cflags --libs 42mars)
-          LD_LIBRARY_PATH="$d/lib" DYLD_LIBRARY_PATH="$d/lib" "$a/example" -r 10 -F 4000 warriors/dwarf.red warriors/imp.red > "$a/out"
-          printf '2 0 8\n0 2 8\n' | diff - "$a/out"
-      # The object of lib/42mars.c (about 40 s of cl /O2) from an earlier run
-      # with the same lib/, build-msvc.bat and runner image, whose MSVC made
-      # it. build-msvc.bat compiles only without it. Runs on main save it and
-      # pull requests read it; a tag always compiles. Without ImageVersion
-      # the key is unique to the run, so nothing is reused.
-      - name: runner image (Windows)
-        id: image
-        if: runner.os == 'Windows' && !startsWith(github.ref, 'refs/tags/')
-        shell: pwsh
-        run: |
-          $v = if ($env:ImageVersion) { $env:ImageVersion } else { "run-$env:GITHUB_RUN_ID" }
-          "version=$v" >> $env:GITHUB_OUTPUT
-      - name: cached library object (Windows)
-        id: obj
-        if: runner.os == 'Windows' && !startsWith(github.ref, 'refs/tags/')
-        uses: actions/cache@v6
-        with:
-          path: build/42mars.obj
-          key: msvc-obj-${{ steps.image.outputs.version }}-${{ hashFiles('lib/**', 'build-msvc.bat') }}
-      # Under a minute. The limit catches cl /O2 slowing down again: with 32
-      # cases of dispatch.h instead of 16 (M42_DISPATCH_16 in platform.h) and
-      # the generic code inside the loops the library alone took 2 minutes
-      # or more.
-      - name: build-msvc.bat and the tests
-        if: runner.os == 'Windows'
-        timeout-minutes: 2
-        shell: cmd
-        env:
-          M42_OBJ_CACHED: ${{ steps.obj.outputs.cache-hit }}
-        run: |
-          call build-msvc.bat || exit /b 1
-          set M42_BIN=build
-          node --test test/c-api.test.js test/cli.test.js
-      - name: archive (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $v = node -p "require('./package.json').version"
-          $d = "build/42mars-$v-windows-x64"
-          New-Item -ItemType Directory -Force "$d/bin", "$d/include", "$d/lib" | Out-Null
-          Copy-Item build/42mars.exe, build/42mars.dll "$d/bin/"
-          Copy-Item lib/42mars.h "$d/include/"
-          Copy-Item build/42mars.lib, build/42mars-static.lib "$d/lib/"
-          Copy-Item LICENSE "$d/"
-          Compress-Archive -Path $d -DestinationPath "$d.zip"
-      - name: the archive works when unpacked (Windows)
-        if: runner.os == 'Windows'
-        shell: cmd
-        run: |
-          for /f "usebackq delims=" %%i in (`node -p "require('./package.json').version"`) do set "V=%%i"
-          set "A=%RUNNER_TEMP%\archive"
-          mkdir "%A%"
-          tar -xf build\42mars-%V%-windows-x64.zip -C "%A%" || exit /b 1
-          set "D=%A%\42mars-%V%-windows-x64"
-          "%D%\bin\42mars.exe" -b -r 10 -F 4000 warriors\dwarf.red warriors\imp.red > "%A%\out1" || exit /b 1
-          findstr /x /c:"Results: 2 0 8" "%A%\out1" || exit /b 1
-          where cl >nul 2>nul || for /f "usebackq delims=" %%i in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do call "%%i\VC\Auxiliary\Build\vcvars64.bat" >nul
-          cl /nologo /O2 /I "%D%\include" examples\example.c "%D%\lib\42mars.lib" /Fo"%A%\example.obj" /Fe"%A%\example.exe" || exit /b 1
-          set "PATH=%D%\bin;%PATH%"
-          "%A%\example.exe" -r 10 -F 4000 warriors\dwarf.red warriors\imp.red > "%A%\out2" || exit /b 1
-          findstr /x /c:"2 0 8" "%A%\out2" || exit /b 1
-          findstr /x /c:"0 2 8" "%A%\out2" || exit /b 1
-      - uses: actions/upload-artifact@v7
-        if: matrix.part == 1
-        with:
-          name: archive-${{ matrix.os }}
-          path: |
-            build/42mars-*.tar.gz
-            build/42mars-*.zip
-          if-no-files-found: error
+          node-version: ${{ matrix.then }}
+      - name: the same on Node ${{ matrix.then }}
+        run: node --version && node --test $(ls test/*.test.js | grep -v '^test/evolver')
 
-  # make test under ASan and UBSan, its test files in eight parts at the same
+  # The tests load the committed 42mars.wasm: this fails when it is not the
+  # build of lib/ (also when lib/src/gen-dispatch.mjs changes dispatch.h).
+  # Another clang version builds other bytes (#203: clang 22 and 23), so CI
+  # builds in Fedora 45, the clang of Martin's machine (23.1.5).
+  wasm:
+    runs-on: ubuntu-26.04
+    container: registry.fedoraproject.org/fedora:45
+    steps:
+      - run: dnf -q -y install clang lld nodejs git
+      - uses: actions/checkout@v7
+      - run: sh wasm/build.sh
+      - name: the committed files are the build
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          git diff --exit-code --stat -- wasm/42mars.wasm lib/src/dispatch.h || {
+            echo "::error::wasm/42mars.wasm or lib/src/dispatch.h is not what wasm/build.sh builds from lib/ (Fedora 45's clang): run wasm/build.sh and commit both"
+            exit 1
+          }
+
+  # make test under ASan and UBSan, its test files in six parts at the same
   # time (test/part.mjs). The parts are CPU-bound, 3 files at a time on the 4
   # cores: in four parts each held about 150 s of test time, 50 to 82 s of
   # tests and 8 to 13 s of building the programs in a job, and only more
-  # parts made them shorter (#161, 26th November 2026). The instrumented
-  # programs are about 3.5 times as slow (333 s of tests in one job, 18th
-  # November 2026).
+  # parts made them shorter; eight with three native parts were 26 jobs, and
+  # the account runs 20 at a time, so the six that waited made the run 100 s
+  # (#161, 26th November 2026). The instrumented programs are about 3.5
+  # times as slow (333 s of tests in one job, 18th November 2026).
   sanitizers:
     name: sanitizers (${{ matrix.part }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        part: [1, 2, 3, 4, 5, 6, 7, 8]
+        part: [1, 2, 3, 4, 5, 6]
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -173,7 +98,7 @@ jobs:
         with:
           flags: asan
           cc: clang
-      - run: make -j4 CC=clang CFLAGS='-O1 -g -fno-omit-frame-pointer -fsanitize=address,undefined -fno-sanitize-recover=all -Wall -Wextra -Werror' LDFLAGS='-fsanitize=address,undefined' test TESTS="$(node test/part.mjs ${{ matrix.part }}/8)"
+      - run: make -j4 CC=clang CFLAGS='-O1 -g -fno-omit-frame-pointer -fsanitize=address,undefined -fno-sanitize-recover=all -Wall -Wextra -Werror' LDFLAGS='-fsanitize=address,undefined' test TESTS="$(node test/part.mjs ${{ matrix.part }}/6)"
 
   # 42mars against pMARS 0.9.5 (#91), built from its source archive and run
   # as a program only. The clean room (CLAUDE.md): nobody reads the files of
@@ -273,53 +198,18 @@ jobs:
           node tools/tournament.mjs "$RUNNER_TEMP/t20" --rounds 100 --seed ${{ github.run_id }} --pmars "$PMARS_OUT" --compare
           node tools/example-check.mjs "$RUNNER_TEMP/t20" --pmars "$PMARS_OUT" --seed ${{ github.run_id }}
 
-  # The tests load the committed 42mars.wasm: this fails when it is not the
-  # build of lib/ (also when lib/src/gen-dispatch.mjs changes dispatch.h).
-  # Another clang version builds other bytes (#203: clang 22 and 23), so CI
-  # builds in Fedora 45, the clang of Martin's machine (23.1.5).
-  wasm:
-    runs-on: ubuntu-26.04
-    container: registry.fedoraproject.org/fedora:45
-    steps:
-      - run: dnf -q -y install clang lld nodejs git
-      - uses: actions/checkout@v7
-      - run: sh wasm/build.sh
-      - name: the committed files are the build
-        run: |
-          git config --global --add safe.directory "$GITHUB_WORKSPACE"
-          git diff --exit-code --stat -- wasm/42mars.wasm lib/src/dispatch.h || {
-            echo "::error::wasm/42mars.wasm or lib/src/dispatch.h is not what wasm/build.sh builds from lib/ (Fedora 45's clang): run wasm/build.sh and commit both"
-            exit 1
-          }
-
-  # The JavaScript and the library on every Node version. The evolver's tests
-  # (test/evolver*.test.js) test the C program: the native jobs run them on
-  # the programs make builds, and the sanitizers under ASan and UBSan.
-  test:
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        node: [20, 22, 24, 26]
-    steps:
-      - uses: actions/checkout@v7
-      # Node 20 is 20.16, the oldest that package.json allows (#198); the
-      # job keeps its name "test (20)", a required check of main.
-      - uses: actions/setup-node@v7
-        with:
-          node-version: ${{ matrix.node == 20 && '20.16' || matrix.node }}
-      - run: node --test $(ls test/*.test.js | grep -v '^test/evolver')
-
   # C11 without compiler extensions, the code MSVC builds: everything builds;
   # the library and 42mars are tested (the evolver is not built by MSVC, and
   # its tests on the slower portable engine took 13 minutes). A job of its
-  # own, at the same time as the native ones (#161).
+  # own, at the same time as the native ones, on x64 only: the account runs
+  # 20 jobs at a time (#161).
   portable:
     name: portable (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, ubuntu-24.04-arm]
+        os: [ubuntu-latest]
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -329,6 +219,128 @@ jobs:
         with:
           flags: portable
       - run: make -j4 CFLAGS='-O2 -std=c11 -pedantic -Wall -Wextra -Werror -DM42_PORTABLE' all test-lib
+
+  # make test in parts at the same time, by the times of the native build
+  # (test/part.mjs ... native): three on ubuntu-latest (in two parts 60 and
+  # 87 s a job), two on macOS and arm64 (75 and 81 s, 51 and 56 s; #161,
+  # 26th November 2026); part 1 also makes the archive. Windows has one part.
+  native:
+    name: native (${{ matrix.os }}, ${{ matrix.part }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, windows-latest]
+        part: [1, 2, 3]
+        exclude:
+          - os: ubuntu-24.04-arm
+            part: 3
+          - os: macos-latest
+            part: 3
+          - os: windows-latest
+            part: 2
+          - os: windows-latest
+            part: 3
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - uses: ./.github/actions/lib-object
+        if: runner.os != 'Windows'
+        with:
+          flags: o3
+      - name: make test
+        if: runner.os != 'Windows'
+        run: make -j4 CFLAGS='-O3 -Wall -Wextra -Werror' test TESTS="$(node test/part.mjs ${{ matrix.part }}/${{ matrix.os == 'ubuntu-latest' && 3 || 2 }} native)"
+      - name: make dist
+        if: runner.os != 'Windows' && matrix.part == 1
+        run: make dist
+      # The archive as a user gets it (#94): unpacked elsewhere, its 42mars
+      # plays two warriors, and examples/example.c builds against it through
+      # pkg-config and runs on its shared library.
+      - name: the archive works when unpacked
+        if: runner.os != 'Windows' && matrix.part == 1
+        run: |
+          a="$RUNNER_TEMP/archive"
+          mkdir -p "$a"
+          tar -xzf build/42mars-*.tar.gz -C "$a"
+          d="$(echo "$a"/42mars-*)"
+          test "$("$d/bin/42mars" -b -r 10 -F 4000 warriors/dwarf.red warriors/imp.red | tail -1)" = "Results: 2 0 8"
+          export PKG_CONFIG_PATH="$d/lib/pkgconfig"
+          cc -O2 -o "$a/example" examples/example.c $(pkg-config --define-prefix --cflags --libs 42mars)
+          LD_LIBRARY_PATH="$d/lib" DYLD_LIBRARY_PATH="$d/lib" "$a/example" -r 10 -F 4000 warriors/dwarf.red warriors/imp.red > "$a/out"
+          printf '2 0 8\n0 2 8\n' | diff - "$a/out"
+      # The object of lib/42mars.c (about 40 s of cl /O2) from an earlier run
+      # with the same lib/, build-msvc.bat and runner image, whose MSVC made
+      # it. build-msvc.bat compiles only without it. Runs on main save it and
+      # pull requests read it; a tag always compiles. Without ImageVersion
+      # the key is unique to the run, so nothing is reused.
+      - name: runner image (Windows)
+        id: image
+        if: runner.os == 'Windows' && !startsWith(github.ref, 'refs/tags/')
+        shell: pwsh
+        run: |
+          $v = if ($env:ImageVersion) { $env:ImageVersion } else { "run-$env:GITHUB_RUN_ID" }
+          "version=$v" >> $env:GITHUB_OUTPUT
+      - name: cached library object (Windows)
+        id: obj
+        if: runner.os == 'Windows' && !startsWith(github.ref, 'refs/tags/')
+        uses: actions/cache@v6
+        with:
+          path: build/42mars.obj
+          key: msvc-obj-${{ steps.image.outputs.version }}-${{ hashFiles('lib/**', 'build-msvc.bat') }}
+      # Under a minute. The limit catches cl /O2 slowing down again: with 32
+      # cases of dispatch.h instead of 16 (M42_DISPATCH_16 in platform.h) and
+      # the generic code inside the loops the library alone took 2 minutes
+      # or more.
+      - name: build-msvc.bat and the tests
+        if: runner.os == 'Windows'
+        timeout-minutes: 2
+        shell: cmd
+        env:
+          M42_OBJ_CACHED: ${{ steps.obj.outputs.cache-hit }}
+        run: |
+          call build-msvc.bat || exit /b 1
+          set M42_BIN=build
+          node --test test/c-api.test.js test/cli.test.js
+      - name: archive (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $v = node -p "require('./package.json').version"
+          $d = "build/42mars-$v-windows-x64"
+          New-Item -ItemType Directory -Force "$d/bin", "$d/include", "$d/lib" | Out-Null
+          Copy-Item build/42mars.exe, build/42mars.dll "$d/bin/"
+          Copy-Item lib/42mars.h "$d/include/"
+          Copy-Item build/42mars.lib, build/42mars-static.lib "$d/lib/"
+          Copy-Item LICENSE "$d/"
+          Compress-Archive -Path $d -DestinationPath "$d.zip"
+      - name: the archive works when unpacked (Windows)
+        if: runner.os == 'Windows'
+        shell: cmd
+        run: |
+          for /f "usebackq delims=" %%i in (`node -p "require('./package.json').version"`) do set "V=%%i"
+          set "A=%RUNNER_TEMP%\archive"
+          mkdir "%A%"
+          tar -xf build\42mars-%V%-windows-x64.zip -C "%A%" || exit /b 1
+          set "D=%A%\42mars-%V%-windows-x64"
+          "%D%\bin\42mars.exe" -b -r 10 -F 4000 warriors\dwarf.red warriors\imp.red > "%A%\out1" || exit /b 1
+          findstr /x /c:"Results: 2 0 8" "%A%\out1" || exit /b 1
+          where cl >nul 2>nul || for /f "usebackq delims=" %%i in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do call "%%i\VC\Auxiliary\Build\vcvars64.bat" >nul
+          cl /nologo /O2 /I "%D%\include" examples\example.c "%D%\lib\42mars.lib" /Fo"%A%\example.obj" /Fe"%A%\example.exe" || exit /b 1
+          set "PATH=%D%\bin;%PATH%"
+          "%A%\example.exe" -r 10 -F 4000 warriors\dwarf.red warriors\imp.red > "%A%\out2" || exit /b 1
+          findstr /x /c:"2 0 8" "%A%\out2" || exit /b 1
+          findstr /x /c:"0 2 8" "%A%\out2" || exit /b 1
+      - uses: actions/upload-artifact@v7
+        if: matrix.part == 1
+        with:
+          name: archive-${{ matrix.os }}
+          path: |
+            build/42mars-*.tar.gz
+            build/42mars-*.zip
+          if-no-files-found: error
 
   release:
     if: startsWith(github.ref, 'refs/tags/v')

@@ -9,7 +9,7 @@ import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { files, parts, SECONDS } from './part.mjs';
+import { files, NATIVE, parts, SECONDS } from './part.mjs';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
 
@@ -29,19 +29,21 @@ test('every test file of make test is in exactly one part, for 1 to 5 parts', ()
   assert.deepEqual(parts(3, more).flat().sort(), [...more].sort());
 });
 
-test('the parts are about even, and the table names only files that exist', () => {
-  for (const f of Object.keys(SECONDS)) assert.ok(existsSync(`${root}/${f}`), `${f} is in the table of part.mjs but not in test/`);
-  const time = (f) => SECONDS[f] ?? 20;
-  const t = (list) => list.reduce((s, f) => s + time(f), 0);
-  for (let n = 2; n <= 5; n++) {
-    const p = parts(n), sums = p.map(t), top = Math.max(...sums), k = sums.indexOf(top);
-    // no single file that moves from the longest part to another, or swaps with one there, makes it shorter
-    for (let q = 0; q < n; q++) {
-      if (q === k) continue;
-      for (const f of p[k]) {
-        for (const g of [null, ...p[q]]) {
-          const d = time(f) - (g ? time(g) : 0);
-          assert.ok(!(d > 0 && Math.max(top - d, sums[q] + d) < top - 1e-9), `${n} parts of ${sums.join(', ')} s: ${f} to part ${q + 1}${g ? ` for ${g}` : ''} is shorter`);
+test('the parts are about even, and the tables name only files that exist', () => {
+  for (const [name, table] of [['SECONDS', SECONDS], ['NATIVE', NATIVE]]) {
+    for (const f of Object.keys(table)) assert.ok(existsSync(`${root}/${f}`), `${f} is in ${name} of part.mjs but not in test/`);
+    const time = (f) => table[f] ?? 20;
+    const t = (list) => list.reduce((s, f) => s + time(f), 0);
+    for (let n = 2; n <= 8; n++) {
+      const p = parts(n, files(), table), sums = p.map(t), top = Math.max(...sums), k = sums.indexOf(top);
+      // no single file that moves from the longest part to another, or swaps with one there, makes it shorter
+      for (let q = 0; q < n; q++) {
+        if (q === k) continue;
+        for (const f of p[k]) {
+          for (const g of [null, ...p[q]]) {
+            const d = time(f) - (g ? time(g) : 0);
+            assert.ok(!(d > 0 && Math.max(top - d, sums[q] + d) < top - 1e-9), `${name}, ${n} parts of ${sums.join(', ')} s: ${f} to part ${q + 1}${g ? ` for ${g}` : ''} is shorter`);
+          }
         }
       }
     }
@@ -49,10 +51,12 @@ test('the parts are about even, and the table names only files that exist', () =
 });
 
 test('the command prints part k of n, and refuses a part that does not exist', () => {
-  const run = (arg) => spawnSync(process.execPath, [`${root}/test/part.mjs`, arg], { encoding: 'utf8' });
   assert.equal(execFileSync(process.execPath, [`${root}/test/part.mjs`, '2/3'], { encoding: 'utf8' }).trim(), parts(3)[1].join(' '));
-  for (const bad of ['0/3', '4/3', '1', 'x/2']) {
-    const r = run(bad);
+  // native: the times of the native build
+  assert.equal(execFileSync(process.execPath, [`${root}/test/part.mjs`, '1/2', 'native'], { encoding: 'utf8' }).trim(), parts(2, files(), NATIVE)[0].join(' '));
+  assert.notDeepEqual(parts(3, files(), NATIVE), parts(3));
+  for (const bad of [['0/3'], ['4/3'], ['1'], ['x/2'], ['1/2', 'asan'], ['1/2', 'native', 'x']]) {
+    const r = spawnSync(process.execPath, [`${root}/test/part.mjs`, ...bad], { encoding: 'utf8' });
     assert.equal(r.status, 2, bad);
     assert.match(r.stderr, /usage/);
   }
