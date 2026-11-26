@@ -58,7 +58,7 @@ void event_start(run *r) {
           "\"rounds\":%u,\"screenRounds\":%u,\"benchEvery\":%u,\"benchRounds\":%u,\"initLength\":%u,"
           "\"screenFactor\":%.17g,\"alpha\":%.17g,\"reintroduce\":%.17g,\"sd\":\"%s\",\"seed\":%" PRIu64
           ","
-          "\"parents\":\"%s\",\"screenMembers\":%u,\"stage\":%u,\"fill\":%s,\"panelRounds\":%u,\"diversity\":\"%s\",\"panelChoice\":\"%s\",\"screenStop\":%.17g,\"screenCheck\":%.17g,\"average\":\"%s\",\"memberGames\":\"%s\",\"drawSeed\":%" PRIu64 ",\"pushoff\":\"%s\",\"positions\":\"%s\",\"clear\":%.17g,\"genome\":\"%s\",\"minLength\":%u,\"tiePoints\":%.17g,\"parsimony\":%s,\"noSpl\":%s,\"survivorsBy\":\"%s\"},"
+          "\"parents\":\"%s\",\"screenMembers\":%u,\"stage\":%u,\"fill\":%s,\"panelRounds\":%u,\"diversity\":\"%s\",\"panelChoice\":\"%s\",\"screenStop\":%.17g,\"screenCheck\":%.17g,\"average\":\"%s\",\"memberGames\":\"%s\",\"drawSeed\":%" PRIu64 ",\"pushoff\":\"%s\",\"positions\":\"%s\",\"clear\":%.17g,\"genome\":\"%s\",\"minLength\":%u,\"tiePoints\":%.17g,\"parsimony\":%s,\"noSpl\":%s,\"survivorsBy\":\"%s\",\"replaceParent\":%s},"
           "\"opponents\":",
           m42_version(), p->rules.core_size, p->rules.max_cycles, p->rules.max_processes, p->rules.max_length,
           p->rules.min_distance, r->panel_n, r->hold_n, p->list, p->batch, p->survivors, p->rounds, p->screen_rounds,
@@ -74,7 +74,7 @@ void event_start(run *r) {
           p->average_panel ? "panel" : "all", p->member_games_none ? "none" : "all", p->draw_seed,
           p->pareto == 3 ? "pareto-sd" : p->pareto ? "pareto" : "value", p->mirror ? "mirror" : "pmars", p->clear, p->gen ? "gen" : "list", p->min_length, p->tie,
           p->parsimony ? "true" : "false", p->no_spl ? "true" : "false",
-          p->survivors_by ? "pushoff" : "strength");
+          p->survivors_by ? "pushoff" : "strength", p->replace_parent ? "true" : "false");
   json_str(f, p->opponents, 0);
   fputs(",\"panelFiles\":", f);
   json_str(f, p->panel_files, 0);
@@ -186,7 +186,10 @@ void event_enter(run *r, uint32_t slot, double screen, double estimate, uint64_t
 // early: decided on the results of the first stage (--stage), the values too
 // twin (--parsimony): the id of the warrior with the same results that
 // stays, NO_ID when the push-off decided.
-void event_leave(run *r, const pushoff_value *v, int early, uint64_t twin) {
+// twin: with --parsimony the id of the twin that stays; parent_duel: with
+// --replace-parent the id of the winner of the duel of a newcomer and its
+// first parent; NO_ID when not.
+void event_leave(run *r, const pushoff_value *v, int early, uint64_t twin, uint64_t parent_duel) {
   fprintf(r->events,
           "{\"type\":\"leave\",\"batch\":%u,\"id\":%" PRIu64 ",\"avg\":%.6f,\"distance\":%.6f,\"nearest\":%" PRId64
           ",\"value\":%.6f%s",
@@ -194,6 +197,7 @@ void event_leave(run *r, const pushoff_value *v, int early, uint64_t twin) {
           v->nearest == UINT32_MAX ? (int64_t)-1 : (int64_t)r->slot[v->nearest]->id, v->value,
           early ? ",\"early\":true" : "");
   if (twin != NO_ID) fprintf(r->events, ",\"twin\":%" PRIu64, twin);
+  if (parent_duel != NO_ID) fprintf(r->events, ",\"duel\":%" PRIu64, parent_duel);
   fputs("}\n", r->events);
 }
 

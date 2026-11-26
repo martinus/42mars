@@ -78,6 +78,7 @@ typedef struct {
   int parsimony;            // --parsimony: of a newcomer and a member with the same results (twins), the longer one leaves (#172)
   int no_spl;               // --no-spl: no SPL in a warrior of the run (#185): a change that would make one is drawn again
   int survivors_by;         // --survivors-by pushoff: the survivors of the screen by their estimated place in the push-off, not their screen score
+  int replace_parent;       // --replace-parent: a newcomer whose nearest warrior is its first parent duels it by panel average, the loser leaves
 } params;
 
 enum { PARENTS_VALUE, PARENTS_DUEL };
@@ -357,7 +358,7 @@ char *generator_text(const genome *g, uint32_t core);
 void event_start(run *r);
 void event_panel(run *r);
 void event_enter(run *r, uint32_t slot, double screen, double estimate, uint64_t rival, const unit *row, const double *pick);
-void event_leave(run *r, const pushoff_value *v, int early, uint64_t twin);
+void event_leave(run *r, const pushoff_value *v, int early, uint64_t twin, uint64_t parent_duel);
 void event_values(run *r);
 
 // state.c: state.txt and islands.txt

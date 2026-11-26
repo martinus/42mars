@@ -69,7 +69,7 @@ static void usage(void) {
           "         [--fill | --no-fill] [--panel-rounds N] [--diversity all|panel] [--average all|panel]\n"
           "         [--member-games all|none] [--pushoff value|pareto|pareto-sd] [--clear R] [--positions mirror|pmars]\n"
           "         [--genome list|gen] [--min-length N] [--tie-points t] [--parsimony] [--no-spl]\n"
-          "         [--survivors-by strength|pushoff]\n"
+          "         [--survivors-by strength|pushoff] [--replace-parent]\n"
           "         [--islands N [--select-after B [--keep K]] [--score-rounds R] [--score-designs 3]\n"
           "           [--migrate M [--migrate-pick best|random] [--migrate-to all|random]] [--island-variant \"options\" ...] [--island-panels shared|own] [--explorers K]]\n"
           "         [--size 8000] [--cycles 80000] [--processes 8000] [--length 100] [--distance 100]\n"
@@ -345,8 +345,9 @@ static int parse_cli(int argc, char **argv, cli *c) {
       c->new_options = 1;
       continue;
     }
-    if (!strcmp(a, "--parsimony") || !strcmp(a, "--no-spl")) {
+    if (!strcmp(a, "--parsimony") || !strcmp(a, "--no-spl") || !strcmp(a, "--replace-parent")) {
       if (a[2] == 'p') c->p.parsimony = 1;
+      else if (a[2] == 'r') c->p.replace_parent = 1;
       else c->p.no_spl = 1;
       c->new_options = 1;
       continue;
