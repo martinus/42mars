@@ -62,6 +62,11 @@ LIB_SOURCES := lib/42mars.c lib/42mars.h $(wildcard lib/src/*.c lib/src/*.h)
 # the files of 42evolve alone (evolver/evolve.h)
 EVOLVE := evolver/evolve.c evolver/pool.c evolver/events.c evolver/state.c evolver/panel.c evolver/batch.c evolver/optimize.c evolver/islands.c evolver/run.c
 EVOLVER_SOURCES := evolver/genome.c evolver/generator.c evolver/gen-change.c evolver/pushoff.c evolver/names.c evolver/style.c $(wildcard evolver/*.h)
+# every source of evolver/ is compiled once into build/evolver/ and the
+# programs link what they need: make -j compiles them at the same time, and
+# generator.c is not compiled five times (#161: 13 to 20 s of every
+# sanitizer job on CI)
+evo = $(patsubst evolver/%.c,build/evolver/%.o,$(1))
 DIST := 42mars-$(VERSION)-$(shell uname -s | tr A-Z a-z)-$(shell uname -m)
 
 all: build/lib42mars.a build/$(SHARED) build/42mars build/42evolve build/42spectrum build/42gen
@@ -81,16 +86,20 @@ build/$(SHARED): build/42mars.o
 build/42mars: cli/42mars.c build/lib42mars.a
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ cli/42mars.c build/lib42mars.a
 
-build/42evolve: $(EVOLVE) $(EVOLVER_SOURCES) build/lib42mars.a
-	$(CC) $(CFLAGS) -pthread $(LDFLAGS) -Ilib -o $@ $(EVOLVE) evolver/genome.c evolver/generator.c evolver/gen-change.c evolver/pushoff.c evolver/names.c evolver/style.c build/lib42mars.a -lm
+build/evolver/%.o: evolver/%.c $(wildcard evolver/*.h) lib/42mars.h
+	@mkdir -p build/evolver
+	$(CC) $(CFLAGS) -pthread -Ilib -c -o $@ $<
+
+build/42evolve: $(call evo,$(EVOLVE) evolver/genome.c evolver/generator.c evolver/gen-change.c evolver/pushoff.c evolver/names.c evolver/style.c) build/lib42mars.a
+	$(CC) $(CFLAGS) -pthread $(LDFLAGS) -o $@ $^ -lm
 
 # 42spectrum: what one change does to a warrior (docs/evolver.md)
-build/42spectrum: evolver/spectrum.c $(EVOLVER_SOURCES) build/lib42mars.a
-	$(CC) $(CFLAGS) -pthread $(LDFLAGS) -Ilib -o $@ evolver/spectrum.c evolver/genome.c evolver/generator.c evolver/gen-change.c build/lib42mars.a -lm
+build/42spectrum: $(call evo,evolver/spectrum.c evolver/genome.c evolver/generator.c evolver/gen-change.c) build/lib42mars.a
+	$(CC) $(CFLAGS) -pthread $(LDFLAGS) -o $@ $^ -lm
 
 # 42gen: the warrior a generator writes (docs/evolver-gen.md)
-build/42gen: evolver/gen.c $(EVOLVER_SOURCES) build/lib42mars.a
-	$(CC) $(CFLAGS) $(LDFLAGS) -Ilib -o $@ evolver/gen.c evolver/generator.c build/lib42mars.a -lm
+build/42gen: $(call evo,evolver/gen.c evolver/generator.c) build/lib42mars.a
+	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $^ -lm
 
 # The test programs: api-test through the shared library, the examples as
 # 42mars.h describes them.
@@ -103,11 +112,11 @@ build/example: examples/example.c build/lib42mars.a
 build/parallel: examples/parallel.c build/lib42mars.a
 	$(CC) $(CFLAGS) -pthread $(LDFLAGS) -Ilib -o $@ examples/parallel.c build/lib42mars.a
 
-build/evolver-test: test/c/evolver-test.c $(EVOLVER_SOURCES) build/lib42mars.a
-	$(CC) $(CFLAGS) $(LDFLAGS) -Ilib -Ievolver -o $@ test/c/evolver-test.c evolver/genome.c evolver/generator.c evolver/gen-change.c evolver/pushoff.c evolver/names.c build/lib42mars.a -lm
+build/evolver-test: test/c/evolver-test.c $(call evo,evolver/genome.c evolver/generator.c evolver/gen-change.c evolver/pushoff.c evolver/names.c) build/lib42mars.a
+	$(CC) $(CFLAGS) $(LDFLAGS) -Ilib -Ievolver -o $@ $^ -lm
 
-build/generator-test: test/c/generator-test.c $(EVOLVER_SOURCES) build/lib42mars.a
-	$(CC) $(CFLAGS) $(LDFLAGS) -Ilib -Ievolver -o $@ test/c/generator-test.c evolver/generator.c evolver/gen-change.c evolver/genome.c build/lib42mars.a -lm
+build/generator-test: test/c/generator-test.c $(call evo,evolver/generator.c evolver/gen-change.c evolver/genome.c) build/lib42mars.a
+	$(CC) $(CFLAGS) $(LDFLAGS) -Ilib -Ievolver -o $@ $^ -lm
 
 # test-lib: the library and 42mars only, without the evolver (CI builds the C11
 # code that MSVC compiles with it, test.yml)
