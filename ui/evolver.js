@@ -135,16 +135,17 @@ function handle(e) {
       for (const [a, b, w, l, t, seed] of e.scores) setRes(a, b, w, l, t, seed, a);
       break;
     case 'enter': {
-      const x = { id: e.id, kind: 'member', name: e.name ?? `e${e.id}`, code: e.code, gen: e.gen ?? null, refactors: [], parents: e.parents, ops: e.ops, length: e.length, screen: e.screen, estimate: e.estimate, born: e.batch, died: null, alive: true, value: null, newFamily: !!e.newFamily, parentDifference: e.parentDifference };
+      // a brief line (42evolve --events brief, #187): a newcomer that leaves in its batch, without code and matches
+      const x = { id: e.id, kind: 'member', name: e.name ?? `e${e.id}`, code: e.code ?? '', gen: e.gen ?? null, refactors: [], parents: e.parents, ops: e.ops, length: e.length, screen: e.screen, estimate: e.estimate, born: e.batch, died: null, alive: true, value: null, newFamily: !!e.newFamily, parentDifference: e.parentDifference, brief: !!e.brief };
       x.hue = hueFor(e.id, e.parents, x.newFamily);
       x.styleKind = e.style?.kind;
       S.w.set(e.id, x);
       let s = S.slots.indexOf(null, S.panel.length);
       if (s < 0) s = S.slots.push(null) - 1;
       S.slots[s] = e.id;
-      for (const [o, w, l, t, seed] of e.scores) setRes(e.id, o, w, l, t, seed, e.id);
-      x.opponents = e.scores.map((s) => s[0]);
-      x.panelAvg = panelAvg(e.id);
+      for (const [o, w, l, t, seed] of e.scores ?? []) setRes(e.id, o, w, l, t, seed, e.id);
+      x.opponents = (e.scores ?? []).map((s) => s[0]);
+      x.panelAvg = e.brief ? e.panelAvg : panelAvg(e.id);
       x.row = null;
       if (!quiet.has(e.id)) tick(`<span class="in">+</span> ${link(e.id)} <b>${f1(x.panelAvg)}</b> vs panel <span style="color:#6c7290">${esc(e.ops)}</span>${x.newFamily ? ` <span class="new-family">new family: ${f1(e.parentDifference)} points from ${link(e.parents[0])}</span>` : ''}`);
       break;

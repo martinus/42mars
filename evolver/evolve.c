@@ -69,7 +69,7 @@ static void usage(void) {
           "         [--fill | --no-fill] [--panel-rounds N] [--diversity all|panel] [--average all|panel]\n"
           "         [--member-games all|none] [--pushoff value|pareto|pareto-sd] [--clear R] [--positions mirror|pmars]\n"
           "         [--genome list|gen] [--min-length N] [--tie-points t] [--parsimony] [--no-spl]\n"
-          "         [--survivors-by strength|pushoff] [--replace-parent]\n"
+          "         [--survivors-by strength|pushoff] [--replace-parent] [--events brief|full]\n"
           "         [--islands N [--select-after B [--keep K]] [--score-rounds R] [--score-designs 3]\n"
           "           [--migrate M [--migrate-pick best|random] [--migrate-to all|random]] [--island-variant \"options\" ...] [--island-panels shared|own] [--explorers K]\n"
           "           [--groups K [--group-every 10] [--group-slots panel/3] [--group-hall slots/2]]]\n"
@@ -136,6 +136,7 @@ typedef struct {
   uint32_t new_list;          // --list, also for a run that continues (it only grows)
   int new_options, stage_given, screen_members_given, diversity_given, panel_rounds_given, fill_given;
   int panel_choice_given, draw_seed_given, positions_given, pushoff_given, genome_given, migrate_given;
+  int events_given; // --events
   int variant_default; // the variants of new_island_defaults(), not given
   const char *pushoff_fallback; // the option that made the default push-off value, not pareto-sd (#199)
   uint32_t islands_n, islands_keep, islands_every, islands_rounds; // --islands, --keep, --select-after, --score-rounds
@@ -222,6 +223,11 @@ static int option_text(cli *c, const char *a, const char *v, double d, int *rc) 
     }
     else if (!strcmp(v, "pareto-sd")) p->pareto = 3;
     else usage();
+  } else if (!strcmp(a, "--events")) {
+    if (!strcmp(v, "full")) p->events_brief = 0;
+    else if (!strcmp(v, "brief")) p->events_brief = 1;
+    else usage();
+    c->events_given = 1;
   } else if (!strcmp(a, "--survivors-by")) {
     if (!strcmp(v, "strength")) p->survivors_by = 0;
     else if (!strcmp(v, "pushoff")) p->survivors_by = 1;
@@ -406,6 +412,7 @@ static const char *new_run_defaults(cli *c) {
   if (!c->panel_rounds_given) p->panel_rounds = p->rounds > 500 ? p->rounds : 500;
   if (!c->panel_choice_given) p->panel_random = PANEL_KINDS; // new runs: a panel of every kind
   if (!c->fill_given) p->fill = 1;
+  if (!c->events_given) p->events_brief = 1; // new runs: brief lines for the newcomers that leave in their batch (#187)
   if (!c->positions_given) p->mirror = 1; // new runs: every position from both sides
   // new runs: pareto-sd, first or tied first on the '94 and the tiny hill (docs/evolver.md); value where
   // pareto does not go (params_error() says where)

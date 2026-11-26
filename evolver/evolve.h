@@ -80,6 +80,7 @@ typedef struct {
   int no_spl;               // --no-spl: no SPL in a warrior of the run (#185): a change that would make one is drawn again
   int survivors_by;         // --survivors-by pushoff: the survivors of the screen by their estimated place in the push-off, not their screen score
   int replace_parent;       // --replace-parent: a newcomer whose nearest warrior is its first parent duels it by panel average, the loser leaves
+  int events_brief;         // --events brief (#187): a newcomer that leaves in its batch is a short enter line, without its complete line
 } params;
 
 enum { PARENTS_VALUE, PARENTS_DUEL };
@@ -216,6 +217,19 @@ typedef struct {
   double *sigma;
   pushoff_value *values;
   uint32_t *active, active_n;
+
+  // --events brief (#187): during a batch its events go to memory
+  // (run_batch()), with the place of every newcomer's enter and complete
+  // lines and its brief enter line; those that leave in the batch get it
+  struct event_mark {
+    long start, end;
+    uint64_t id;
+    char *brief; // 0: a complete line
+  } *marks;
+  uint32_t marks_n, marks_cap;
+  uint64_t *gone; // the newcomers of this batch that left in it
+  uint32_t gone_n, gone_cap;
+  int buffering;  // in run_batch() with --events brief: r->events is the memory
 
   // --groups (#183): the foes that left the panel's foe slots, the latest
   // HALL_MAX; some of the slots are drawn from them (islands.c)
@@ -371,6 +385,7 @@ void event_start(run *r);
 void event_panel(run *r);
 void event_enter(run *r, uint32_t slot, double screen, double estimate, uint64_t rival, const unit *row, const double *pick);
 void event_leave(run *r, const pushoff_value *v, int early, uint64_t twin, uint64_t parent_duel);
+void mark_line(run *r, long start, uint64_t id, char *brief);
 void event_values(run *r);
 
 // state.c: state.txt and islands.txt

@@ -412,6 +412,7 @@ static void complete_one(run *r, uint32_t s) {
   }
   pool_run(r->pool, u, n);
   FILE *f = r->events;
+  const long start = r->buffering ? ftell(f) : 0;
   fprintf(f, "{\"type\":\"complete\",\"batch\":%u,\"id\":%" PRIu64 ",\"scores\":[", r->batch, r->slot[s]->id);
   for (uint32_t k = 0; k < n; k++) {
     const m42_score whole = add_scores(r->wlt[s * r->cap + opp[k]], u[k].s[0]);
@@ -420,6 +421,7 @@ static void complete_one(run *r, uint32_t s) {
             whole.ties, u[k].seed);
   }
   fputs("]}\n", f);
+  if (r->buffering) mark_line(r, start, r->slot[s]->id, 0);
   free(u);
   free(opp);
 }
@@ -1076,7 +1078,38 @@ static void batch_free(batch *b) {
 
 // One batch of the run: breed, screen, the survivors' matches, each
 // survivor entering with the push-off after it, the bench, the events.
+// --events brief (#187): the events of the batch went to memory (r->events,
+// mem): into the file, with the brief enter line of each newcomer that
+// left in the batch instead of its enter line, and without its complete
+// line. The same events, in their order, otherwise.
+static void write_brief(run *r, FILE *file, char *mem, size_t size) {
+  long at = 0;
+  for (uint32_t k = 0; k < r->marks_n; k++) {
+    const struct event_mark *m = &r->marks[k];
+    int left = 0;
+    for (uint32_t g = 0; g < r->gone_n && !left; g++) left = r->gone[g] == m->id;
+    if (!left) continue;
+    fwrite(mem + at, 1, (size_t)(m->start - at), file);
+    if (m->brief) fputs(m->brief, file);
+    at = m->end;
+  }
+  fwrite(mem + at, 1, size - (size_t)at, file);
+  for (uint32_t k = 0; k < r->marks_n; k++) free(r->marks[k].brief);
+  r->marks_n = r->gone_n = 0;
+}
+
 void run_batch(run *r) {
+  FILE *file = r->events;
+  char *mem = 0;
+  size_t size = 0;
+  if (r->p.events_brief) {
+    r->events = open_memstream(&mem, &size);
+    if (!r->events) {
+      fprintf(stderr, "42evolve: out of memory\n");
+      exit(1);
+    }
+    r->buffering = 1;
+  }
   batch b;
   memset(&b, 0, sizeof b);
   b.B = r->p.batch, b.P = r->panel_n;
@@ -1096,5 +1129,12 @@ void run_batch(run *r) {
   event_parents(r, b.c, b.B);
   event_batch(r, &b);
   batch_free(&b);
+  if (r->buffering) {
+    fclose(r->events);
+    r->events = file;
+    r->buffering = 0;
+    write_brief(r, file, mem, size);
+    free(mem);
+  }
   r->batch++;
 }
