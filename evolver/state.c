@@ -99,11 +99,19 @@ void save_state(run *r) {
   char mix[CH_ALL * 32];
   genome_mix_text(&p->changes, mix, sizeof mix);
   fprintf(f, "changes %s\n", mix);
-  for (uint32_t i = 0; i < r->panel_n; i++) fprintf(f, "panel-id %" PRIu64 " %s\n", r->panel[i].id, r->panel[i].file);
+  char text[GENOME_SAVE_MAX];
+  for (uint32_t i = 0; i < r->panel_n; i++) {
+    const warrior *w = &r->panel[i];
+    if (!w->foe_island) {
+      fprintf(f, "panel-id %" PRIu64 " %s\n", w->id, w->file);
+      continue;
+    }
+    genome_save(w->g, text, sizeof text); // a foe of --groups (#183): its island, its id there, its genome, then its name
+    fprintf(f, "panel-foe %" PRIu64 " %u %" PRIu64 " %s\nfoe-name %s\n", w->id, w->foe_island, w->foe_id, text, w->name);
+  }
   for (uint32_t i = 0; i < r->hold_n; i++) fprintf(f, "holdout %s\n", r->hold[i].file);
   fprintf(f, "batch %u\nnext %" PRIu64 "\nbest %" PRIu64 " %.17g\nevents %ld\n", r->batch, r->next_id, r->best_id,
           r->best_holdout, events_size);
-  char text[GENOME_SAVE_MAX];
   // the members' slots: a later newcomer takes the lowest free one, so a
   // resumed run needs the holes where they were
   for (uint32_t i = 0; i < r->active_n; i++)
@@ -120,6 +128,10 @@ void save_state(run *r) {
     fprintf(f, "archive %" PRIu64 " %u %s\n", r->archive_id[i], r->archive_noun[i], text);
   }
   fprintf(f, "archive-next %u\n", r->archive_next);
+  for (uint32_t i = 0; i < r->hall_n; i++) { // --groups: the hall of fame, the oldest first
+    genome_save(r->hall[i].g, text, sizeof text);
+    fprintf(f, "hall %u %" PRIu64 " %s\nhall-name %s\n", r->hall[i].foe_island, r->hall[i].foe_id, text, r->hall[i].name);
+  }
   if (r->best_g_set) { // the warrior of best.red
     genome_save(&r->best_g, text, sizeof text);
     fprintf(f, "best-genome %s\n", text);
@@ -158,6 +170,7 @@ int names_loop(const char *mix) {
 // holdout's files (the panel's ids), and the lines that need the matrix.
 typedef struct {
   char **panel, **hold, **rest;
+  char **foe, **foe_name; // panel slot i a foe of --groups: the rest of its panel-foe line and its name, else 0
   uint64_t *panel_id;
   uint32_t pn, hn, rn;
 } state_lines;
@@ -200,6 +213,14 @@ static int state_head_line(run *r, char *line, state_lines *s, int *refused) {
     int used = 0;
     if (sscanf(line + 9, "%" SCNu64 " %n", &s->panel_id[s->pn], &used) != 1 || !used) return -1;
     s->panel[s->pn++] = line + 9 + used;
+  } else if (!strncmp(line, "panel-foe ", 10)) { // --groups: a foe in the panel
+    int used = 0;
+    if (sscanf(line + 10, "%" SCNu64 " %n", &s->panel_id[s->pn], &used) != 1 || !used) return -1;
+    s->panel[s->pn] = 0;
+    s->foe[s->pn++] = line + 10 + used;
+  } else if (!strncmp(line, "foe-name ", 9)) {
+    if (!s->pn || !s->foe[s->pn - 1]) return -1;
+    s->foe_name[s->pn - 1] = line + 9;
   } else if (!strncmp(line, "reserve ", 8)) { // the rest of the folder, for --rotate and --prior hill (#193)
   } else if (!strncmp(line, "holdout ", 8)) {
     s->hold[s->hn++] = line + 8;
@@ -268,6 +289,22 @@ static int state_line(run *r, char *line, uint64_t *slot_id, uint32_t *slot_at, 
     fprintf(stderr, "42evolve: %s: --tune-novel was removed after 1.1.0 (#193)\n", r->dir);
     *refused = 1;
     return -1;
+  } else if (!strncmp(line, "hall ", 5)) { // --groups: an entry of the hall of fame
+    int used = 0;
+    if (!r->hall) r->hall = xmalloc(HALL_MAX * sizeof *r->hall);
+    if (r->hall_n >= HALL_MAX) return -1;
+    warrior *h = &r->hall[r->hall_n];
+    memset(h, 0, sizeof *h);
+    h->g = xmalloc(sizeof *h->g);
+    if (sscanf(line + 5, "%u %" SCNu64 " %n", &h->foe_island, &h->foe_id, &used) != 2 || !used || !h->foe_island ||
+        genome_load(h->g, line + 5 + used, p->rules.core_size, 0) != 0) {
+      free(h->g);
+      return -1;
+    }
+    r->hall_n++;
+  } else if (!strncmp(line, "hall-name ", 10)) {
+    if (!r->hall_n) return -1;
+    snprintf(r->hall[r->hall_n - 1].name, sizeof r->hall[0].name, "%s", line + 10);
   } else if (!strncmp(line, "archive ", 8)) {
     int used = 0;
     if (r->archive_n >= ARCHIVE_MAX ||
@@ -311,6 +348,8 @@ int load_state(run *r, const char *path) {
   state_lines s = {0};
   s.panel = xmalloc(len * sizeof *s.panel / 8 + 8), s.hold = xmalloc(len * sizeof *s.hold / 8 + 8);
   s.panel_id = xmalloc(len * sizeof *s.panel_id / 8 + 8);
+  s.foe = xmalloc((len / 8 + 8) * sizeof *s.foe), s.foe_name = xmalloc((len / 8 + 8) * sizeof *s.foe_name);
+  memset(s.foe, 0, (len / 8 + 8) * sizeof *s.foe), memset(s.foe_name, 0, (len / 8 + 8) * sizeof *s.foe_name);
   params *p = &r->p;
   char *save = 0;
   s.rest = xmalloc(len * sizeof(char *) / 4 + 8);
@@ -324,8 +363,27 @@ int load_state(run *r, const char *path) {
     if (state_head_line(r, line, &s, &refused) != 0) goto bad;
   p->rules.rounds = p->rounds;
   p->rules.warriors = 2;
-  load_list(r, &r->panel, &r->panel_n, s.panel, s.pn, PANEL, 0);
-  for (uint32_t i = 0; i < s.pn; i++) r->panel[i].id = s.panel_id[i];
+  r->panel = xmalloc((s.pn ? s.pn : 1) * sizeof *r->panel);
+  for (r->panel_n = 0; r->panel_n < s.pn; r->panel_n++) {
+    const uint32_t i = r->panel_n;
+    if (s.foe[i]) { // --groups: a foe, from its genome
+      uint32_t island;
+      uint64_t from;
+      int used = 0;
+      static genome g;
+      if (sscanf(s.foe[i], "%u %" SCNu64 " %n", &island, &from, &used) != 2 || !used || !island ||
+          genome_load(&g, s.foe[i] + used, p->rules.core_size, 0) != 0)
+        goto bad;
+      foe_warrior(r, &r->panel[i], &g, s.panel_id[i], island, from, s.foe_name[i] ? s.foe_name[i] : "");
+      continue;
+    }
+    warrior *one;
+    uint32_t got;
+    load_list(r, &one, &got, &s.panel[i], 1, PANEL, 0);
+    r->panel[i] = one[0];
+    r->panel[i].id = s.panel_id[i];
+    free(one);
+  }
   load_list(r, &r->hold, &r->hold_n, s.hold, s.hn, HOLDOUT, s.pn);
   if (r->list_grow) { // --list on a run that continues: more places, filled by children (not random warriors)
     if (r->list_grow < p->list) {
@@ -350,6 +408,7 @@ bad:
   free(text);
   free(s.panel);
   free(s.panel_id);
+  free(s.foe), free(s.foe_name);
   free(s.hold);
   free(s.rest);
   if (!ok && !refused) fprintf(stderr, "42evolve: %s is not a state file of this version\n", path);
@@ -379,6 +438,7 @@ void islands_save(const islands *I) {
           I->next_score, I->seed, I->best, I->rounds);
   for (uint32_t i = 0; i < I->n; i++) fprintf(f, " %u", I->live[i]);
   fprintf(f, "\nmigrate %u %u %u\nexplorers %u\ndesigns %u\n", I->migrate, I->migrate_random, I->migrate_next, I->explorers, I->designs);
+  if (I->groups) fprintf(f, "groups %u %u %u %u %u\n", I->groups, I->group_every, I->group_slots, I->group_hall, I->next_foes);
   fclose(f);
   if (rename(tmp, path) != 0) {
     fprintf(stderr, "42evolve: cannot write %s\n", path);
@@ -413,6 +473,8 @@ int islands_load(islands *I) {
     }
   if (ok && fscanf(f, " explorers %u", &I->explorers) != 1) I->explorers = 0; // a state from before --explorers
   if (ok && fscanf(f, " designs %u", &I->designs) != 1) I->designs = 3; // a state from before --score-designs: its default from now on
+  if (ok && fscanf(f, " groups %u %u %u %u %u", &I->groups, &I->group_every, &I->group_slots, &I->group_hall, &I->next_foes) != 5)
+    I->groups = 0; // none
   fclose(f);
   if (!ok) {
     fprintf(stderr, "42evolve: %s is not a state of islands\n", path);

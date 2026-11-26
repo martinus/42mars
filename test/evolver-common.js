@@ -261,6 +261,13 @@ export function checkValues(evs) {
   };
   for (const e of evs) {
     if (e.type === 'panel') for (const [a, b, w, l, t] of e.scores) put(a, b, w, l, t);
+    if (e.type === 'rotate') { // --groups (#183): a foe takes the place of a panel warrior, everybody in played it
+      slots[slots.indexOf(e.out)] = e.panel.id;
+      panel.delete(e.out);
+      panel.add(e.panel.id);
+      for (const [o, w, l, t] of e.scores) put(e.panel.id, o, w, l, t);
+      snap = null;
+    }
     if (e.type === 'enter' && e.rival >= 0) {
       // the first parent won its tournament of two against the rival: by
       // push-off value at the start of the batch, or with --parents duel by
