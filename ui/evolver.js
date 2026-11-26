@@ -118,6 +118,10 @@ function handle(e) {
       } else if (e.params.mapElites) { // the matrix panel shows the archive
         document.querySelector('.matrix-panel h2').innerHTML = 'MAP-Elites archive <small>a cell for each kind of style: rows the copies a warrior makes of its own code, columns its processes and the cells it reads far from home · in each cell the warrior with the best average against the panel (points per 100 rounds) · click a cell for its warrior</small>';
       }
+      if (e.params.memberGames === 'none') { // no games among members: no columns of members
+        const legend = document.querySelector('.matrix-panel h2 .legend');
+        if (legend) legend.innerHTML = legend.innerHTML.replace('<b>columns</b> the members, ', '<b>columns</b> ');
+      }
       if (!e.params.crowding && !e.params.mapElites) document.querySelector('.matrix-panel h2 small').insertAdjacentHTML('afterbegin', `<span class="setup">${setupText(e)}</span>`);
       for (const p of e.panel) S.w.set(p.id, { ...p, kind: 'panel' });
       for (const p of e.holdout) S.w.set(p.id, { ...p, kind: 'holdout' });
@@ -321,7 +325,7 @@ function setupText(e) {
     [`batch ${b(p.batch)}`, `screen ${b(p.screenRounds)} rounds vs panel${p.screenMembers ? ` + ${b(p.screenMembers)} members` : ''}${p.screenStop ? ` (stops at ${b(p.screenStop)} SE)` : ''}`,
       `best ${b(p.survivors)} play ${b(p.rounds)} rounds${p.panelRounds && p.panelRounds !== p.rounds ? ` (${b(p.panelRounds)} vs panel)` : ''}`],
     [p.pushoff?.startsWith('pareto')
-      ? `push-off: last <b>front</b> of vs panel, vs members${p.pushoff === 'pareto-sd' ? `, <b>SD-score</b> (${p.diversity === 'panel' ? 'panel columns' : 'all columns'})` : ''}`
+      ? `push-off: last <b>front</b> of vs panel${p.memberGames === 'none' ? '' : ', vs members'}${p.pushoff === 'pareto-sd' ? `, <b>SD-score</b> (${p.diversity === 'panel' ? 'panel columns' : 'all columns'})` : ''}`
       : `push-off: <b>score × SD-score</b> (score vs ${p.average === 'panel' ? 'panel' : 'all'}, SD over ${p.diversity === 'panel' ? 'panel' : 'all'})`,
       ...(p.positions === 'mirror' ? ['mirrored starts'] : []), ...(p.tiePoints !== undefined && p.tiePoints !== 1 ? [`a tie ${b(p.tiePoints)}`] : []),
       ...(p.parsimony ? ['parsimony'] : []), ...(p.minLength ? [`min length ${b(p.minLength)}`] : []), ...(p.memberGames === 'none' ? ['no member games'] : [])],
@@ -539,6 +543,8 @@ function drawMatrix(now) {
   const pnums = PANEL_NUMBERS.map(([key, head, value]) => ({ key, head, value: (p) => value(p, columns) }));
   const colKey = pnums.find((c) => c.key === matrixSort.cols).value;
   const panel = S.panel.map(member).sort((a, b) => matrixSort.colsDir * (colKey(a) - colKey(b)) || a.id - b.id);
+  // the columns of the members: none with --member-games none, where members never play each other
+  const mcols = S.start.params.memberGames === 'none' ? [] : ms;
   matrix.order = ms.map((m) => m.id); // for the arrow keys
   ms.forEach((m, i) => {
     m.row = i; // at its place at once: no sliding
@@ -547,7 +553,7 @@ function drawMatrix(now) {
   // its columns, the headings of the rows' numbers, the rows. The panel's
   // numbers are text turned upright where the columns are wide enough, else
   // strips from dark (lowest) to bright (highest).
-  const gap = 10, cols = ms.length + panel.length, bands = 18;
+  const gap = 10, cols = mcols.length + panel.length, bands = 18;
   let top, bh, ch, names, nums, numsW, labelW, cw, vw;
   for (bh of [21, 12]) {
     top = Math.max(bands + pnums.length * bh + 14, matrix.noteH ? matrix.noteH + 26 : 0); // below the note, placeNote()
@@ -578,8 +584,8 @@ function drawMatrix(now) {
   const upright = bh === 21;
   for (let k = nums.length - 1, x = labelW - (S.start.params.specialists ? 20 : 6); k >= 0; x -= nums[k].w, k--) nums[k].x = x;
   const cg = cw >= 4 ? 1 : 0, rg = ch >= 4 ? 1 : 0;
-  const colX = (i) => labelW + (i < ms.length ? i * cw : ms.length * cw + gap + vw + (i - ms.length) * cw);
-  const vx = labelW + ms.length * cw + gap + vw - gap / 2; // the right edge of the numbers against the panel
+  const colX = (i) => labelW + (i < mcols.length ? i * cw : mcols.length * cw + gap + vw + (i - mcols.length) * cw);
+  const vx = labelW + mcols.length * cw + gap + vw - gap / 2; // the right edge of the numbers against the panel
   const vs = ms.map((m) => m.panelAvg).filter((v) => Number.isFinite(v)), vlo = Math.min(...vs), vhi = Math.max(...vs);
   ctx.font = `10px ${SANS}`;
   ctx.fillStyle = '#7f86a0';
@@ -603,7 +609,7 @@ function drawMatrix(now) {
     matrix.heads.push({ axis: 'rows', key: 'panel', x0: vx - vw + gap - 4, x1: vx + 6, y0: top - 18, y1: top - 3 });
     ctx.textAlign = 'left';
   }
-  const px = labelW + ms.length * cw + gap + vw, ptext = `panel (${panel.length} hill warriors)`;
+  const px = labelW + mcols.length * cw + gap + vw, ptext = `panel (${panel.length} hill warriors)`;
   ctx.font = `10px ${SANS}`;
   placeNote(canvas, px - 22 - Math.max(...pnums.map((c) => ctx.measureText(`${c.head} ↓`).width)));
   ctx.fillStyle = '#7f86a0';
@@ -622,7 +628,7 @@ function drawMatrix(now) {
     ctx.font = `10px ${SANS}`;
     ctx.textAlign = 'left';
     panel.forEach((p, j) => {
-      const x = colX(ms.length + j);
+      const x = colX(mcols.length + j);
       if (upright) {
         ctx.fillStyle = rampColor(vs[j], lo, hi);
         ctx.save();
@@ -640,13 +646,13 @@ function drawMatrix(now) {
   });
   ctx.textAlign = 'left';
   // column marks in the warriors' colors
-  ms.forEach((m, i) => {
+  mcols.forEach((m, i) => {
     ctx.fillStyle = hsl(m.hue);
     ctx.fillRect(colX(i) + cg, top - 7, Math.max(1, cw - 2 * cg), 3);
   });
   matrix.cells = [];
   matrix.rows = [];
-  const others = [...ms, ...panel];
+  const others = [...mcols, ...panel];
   const columnsKey = `${S.version}:${others.length}:${others[0]?.id}:${matrixSort.rows}${matrixSort.rowsDir}${matrixSort.cols}${matrixSort.colsDir}`;
   const drawRow = (m, y, alpha) => {
     ctx.globalAlpha = alpha;
@@ -710,14 +716,13 @@ function drawMatrix(now) {
   for (const m of ms) drawRow(m, top + m.row * ch, 1);
   // the selected warrior: its row (its matches) and its column (the matches
   // of the others against it) framed
-  const si = others.findIndex((o) => o.id === selected);
-  if (si >= 0) {
+  const si = others.findIndex((o) => o.id === selected), m = ms.find((x) => x.id === selected);
+  if (si >= 0 || m) {
     const right = colX(others.length - 1) + cw - cg, bottom = top + ms.length * ch;
-    const m = si < ms.length ? ms[si] : null, ry = m ? top + m.row * ch : 0, cx = colX(si);
     ctx.strokeStyle = '#ffc53d';
     ctx.lineWidth = 1.5;
-    if (m) ctx.strokeRect(1.5, ry - 1, right, ch - rg + 2);
-    ctx.strokeRect(cx - 1, top - 9, cw - cg + 2, bottom - top + 10);
+    if (m) ctx.strokeRect(1.5, top + m.row * ch - 1, right, ch - rg + 2);
+    if (si >= 0) ctx.strokeRect(colX(si) - 1, top - 9, cw - cg + 2, bottom - top + 10);
   }
   const hv = mouseOf(canvas);
   canvas.style.cursor = '';
