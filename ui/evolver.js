@@ -73,6 +73,19 @@ function setRes(a, b, w, l, t, seed, first, rounds = w + l + t) {
   S.res.set(`${b}:${a}`, { w: l, l: w, t, seed, first, rounds });
 }
 const resOf = (a, b) => S.res.get(`${a}:${b}`);
+
+// 42evolve --stage: a newcomer enters with the screen's rounds against the
+// panel only (its first stage), the rounds the screen chose it on, so its
+// panel average is too high until its event complete (on seed 303 of #196 by
+// 9 to 13 points in the median). Until then it is shown as such and ranks
+// below every member that played all its rounds; one that leaves on the first
+// stage keeps that mark.
+const firstRounds = () => {
+  const p = S.start?.params;
+  return p?.stage > 0 && p.stage < p.rounds ? Math.max(p.stage, p.screenRounds ?? 0) : 0;
+};
+const rankAvg = (m) => (m.firstStage ? -1 : m.panelAvg ?? -1);
+const panelText = (m) => (m.firstStage ? `${f1(m.panelAvg)} after ${m.firstStage} rounds` : f1(m.panelAvg));
 const points = (r) => (r ? ((3 * r.w + r.t) * 100) / r.rounds : null);
 
 function panelAvg(id) {
@@ -146,8 +159,9 @@ function handle(e) {
       for (const [o, w, l, t, seed] of e.scores ?? []) setRes(e.id, o, w, l, t, seed, e.id);
       x.opponents = (e.scores ?? []).map((s) => s[0]);
       x.panelAvg = e.brief ? e.panelAvg : panelAvg(e.id);
+      x.firstStage = firstRounds();
       x.row = null;
-      if (!quiet.has(e.id)) tick(`<span class="in">+</span> ${link(e.id)} <b>${f1(x.panelAvg)}</b> vs panel <span style="color:#6c7290">${esc(e.ops)}</span>${x.newFamily ? ` <span class="new-family">new family: ${f1(e.parentDifference)} points from ${link(e.parents[0])}</span>` : ''}`);
+      if (!quiet.has(e.id)) tick(`<span class="in">+</span> ${link(e.id)} <b>${panelText(x)}</b> vs panel <span style="color:#6c7290">${esc(e.ops)}</span>${x.newFamily ? ` <span class="new-family">new family: ${f1(e.parentDifference)} points from ${link(e.parents[0])}</span>` : ''}`);
       break;
     }
     case 'elite': { // --map-elites: a warrior takes a cell, the one there leaves
@@ -187,7 +201,7 @@ function handle(e) {
     case 'complete': { // --stage: a survivor that stayed played the rest of its rounds
       for (const [o, w, l, t, seed] of e.scores) setRes(e.id, o, w, l, t, seed, e.id);
       const x = S.w.get(e.id);
-      if (x) x.panelAvg = panelAvg(e.id);
+      if (x) x.panelAvg = panelAvg(e.id), x.firstStage = 0;
       break;
     }
     case 'refactor': { // --refactor: a member's generator rewritten in place, its warrior the same
@@ -234,7 +248,7 @@ function handle(e) {
       for (const [id, avg, distance, nearest, value, pAvg] of e.values) {
         const x = S.w.get(id);
         if (!x) continue;
-        Object.assign(x, { avg, distance, nearest, value, panelAvg: pAvg });
+        Object.assign(x, { avg, distance, nearest, value, panelAvg: pAvg, firstStage: 0 });
       }
       { // the members by kind of style after the batch (tab Kinds)
         const counts = kindCounts(alive().map((m) => m.styleKind));
@@ -538,7 +552,7 @@ function drawMatrix(now) {
   const canvas = $('matrix');
   const { ctx, w, h } = fit(canvas);
   if (!S.start) return;
-  const rowKey = { panel: (m) => m.panelAvg ?? -1, value: (m) => m.value ?? -1, average: (m) => m.avg ?? -1, distance: (m) => m.distance ?? -1, age: (m) => ageOfMember(m), length: (m) => m.length ?? 0 }[matrixSort.rows];
+  const rowKey = { panel: rankAvg, value: (m) => m.value ?? -1, average: (m) => m.avg ?? -1, distance: (m) => m.distance ?? -1, age: (m) => ageOfMember(m), length: (m) => m.length ?? 0 }[matrixSort.rows];
   const ms = alive().sort((a, b) => matrixSort.rowsDir * (rowKey(a) - rowKey(b)) || a.id - b.id);
   const columns = panelColumns();
   const pnums = PANEL_NUMBERS.map(([key, head, value]) => ({ key, head, value: (p) => value(p, columns) }));
@@ -587,7 +601,7 @@ function drawMatrix(now) {
   const cg = cw >= 4 ? 1 : 0, rg = ch >= 4 ? 1 : 0;
   const colX = (i) => labelW + (i < mcols.length ? i * cw : mcols.length * cw + gap + vw + (i - mcols.length) * cw);
   const vx = labelW + mcols.length * cw + gap + vw - gap / 2; // the right edge of the numbers against the panel
-  const vs = ms.map((m) => m.panelAvg).filter((v) => Number.isFinite(v)), vlo = Math.min(...vs), vhi = Math.max(...vs);
+  const vs = ms.filter((m) => !m.firstStage).map((m) => m.panelAvg).filter((v) => Number.isFinite(v)), vlo = Math.min(...vs), vhi = Math.max(...vs);
   ctx.font = `10px ${SANS}`;
   ctx.fillStyle = '#7f86a0';
   ctx.textBaseline = 'middle';
@@ -674,15 +688,15 @@ function drawMatrix(now) {
         ctx.fillText(c.text(m), c.x, y + ch / 2);
       }
       // its average against the panel
-      ctx.fillStyle = sel ? '#ffc53d' : rampColor(m.panelAvg, vlo, vhi);
-      ctx.fillText(f1(m.panelAvg), vx, y + ch / 2);
+      ctx.fillStyle = sel ? '#ffc53d' : m.firstStage ? '#6c7290' : rampColor(m.panelAvg, vlo, vhi); // first stage: grey, with a ~
+      ctx.fillText(m.firstStage ? `~${f1(m.panelAvg)}` : f1(m.panelAvg), vx, y + ch / 2);
       ctx.textAlign = 'left';
       if (S.spec.has(m.id)) { // --specialists: a protected member
         ctx.fillStyle = '#ffc53d';
         ctx.fillText('◆', labelW - 14, y + ch / 2);
       }
     } else {
-      ctx.fillStyle = rampColor(m.panelAvg, vlo, vhi); // its average against the panel, a strip
+      ctx.fillStyle = m.firstStage ? '#6c7290' : rampColor(m.panelAvg, vlo, vhi); // its average against the panel, a strip
       ctx.fillRect(vx - 12, y, 12, Math.max(1, ch - rg));
       ctx.fillStyle = sel ? '#ffc53d' : hsl(m.hue);
       ctx.fillRect(4, y, 12, Math.max(1, ch - rg)); // the family's color, no room for the name
@@ -765,7 +779,7 @@ function warriorTip(id) {
   }
   if (x.cell !== undefined) return `<b style="color:${hsl(x.hue)}">${esc(x.name)}</b> #${x.id} · batch ${x.born}${x.alive ? '' : ` to ${x.died}`}<br>${f1(x.panelAvg)} vs panel · cell ${x.cellXyz.join('·')}<br>${esc(x.style?.kind ?? '')}${x.holdout >= 0 ? `<br>holdout ${f1(x.holdout)}` : ''}`;
   const sp = (S.spec.get(id) ?? []).map((s) => `<br><span style="color:#ffc53d">◆</span> protected: best against ${esc(nameOf(s.panel))}, ${f1(s.score)} (median ${f1(s.median)})`).join('');
-  return `<b style="color:${hsl(x.hue)}">${esc(x.name)}</b> #${x.id} · batch ${x.born}${x.alive ? '' : ` to ${x.died}`}<br>${f1(x.panelAvg)} vs panel · value ${f1(x.value)}<br>nearest ${esc(nameOf(x.nearest))} at ${x.distance?.toFixed(2) ?? '–'}${x.holdout >= 0 ? `<br>holdout ${f1(x.holdout)}` : ''}${sp}`;
+  return `<b style="color:${hsl(x.hue)}">${esc(x.name)}</b> #${x.id} · batch ${x.born}${x.alive ? '' : ` to ${x.died}`}<br>${panelText(x)} vs panel · value ${f1(x.value)}<br>nearest ${esc(nameOf(x.nearest))} at ${x.distance?.toFixed(2) ?? '–'}${x.holdout >= 0 ? `<br>holdout ${f1(x.holdout)}` : ''}${sp}`;
 }
 
 // ---------------- the lineage
@@ -1012,7 +1026,7 @@ const busyHistory = [];
 // The strongest member of the list now, by its average against the panel.
 function strongest() {
   let top = null;
-  for (const m of alive()) if (!top || (m.panelAvg ?? 0) > (top.panelAvg ?? 0)) top = m;
+  for (const m of alive()) if (!top || rankAvg(m) > rankAvg(top)) top = m;
   return top;
 }
 
@@ -1026,7 +1040,7 @@ function drawChips() {
   const top = strongest();
   $('c-top-name').textContent = top ? top.name : '–';
   $('c-top-name').style.color = top ? hsl(top.hue) : '';
-  $('c-top-sub').textContent = top ? `${f1(top.panelAvg)} panel${top.holdout >= 0 ? ` · ${f1(top.holdout)} holdout` : ''}` : '';
+  $('c-top-sub').textContent = top ? `${panelText(top)} panel${top.holdout >= 0 ? ` · ${f1(top.holdout)} holdout` : ''}` : '';
   $('c-batch').textContent = S.batch >= 0 ? fmtInt(S.batch) : '–';
   $('c-tried').textContent = S.tried ? fmtBig(S.tried) : '–';
   const sp = S.speed;
@@ -1113,7 +1127,7 @@ function renderOps() {
         if ((x.died ?? S.batch) - x.born >= 5) t.lasted++;
       }
       const parent = S.w.get(x.parents[0]);
-      if (parent?.kind === 'member' && parent.panelAvg !== undefined && x.panelAvg !== undefined) t.gain += x.panelAvg - parent.panelAvg, t.compared++;
+      if (parent?.kind === 'member' && !x.firstStage && !parent.firstStage && parent.panelAvg !== undefined && x.panelAvg !== undefined) t.gain += x.panelAvg - parent.panelAvg, t.compared++;
       extra.set(op, t);
     }
   }
@@ -1127,7 +1141,7 @@ function renderOps() {
   $('ops').innerHTML = `<div class="ops-toggle">children of each change in
       <button data-window="0" class="${opsWindow ? '' : 'on'}">the whole run</button>
       <button data-window="20" class="${opsWindow === 20 ? 'on' : ''}">the last 20 batches</button></div>
-    <table class="ops-table"><tr><th>change</th><th title="children with this change">children</th><th title="share that got past the screen and entered the list">screen</th><th title="share still in the list after their own batch">kept</th><th></th><th title="of the children that entered at least 5 batches ago, how many stayed 5 batches or more">5+</th><th title="mean change of the average against the panel, child minus first parent, over the children that entered">Δ</th></tr>
+    <table class="ops-table"><tr><th>change</th><th title="children with this change">children</th><th title="share that got past the screen and entered the list">screen</th><th title="share still in the list after their own batch">kept</th><th></th><th title="of the children that entered at least 5 batches ago, how many stayed 5 batches or more">5+</th><th title="mean change of the average against the panel, child minus first parent, over the children that entered and played all their rounds">Δ</th></tr>
     ${rows.map(([op, n]) => {
       const x = extra.get(op);
       const stay = n[3] / Math.max(1, n[0]);
@@ -1137,7 +1151,7 @@ function renderOps() {
         <td>${x?.old ? `${x.lasted}/${x.old}` : '–'}</td>
         <td class="${gain === null ? '' : gain < 0 ? 'neg' : 'pos'}">${gain === null ? '–' : `${gain >= 0 ? '+' : ''}${gain.toFixed(2)}`}</td></tr>`;
     }).join('')}</table>
-    <p class="ops-note">A child with several changes counts for each of them. <b>Screen</b>: it scored well enough in the first ${S.start?.params.screenRounds ?? ''} rounds against the panel to play the full matches and enter the list. <b>Kept</b>: it was still in the list after its own batch, so the push-off kept it; the green bar compares the kept shares, the longest bar is the change whose children were kept most often. <b>5+</b>: of the children that entered 5 or more batches ago, how many stayed 5 batches. <b>Δ</b>: its average against the panel minus the first parent's, for the children that entered. Hover a row for what the change does.</p>`;
+    <p class="ops-note">A child with several changes counts for each of them. <b>Screen</b>: it scored well enough in the first ${S.start?.params.screenRounds ?? ''} rounds against the panel to play the full matches and enter the list. <b>Kept</b>: it was still in the list after its own batch, so the push-off kept it; the green bar compares the kept shares, the longest bar is the change whose children were kept most often. <b>5+</b>: of the children that entered 5 or more batches ago, how many stayed 5 batches. <b>Δ</b>: its average against the panel minus the first parent's, for the children that entered and played all their rounds (with --stage one that left on the first stage has only the screen's rounds, the ones the screen picked it on, and would count too high). Hover a row for what the change does.</p>`;
 }
 
 // The weights of genome_mix_default(), for logs from before --changes.
@@ -1266,7 +1280,7 @@ function renderCard() {
     head = `<h3 style="color:${color}">${esc(x.name)} <small style="color:#6c7290;font-size:13px">#${x.id}</small></h3>
       ${x.id === S.bestId ? '<div class="sub" style="color:#ffc53d">★ the best against the holdout warriors so far</div>' : ''}
       <div class="sub">born in batch ${x.born}${x.alive ? ', in the list' : `, pushed off in batch ${x.died}`} · ${x.length} instructions · ${esc(x.ops)}</div>
-      <div class="stats">${stat('vs panel', f1(x.panelAvg))}${stat('vs holdout', f1(x.holdout))}${stat('vs members', f1(membersAvg))}${stat('beaten by', vsMembers.length ? `${beatenBy}/${vsMembers.length}` : '–')}
+      <div class="stats">${stat('vs panel', panelText(x))}${stat('vs holdout', f1(x.holdout))}${stat('vs members', f1(membersAvg))}${stat('beaten by', vsMembers.length ? `${beatenBy}/${vsMembers.length}` : '–')}
       ${stat('push-off value', f1(x.value))}${stat('distance', x.distance?.toFixed(2) ?? '–')}${stat('nearest', x.nearest !== undefined && x.nearest !== null && S.w.has(x.nearest) ? link(x.nearest) : '–')}${stat('screen', `${f1(x.screen)}${x.estimate !== undefined ? ` <small style="color:#7f86a0">est. ${x.estimate.toFixed(0)}</small>` : ''}`)}</div>
       <div class="links">parents: ${parents}</div>
       <div class="sub style" id="card-style">style: measuring…</div>
@@ -1454,7 +1468,7 @@ let autoPick = true;
 function pickBest() {
   const ms = alive();
   if (!ms.length) return;
-  const best = ms.reduce((a, b) => ((b.panelAvg ?? -1) > (a.panelAvg ?? -1) ? b : a));
+  const best = ms.reduce((a, b) => (rankAvg(b) > rankAvg(a) ? b : a));
   if (selected !== best.id) select(best.id, true);
   const foe = foeFor(arenaFoe) === 'match' ? worstOpponent(best.id) : foeFor(arenaFoe);
   if (foe !== null && (arenaPair?.[0] !== best.id || arenaPair?.[1] !== foe)) playArena(best.id, foe);
