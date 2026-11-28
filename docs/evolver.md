@@ -906,3 +906,45 @@ The measurement: the full events of `94-own16` (seed 301) and `94-base-302`, 16 
 - Seen on the way: reintroduced warriors (`--reintroduce 0.02`) are 9 to 12% of the enter lines after batch 200 and 4% before, 1.5 to 2 of the 16 survivors, and a third of them stay past their batch.
 
 Verdict on the rule: `--twins replace` fails its own bar (the screen twins that differ later should be below 1% and are 58 to 76%: the twin would keep results that are not its own). `--twins drop` would free a fifth of the survivor places and would have cut 11 of 80 and 20 of 139 steps of the two best lines, more than half of them real changes. A fifth more search per batch is under a point on '94 (the best of the baseline's seeds moved by 0.4 to 2.7 points from batch 800 to 1,000), where 4 seeds resolve 10. `--parsimony` handles exact twins after their whole matches. What stays useful is the test itself: after the first stage a newcomer and its parent have played the same 20 rounds against the panel, so "no twin of its parent" is exact and free there, for a definition of success (#248, #251).
+
+## The tiny hill as a nursery: tiny champions scaled to the '94 core (#250, step 1)
+
+28th November 2026. On the tiny hill evolution gets to 160 and a batch costs a fraction of one on '94. If its warriors worked on '94 with their distances scaled, tiny runs could be the first phase of every '94 run. A test by hand first, as for the join of #223.
+
+The 20 best of `warriors/evolved/tiny/` by the table of `warriors/evolved/README.md`, at most 2 per family (its first 20 rows). Scaled: every operand value that is no reference into the warrior and more than 16 away from 0 (what `--optimize` calls a constant) times 10, since the tiny core has 800 cells and the '94 core 8,000. Each against the 1,107 warriors of `warriors/koenigstuhl/94nop`, 100 rounds, as it is and scaled, by the kind of its opponents (`tools/hill-kinds.mjs --bench`); the tiny hill column is the same bench against the 429 tiny warriors under the tiny rules. `--optimize` (a panel of 100 drawn, 100 rounds) on the 5 best that are not the 4-line clear:
+
+```sh
+node tools/tournament.mjs warriors/koenigstuhl/94nop --rounds 100 --bench <scaled.red> --json <scaled>.json
+node tools/hill-kinds.mjs warriors/koenigstuhl/94nop --bench <scaled>.json --bench ...
+build/42evolve <folder> --optimize <scaled.red> --opponents warriors/koenigstuhl/94nop --panel 100 --rounds 100
+```
+
+| warrior | instructions | tiny hill | on '94 as it is | scaled | vs paper | mover | scanner | stone | after `--optimize` |
+|---|---|---|---|---|---|---|---|---|---|
+| Clever Llama MCCXLV | 8: `DJN SPL 4 MOV DJN DJN` | 159.2 | 80.7 | **123.7** | 47.4 | 112.3 | 149.5 | 173.6 | 123.7 (0 steps) |
+| Furious Stoat | 5: `SPL MOV MOV JMP SLT` | 145.1 | 92.4 | **116.5** | 30.0 | 98.6 | 155.4 | 170.0 | 117.9 (1 step) |
+| Lone Adder | 4: `SPL MOV MOV DJN` | 129.3 | 67.7 | **115.1** | 33.9 | 104.7 | 146.4 | 165.3 |  |
+| Chaotic Lynx MDCXVI | 17: `DAT JMP DAT SPL 7 MOV JMN SPL JMP DIV DIV DAT` | 152.3 | 65.7 | 114.8 | 63.0 | 122.5 | 108.7 | 151.9 | 114.8 (0 steps) |
+| Quirky Eel | 10: `SPL MOV MOV 4 DJN SLT SLT JMP` | 142.7 | 98.5 | 112.7 | 40.6 | 101.8 | 131.0 | 161.6 |  |
+| Mighty Dodo CCLIX | 9: `DIV SPL 5 MOV DJN DJN` | 151.4 | 91.9 | 112.0 | 36.6 | 98.8 | 127.9 | 166.8 | 112.0 (0 steps) |
+| Twisted Falcon LIV | 20: `SPL SPL 3 MOV DAT SNE ADD JMN NOP JMZ 4 MOV SPL 3 MOV DAT` | 149.3 | 44.5 | 111.8 | 45.8 | 111.3 | 122.3 | 154.2 | 111.8 (0 steps) |
+| Rabid Hedgehog IV | 5: `SPL SPL MOV MOV DJN` | 116.1 | 103.9 | 111.6 | 60.3 | 131.9 | 115.3 | 137.8 |  |
+| Neon Salamander CLIX | 7: `JMP SPL 4 MOV DJN` | 148.7 | 92.6 | 110.8 | 34.6 | 95.8 | 134.1 | 163.9 |  |
+| Zealous Adder CXXVII | 20: `MOV SPL MOV MOV SPL 8 MOV SPL 5 MOV DJN` | 166.7 | 53.1 | 108.6 | 69.0 | 119.7 | 102.5 | 131.7 |  |
+| Overclocked Kitten CCCXXIII | 20: `JMP ADD 3 SPL MOV SPL 6 MOV SPL 3 MOV JMP MOV SNE` | 150.1 | 95.4 | 105.6 | 75.4 | 123.7 | 99.1 | 118.4 |  |
+| Toxic Octopus II | 8: `JMN 3 SPL MOV MOV DJN MUL` | 108.3 | 95.8 | 102.6 | 60.5 | 128.4 | 95.3 | 123.7 |  |
+| Lunar Squid CLXXXIX | 20: `SPL 3 MOV SPL 4 MOV MOD NOP CMP SPL MOV MOV SPL CMP MOV SPL MOV` | 146.1 | 55.2 | 101.3 | 55.6 | 109.3 | 103.9 | 127.0 |  |
+| Fearless Lobster MCCCXXXVII | 20: `SPL SPL 11 MOV SPL 6 MOV` | 160.3 | 63.3 | 99.5 | 65.3 | 114.6 | 93.7 | 115.9 |  |
+| Salty Jackal XIV | 20: `SPL SPL 3 MOV SPL 3 MOV SPL SPL MOV 3 SPL MOV 3 SPL JMN` | 141.3 | 79.6 | 96.2 | 82.8 | 110.4 | 80.3 | 101.9 |  |
+| Lunar Kitten XLIII | 20: `NOP SPL JMZ SPL MUL SUB SNE MUL DJN SPL MOV SPL JMP SPL DJN JMN MUL ADD ADD MOV` | 110.0 | 99.5 | 95.1 | 83.2 | 105.3 | 77.4 | 104.7 |  |
+| Blazing Gibbon | 8: `MOV SPL SPL 5 MOV` | 107.9 | 89.9 | 90.2 | 40.7 | 99.1 | 92.5 | 119.0 |  |
+| Jittery Hornet XII | 16: `SPL SPL 5 MOV DJN JMN MOV SPL JMN MOV DJN JMN MOV` | 123.0 | 58.7 | 88.6 | 65.1 | 111.0 | 75.5 | 94.8 |  |
+| Zesty Raptor XXVII | 18: `SPL JMP SPL 10 MOV DJN CMP ADD DAT DJN` | 121.2 | 82.7 | 87.3 | 51.5 | 103.5 | 83.8 | 103.5 |  |
+| Bitter Mummy XXXVI | 8: `SPL DAT SPL SPL MOV MOV DJN DJN` | 137.7 | 69.3 | 80.6 | 71.5 | 90.3 | 65.2 | 88.4 |  |
+
+- **Scaling is needed and is not enough.** As they are the 20 score 79.0 on average on '94, scaled 104.2 (138.3 on their own hill). None reaches 125. The best, Clever Llama MCCXLV with 123.7, is 19 points under the best '94 warrior from random code (Spiky Mongoose XVI, 142.9) and under the baseline's 126.8.
+- **What carries over is the design '94 finds by itself.** The three best scaled warriors are the clear of 4 to 8 instructions (`SPL`, two to four `MOV` with moving pointers, a `DJN` or `JMP` back): the design on top of every '94 run. They have its profile too: 30 to 47 against papers, 146 to 174 against scanners and stones.
+- **The tiny hill's own designs do not carry over.** The 10 warriors of 16 to 20 instructions (the Adder family with its rows of `MOV`, the Lobster, the Falcon) score 100.9 scaled, the 10 of up to 10 instructions 107.6. The long ones do better against papers (65.7 against 45.6) and much worse against scanners and stones (94.7 and 120.4 against 121.3 and 147.0): on '94 a warrior of 20 lines is a target, as the 16 unused instructions of "Stages around evolved warriors" were. Salty Jackal XIV and Lunar Kitten XLIII, with 83 against papers, are the best of all 20 there and score 96 and 95 in all.
+- **`--optimize` repairs nothing here.** One step on five warriors (Furious Stoat, 116.5 to 117.9 on the bench), none on the other four with 5 to 17 constants each. Constants times 10 are no worse a start than single moves can tell.
+
+Verdict: step 2 of #250, a '94 run started from the scaled warriors, is not run. Its bar was a scaled warrior at 125 or more, or one of a design that no '94 run has on top: the best has 123.7, and the ones that score are the clear every '94 run finds within 200 to 700 batches. The tiny hill is no nursery for '94 as the warriors stand. What the table adds to the papers question of #245: 20 lines of `SPL` and `MOV` hold 65 to 83 against papers where the clear holds 30 to 58, and pay for it against everything else.
