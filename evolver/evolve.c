@@ -82,7 +82,8 @@ static void usage(void) {
           "       42evolve <run folder> [--threads N] [--batches N] [--seconds S] [--changes ...] [--reintroduce p] [--list N]\n"
           "         [--screen-stop z | --screen-check z]   (continue a run)\n"
           "       42evolve <folder> --optimize <warrior.red> --opponents <dir> [--panel N | --panel-files ...]\n"
-          "         [--rounds 100] [--holdout 100] [--bench-rounds 100] [--seed 1] [--threads N]   (its constants)\n");
+          "         [--rounds 100] [--holdout 100] [--bench-rounds 100] [--seed 1] [--threads N]\n"
+          "         [--optimize-moves constants,fields,pairs,field-pairs]   (its constants, fields, pairs of them)\n");
   exit(2);
 }
 
@@ -176,6 +177,24 @@ static int option_text(cli *c, const char *a, const char *v, double d, int *rc) 
   if (!strcmp(a, "--opponents")) snprintf(p->opponents, sizeof p->opponents, "%s", v);
   else if (!strcmp(a, "--start")) snprintf(p->start, sizeof p->start, "%s", v);
   else if (!strcmp(a, "--optimize")) c->optimize_file = v;
+  else if (!strcmp(a, "--optimize-moves")) { // a comma list of constants, fields, pairs, field-pairs
+    static const char *const names[] = {"constants", "fields", "pairs", "field-pairs"};
+    p->optimize_moves = 0;
+    for (const char *q = v; *q;) {
+      const char *end = strchr(q, ',');
+      const size_t len = end ? (size_t)(end - q) : strlen(q);
+      int k = 0;
+      while (k < 4 && !(strlen(names[k]) == len && !strncmp(names[k], q, len))) k++;
+      if (k == 4) {
+        fprintf(stderr, "42evolve: --optimize-moves takes constants, fields, pairs and field-pairs, comma separated, not '%.*s'\n", (int)len, q);
+        *rc = 2;
+        return 1;
+      }
+      p->optimize_moves |= 1u << k;
+      q += len + (end ? 1 : 0);
+    }
+    if (!p->optimize_moves) usage();
+  }
   else if (!strcmp(a, "--panel-files")) {
     if (!*v || strlen(v) >= sizeof p->panel_files || strstr(v, ",,") || v[strlen(v) - 1] == ',') usage();
     snprintf(p->panel_files, sizeof p->panel_files, "%s", v);
@@ -414,6 +433,7 @@ static int parse_cli(int argc, char **argv, cli *c) {
 static const char *new_run_defaults(cli *c) {
   params *p = &c->p;
   if (!p->opponents[0]) usage();
+  if (p->optimize_moves && !c->optimize_file) return "--optimize-moves with --optimize";
   if (c->ladder_option && !p->ladder) return "--ladder-every and --ladder-above with --ladder";
   if (c->yield_option && p->parents != PARENTS_YIELD) return "--yield-half with --parents yield";
   // new runs: generators (docs/evolver-gen.md), not for --optimize, which keeps lists
