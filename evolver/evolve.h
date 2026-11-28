@@ -84,6 +84,7 @@ typedef struct {
   int ladder;               // --ladder (#247): the panel starts from the weakest third of the pick's candidates and climbs (ladder_climb())
   uint32_t ladder_every;    // --ladder-every E: a step of the ladder before every E-th batch
   uint32_t yield_half;      // --yield-half H: with --parents yield every member's counts are halved every H batches, 0 never
+  uint32_t optimize_moves;  // --optimize-moves: the bits of MOVE_* that --optimize tries, 0 constants only
   double ladder_above;      // --ladder-above T: a panel warrior is beaten when the median of the members' points against it is T or more
 } params;
 
@@ -91,6 +92,8 @@ enum { PARENTS_VALUE, PARENTS_DUEL, PARENTS_YIELD };
 #define YIELD_CAP 500 // --parents yield: a member's counts are halved above this (count_children()); below RNG_BETA_MAX
 
 enum { PANEL_PICKED, PANEL_RANDOM, PANEL_KINDS }; // --panel-choice
+
+enum { MOVE_CONSTANTS = 1, MOVE_FIELDS = 2, MOVE_PAIRS = 4, MOVE_FIELD_PAIRS = 8 }; // --optimize-moves (optimize.c)
 
 // ---------------------------------------------------------------- warriors
 

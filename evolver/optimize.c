@@ -121,14 +121,175 @@ static double opt_holdout(run *r, const m42_warrior *w) {
 
 typedef void (*opt_start_fn)(run *r, void *ctx, uint32_t nconst, const m42_warrior *w, double avg);
 
+// ---------------------------------------------------------------- the moves (--optimize-moves, #249)
+
+// One constant at a time found nothing on the warriors evolution had tuned:
+// the steps left are those that change two things together, and on warriors
+// of 4 to 7 instructions that neighbourhood is small enough to search
+// completely. A position is what a move changes; its candidates are every
+// change of that kind there, all played as one constant's candidates are.
+//   constants    one constant (opt_candidates()), as before #249
+//   fields       one field: an opcode, a modifier, an A or B mode (field x
+//                = 4 i + 0 .. 3 of instruction i), or the start (x = 4 len)
+//   pairs        two far constants together, by the same amount d (their
+//                difference stays) and by opposite ones (their sum stays),
+//                d = ±1 .. ±8 and ±1/2, ±1/3, ±2/3, ±1/4, ±3/4 of the core
+//   field-pairs  two fields at once, every value of each; only for warriors
+//                of up to FIELD_PAIRS_MAX instructions
+// The positions of a pass: those of each move given, in this order; a step
+// is taken where it is found and the same position is tried again.
+#define FIELD_PAIRS_MAX 8
+static const char *const MOVE_NAMES[] = {"constants", "fields", "pairs", "field-pairs"};
+static const char *const FIELD_NAMES[] = {"op", "mod", "am", "bm", "start"};
+
+typedef struct {
+  uint8_t move; // 0 .. 3, MOVE_NAMES
+  uint32_t x, y; // constants: x the constant; fields: x the field; pairs: the constants x, y; field-pairs: the fields x, y
+} opt_pos;
+
+static uint32_t field_kind(const genome *g, uint32_t x) { return x < 4 * g->len ? x % 4 : 4; }
+static uint32_t field_values(const genome *g, uint32_t x) {
+  static const uint32_t n[] = {GENOME_OPCODES, 7, 8, 8};
+  const uint32_t f = field_kind(g, x);
+  return f < 4 ? n[f] : g->len;
+}
+static uint32_t field_get(const genome *g, uint32_t x) {
+  const gene *e = &g->g[x / 4];
+  switch (field_kind(g, x)) {
+    case 0: return e->op;
+    case 1: return e->mod;
+    case 2: return e->am;
+    case 3: return e->bm;
+    default: return g->start;
+  }
+}
+static void field_set(genome *g, uint32_t x, uint32_t v) {
+  gene *e = &g->g[x / 4];
+  switch (field_kind(g, x)) {
+    case 0: e->op = (uint8_t)v; break;
+    case 1: e->mod = (uint8_t)v; break;
+    case 2: e->am = (uint8_t)v; break;
+    case 3: e->bm = (uint8_t)v; break;
+    default: g->start = v;
+  }
+}
+
+// The fields of g: every instruction's four, and the start when there is a choice.
+static uint32_t field_count(const genome *g) { return 4 * g->len + (g->len > 1); }
+
+// The positions of the moves given (bits of MOVE_*), in their order; how many. consts: the constants (the
+// start last, as opt_search() lists them).
+static uint32_t opt_positions(const genome *g, uint32_t moves, const uint32_t *consts, uint32_t nc, opt_pos **out) {
+  const uint32_t F = field_count(g), far = nc && consts[nc - 1] == 2 * g->len ? nc - 1 : nc;
+  const size_t most = nc + F + (size_t)far * far + (size_t)F * F + 1;
+  opt_pos *q = xmalloc(most * sizeof *q);
+  uint32_t n = 0;
+  if (moves & MOVE_CONSTANTS)
+    for (uint32_t i = 0; i < nc; i++) q[n++] = (opt_pos){0, consts[i], 0};
+  if (moves & MOVE_FIELDS)
+    for (uint32_t x = 0; x < F; x++)
+      if (x < 4 * g->len || !(moves & MOVE_CONSTANTS)) q[n++] = (opt_pos){1, x, 0}; // the start is a constant too
+  if (moves & MOVE_PAIRS)
+    for (uint32_t i = 0; i < far; i++)
+      for (uint32_t j = i + 1; j < far; j++) q[n++] = (opt_pos){2, consts[i], consts[j]};
+  if ((moves & MOVE_FIELD_PAIRS) && g->len <= FIELD_PAIRS_MAX)
+    for (uint32_t x = 0; x < F; x++)
+      for (uint32_t y = x + 1; y < F; y++) q[n++] = (opt_pos){3, x, y};
+  *out = q;
+  return n;
+}
+
+// The candidates of position q of g into *out (grown as needed, *cap its size); how many.
+static uint32_t opt_moves(const genome *g, const opt_pos *q, uint32_t core, const uint32_t *consts, uint32_t nc, genome **out,
+                          uint32_t *cap) {
+  uint32_t n = 0;
+#define ADD_CANDIDATE()                                                 \
+  do {                                                                  \
+    if (n == *cap) {                                                    \
+      *cap = *cap ? 2 * *cap : 64;                                      \
+      genome *t = xmalloc(*cap * sizeof *t);                            \
+      if (n) memcpy(t, *out, n * sizeof *t);                            \
+      free(*out);                                                       \
+      *out = t;                                                         \
+    }                                                                   \
+    (*out)[n] = *g;                                                     \
+  } while (0)
+  if (q->move == 0) {
+    uint32_t v[128];
+    const uint32_t m = opt_candidates((genome *)g, q->x, core, consts, nc, v);
+    for (uint32_t i = 0; i < m; i++) {
+      ADD_CANDIDATE();
+      *opt_slot(&(*out)[n++], q->x) = v[i];
+    }
+  } else if (q->move == 1) {
+    const uint32_t now = field_get(g, q->x), m = field_values(g, q->x);
+    for (uint32_t v = 0; v < m; v++)
+      if (v != now) {
+        ADD_CANDIDATE();
+        field_set(&(*out)[n++], q->x, v);
+      }
+  } else if (q->move == 2) {
+    const uint32_t a = *opt_slot((genome *)g, q->x), b = *opt_slot((genome *)g, q->y);
+    int64_t d[26];
+    uint32_t nd = 0;
+    for (int k = 1; k <= 8; k++) d[nd++] = k, d[nd++] = -k;
+    static const int frac[][2] = {{1, 2}, {1, 3}, {2, 3}, {1, 4}, {3, 4}};
+    for (int f = 0; f < 5; f++) d[nd++] = (int64_t)core * frac[f][0] / frac[f][1], d[nd++] = -((int64_t)core * frac[f][0] / frac[f][1]);
+    uint32_t seen[2 * 26][2], ns = 0;
+    for (uint32_t k = 0; k < nd; k++)
+      for (int opposite = 0; opposite < 2; opposite++) {
+        const uint32_t va = wrapped((int64_t)a + d[k], core), vb = wrapped((int64_t)b + (opposite ? -d[k] : d[k]), core);
+        int dup = va == a && vb == b;
+        for (uint32_t i = 0; i < ns && !dup; i++) dup = seen[i][0] == va && seen[i][1] == vb;
+        if (dup) continue;
+        seen[ns][0] = va, seen[ns++][1] = vb;
+        ADD_CANDIDATE();
+        *opt_slot(&(*out)[n], q->x) = va;
+        *opt_slot(&(*out)[n++], q->y) = vb;
+      }
+  } else {
+    const uint32_t nx = field_get(g, q->x), ny = field_get(g, q->y), mx = field_values(g, q->x), my = field_values(g, q->y);
+    for (uint32_t vx = 0; vx < mx; vx++)
+      for (uint32_t vy = 0; vy < my; vy++)
+        if (vx != nx && vy != ny) {
+          ADD_CANDIDATE();
+          field_set(&(*out)[n], q->x, vx);
+          field_set(&(*out)[n++], q->y, vy);
+        }
+  }
+#undef ADD_CANDIDATE
+  return n;
+}
+
+// What a step changed, from g to h at position q: {"field", "at" (its instruction, the start: -1), "from",
+// "to"} for each thing it changed; operand values signed, the others as they are stored.
+static void opt_changes(FILE *f, const genome *g, const genome *h, const opt_pos *q, uint32_t core) {
+  fputc('[', f);
+  for (int k = 0; k < (q->move >= 2 ? 2 : 1); k++) {
+    const uint32_t x = k ? q->y : q->x;
+    if (k) fputc(',', f);
+    if (q->move == 0 || q->move == 2) { // a constant: operand x / 2, or the start
+      const int start = x == 2 * g->len;
+      fprintf(f, "{\"field\":\"%s\",\"at\":%d,\"from\":%d,\"to\":%d}", start ? "start" : x % 2 ? "b" : "a", start ? -1 : (int)(x / 2),
+              start ? (int)g->start : signed_of(*opt_slot((genome *)g, x), core), start ? (int)h->start : signed_of(*opt_slot((genome *)h, x), core));
+    } else {
+      const uint32_t fk = field_kind(g, x);
+      fprintf(f, "{\"field\":\"%s\",\"at\":%d,\"from\":%u,\"to\":%u}", FIELD_NAMES[fk], fk == 4 ? -1 : (int)(x / 4), field_get(g, x), field_get(h, x));
+    }
+  }
+  fputc(']', f);
+}
+
 // The search on genome g, changed in place to the best found: at most
-// `passes` passes over its constants. on_start (if any) gets the number of
-// constants, the warrior and its average against the panel before the first
-// step; log (if any) gets an event `optimize-step` for each step. Returns the
-// steps taken; *avg0, *avg1 the average against the panel before and after;
-// *out (if given) the warrior of the result, else it is freed.
-static uint32_t opt_search(run *r, genome *g_io, uint32_t passes, opt_start_fn on_start, void *ctx, FILE *log, double *avg0,
-                           double *avg1, m42_warrior **out) {
+// `passes` passes over the positions of the moves (bits of MOVE_*). on_start
+// (if any) gets the number of constants, the warrior and its average against
+// the panel before the first step; log (if any) gets an event `optimize-try`
+// for each position tried (its candidates, how many were ahead after the
+// first rounds, whether it took a step) and `optimize-step` for each step.
+// Returns the steps taken; *avg0, *avg1 the average against the panel before
+// and after; *out (if given) the warrior of the result, else it is freed.
+static uint32_t opt_search(run *r, genome *g_io, uint32_t passes, uint32_t moves, opt_start_fn on_start, void *ctx, FILE *log,
+                           double *avg0, double *avg1, m42_warrior **out) {
   const params *p = &r->p;
   const uint32_t core = p->rules.core_size, P = r->panel_n, R = p->rounds, F = OPT_FIRST < R ? OPT_FIRST : R;
   genome g = *g_io;
@@ -138,6 +299,10 @@ static uint32_t opt_search(run *r, genome *g_io, uint32_t passes, opt_start_fn o
     if (!g.g[i].bref && abs(signed_of(g.g[i].b, core)) > 16) consts[nc++] = 2 * i + 1;
   }
   if (g.len > 1) consts[nc++] = 2 * g.len;
+  opt_pos *pos;
+  const uint32_t npos = opt_positions(&g, moves, consts, nc, &pos);
+  if ((moves & MOVE_FIELD_PAIRS) && g.len > FIELD_PAIRS_MAX)
+    fprintf(stderr, "42evolve: --optimize-moves field-pairs: %u instructions, more than %d: no field pairs\n", g.len, FIELD_PAIRS_MAX);
   m42_warrior *cur = make_warrior(&g, &p->rules);
   m42_score *cur1 = calloc(P, sizeof *cur1), *curw = calloc(P, sizeof *curw);
   opt_play(r, (const m42_warrior *const *)&cur, 1, 0, F, 0, cur1);
@@ -145,27 +310,30 @@ static uint32_t opt_search(run *r, genome *g_io, uint32_t passes, opt_start_fn o
   if (R > F) opt_play(r, (const m42_warrior *const *)&cur, 1, F, R - F, 0, curw);
   *avg0 = opt_avg(curw, P);
   if (on_start) on_start(r, ctx, nc, cur, *avg0);
-  uint32_t cand[128];
-  m42_warrior **cw = xmalloc(128 * sizeof *cw);
-  m42_score *s1 = xmalloc((size_t)128 * P * sizeof *s1), *sw = xmalloc((size_t)128 * P * sizeof *sw);
+  genome *cg = 0;
+  uint32_t cap = 0, wcap = 0;
+  m42_warrior **cw = 0;
+  m42_score *s1 = 0, *sw = 0;
+  uint32_t *ahead = 0;
   uint32_t accepted = 0;
   for (uint32_t pass = 1; pass <= passes && !stop_now; pass++) {
     uint32_t in_pass = 0;
-    for (uint32_t ci = 0; ci < nc && !stop_now; ci++) {
-      const uint32_t k = consts[ci];
+    for (uint32_t pi = 0; pi < npos && !stop_now; pi++) {
+      const opt_pos *q = &pos[pi];
       for (;;) {
-        const uint32_t n = opt_candidates(&g, k, core, consts, nc, cand);
+        const uint32_t n = opt_moves(&g, q, core, consts, nc, &cg, &cap);
         if (!n) break;
-        genome *cg = xmalloc(n * sizeof *cg);
-        for (uint32_t i = 0; i < n; i++) {
-          cg[i] = g;
-          *opt_slot(&cg[i], k) = cand[i];
-          cw[i] = make_warrior(&cg[i], &p->rules);
+        if (n > wcap) {
+          free(cw), free(s1), free(sw), free(ahead);
+          wcap = n;
+          cw = xmalloc(n * sizeof *cw), ahead = xmalloc(n * sizeof *ahead);
+          s1 = xmalloc((size_t)n * P * sizeof *s1), sw = xmalloc((size_t)n * P * sizeof *sw);
         }
+        for (uint32_t i = 0; i < n; i++) cw[i] = make_warrior(&cg[i], &p->rules);
         // the first rounds for all, the rest for those ahead then
         memset(s1, 0, (size_t)n * P * sizeof *s1);
         opt_play(r, (const m42_warrior *const *)cw, n, 0, F, 0, s1);
-        uint32_t ahead[128], na = 0;
+        uint32_t na = 0;
         for (uint32_t i = 0; i < n; i++) {
           double d, se;
           opt_diff(s1 + (size_t)i * P, cur1, P, &d, &se);
@@ -200,8 +368,30 @@ static uint32_t opt_search(run *r, genome *g_io, uint32_t passes, opt_start_fn o
           free(a);
           free(b);
         }
+        if (log) {
+          fprintf(log, "{\"type\":\"optimize-try\",\"pass\":%u,\"move\":\"%s\",\"at\":[%u", pass, MOVE_NAMES[q->move], q->x);
+          if (q->move >= 2) fprintf(log, ",%u", q->y);
+          fprintf(log, "],\"candidates\":%u,\"ahead\":%u,\"step\":%s}\n", n, na, ok ? "true" : "false");
+        }
         if (ok) {
-          const uint32_t from = *opt_slot(&g, k);
+          if (log) {
+            fprintf(log, "{\"type\":\"optimize-step\",\"pass\":%u,\"move\":\"%s\",", pass, MOVE_NAMES[q->move]);
+            if (q->move == 0) {
+              const uint32_t k = q->x;
+              fprintf(log, "\"constant\":%u,\"what\":\"%s\",\"from\":%d,\"to\":%d,", k, k == 2 * g.len ? "start" : k % 2 ? "b" : "a",
+                      k == 2 * g.len ? (int)g.start : signed_of(*opt_slot(&g, k), core),
+                      k == 2 * g.len ? (int)cg[best].start : signed_of(*opt_slot(&cg[best], k), core));
+            }
+            fputs("\"changes\":", log);
+            opt_changes(log, &g, &cg[best], q, core);
+            m42_score *w = sw + (size_t)best * P;
+            fprintf(log, ",\"avg\":%.6f,\"gain\":%.6f,\"se\":%.6f,\"confirm\":%.6f,\"confirmSe\":%.6f,\"candidates\":%u}\n", opt_avg(w, P),
+                    best_d, best_se, cd, cse, n);
+            fflush(log);
+            fprintf(stderr, "pass %u: %s at %u", pass, MOVE_NAMES[q->move], q->x);
+            if (q->move >= 2) fprintf(stderr, " and %u", q->y);
+            fprintf(stderr, ", %.1f against the panel (+%.2f, se %.2f)\n", opt_avg(w, P), best_d, best_se);
+          }
           g = cg[best];
           free(cur);
           cur = cw[best];
@@ -209,20 +399,8 @@ static uint32_t opt_search(run *r, genome *g_io, uint32_t passes, opt_start_fn o
           memcpy(cur1, s1 + (size_t)best * P, P * sizeof *cur1);
           memcpy(curw, sw + (size_t)best * P, P * sizeof *curw);
           accepted++, in_pass++;
-          if (log) {
-            fprintf(log,
-                    "{\"type\":\"optimize-step\",\"pass\":%u,\"constant\":%u,\"what\":\"%s\",\"from\":%d,\"to\":%d,"
-                    "\"avg\":%.6f,\"gain\":%.6f,\"se\":%.6f,\"confirm\":%.6f,\"confirmSe\":%.6f,\"candidates\":%u}\n",
-                    pass, k, k == 2 * g.len ? "start" : k % 2 ? "b" : "a", k == 2 * g.len ? (int)from : signed_of(from, core),
-                    k == 2 * g.len ? (int)*opt_slot(&g, k) : signed_of(*opt_slot(&g, k), core), opt_avg(curw, P), best_d,
-                    best_se, cd, cse, n);
-            fflush(log);
-            fprintf(stderr, "pass %u: constant %u from %d to %d, %.1f against the panel (+%.2f, se %.2f)\n", pass, k,
-                    signed_of(from, core), signed_of(*opt_slot(&g, k), core), opt_avg(curw, P), best_d, best_se);
-          }
         }
         for (uint32_t i = 0; i < n; i++) free(cw[i]);
-        free(cg);
         if (!ok) break;
       }
     }
@@ -232,11 +410,7 @@ static uint32_t opt_search(run *r, genome *g_io, uint32_t passes, opt_start_fn o
   *g_io = g;
   if (out) *out = cur;
   else free(cur);
-  free(cur1);
-  free(curw);
-  free(cw);
-  free(s1);
-  free(sw);
+  free(cur1), free(curw), free(cw), free(s1), free(sw), free(ahead), free(cg), free(pos);
   return accepted;
 }
 
@@ -254,7 +428,11 @@ static void opt_start(run *r, void *ctx, uint32_t nc, const m42_warrior *w, doub
   json_str(f, o->file, 1);
   fprintf(f, ",\"name\":");
   json_str(f, o->name, 1);
-  fprintf(f, ",\"constants\":%u,\"rounds\":%u,\"avg\":%.6f,\"holdout\":%.6f,\"panel\":[", nc, r->p.rounds, avg, o->hold);
+  fputs(",\"moves\":\"", f);
+  const uint32_t moves = r->p.optimize_moves ? r->p.optimize_moves : MOVE_CONSTANTS;
+  for (int k = 0, n = 0; k < 4; k++)
+    if (moves & (1u << k)) fprintf(f, "%s%s", n++ ? "," : "", MOVE_NAMES[k]);
+  fprintf(f, "\",\"constants\":%u,\"rounds\":%u,\"avg\":%.6f,\"holdout\":%.6f,\"panel\":[", nc, r->p.rounds, avg, o->hold);
   for (uint32_t j = 0; j < r->panel_n; j++) {
     fprintf(f, "%s{\"file\":", j ? "," : "");
     json_str(f, r->panel[j].file, 1);
@@ -281,7 +459,8 @@ int optimize(run *r, const char *file) {
   opt_ctx ctx = {file, name, 0};
   double start_avg, end_avg;
   m42_warrior *cur;
-  const uint32_t accepted = opt_search(r, &g, OPT_PASSES, opt_start, &ctx, r->events, &start_avg, &end_avg, &cur);
+  const uint32_t accepted = opt_search(r, &g, OPT_PASSES, p->optimize_moves ? p->optimize_moves : MOVE_CONSTANTS, opt_start, &ctx, r->events,
+                                        &start_avg, &end_avg, &cur);
   const double start_hold = ctx.hold, end_hold = opt_holdout(r, cur);
   FILE *f = r->events;
   fprintf(f, "{\"type\":\"optimize-end\",\"accepted\":%u,\"avg\":%.6f,\"holdout\":%.6f}\n", accepted, end_avg, end_hold);
