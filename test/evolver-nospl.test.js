@@ -13,7 +13,7 @@ import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { setup, cleanup, root, tmp, skip, evolve, TINY, run, events, without, stable } from './evolver-common.js';
+import { setup, cleanup, root, tmp, skip, evolve, TINY, run, events, without, stable, stateParam } from './evolver-common.js';
 
 before(() => setup({ base: false }));
 after(cleanup);
@@ -50,7 +50,7 @@ test('--no-spl: no newcomer of a run on lists has SPL, every kind of change draw
   run(join(tmp, 'nospl-list'), [...list, '--no-spl', '--threads', '1', '--batches', String(B)]);
   const one = events(join(tmp, 'nospl-list'));
   assert.equal(one[0].params.noSpl, true);
-  assert.match(readFileSync(join(tmp, 'nospl-list', 'state.txt'), 'latin1'), /^params .* 1 0 0 0$/m); // --no-spl, then --survivors-by, --replace-parent and --events
+  assert.equal(stateParam(readFileSync(join(tmp, 'nospl-list', 'state.txt'), 'latin1'), 'noSpl'), '1');
   assert.ok(enters(one).length >= 400, `${enters(one).length} newcomers`);
   assert.ok(allEntered(one));
   assert.deepEqual(withSpl(one).map((e) => e.id), []);

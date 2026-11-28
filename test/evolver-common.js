@@ -54,6 +54,13 @@ export const TINY = ['--opponents', join(root, 'warriors/koenigstuhl/tiny'), '--
   '--events', 'full', // every newcomer with its matches, which checkValues replays; test/evolver-brief.test.js has the brief lines
   '--stage', '0']; // the tests of --stage set it
 
+// The numbers of the params line of a state, in the order of param_fields (evolver/state.c), and the places (from
+// 1) of those the tests look at: by its place, so that a field added at the end changes no test (#247: six tests
+// matched the end of the line).
+export const stateParams = (text) => /^params (.*)$/m.exec(text)[1].split(' ');
+export const PARAM = { gen: 44, tie: 47, parsimony: 48, noSpl: 49, survivorsBy: 50, replaceParent: 51, events: 52, ladder: 53, ladderEvery: 54, ladderAbove: 55 };
+export const stateParam = (text, name) => stateParams(text)[PARAM[name] - 1];
+
 export function run(dir, args) {
   const r = spawnSync(evolve, [dir, ...args], { encoding: 'utf8', timeout: Math.ceil(120000 * slowdown()) });
   assert.equal(r.status, 0, r.stderr);
@@ -530,4 +537,103 @@ export function mirrored(m, a, b, seed, first, rounds) {
     out[0] += x.wins, out[1] += x.losses, out[2] += x.ties;
   }
   return out;
+}
+
+// --ladder (#247)
+// The ladder of a run as its state has it: the candidates, the weakest first.
+export const rungs = (dir) => readFileSync(join(dir, 'state.txt'), 'utf8').split('\n').filter((l) => l.startsWith('ladder ')).map((l) => {
+  const [, used, kind, avg, file] = /^ladder (\d) (-?\d+) (\S+) (.*)$/.exec(l);
+  return { used: used === '1', kind: Number(kind), avg: Number(avg), file };
+});
+
+// Replays the ladder of a run from its events: the start, every step and what the state has at the end.
+// Returns { steps, replaced, tops (replacements by a candidate of another kind), stuck (beaten and not replaced) }.
+export function checkLadder(dir, evs, { every, above }) {
+  const start = evs[0];
+  assert.deepEqual([start.params.ladder, start.params.ladderEvery, start.params.ladderAbove], [true, every, above]);
+  const ladder = rungs(dir), P = start.panel.length;
+  const at = new Map(ladder.map((g, i) => [g.file, i]));
+  // the weakest first; the panel is of the weakest third (at least the panel's size), and no holdout warrior is a candidate
+  for (let i = 1; i < ladder.length; i++) assert.ok(ladder[i - 1].avg <= ladder[i].avg, `rung ${i} is weaker than the one before`);
+  const third = Math.max(Math.floor(ladder.length / 3), P);
+  for (const p of start.panel) assert.ok(at.get(p.file) < third, `${p.file} is rung ${at.get(p.file)} of ${ladder.length}: not of the weakest ${third}`);
+  for (const h of start.holdout) assert.ok(!at.has(h.file), `the holdout warrior ${h.file} is a candidate of the ladder`);
+  const pick = evs.find((e) => e.type === 'pick');
+  assert.deepEqual(pick.picked.map((p) => p.file), start.panel.map((p) => p.file));
+  for (const p of pick.picked) assert.ok(Math.abs(p.avg - ladder[at.get(p.file)].avg) < 1e-5, `${p.file}: its average in the pick`);
+  const used = new Set(start.panel.map((p) => p.file));
+  const slots = start.panel.map((p) => ({ id: p.id, file: p.file })); // the panel now
+  const pts = new Map(); // "member,panel id" -> the member's points per 100 rounds
+  const members = new Set();
+  let steps = 0, replaced = 0, tops = 0, stuck = 0, pending = [];
+  const expectStep = (batch) => { // the step before the batch, from the list as it is: [{ slot, median, file }]
+    const med = slots.map((s) => {
+      const col = [...members].map((m) => pts.get(`${m},${s.id}`)).sort((a, b) => a - b);
+      return col.length ? col[Math.floor(col.length / 2)] : -1;
+    });
+    const beaten = med.filter((x) => x >= above).length, out = [], tried = new Set();
+    while (out.length < 3) {
+      let j = -1;
+      med.forEach((x, k) => { if (!tried.has(k) && x >= above && (j < 0 || x > med[j])) j = k; });
+      if (j < 0) break;
+      tried.add(j);
+      const mine = at.get(slots[j].file);
+      let next = ladder.findIndex((g, k) => k > mine && !used.has(g.file) && g.kind === ladder[mine].kind), top = false;
+      if (next < 0) {
+        for (let k = ladder.length - 1; k > mine && next < 0; k--) if (!used.has(ladder[k].file)) next = k;
+        top = next >= 0;
+      }
+      if (next < 0) {
+        stuck++;
+        continue;
+      }
+      used.add(ladder[next].file);
+      out.push({ slot: j, median: med[j], file: ladder[next].file, was: ladder[mine].avg, avg: ladder[next].avg, top });
+    }
+    return { batch, beaten, out };
+  };
+  for (const e of evs) {
+    if (e.type === 'enter') {
+      members.add(e.id);
+      for (const [o, w, l, t] of e.scores) pts.set(`${e.id},${o}`, ((3 * w + t) * 100) / (w + l + t));
+    }
+    if (e.type === 'complete') for (const [o, w, l, t] of e.scores) pts.set(`${e.id},${o}`, ((3 * w + t) * 100) / (w + l + t));
+    if (e.type === 'leave') members.delete(e.id);
+    if (e.type === 'rotate') { // the new panel warrior's results: a member's are the other way round
+      assert.deepEqual(e.from, [0, 0], 'a hill warrior, no foe of --groups');
+      pending.push(e);
+      for (const [o, w, l, t] of e.scores) pts.set(`${o},${e.panel.id}`, ((3 * l + t) * 100) / (w + l + t));
+      assert.equal(e.scores.length, slots.length - 1 + members.size, 'everybody in played the new panel warrior');
+    }
+    if (e.type !== 'ladder') continue;
+    steps++;
+    assert.ok(e.batch > 0 && e.batch % every === 0, `a step before batch ${e.batch}`);
+    // the rotate events of the step came first; the step was decided on the panel before them (slots has it still)
+    const want = expectStep(e.batch);
+    assert.equal(e.above, above);
+    assert.equal(e.beaten, want.beaten, `batch ${e.batch}: the beaten panel warriors`);
+    assert.deepEqual(e.replaced.map((x) => [x.slot, x.file]), want.out.map((x) => [x.slot, x.file]), `batch ${e.batch}: who was replaced by whom`);
+    assert.deepEqual(pending.map((r) => [r.out, r.panel.id, r.panel.file]), e.replaced.map((x) => [x.out, x.in, x.file]), `batch ${e.batch}: a rotate event for each`);
+    e.replaced.forEach((x, k) => {
+      const w = want.out[k];
+      assert.ok(Math.abs(x.median - w.median) < 1e-5 && Math.abs(x.avg - w.avg) < 1e-5 && Math.abs(x.was - w.was) < 1e-5, `batch ${e.batch}, slot ${x.slot}`);
+      assert.ok(x.median >= above, 'only a beaten panel warrior is replaced');
+      assert.ok(at.get(x.file) > at.get(slots[x.slot].file), 'by a stronger one');
+      assert.equal(x.out, slots[x.slot].id);
+      slots[x.slot] = { id: x.in, file: x.file };
+      if (w.top) tops++;
+    });
+    for (let k = 1; k < e.replaced.length; k++) assert.ok(e.replaced[k - 1].median >= e.replaced[k].median, 'the most beaten first');
+    assert.ok(e.replaced.length <= 3);
+    replaced += e.replaced.length;
+    pending = [];
+    const strength = slots.reduce((s, x) => s + ladder[at.get(x.file)].avg, 0) / slots.length;
+    assert.ok(Math.abs(e.strength - strength) < 1e-5, `batch ${e.batch}: the strength of the panel`);
+    assert.equal(e.left, ladder.length - used.size);
+  }
+  assert.equal(pending.length, 0, 'a rotate event without its ladder event');
+  // never a warrior twice, and the state has who was in
+  assert.equal(new Set(evs.filter((e) => e.type === 'rotate').map((e) => e.panel.file)).size, replaced);
+  assert.deepEqual(ladder.filter((g) => g.used).map((g) => g.file).sort(), [...used].sort());
+  return { steps, replaced, tops, stuck };
 }
