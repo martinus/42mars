@@ -224,7 +224,7 @@ Nobody writes a function: `extract` makes one from lines that evolved, `call` an
 | 3, open | '94nop: 8 islands against 8, the setting of the twelfth comparison, then the long runs | The top three against the 1,107: above the list's. At batch 100: 101.1 and 101.8 against the list's 104.0, not above. The long runs stop rising at about 107 ("After step 2b") |
 | 4, part | The dashboard shows the generator; `--optimize` and `--tune-novel` on generators | The card shows the generator and its refactorings (21st November); `--optimize` and `--tune-novel` not yet |
 
-The reference for "rivals" is to be measured once before step 3: the scores of the hill's own warriors on the same bench (median 145; the top is not recorded yet).
+The reference for "rivals" is to be measured once before step 3: the scores of the hill's own warriors on the same bench (measured for #245, 28th November 2026: median 151.0, the best quarter from 165.7, the best tenth from 172.2, the best, Arvon, 187.1; the mean of the best 20 is 181.8, and our best from random code, Spiky Mongoose XVI, has 142.9: `docs/evolver.md`, "The hill's own scores").
 
 ## Step 2b on the tiny hill
 
