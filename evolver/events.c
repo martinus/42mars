@@ -58,7 +58,7 @@ void event_start(run *r) {
           "\"rounds\":%u,\"screenRounds\":%u,\"benchEvery\":%u,\"benchRounds\":%u,\"initLength\":%u,"
           "\"screenFactor\":%.17g,\"alpha\":%.17g,\"reintroduce\":%.17g,\"sd\":\"%s\",\"seed\":%" PRIu64
           ","
-          "\"parents\":\"%s\",\"screenMembers\":%u,\"stage\":%u,\"fill\":%s,\"panelRounds\":%u,\"diversity\":\"%s\",\"panelChoice\":\"%s\",\"screenStop\":%.17g,\"screenCheck\":%.17g,\"average\":\"%s\",\"memberGames\":\"%s\",\"drawSeed\":%" PRIu64 ",\"pushoff\":\"%s\",\"positions\":\"%s\",\"clear\":%.17g,\"genome\":\"%s\",\"minLength\":%u,\"tiePoints\":%.17g,\"parsimony\":%s,\"noSpl\":%s,\"survivorsBy\":\"%s\",\"replaceParent\":%s,\"events\":\"%s\"},"
+          "\"parents\":\"%s\",\"screenMembers\":%u,\"stage\":%u,\"fill\":%s,\"panelRounds\":%u,\"diversity\":\"%s\",\"panelChoice\":\"%s\",\"screenStop\":%.17g,\"screenCheck\":%.17g,\"average\":\"%s\",\"memberGames\":\"%s\",\"drawSeed\":%" PRIu64 ",\"pushoff\":\"%s\",\"positions\":\"%s\",\"clear\":%.17g,\"genome\":\"%s\",\"minLength\":%u,\"tiePoints\":%.17g,\"parsimony\":%s,\"noSpl\":%s,\"survivorsBy\":\"%s\",\"replaceParent\":%s,\"events\":\"%s\",\"ladder\":%s,\"ladderEvery\":%u,\"ladderAbove\":%.17g},"
           "\"opponents\":",
           m42_version(), p->rules.core_size, p->rules.max_cycles, p->rules.max_processes, p->rules.max_length,
           p->rules.min_distance, r->panel_n, r->hold_n, p->list, p->batch, p->survivors, p->rounds, p->screen_rounds,
@@ -74,7 +74,8 @@ void event_start(run *r) {
           p->average_panel ? "panel" : "all", p->member_games_none ? "none" : "all", p->draw_seed,
           p->pareto == 3 ? "pareto-sd" : p->pareto ? "pareto" : "value", p->mirror ? "mirror" : "pmars", p->clear, p->gen ? "gen" : "list", p->min_length, p->tie,
           p->parsimony ? "true" : "false", p->no_spl ? "true" : "false",
-          p->survivors_by ? "pushoff" : "strength", p->replace_parent ? "true" : "false", p->events_brief ? "brief" : "full");
+          p->survivors_by ? "pushoff" : "strength", p->replace_parent ? "true" : "false", p->events_brief ? "brief" : "full",
+          p->ladder ? "true" : "false", p->ladder_every, p->ladder_above);
   json_str(f, p->opponents, 0);
   fputs(",\"panelFiles\":", f);
   json_str(f, p->panel_files, 0);

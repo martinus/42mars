@@ -16,7 +16,7 @@ import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from
 import { join } from 'node:path';
 import { assemble } from '../wasm/42mars.js';
 import { builtProgram, lines, prebuilt, program } from './native.js';
-import { setup, cleanup, root, tmp, evolve, skip, RULES, TINY, run, events, stable, checkValues } from './evolver-common.js';
+import { setup, cleanup, root, tmp, evolve, skip, RULES, TINY, run, events, stable, checkValues, PARAM, stateParams } from './evolver-common.js';
 
 let gen = prebuilt ? program(prebuilt, '42gen') : null;
 before(async () => {
@@ -127,11 +127,13 @@ test('--genome gen: start warriors, what it refuses, and a state from before it'
   // a state without the field (written before --genome) is a run on lists
   const file = join(tmp, 'start-list', 'state.txt');
   const state = readFileSync(file, 'latin1');
-  const old = state.replace(/^(params .*) 0 0 0 1 0 0 0 0 0$/m, '$1'); // and without --refactor, --min-length, --tie-points, --parsimony, --no-spl, --survivors-by, --replace-parent and --events
+  // and without everything after it: --refactor, --min-length, --tie-points, --parsimony, --no-spl, --survivors-by, --replace-parent, --events, ...
+  const old = state.replace(/^params .*$/m, (line) => line.split(' ').slice(0, PARAM.gen).join(' '));
   assert.notEqual(old, state);
   writeFileSync(file, old, 'latin1');
   run(join(tmp, 'start-list'), ['--threads', '2', '--batches', '1']);
-  assert.match(readFileSync(file, 'latin1'), /^params .* 0 0 0 1 0 0 0 0 0$/m); // a state from before --events: full
+  // the defaults of what it lacked: lists, --tie-points 1, and from before --events: full
+  assert.deepEqual(stateParams(readFileSync(file, 'latin1')).slice(PARAM.gen - 1, PARAM.events), ['0', '0', '0', '1', '0', '0', '0', '0', '0']);
   assert.ok(events(join(tmp, 'start-list')).every((e) => !('gen' in e)));
 });
 

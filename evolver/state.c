@@ -30,7 +30,8 @@ static const param_field param_fields[] = {
     GONE("--tune-novel"), PF('d', average_panel), PF('d', member_games_none), GONE("--simple"), PF('q', draw_seed),
     GONE("--difference"), PF('d', pareto), PF('d', mirror), PF('g', clear), PF('d', gen), GONE("--refactor"),
     PF('u', min_length), PF('g', tie), PF('d', parsimony), PF('d', no_spl),
-    PF('d', survivors_by), PF('d', replace_parent), PF('d', events_brief)};
+    PF('d', survivors_by), PF('d', replace_parent), PF('d', events_brief), PF('d', ladder), PF('u', ladder_every),
+    PF('g', ladder_above)};
 #define PARAM_FIELDS (sizeof param_fields / sizeof *param_fields)
 
 static void save_params(FILE *f, const params *p) {
@@ -136,6 +137,8 @@ void save_state(run *r) {
     genome_save(&r->best_g, text, sizeof text);
     fprintf(f, "best-genome %s\n", text);
   }
+  for (uint32_t i = 0; i < r->ladder_n; i++) // --ladder: the candidates, the weakest first
+    fprintf(f, "ladder %d %d %.17g %s\n", r->ladder[i].used, r->ladder[i].kind, r->ladder[i].avg, r->ladder[i].file);
   for (uint32_t i = 0; i < NAME_ADJECTIVES * NAME_NOUNS; i++)
     if (r->names[i]) fprintf(f, "names %u %u\n", i, r->names[i]);
   for (uint32_t i = 0; i < r->active_n; i++)
@@ -305,6 +308,11 @@ static int state_line(run *r, char *line, uint64_t *slot_id, uint32_t *slot_at, 
   } else if (!strncmp(line, "hall-name ", 10)) {
     if (!r->hall_n) return -1;
     snprintf(r->hall[r->hall_n - 1].name, sizeof r->hall[0].name, "%s", line + 10);
+  } else if (!strncmp(line, "ladder ", 7)) { // --ladder: a candidate, in the order of the ladder
+    int used, kind, at = 0;
+    double avg;
+    if (sscanf(line + 7, "%d %d %lg %n", &used, &kind, &avg, &at) != 3 || !at || !line[7 + at]) return -1;
+    ladder_add(r, line + 7 + at, kind, avg, used);
   } else if (!strncmp(line, "archive ", 8)) {
     int used = 0;
     if (r->archive_n >= ARCHIVE_MAX ||

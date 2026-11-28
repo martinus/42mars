@@ -46,6 +46,8 @@ params default_params(void) {
   p.sd = SD_OPPONENT;
   p.seed = 1;
   p.changes = genome_mix_default();
+  p.ladder_every = 10;
+  p.ladder_above = 200;
   return p;
 }
 
@@ -70,6 +72,7 @@ static void usage(void) {
           "         [--member-games all|none] [--pushoff value|pareto|pareto-sd] [--clear R] [--positions mirror|pmars]\n"
           "         [--genome list|gen] [--min-length N] [--tie-points t] [--parsimony] [--no-spl]\n"
           "         [--survivors-by strength|pushoff] [--replace-parent] [--events brief|full]\n"
+          "         [--ladder [--ladder-every 10] [--ladder-above 200]]\n"
           "         [--islands N [--select-after B [--keep K]] [--score-rounds R] [--score-designs 3]\n"
           "           [--migrate M [--migrate-pick best|random] [--migrate-to all|random]] [--island-variant \"options\" ...] [--island-panels shared|own] [--explorers K]\n"
           "           [--groups K [--group-every 10] [--group-slots panel/3] [--group-hall slots/2]]]\n"
@@ -119,6 +122,8 @@ static const char *params_error(const params *p) {
   if (!p->gen && structure_kinds(&p->changes)) return STRUCTURE_NEEDS_GEN;
   if (p->min_length > p->rules.max_length) return "--min-length at most --length";
   if (!(p->tie >= 0 && p->tie <= 3)) return "--tie-points 0 to 3";
+  if (p->ladder && (p->panel_random != PANEL_KINDS || p->panel_files[0])) return "--ladder with --panel-choice kinds, not with --panel-files";
+  if (!p->ladder_every || !(p->ladder_above > 0)) return "--ladder-every 1 or more, --ladder-above more than 0";
   return 0;
 }
 
@@ -137,6 +142,7 @@ typedef struct {
   int new_options, stage_given, screen_members_given, diversity_given, panel_rounds_given, fill_given;
   int panel_choice_given, draw_seed_given, positions_given, pushoff_given, genome_given, migrate_given;
   int events_given; // --events
+  int ladder_option; // --ladder-every or --ladder-above given
   int variant_default; // the variants of new_island_defaults(), not given
   const char *pushoff_fallback; // the option that made the default push-off value, not pareto-sd (#199)
   uint32_t islands_n, islands_keep, islands_every, islands_rounds; // --islands, --keep, --select-after, --score-rounds
@@ -300,6 +306,8 @@ static void option_number(cli *c, const char *a, int number, double d, uint32_t 
   else if (!strcmp(a, "--stage")) p->stage = u, c->stage_given = 1;
   else if (!strcmp(a, "--panel-rounds")) p->panel_rounds = u, c->panel_rounds_given = 1;
   else if (!strcmp(a, "--pick-sample")) p->pick_sample = u;
+  else if (!strcmp(a, "--ladder-every")) p->ladder_every = u, c->ladder_option = 1;
+  else if (!strcmp(a, "--ladder-above")) p->ladder_above = d, c->ladder_option = 1;
 
   else if (!strcmp(a, "--screen-stop") || !strcmp(a, "--screen-check")) {
     const int stop = !strcmp(a, "--screen-stop");
@@ -360,6 +368,11 @@ static int parse_cli(int argc, char **argv, cli *c) {
       c->new_options = 1;
       continue;
     }
+    if (!strcmp(a, "--ladder")) {
+      c->p.ladder = 1;
+      c->new_options = 1;
+      continue;
+    }
     if (!strcmp(a, "--parsimony") || !strcmp(a, "--no-spl") || !strcmp(a, "--replace-parent")) {
       if (a[2] == 'p') c->p.parsimony = 1;
       else if (a[2] == 'r') c->p.replace_parent = 1;
@@ -397,6 +410,7 @@ static int parse_cli(int argc, char **argv, cli *c) {
 static const char *new_run_defaults(cli *c) {
   params *p = &c->p;
   if (!p->opponents[0]) usage();
+  if (c->ladder_option && !p->ladder) return "--ladder-every and --ladder-above with --ladder";
   // new runs: generators (docs/evolver-gen.md), not for --optimize, which keeps lists
   if (!c->genome_given && !c->optimize_file) p->gen = 1;
   if (p->gen && !c->changes_given) p->changes = gen_mix_default(); // the kinds that make structure too
@@ -447,6 +461,7 @@ static const char *variant_differs(const params *a, const params *b) {
     return "--panel, --holdout, --panel-choice, --pick-sample or --panel-files";
   if (a->seed != b->seed || a->draw_seed != b->draw_seed) return "--seed or --draw-seed";
   if (a->gen != b->gen) return "--genome";
+  if (a->ladder != b->ladder) return "--ladder";
   return 0;
 }
 
@@ -522,6 +537,10 @@ static int new_islands(int argc, char **argv, cli *c, const params *p, uint32_t 
   }
   if (c->own_panels && (islands_n < 2 || p->panel_files[0] || p->panel_random == PANEL_RANDOM)) {
     fprintf(stderr, "42evolve: --island-panels own with 2 islands or more, a panel that is picked (--panel-choice picked or kinds), not --panel-files\n");
+    return 2;
+  }
+  if (p->ladder && (!c->own_panels || c->groups)) { // each island climbs through candidates of its own; the foe slots of --groups change by themselves
+    fprintf(stderr, "42evolve: --ladder with --islands needs --island-panels own, and does not go with --groups\n");
     return 2;
   }
   if (c->explorers && (c->explorers >= islands_n || islands_keep)) {
