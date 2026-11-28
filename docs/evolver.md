@@ -779,3 +779,39 @@ The child in its parent's place keeps lines alive but does not make them climb. 
 | 100 | 147.7 | 146.3 | 143.7 |
 
 The islands that had kept the `SPL`/`DJN` loop on top caught up within 50 batches, and the mean rose by 6. The best did not move: 0.3 points in 134 batches, with every island between 143.7 and 147.7. Two thirds of all members start with `SPL`, `SPL` (66%, 6% with the `SPL #`/`DJN #` loop). The large panel spreads the best design over all islands, but it does not lift it: on the tiny hill these settings top out at about 147, 13 points under `tiny-own16`.
+
+## The baseline on the '94 hill: 4 seeds of the best setting (#196)
+
+Every comparison on '94nop before this was one run per setting. These are 4 runs of the best setting of the tiny hill, seeds 301 to 304, 1,000 batches each (27th November 2026; seed 301 is `94-own16`). Seeds 303 and 304 took about 16 hours each on the 32 threads:
+
+```sh
+chrt -i 0 nice -n 19 build/42evolve ~/42evolve.94-base-<seed> --opponents warriors/koenigstuhl/94nop --islands 16 --island-panels own \
+  --select-after 100 --seed <seed> --batches 1000 --threads 32 --changes <the defaults without loop>
+```
+
+That is 16 islands with panels of their own, a migrant from a random island every 5 batches, `--stage 20` and `pareto-sd`: the defaults otherwise, from `main` at 8b242aa. Against the 1,107 warriors of the folder, 100 rounds each, the best and the mean of the 16 islands' best (best.red and the 3 best by panel average of each island):
+
+| seed | b100 | b300 | b500 | b700 | b800 | b1000 | best warrior at the end |
+|---|---|---|---|---|---|---|---|
+| 301 | 105.9 / 100.4 | 105.9 / 104.2 | 110.6 / 106.3 | 121.5 / 111.5 | 129.6 / 118.6 | 131.1 / 128.0 | Humble Kernel XVI, 5 instructions (131.4 at batch 1,100) |
+| 302 | 115.6 / 99.5 | 122.2 / 119.4 | 133.9 / 129.9 | 134.1 / 132.2 | 134.1 / 132.3 | **134.5** / 133.2 | Wiry Bumblebee XX, island 3, 4 instructions |
+| 303 | 108.4 / 98.3 | 112.1 / 107.5 | 114.4 / 109.0 | 117.9 / 113.8 | 117.9 / 114.6 | 120.6 / 116.0 | Ancient Vole XVII, island 3, 75 instructions |
+| 304 | 103.8 / 95.8 | 116.7 / 109.8 | 119.1 / 115.8 | 120.1 / 117.5 | 120.1 / 117.8 | 120.8 / 118.9 | Turbo Leech II, island 6, 50 instructions (5 others at 120.8 too) |
+
+The runs score every 100 batches, and a run of 1,000 batches (0 to 999) has its last score at 900. The column b1000 of seeds 302 to 304 is therefore their lists at the end, scored afterwards the same way (`node tools/run-report.mjs <run> --bench --opponents warriors/koenigstuhl/94nop --rounds 100`, 2 minutes on the idle machine); seed 301 has its own score at batch 1,000.
+
+**The spread.** At batch 1,000 the best of a seed is between 120.6 and 134.5: mean 126.8, standard deviation 7.1. The mean of the islands' best is between 116.0 and 133.2. At batch 500 the best was between 110.6 and 133.9. A single run per setting therefore says nothing below about 15 points. With 4 seeds per setting the standard error of a difference of the means is about 5, so a difference needs about 10 points to count. This is the yardstick for every later comparison on '94; an arm runs from the same seeds 301 to 304.
+
+**The designs on top** (the 48 best of 16 islands at the end, grouped by their first 5 opcodes):
+- 302: `SPL MOV MOV DJN`, 45 of 48 on 15 islands, from batch 500 on. The other 3 are one paper of 72 to 75 instructions on one island.
+- 301: the same body, 36 of 48: 13 with a `DAT` in front, 10 plain, the rest behind one more instruction (`JMN`, `SEQ`, `SPL`). It got there only between batches 700 and 1,000.
+- 303: the 3-instruction `SPL MOV DJN` and its variants, 27 of 48, and the "Gibbon" `SPL SPL MOV MOV MOV DAT`, 12. The `SPL MOV DJN` came up on island 13 at batch 122 and spread to the other islands by migration.
+- 304: no `DJN` among the 48. 44 of them are stones: a `SPL MOV MOV SUB JMN` loop with rows of `SPL #0, >0` around it (17), long rows of `SPL` (12), `MOV SPL MOV SPL` (8), rows of `MOV` (3).
+
+The two seeds that found the clear of 4 or 5 instructions (`SPL`, two `MOV`s whose pointers move on every pass, `DJN`) scored 131 to 135. The two that did not stopped at 121: 303 with the 3-instruction clear, one `MOV` that bombs through a decrementing pointer, several changes away from the other; 304 with stones that never found the clear at all. Which design a run finds decides it, as with the 8 runs of 16th November (96.3 to 139.3).
+
+**Panels of their own are not comparable.** With `--island-panels own` each island has its own 30 panel warriors; only the 100 of the holdout are the same for all. In seed 304, the mean of holdout minus panel average over all benches of an island ranged from 13.5 (island 11) to 42.4 (island 13). Panel averages rank the members of one island, never warriors of different islands: Nervous Lynx X (island 13) had 77.7 against its panel and 133.3 against the holdout, Undying Leech II (island 11) 105.3 and 117.4.
+
+**Against the hill's own warriors** (a round robin of the 1,107 warriors, the best warrior of each seed and Eager Ferret II, 100 rounds: `node tools/tournament.mjs warriors/koenigstuhl/94nop <the 5 .red files> --rounds 100 --json rr.json`): Wiry Bumblebee XX ranks 729th of 1,112 with 134.6 points per 100 rounds, Humble Kernel XVI 752nd (131.3), Turbo Leech II 805th (121.4), Ancient Vole XVII 814th (120.2); Eager Ferret II, the best evolved warrior before, 717th (135.9). The median of the 1,112 is 150.9, its best quartile starts at 165.7 and its best warrior, Arvon, has 187.5. So the best of the baseline beats about a third of the hill and is 16 points under its median. The round robin took 19 minutes on 32 threads.
+
+Verdict: none of the 4 beats Eager Ferret II (135.6 against the 1,107, `warriors/evolved/94nop/`), so no warrior is added. The baseline of '94 is 126.8 ± 7.1 for the best of a run of 1,000 batches with these settings, and 124.0 for the mean of the islands' best.
