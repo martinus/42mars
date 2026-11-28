@@ -31,7 +31,7 @@ static const param_field param_fields[] = {
     GONE("--difference"), PF('d', pareto), PF('d', mirror), PF('g', clear), PF('d', gen), GONE("--refactor"),
     PF('u', min_length), PF('g', tie), PF('d', parsimony), PF('d', no_spl),
     PF('d', survivors_by), PF('d', replace_parent), PF('d', events_brief), PF('d', ladder), PF('u', ladder_every),
-    PF('g', ladder_above), PF('u', yield_half)};
+    PF('g', ladder_above), PF('u', yield_half), PF('d', changes_learn), PF('u', learn_every), PF('u', learn_window)};
 #define PARAM_FIELDS (sizeof param_fields / sizeof *param_fields)
 
 static void save_params(FILE *f, const params *p) {
@@ -100,6 +100,10 @@ void save_state(run *r) {
   char mix[CH_ALL * 32];
   genome_mix_text(&p->changes, mix, sizeof mix);
   fprintf(f, "changes %s\n", mix);
+  if (p->changes_learn) { // --changes-learn: the weights the learned ones are relative to
+    genome_mix_text(&r->learn_base, mix, sizeof mix);
+    fprintf(f, "changes-base %s\n", mix);
+  }
   char text[GENOME_SAVE_MAX];
   for (uint32_t i = 0; i < r->panel_n; i++) {
     const warrior *w = &r->panel[i];
@@ -130,6 +134,11 @@ void save_state(run *r) {
     fprintf(f, "archive %" PRIu64 " %u %s\n", r->archive_id[i], r->archive_noun[i], text);
   }
   fprintf(f, "archive-next %u\n", r->archive_next);
+  for (uint32_t w = 0; p->changes_learn && w < p->learn_window; w++) { // --changes-learn: the window
+    fprintf(f, "learn %u", w);
+    for (int k = 0; k < CH_ALL; k++) fprintf(f, " %u %u", r->learn[w][k][0], r->learn[w][k][1]);
+    fputc('\n', f);
+  }
   for (uint32_t i = 0; i < r->hall_n; i++) { // --groups: the hall of fame, the oldest first
     genome_save(r->hall[i].g, text, sizeof text);
     fprintf(f, "hall %u %" PRIu64 " %s\nhall-name %s\n", r->hall[i].foe_island, r->hall[i].foe_id, text, r->hall[i].name);
@@ -210,6 +219,9 @@ static int state_head_line(run *r, char *line, state_lines *s, int *refused) {
       return -1;
     }
     if (genome_mix_parse(&p->changes, line + 8) != 0) return -1;
+  } else if (!strncmp(line, "changes-base ", 13)) { // --changes-learn, after the changes line
+    if (genome_mix_parse(&r->learn_base, line + 13) != 0) return -1;
+    r->learn_base_set = 1;
   } else if (!strncmp(line, "panel ", 6)) { // a state from before panel-id: the ids are 0, 1, ...
     s->panel_id[s->pn] = s->pn;
     s->panel[s->pn++] = line + 6;
@@ -318,6 +330,16 @@ static int state_line(run *r, char *line, uint64_t *slot_id, uint32_t *slot_at, 
     double avg;
     if (sscanf(line + 7, "%d %d %lg %n", &used, &kind, &avg, &at) != 3 || !at || !line[7 + at]) return -1;
     ladder_add(r, line + 7 + at, kind, avg, used);
+  } else if (!strncmp(line, "learn ", 6)) { // --changes-learn: a batch of the window
+    uint32_t w;
+    int at = 0;
+    if (!r->learn || sscanf(line + 6, "%u%n", &w, &at) != 1 || w >= p->learn_window) return -1;
+    const char *q = line + 6 + at;
+    for (int k = 0; k < CH_ALL; k++) {
+      int used = 0;
+      if (sscanf(q, " %u %u%n", &r->learn[w][k][0], &r->learn[w][k][1], &used) != 2) return -1;
+      q += used;
+    }
   } else if (!strncmp(line, "archive ", 8)) {
     int used = 0;
     if (r->archive_n >= ARCHIVE_MAX ||
@@ -412,6 +434,7 @@ int load_state(run *r, const char *path) {
   slot_at = xmalloc(r->cap * sizeof *slot_at);
   for (uint32_t i = 0; i < s.rn; i++)
     if (state_line(r, s.rest[i], slot_id, slot_at, &slots, &last, &refused) != 0) goto bad;
+  if (!r->learn_base_set) r->learn_base = p->changes;
   rebuild_active(r);
   compute_values(r);
   ok = 1;

@@ -154,6 +154,17 @@ typedef struct {
 // move 7%, crossover-insert 6%, crossover-replace 6%; the four small steps 0.
 genome_mix genome_mix_default(void);
 
+// --changes-learn (#251): new weights *out from those of base and, per kind,
+// n its evaluated children and s their successes. The rate r of all kinds
+// is the sum of s over the sum of n; a kind's rate, pulled toward r while it
+// has few children, is (s + GENOME_LEARN_PULL r) / (n + GENOME_LEARN_PULL),
+// and its weight base times its rate over r, kept between a quarter and 4
+// times base and at least 1: no kind drawn goes to 0, since a kind that pays
+// nothing now may pay later. A kind of weight 0 stays 0. Returns r; with no
+// success at all 0, and *out is as it was.
+#define GENOME_LEARN_PULL 200.0
+double genome_mix_learn(const genome_mix *base, const double *n, const double *s, genome_mix *out);
+
 // "name=weight,name=weight,..." with the names of genome_change_name(); a
 // kind not named gets 0. Returns 0, or -1 for an unknown name, a weight that
 // is no whole number up to 1,000,000, a name given twice or all weights 0.

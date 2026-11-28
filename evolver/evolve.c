@@ -48,6 +48,8 @@ params default_params(void) {
   p.changes = genome_mix_default();
   p.ladder_every = 10;
   p.yield_half = 100;
+  p.learn_every = 20;
+  p.learn_window = 100;
   p.ladder_above = 200;
   return p;
 }
@@ -73,7 +75,7 @@ static void usage(void) {
           "         [--member-games all|none] [--pushoff value|pareto|pareto-sd] [--clear R] [--positions mirror|pmars]\n"
           "         [--genome list|gen] [--min-length N] [--tie-points t] [--parsimony] [--no-spl]\n"
           "         [--survivors-by strength|pushoff] [--replace-parent] [--events brief|full]\n"
-          "         [--ladder [--ladder-every 10] [--ladder-above 200]]\n"
+          "         [--ladder [--ladder-every 10] [--ladder-above 200]] [--changes-learn [--learn-every 20] [--learn-window 100]]\n"
           "         [--islands N [--select-after B [--keep K]] [--score-rounds R] [--score-designs 3]\n"
           "           [--migrate M [--migrate-pick best|random] [--migrate-to all|random]] [--island-variant \"options\" ...] [--island-panels shared|own] [--explorers K]\n"
           "           [--groups K [--group-every 10] [--group-slots panel/3] [--group-hall slots/2]]]\n"
@@ -124,6 +126,7 @@ static const char *params_error(const params *p) {
   if (!p->gen && structure_kinds(&p->changes)) return STRUCTURE_NEEDS_GEN;
   if (p->min_length > p->rules.max_length) return "--min-length at most --length";
   if (!(p->tie >= 0 && p->tie <= 3)) return "--tie-points 0 to 3";
+  if (!p->learn_every || !p->learn_window || p->learn_window > 1000) return "--learn-every 1 or more, --learn-window 1 to 1000";
   if (p->ladder && (p->panel_random != PANEL_KINDS || p->panel_files[0])) return "--ladder with --panel-choice kinds, not with --panel-files";
   if (!p->ladder_every || !(p->ladder_above > 0)) return "--ladder-every 1 or more, --ladder-above more than 0";
   return 0;
@@ -146,6 +149,7 @@ typedef struct {
   int events_given; // --events
   int ladder_option; // --ladder-every or --ladder-above given
   int yield_option;  // --yield-half given
+  int learn_option;  // --learn-every or --learn-window given
   int variant_default; // the variants of new_island_defaults(), not given
   const char *pushoff_fallback; // the option that made the default push-off value, not pareto-sd (#199)
   uint32_t islands_n, islands_keep, islands_every, islands_rounds; // --islands, --keep, --select-after, --score-rounds
@@ -330,6 +334,8 @@ static void option_number(cli *c, const char *a, int number, double d, uint32_t 
   else if (!strcmp(a, "--pick-sample")) p->pick_sample = u;
   else if (!strcmp(a, "--ladder-every")) p->ladder_every = u, c->ladder_option = 1;
   else if (!strcmp(a, "--yield-half")) p->yield_half = u, c->yield_option = 1;
+  else if (!strcmp(a, "--learn-every")) p->learn_every = u, c->learn_option = 1;
+  else if (!strcmp(a, "--learn-window")) p->learn_window = u, c->learn_option = 1;
   else if (!strcmp(a, "--ladder-above")) p->ladder_above = d, c->ladder_option = 1;
 
   else if (!strcmp(a, "--screen-stop") || !strcmp(a, "--screen-check")) {
@@ -391,6 +397,11 @@ static int parse_cli(int argc, char **argv, cli *c) {
       c->new_options = 1;
       continue;
     }
+    if (!strcmp(a, "--changes-learn")) {
+      c->p.changes_learn = 1;
+      c->new_options = 1;
+      continue;
+    }
     if (!strcmp(a, "--ladder")) {
       c->p.ladder = 1;
       c->new_options = 1;
@@ -436,6 +447,7 @@ static const char *new_run_defaults(cli *c) {
   if (p->optimize_moves && !c->optimize_file) return "--optimize-moves with --optimize";
   if (c->ladder_option && !p->ladder) return "--ladder-every and --ladder-above with --ladder";
   if (c->yield_option && p->parents != PARENTS_YIELD) return "--yield-half with --parents yield";
+  if (c->learn_option && !p->changes_learn) return "--learn-every and --learn-window with --changes-learn";
   // new runs: generators (docs/evolver-gen.md), not for --optimize, which keeps lists
   if (!c->genome_given && !c->optimize_file) p->gen = 1;
   if (p->gen && !c->changes_given) p->changes = gen_mix_default(); // the kinds that make structure too
@@ -630,6 +642,7 @@ static int resume_changes(run *r, const cli *c) {
   const uint32_t new_list = c->new_list;
   if (changes_given) { // the weights of the changes from now on; the run is no longer the one without a break
     r->p.changes = new_changes;
+    r->learn_base = new_changes; // --changes-learn: relative to these from now on
     char mix[CH_ALL * 32];
     genome_mix_text(&r->p.changes, mix, sizeof mix);
     fprintf(r->events, "{\"type\":\"changes\",\"batch\":%u,\"changes\":\"%s\"}\n", r->batch, mix);

@@ -482,6 +482,26 @@ int genome_mix_parse(genome_mix *m, const char *text) {
   return 0;
 }
 
+double genome_mix_learn(const genome_mix *base, const double *n, const double *s, genome_mix *out) {
+  double N = 0, S = 0;
+  for (int k = 0; k < CH_ALL; k++) N += n[k], S += s[k];
+  if (!(S > 0)) return 0;
+  const double rate = S / N;
+  for (int k = 0; k < CH_ALL; k++) {
+    const double b = base->w[k];
+    if (!(b > 0)) {
+      out->w[k] = 0;
+      continue;
+    }
+    double w = b * ((s[k] + GENOME_LEARN_PULL * rate) / (n[k] + GENOME_LEARN_PULL)) / rate;
+    if (w < b / 4) w = b / 4;
+    if (w > 4 * b) w = 4 * b;
+    const uint32_t v = (uint32_t)(w + 0.5);
+    out->w[k] = v ? v : 1;
+  }
+  return rate;
+}
+
 size_t genome_mix_text(const genome_mix *m, char *buf, size_t n) {
   size_t len = 0;
   if (n) buf[0] = 0;
