@@ -3,6 +3,7 @@
 // Copyright (c) 2026 Martin Leitner-Ankerl
 // Minimal static file server for the visualizer (ES modules need http://).
 // Usage: node tools/serve.mjs [port] [--run <folder of a 42evolve run> ...]
+// Port 0 is any free port; the first line it prints names it.
 //
 // With --run, /run/<n>/events streams the events.jsonl of run n (0, 1, ...
 // in the order given) as Server-Sent Events for the evolver dashboards:
@@ -458,11 +459,12 @@ createServer(async (req, res) => {
   if (e.code !== 'EADDRINUSE') throw e;
   console.error(`port ${port} is in use, by another server${runDir ? '' : ' (another serve.mjs?)'}: start this one on another port, e.g.\n  node ${process.argv[1]} ${port + 1}${given.length ? ` --run ${given.join(' ')}` : ''}${prefixes.length ? ` --watch ${prefixes.join(' ')}` : ''}`);
   process.exit(1);
-}).listen(port, '127.0.0.1', () => {
-  console.log(`Core War Theater: http://127.0.0.1:${port}/`);
-  if (runDirs.length === 1 && !prefixes.length) console.log(`evolver dashboard of ${runDirs[0]}: http://127.0.0.1:${port}/ui/evolver.html`);
+}).listen(port, '127.0.0.1', function listening() {
+  const at = this.address().port; // port 0: the free port the system gave
+  console.log(`Core War Theater: http://127.0.0.1:${at}/`);
+  if (runDirs.length === 1 && !prefixes.length) console.log(`evolver dashboard of ${runDirs[0]}: http://127.0.0.1:${at}/ui/evolver.html`);
   else if (runDirs.length || prefixes.length) {
-    console.log(`evolver dashboard of ${runDirs.length} runs, a list on the left to switch: http://127.0.0.1:${port}/ui/evolver.html`);
-    console.log(`all ${runDirs.length} runs side by side: http://127.0.0.1:${port}/ui/runs.html`);
+    console.log(`evolver dashboard of ${runDirs.length} runs, a list on the left to switch: http://127.0.0.1:${at}/ui/evolver.html`);
+    console.log(`all ${runDirs.length} runs side by side: http://127.0.0.1:${at}/ui/runs.html`);
   }
 });

@@ -22,14 +22,22 @@ after(() => {
   rmSync(dir, { recursive: true, force: true });
 });
 
+// Starts the server on a free port (port 0: the system picks it, and the server's first line names it) and
+// returns its address. A random port collided with another server once in CI (#244, port 23664): that server
+// said so on stderr and ended, and this waited for its first line until the test's timeout. So it also fails
+// at once when the server ends before that line.
 async function serve(args, env = {}) {
-  // below 32768, where Linux takes the local ports of outgoing connections (36342 was taken in CI, 21st November
-  // 2026: the server said so on stderr, and the test waited for its first line until the timeout)
-  const port = 20000 + Math.floor(Math.random() * 12000);
-  const p = spawn(process.execPath, [join(root, 'tools/serve.mjs'), String(port), ...args], { stdio: ['ignore', 'pipe', 'inherit'], env: { ...process.env, ...env } });
+  const p = spawn(process.execPath, [join(root, 'tools/serve.mjs'), '0', ...args], { stdio: ['ignore', 'pipe', 'inherit'], env: { ...process.env, ...env } });
   servers.push(p);
-  await new Promise((resolve) => p.stdout.on('data', resolve));
-  return `http://127.0.0.1:${port}`;
+  return new Promise((resolve, reject) => {
+    let text = '';
+    p.stdout.on('data', (chunk) => {
+      text += chunk;
+      const m = /^Core War Theater: (http:\/\/127\.0\.0\.1:\d+)\/$/m.exec(text);
+      if (m) resolve(m[1]);
+    });
+    p.on('exit', (code, signal) => reject(new Error(`tools/serve.mjs ended before its first line: exit code ${code}, signal ${signal}`)));
+  });
 }
 
 // Reads server-sent events until `until` returns true for the list so far;
@@ -346,6 +354,10 @@ test('a wrong option or port is refused with the usage', () => {
     assert.match(p.stderr, why);
     assert.match(p.stderr, /usage: node tools\/serve.mjs/);
   }
+});
+
+test('the helper of these tests does not wait for a server that ended before its first line (#244)', { timeout: 15000 }, async () => {
+  await assert.rejects(serve(['--no-such-option']), /ended before its first line: exit code 2/);
 });
 
 test('a port in use: a message with another port, exit code 1', { timeout: 15000 }, async () => {
