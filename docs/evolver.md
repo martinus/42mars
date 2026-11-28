@@ -815,3 +815,68 @@ The two seeds that found the clear of 4 or 5 instructions (`SPL`, two `MOV`s who
 **Against the hill's own warriors** (a round robin of the 1,107 warriors, the best warrior of each seed and Eager Ferret II, 100 rounds: `node tools/tournament.mjs warriors/koenigstuhl/94nop <the 5 .red files> --rounds 100 --json rr.json`): Wiry Bumblebee XX ranks 729th of 1,112 with 134.6 points per 100 rounds, Humble Kernel XVI 752nd (131.3), Turbo Leech II 805th (121.4), Ancient Vole XVII 814th (120.2); Eager Ferret II, the best evolved warrior before, 717th (135.9). The median of the 1,112 is 150.9, its best quartile starts at 165.7 and its best warrior, Arvon, has 187.5. So the best of the baseline beats about a third of the hill and is 16 points under its median. The round robin took 19 minutes on 32 threads.
 
 Verdict: none of the 4 beats Eager Ferret II (135.6 against the 1,107, `warriors/evolved/94nop/`), so no warrior is added. The baseline of '94 is 126.8 ± 7.1 for the best of a run of 1,000 batches with these settings, and 124.0 for the mean of the islands' best.
+
+## The hill's own scores, and where our best lose their points (#245)
+
+28th November 2026. The aim is warriors that rival the ones people write, so this is what those score on our bench, and where our best are behind. One round robin of the 1,107 warriors of `warriors/koenigstuhl/94nop` (100 rounds; the one of the baseline above, its 5 evolved warriors left out) and a bench of each of ours:
+
+```sh
+node tools/tournament.mjs warriors/koenigstuhl/94nop <the 5 .red files> --rounds 100 --json rr.json        # 19 minutes on 32 threads
+node tools/tournament.mjs warriors/koenigstuhl/94nop --rounds 100 --bench <ours.red> --json <ours>.json    # 15 s each
+node tools/hill-kinds.mjs warriors/koenigstuhl/94nop --round-robin rr.json --bench <ours>.json ... --worst 60
+```
+
+**The hill against itself.** A hill warrior's score against the other 1,106 is its score on our bench:
+
+| | best | best tenth from | best quarter from | median | lowest quarter below | lowest tenth below |
+|---|---|---|---|---|---|---|
+| points per 100 rounds | 187.1 | 172.2 | 165.7 | 151.0 | 116.1 | 68.0 |
+
+The best 20, with the kind `tools/hill-kinds.mjs` measures (a paper/stone or a paper with imps that boots away measures as a mover): Arvon 187.1 (mover), Azathoth 186.5 (paper), Excalibur 186.2 (mover), pst_v4 186.2 (mover), Kusanagi 182.8 (scanner), King Cobra 182.6 (mover), Hullab3loo 182.3 (mover), Kaitain 181.4 (mover), Tolypeutes 181.4 (mover), Discord (decoy) 181.0 (scanner), The Collective 181.0 (mover), Ghost Murmur 180.5 (scanner), Hullabaloo 180.3 (paper), Borgir 179.9 (mover), Escaped Experiment 179.7 (scanner), lzma2 179.7 (paper), HazyLazy C 11 179.6 (scanner), King of Metal 179.3 (mover), clrsrc 179.3 (scanner), Shadow Weaver 179.2 (paper). 10 movers, 6 scanners, 4 papers, no stone.
+
+**Kind against kind:** the mean of a row's warriors against a column's (other: 17 that write fields, 11 that write little, 1 that damages by increments):
+
+| | paper | mover | scanner | stone | other | all |
+|---|---|---|---|---|---|---|
+| paper (321) | 111.8 | 156.3 | 160.6 | 171.6 | 242.1 | **151.5** |
+| mover (178) | 88.0 | 129.4 | 128.7 | 132.6 | 194.0 | 120.0 |
+| scanner (219) | 113.9 | 154.7 | 145.6 | 150.2 | 200.6 | 140.8 |
+| stone (360) | 99.4 | 148.1 | 139.1 | 143.7 | 196.5 | 132.0 |
+| other (29) | 36.4 | 83.2 | 88.6 | 90.9 | 139.0 | 74.6 |
+
+Papers are the strongest kind on average, and the hardest opponents for every kind: the column of the papers is the lowest of every row. The movers are two groups, the best of the hill and many weak ones (10 of the best 20, and the lowest mean of the four).
+
+**Ours by the kind of the opponent.** The 8 best from random code of `warriors/evolved/94nop/` (benched for this: the 40 best by holdout, now in the column "whole hill" of `warriors/evolved/README.md`; left out are the Locusts and Wombats, whose runs started from our warriors, and Jagged Glitch, 140.4, and Salty Gecko, 140.0, of whose runs `w1-ap24` and `s1-ap24` nothing says what they started from), the best of the baseline (Wiry Bumblebee XX), and the mean of the hill's best 20:
+
+| warrior | paper | mover | scanner | stone | other | all |
+|---|---|---|---|---|---|---|
+| Spiky Mongoose XVI | 53.9 | 119.6 | 190.3 | 199.1 | 213.8 | **142.9** |
+| Cranky Mongoose VI | 52.5 | 123.2 | 190.3 | 197.4 | 222.0 | 142.7 |
+| Twisted Jackal II | 109.1 | 146.2 | 140.7 | 156.0 | 228.6 | 139.7 |
+| Restless Gremlin | 58.0 | 124.8 | 175.8 | 190.2 | 220.4 | 139.3 |
+| Eager Ferret II | 46.9 | 122.7 | 180.0 | 186.8 | 228.7 | 135.7 |
+| Rowdy Stingray | 47.2 | 121.9 | 177.9 | 188.2 | 226.9 | 135.6 |
+| Humble Sloth V | 106.7 | 146.6 | 134.0 | 148.7 | 224.9 | 135.3 |
+| Zesty Coyote | 52.5 | 120.5 | 159.7 | 181.3 | 224.9 | 131.0 |
+| Wiry Bumblebee XX (#196) | 47.7 | 122.3 | 172.7 | 185.9 | 245.1 | 134.5 |
+| mean of the hill's best 20 | 151.2 | 187.0 | 191.7 | 195.0 | 249.4 | 181.8 |
+
+- The best evolved warriors from random code are the two Mongooses (142.9 and 142.7; the column had no number for them, so Eager Ferret II at 135.6 counted as the best). 652 of the 1,107 hill warriors score more than 142.9 on the same bench: 8 points under the hill's median and 39 under the mean of its best 20.
+- Seven of the nine are one design, the clear of 4 or 5 instructions, and have one profile: 47 to 58 against papers, 120 to 125 against movers, and against scanners and stones up to what the best 20 score (the Mongooses 190 and 198).
+- Two are different, Twisted Jackal II and Humble Sloth V: 107 to 109 against papers and 146 against movers, paid with 40 to 50 points against scanners and stones. Both have a `MOV.I` whose source is their own `SPL #` line, so they throw `SPL` instructions through the core; the clears of the other seven throw `DAT`s (what comes out of their moving pointers). A paper hit by an `SPL` keeps its processes busy there, one hit by a `DAT` loses one of thousands.
+
+**The gap in points**, for Spiky Mongoose XVI: (the best 20's mean against a kind − ours) × the kind's share of the hill:
+
+| kind | share of the hill | best 20 | ours | gap |
+|---|---|---|---|---|
+| paper | 29.0% | 151.2 | 53.9 | **28.2** |
+| mover | 16.1% | 187.0 | 119.6 | 10.8 |
+| other | 2.6% | 249.4 | 213.8 | 0.9 |
+| scanner | 19.8% | 191.7 | 190.3 | 0.3 |
+| stone | 32.5% | 195.0 | 199.1 | −1.3 |
+
+Of the 38.9 points to the best 20, 28.2 are papers and 10.8 movers. Against scanners and stones, half of the hill, nothing is left to gain. A tie with every paper (100) would already be 13 points: 156.3, above the hill's median.
+
+**The 60 warriors Spiky Mongoose XVI scores least against** (4 to 26 points per 100 rounds): 55 measure as papers and 5 as movers, and all 60 name a paper in their `;strategy` lines (silk, Moore-style, imp paper, paper/stone; 27 with a quick scan in front, 14 with imps). The files of `warriors/koenigstuhl/94nop/`, the worst first: `yatima`, `twotrickpony`, `tyrant`, `kitchensink21`, `carboniteMarcia`, `shrubbery`, `cacodemon097`, `silkwarrior13`, `marcia`, `pulp`, `614235`, `bravo2`, `cheephalfoff`, `puff`, `headortail`, `reamopt3-aaae`, `soldierofsilk`, `disincentive`, `firestorm`, `paperdream2`, `papery`, `ryooki`, `alwayscoop`, `paperparty`, `papertowel`, `avamppaper`, `ep802`, `halcyon`, `largepaper`, `papyrus13`, `rust`, `forjohn`, `netpaper`, `redconquerer`, `skin`, `xerox01ah`, `diffopws`, `linalg`, `paperdream`, `timescape10`, `azathoth`, `godsofdestiny`, `implication`, `doughnut`, `labomba`, `polypap2`, `pst_v4`, `siriussunset-jeyi`, `artofcorewar`, `maelstrom`, `metal`, `neith`, `paradiddle`, `pppc`, `pyronaut`, `ringworm14`, `sith`, `tican`, `unreqlove`, `arvon`.
+
+What follows for the order of the work: the clear we have is finished against half of the hill, and what it lacks is one match-up, papers, then the movers that are papers with a stone or imps. An idea should be judged by its score against the 321 papers first. The runs that put papers in front of the clear (the groups of #183 that start from Kernels and from our evolved papers, a panel of one kind, #184) aim at the 28 points; the two warriors above say that a design that holds against papers exists within a few changes of the clear and costs it its lead against scanners and stones, so the open question is a warrior that does both.

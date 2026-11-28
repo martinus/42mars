@@ -4,7 +4,7 @@ Warriors that `42evolve` (`evolver/`, [`docs/evolver.md`](../../docs/evolver.md)
 
 Each file is the `best.red` as the run wrote it, with one line added: `;strategy from run <run>, <date>, --pushoff <push-off>`. The other `;strategy` lines say which warrior of the run it was, the batch it was found in, and its score against the run's holdout. The name is the warrior's own (an adjective and the noun of its family, Roman numerals for repeats); a name that two runs gave to different code has the run's name added. The same code from two runs is here once, the table names both runs.
 
-The tables are sorted by the score against the holdout: points per 100 rounds against the 100 warriors of the hill that run kept out of its panel. Each run drew its own holdout, so these scores compare only roughly. "Whole hill" is the score against every warrior of the hill, 100 rounds each, where the run measured it (folders of islands, `--islands`); that one compares across runs. "Batch" is when the warrior was found, as far as the run says.
+The tables are sorted by the score against the holdout: points per 100 rounds against the 100 warriors of the hill that run kept out of its panel. Each run drew its own holdout, so these scores compare only roughly. "Whole hill" is the score against every warrior of the hill, 100 rounds each, where the run measured it (folders of islands, `--islands`) or, for the 40 best of `94nop/` by holdout, a bench of 28th November 2026 (`node tools/tournament.mjs warriors/koenigstuhl/94nop --rounds 100 --bench <file>`, #245); that one compares across runs. "Batch" is when the warrior was found, as far as the run says.
 
 The runs of 14th to 19th November 2026 are in this first collection: the E5 comparisons and the push-off comparisons of `docs/evolver.md`. Fancy Falcon (21st November) is the first from a run on generators (`--genome gen`, #174): 16 islands, half of them screening against every member, each taking a member drawn from an island drawn every 5 batches; 117.0 against the whole hill, 6.7 above the best before it. Lucky Minotaur II, island 13 of the same run at batch 200, is the same design tuned further: 122.1. The islands then stayed at 122 to 123 for 800 batches, all with such a clear on top, while the other warriors of their lists kept rising against the panel; at batch 1100 Zesty Coyote, island 8, a clear with a second write stream and a second SPL, scored 131.4, and five islands were above 127. Rowdy Stingray, island 10 at batch 1200, is that design in four instructions: 135.3. On the tiny hill, Zealous Adder CXXVII (`tiny-own16`, 16 islands with a panel of their own, 23rd November 2026) is the best so far: 167.2 against the whole hill. Fickle Mosquito XLIV of the same run, 165.3, placed 110th of 437 in a round robin with the hill's 436 warriors. From then to batch 1700 the run stayed at 135 to 136 with this clear on top of every island; Eager Ferret II, island 14, is the best of that time, 135.6. `94-own16` (16 islands with a panel of their own on '94, generators, 25th to 26th November 2026) ended at batch 1286 with one design on top of every island, SPL, two MOVs and a DJN: Humble Kernel XVI, island 11 at batch 1100, scored 131.4 and the islands' best rose by 1.2 from batch 1000 to 1200; `42evolve --optimize` found no better constant for it. Next to the Kernels, 396 of the 1,280 members were papers of 76 to 100 instructions, which score about 150 against the other members but only 83 against the panel; Ghostly Squid, island 10, is the best of them against the whole hill, 114.2. Its holdout and that of the Kernel are from `tools/tournament.mjs --bench` (seed 1) against the island's holdout, not from the run.
 
@@ -15,45 +15,45 @@ Rules: pMARS's defaults: core 8000, 80,000 cycles, 8000 processes, length 100, d
 | warrior | length | holdout | whole hill | run | push-off | batch | date |
 |---|---|---|---|---|---|---|---|
 | [Humble Kernel XVI](94nop/humble-kernel-xvi.red) | 5 | 149.9 | 131.4 | `94-own16/island-11` | pareto-sd | 1099 | 26th November 2026 |
-| [Restless Gremlin](94nop/restless-gremlin.red) | 5 | 142.5 |  | `isl11` | value | 679 | 16th November 2026 |
-| [Spiky Mongoose XVI](94nop/spiky-mongoose-xvi.red) | 4 | 142.2 |  | `mrg2` | value | 129 | 16th November 2026 |
-| [Cranky Mongoose VI](94nop/cranky-mongoose-vi.red) | 4 | 141.5 |  | `mrg1` | value | 109 | 16th November 2026 |
-| [Giddy Locust XX](94nop/giddy-locust-xx.red) | 27 | 140.2 |  | `s-seeded` | value | 169 | 14th November 2026 |
+| [Restless Gremlin](94nop/restless-gremlin.red) | 5 | 142.5 | 139.3 | `isl11` | value | 679 | 16th November 2026 |
+| [Spiky Mongoose XVI](94nop/spiky-mongoose-xvi.red) | 4 | 142.2 | 142.9 | `mrg2` | value | 129 | 16th November 2026 |
+| [Cranky Mongoose VI](94nop/cranky-mongoose-vi.red) | 4 | 141.5 | 142.7 | `mrg1` | value | 109 | 16th November 2026 |
+| [Giddy Locust XX](94nop/giddy-locust-xx.red) | 27 | 140.2 | 142.8 | `s-seeded` | value | 169 | 14th November 2026 |
 | [Rowdy Stingray](94nop/rowdy-stingray.red) | 4 | 140.2 | 135.3 | `gen-var16-rnd/island-10` | pareto-sd | 1199 | 22nd November 2026 |
-| [Toxic Locust V](94nop/toxic-locust-v.red) | 13 | 138.5 |  | `m-seed-mix` | value | 109 | 15th November 2026 |
+| [Toxic Locust V](94nop/toxic-locust-v.red) | 13 | 138.5 | 141.7 | `m-seed-mix` | value | 109 | 15th November 2026 |
 | [Eager Ferret II](94nop/eager-ferret-ii.red) | 4 | 138.1 | 135.6 | `gen-var16-rnd/island-14` | pareto-sd | 1689 | 22nd November 2026 |
-| [Hyper Wombat XXVI](94nop/hyper-wombat-xxvi.red) | 15 | 136.4 |  | `sps2` | value | 179 | 16th November 2026 |
-| [Humble Locust VII](94nop/humble-locust-vii.red) | 10 | 135.7 |  | `n1-seed` | value | 59 | 15th November 2026 |
-| [Haunted Locust XLIII](94nop/haunted-locust-xliii.red) | 27 | 135.4 |  | `s-seeded-prior` | value | 249 | 14th November 2026 |
+| [Hyper Wombat XXVI](94nop/hyper-wombat-xxvi.red) | 15 | 136.4 | 136.0 | `sps2` | value | 179 | 16th November 2026 |
+| [Humble Locust VII](94nop/humble-locust-vii.red) | 10 | 135.7 | 134.8 | `n1-seed` | value | 59 | 15th November 2026 |
+| [Haunted Locust XLIII](94nop/haunted-locust-xliii.red) | 27 | 135.4 | 136.3 | `s-seeded-prior` | value | 249 | 14th November 2026 |
 | [Ghostly Squid](94nop/ghostly-squid.red) | 76 | 134.8 | 114.2 | `94-own16/island-10` | pareto-sd | 1285 | 26th November 2026 |
-| [Humble Sloth V](94nop/humble-sloth-v.red) | 7 | 134.8 |  | `kd1b`, `kd1b-ctl`, `kd1b-l200`, `kd1b-tn` | value | 8249 | 16th November 2026 |
-| [Restless Wombat XVI](94nop/restless-wombat-xvi.red) | 10 | 134.0 |  | `ss2` | value | 109 | 16th November 2026 |
+| [Humble Sloth V](94nop/humble-sloth-v.red) | 7 | 134.8 | 135.3 | `kd1b`, `kd1b-ctl`, `kd1b-l200`, `kd1b-tn` | value | 8249 | 16th November 2026 |
+| [Restless Wombat XVI](94nop/restless-wombat-xvi.red) | 10 | 134.0 | 138.9 | `ss2` | value | 109 | 16th November 2026 |
 | [Zesty Coyote](94nop/zesty-coyote.red) | 5 | 133.4 | 131.4 | `gen-var16-rnd/island-08` | pareto-sd | 1093 | 22nd November 2026 |
-| [Patient Locust IX](94nop/patient-locust-ix.red) | 12 | 133.1 |  | `m-seed` | value | 49 | 15th November 2026 |
-| [Polite Wombat VII](94nop/polite-wombat-vii.red) | 9 | 133.1 |  | `sk2` | value | 59 | 16th November 2026 |
-| [Jagged Glitch](94nop/jagged-glitch.red) | 4 | 132.7 |  | `w1-ap24` | value | 9 | 17th November 2026 |
-| [Nocturnal Kitten XLI](94nop/nocturnal-kitten-xli.red) | 7 | 131.9 |  | `kd1`, `kd1a`, `kd1c` | value | 4269 | 15th November 2026 |
-| [Scarlet Dodo II](94nop/scarlet-dodo-ii.red) | 5 | 131.1 |  | `pd80` | value | 3369 | 15th November 2026 |
-| [Brazen Spider](94nop/brazen-spider.red) | 6 | 131.1 |  | `w1-ap21` | value | 9 | 17th November 2026 |
-| [Twisted Jackal II](94nop/twisted-jackal-ii.red) | 4 | 130.6 |  | `ap24`, `r-ap24` | value | 1679 | 17th November 2026 |
-| [Tiny Locust III](94nop/tiny-locust-iii.red) | 17 | 129.3 |  | `s100-seed` | value | 9 | 15th November 2026 |
-| [Unstable Condor](94nop/unstable-condor.red) | 4 | 128.5 |  | `ctl4` | value | 439 | 16th November 2026 |
-| [Salty Gecko](94nop/salty-gecko.red) | 4 | 128.4 |  | `s1-ap24`, `s3-ap24` | value | 9 | 17th November 2026 |
-| [Hasty Dingo](94nop/hasty-dingo.red) | 6 | 127.3 |  | `ap21`, `r-ap21` | value | 719 | 17th November 2026 |
-| [Sneaky Octopus](94nop/sneaky-octopus.red) | 6 | 123.4 |  | `s3-ap21` | value | 29 | 17th November 2026 |
-| [Spiky Octopus](94nop/spiky-octopus.red) | 6 | 123.1 |  | `s1-ap21` | value | 9 | 17th November 2026 |
-| [Molten Bison](94nop/molten-bison.red) | 3 | 122.0 |  | `ap23`, `r-ap23` | value | 609 | 16th November 2026 |
-| [Zesty Kestrel](94nop/zesty-kestrel.red) | 3 | 120.8 |  | `me1` | value | 119 | 15th November 2026 |
-| [Silver Condor](94nop/silver-condor.red) | 5 | 120.7 |  | `long30` | pareto-age | 1339 | 18th November 2026 |
-| [Spinning Worm](94nop/spinning-worm.red) | 5 | 120.3 |  | `tn4` | value | 759 | 16th November 2026 |
-| [Lone Gibbon XVII](94nop/lone-gibbon-xvii.red) | 2 | 119.8 |  | `i55-41` | value | 169 | 17th November 2026 |
-| [Quirky Puffin](94nop/quirky-puffin.red) | 7 | 119.2 |  | `w1-ap23` | value | 9 | 17th November 2026 |
-| [Patient Wasp](94nop/patient-wasp.red) | 4 | 118.2 |  | `s1-ap23`, `s3-ap23` | value | 9 | 17th November 2026 |
-| [Undying Imp](94nop/undying-imp.red) | 3 | 117.8 |  | `pareto30` | pareto | 59 | 17th November 2026 |
+| [Patient Locust IX](94nop/patient-locust-ix.red) | 12 | 133.1 | 134.9 | `m-seed` | value | 49 | 15th November 2026 |
+| [Polite Wombat VII](94nop/polite-wombat-vii.red) | 9 | 133.1 | 136.8 | `sk2` | value | 59 | 16th November 2026 |
+| [Jagged Glitch](94nop/jagged-glitch.red) | 4 | 132.7 | 140.4 | `w1-ap24` | value | 9 | 17th November 2026 |
+| [Nocturnal Kitten XLI](94nop/nocturnal-kitten-xli.red) | 7 | 131.9 | 130.7 | `kd1`, `kd1a`, `kd1c` | value | 4269 | 15th November 2026 |
+| [Scarlet Dodo II](94nop/scarlet-dodo-ii.red) | 5 | 131.1 | 125.0 | `pd80` | value | 3369 | 15th November 2026 |
+| [Brazen Spider](94nop/brazen-spider.red) | 6 | 131.1 | 119.6 | `w1-ap21` | value | 9 | 17th November 2026 |
+| [Twisted Jackal II](94nop/twisted-jackal-ii.red) | 4 | 130.6 | 139.7 | `ap24`, `r-ap24` | value | 1679 | 17th November 2026 |
+| [Tiny Locust III](94nop/tiny-locust-iii.red) | 17 | 129.3 | 131.1 | `s100-seed` | value | 9 | 15th November 2026 |
+| [Unstable Condor](94nop/unstable-condor.red) | 4 | 128.5 | 116.8 | `ctl4` | value | 439 | 16th November 2026 |
+| [Salty Gecko](94nop/salty-gecko.red) | 4 | 128.4 | 140.0 | `s1-ap24`, `s3-ap24` | value | 9 | 17th November 2026 |
+| [Hasty Dingo](94nop/hasty-dingo.red) | 6 | 127.3 | 119.1 | `ap21`, `r-ap21` | value | 719 | 17th November 2026 |
+| [Sneaky Octopus](94nop/sneaky-octopus.red) | 6 | 123.4 | 115.2 | `s3-ap21` | value | 29 | 17th November 2026 |
+| [Spiky Octopus](94nop/spiky-octopus.red) | 6 | 123.1 | 115.2 | `s1-ap21` | value | 9 | 17th November 2026 |
+| [Molten Bison](94nop/molten-bison.red) | 3 | 122.0 | 126.8 | `ap23`, `r-ap23` | value | 609 | 16th November 2026 |
+| [Zesty Kestrel](94nop/zesty-kestrel.red) | 3 | 120.8 | 117.8 | `me1` | value | 119 | 15th November 2026 |
+| [Silver Condor](94nop/silver-condor.red) | 5 | 120.7 | 120.4 | `long30` | pareto-age | 1339 | 18th November 2026 |
+| [Spinning Worm](94nop/spinning-worm.red) | 5 | 120.3 | 109.7 | `tn4` | value | 759 | 16th November 2026 |
+| [Lone Gibbon XVII](94nop/lone-gibbon-xvii.red) | 2 | 119.8 | 106.2 | `i55-41` | value | 169 | 17th November 2026 |
+| [Quirky Puffin](94nop/quirky-puffin.red) | 7 | 119.2 | 124.9 | `w1-ap23` | value | 9 | 17th November 2026 |
+| [Patient Wasp](94nop/patient-wasp.red) | 4 | 118.2 | 124.6 | `s1-ap23`, `s3-ap23` | value | 9 | 17th November 2026 |
+| [Undying Imp](94nop/undying-imp.red) | 3 | 117.8 | 115.6 | `pareto30` | pareto | 59 | 17th November 2026 |
 | [Lucky Minotaur II](94nop/lucky-minotaur-ii.red) | 3 | 117.0 | 122.1 | `gen-var16-rnd/island-13` | pareto-sd | 186 | 21st November 2026 |
-| [Shadowy Gecko](94nop/shadowy-gecko.red) | 7 | 116.3 |  | `w1-ap22` | value | 69 | 17th November 2026 |
-| [Lucky Ocelot III](94nop/lucky-ocelot-iii.red) | 4 | 116.0 |  | `al23` | value | 1649 | 16th November 2026 |
-| [Noble Imp](94nop/noble-imp.red) | 6 | 116.0 |  | `pdm80` | value | 559 | 15th November 2026 |
+| [Shadowy Gecko](94nop/shadowy-gecko.red) | 7 | 116.3 | 117.3 | `w1-ap22` | value | 69 | 17th November 2026 |
+| [Lucky Ocelot III](94nop/lucky-ocelot-iii.red) | 4 | 116.0 | 114.7 | `al23` | value | 1649 | 16th November 2026 |
+| [Noble Imp](94nop/noble-imp.red) | 6 | 116.0 | 112.1 | `pdm80` | value | 559 | 15th November 2026 |
 | [Feral Yeti II](94nop/feral-yeti-ii.red) | 10 | 115.1 |  | `r-ap22` | value | 869 | 17th November 2026 |
 | [Lazy Sloth](94nop/lazy-sloth.red) | 3 | 114.3 |  | `isl13` | value | 239 | 16th November 2026 |
 | [Patient Gargoyle](94nop/patient-gargoyle.red) | 3 | 114.0 |  | `i55-51` | value | 329 | 17th November 2026 |
