@@ -587,9 +587,10 @@ static void islands_close(islands *I) {
 static int island_panels(islands *I, run *root, const params *base) {
   uint32_t count;
   char **names = opponent_files(root, &count);
+  if (base->ladder && ladder_holdout(root, count) != 0) return 2;
   pick_table t;
   pick_play(root, names, count, &t);
-  uint8_t *in_panel = calloc(count, 1), *allowed = xmalloc(t.n);
+  uint8_t *in_panel = calloc(count, 1), *allowed = xmalloc(t.n), *start = xmalloc(t.n ? t.n : 1);
   uint32_t *cand = xmalloc(t.nc * sizeof *cand), *picked = xmalloc((t.want ? t.want : 1) * sizeof *picked);
   char **chosen = xmalloc((t.want ? t.want : 1) * sizeof *chosen);
   const uint32_t half = t.nc / 2;
@@ -609,7 +610,9 @@ static int island_panels(islands *I, run *root, const params *base) {
     }
     memset(allowed, 0, t.n);
     for (uint32_t j = 0; j < half; j++) allowed[cand[j]] = 1;
-    const uint32_t np = pick_choose(r, &t, names, allowed, picked);
+    if (base->ladder) ladder_allowed(&t, allowed, start); // --ladder: from the weakest third of the island's half
+    const uint32_t np = pick_choose(r, &t, names, base->ladder ? start : allowed, picked);
+    if (base->ladder) ladder_set(r, &t, names, allowed, picked, np);
     if (np < t.want) fprintf(stderr, "42evolve: island %u: a panel of %u warriors, not %u (too few candidates of the kinds)\n", i + 1, np, t.want);
     for (uint32_t j = 0; j < np; j++) chosen[j] = names[picked[j]], in_panel[picked[j]] = 1;
     if (join_files(r->p.panel_files, sizeof r->p.panel_files, chosen, 0, np) != 0) {
@@ -620,7 +623,8 @@ static int island_panels(islands *I, run *root, const params *base) {
   if (!rc) { // the holdout: in the shuffled order, the first in no panel (fewer than --holdout when no more are left)
     char **hold = xmalloc((base->holdout ? base->holdout : 1) * sizeof *hold);
     uint32_t h = 0;
-    for (uint32_t i = 0; i < count && h < base->holdout; i++)
+    // --ladder: none of the sample, whose warriors are the candidates of the islands' ladders
+    for (uint32_t i = base->ladder ? t.n : 0; i < count && h < base->holdout; i++)
       if (!in_panel[i]) hold[h++] = names[i];
     char *files = I->is[0]->p.holdout_files;
     if (join_files(files, sizeof I->is[0]->p.holdout_files, hold, 0, h) != 0) {
@@ -631,7 +635,7 @@ static int island_panels(islands *I, run *root, const params *base) {
     free(hold);
   }
   for (uint32_t i = 0; i < count; i++) free(names[i]);
-  free(names), free(in_panel), free(allowed), free(cand), free(picked), free(chosen);
+  free(names), free(in_panel), free(allowed), free(start), free(cand), free(picked), free(chosen);
   pick_free(&t);
   return rc;
 }
@@ -708,7 +712,10 @@ int islands_new(const params *base, const params *variant, const char *const *va
     if (base->start[0] && strlen(own) < sizeof r->p.start && stat(own, &st) == 0 && S_ISDIR(st.st_mode))
       snprintf(r->p.start, sizeof r->p.start, "%s", own);
   }
-  if (own_panels && island_panels(&I, root, base) != 0) return 1;
+  if (own_panels) {
+    const int rc = island_panels(&I, root, base);
+    if (rc) return rc;
+  }
   for (uint32_t i = 0; i < n; i++) {
     const int rc = island_start(&I, i, 0);
     if (rc) return rc;

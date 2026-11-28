@@ -81,6 +81,9 @@ typedef struct {
   int survivors_by;         // --survivors-by pushoff: the survivors of the screen by their estimated place in the push-off, not their screen score
   int replace_parent;       // --replace-parent: a newcomer whose nearest warrior is its first parent duels it by panel average, the loser leaves
   int events_brief;         // --events brief (#187): a newcomer that leaves in its batch is a short enter line, without its complete line
+  int ladder;               // --ladder (#247): the panel starts from the weakest third of the pick's candidates and climbs (ladder_climb())
+  uint32_t ladder_every;    // --ladder-every E: a step of the ladder before every E-th batch
+  double ladder_above;      // --ladder-above T: a panel warrior is beaten when the median of the members' points against it is T or more
 } params;
 
 enum { PARENTS_VALUE, PARENTS_DUEL };
@@ -235,6 +238,17 @@ typedef struct {
   // HALL_MAX; some of the slots are drawn from them (islands.c)
   warrior *hall; // genome, name, foe_island and foe_id of each
   uint32_t hall_n;
+
+  // --ladder (#247): the candidates of the pick this run may take into its
+  // panel, the weakest first, each with its kind of style and its average in
+  // the pick's round robin; used: in the panel now or before
+  struct rung {
+    char *file;
+    int kind;
+    double avg;
+    uint8_t used;
+  } *ladder;
+  uint32_t ladder_n, ladder_cap;
 
   uint32_t batch;
   uint64_t next_id;
@@ -416,6 +430,12 @@ typedef struct {
 void pick_play(run *r, char **names, uint32_t count, pick_table *out);
 void pick_free(pick_table *t);
 uint32_t pick_choose(run *r, const pick_table *t, char **names, const uint8_t *allowed, uint32_t *picked);
+// --ladder (#247)
+int ladder_holdout(const run *r, uint32_t count);
+uint32_t ladder_allowed(const pick_table *t, const uint8_t *mine, uint8_t *allowed);
+void ladder_set(run *r, const pick_table *t, char **names, const uint8_t *mine, const uint32_t *picked, uint32_t np);
+void ladder_add(run *r, const char *file, int kind, double avg, int used);
+void ladder_climb(run *r);
 
 // batch.c: one batch
 void run_batch(run *r);

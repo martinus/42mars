@@ -446,6 +446,7 @@ void run_first(run *r) {
 
 // One batch, its state, and a line on stderr.
 void run_step(run *r) {
+  if (r->p.ladder && r->batch && r->batch % r->p.ladder_every == 0) ladder_climb(r); // --ladder (#247)
   run_batch(r);
   save_state(r);
   const pushoff_value *best = 0;

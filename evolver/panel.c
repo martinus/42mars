@@ -291,7 +291,7 @@ void pick_play(run *r, char **names, uint32_t count, pick_table *out) {
       order[j] = order[j - 1], order[j - 1] = t;
     }
   const int kinds = r->p.panel_random == PANEL_KINDS;
-  uint32_t nc = kinds ? (n + 1) / 2 : (n + 3) / 4;
+  uint32_t nc = r->p.ladder ? n : kinds ? (n + 1) / 2 : (n + 3) / 4; // --ladder: every warrior of the sample is a candidate
   if (nc < want) nc = want;
   int *kind = xmalloc(n * sizeof *kind);
   for (uint32_t i = 0; i < n; i++) kind[i] = -1;
@@ -380,21 +380,178 @@ uint32_t pick_choose(run *r, const pick_table *t, char **names, const uint8_t *a
 }
 
 void pick_panel(run *r, char **names, uint32_t count) {
+  const int ladder = r->p.ladder;
+  if (ladder && ladder_holdout(r, count) != 0) exit(2);
   pick_table t;
   pick_play(r, names, count, &t);
   uint32_t *picked = xmalloc((t.want ? t.want : 1) * sizeof *picked);
-  const uint32_t np = pick_choose(r, &t, names, 0, picked);
-  // the picked first, then the rest in its order
+  uint8_t *start = 0; // --ladder: the panel from the weakest third of the candidates
+  if (ladder) {
+    start = xmalloc(t.n ? t.n : 1);
+    ladder_allowed(&t, 0, start);
+  }
+  const uint32_t np = pick_choose(r, &t, names, start, picked);
+  if (ladder) ladder_set(r, &t, names, 0, picked, np);
+  // the picked first, then the rest in its order; with --ladder the warriors
+  // outside the sample before the rest of the sample (the holdout)
   uint8_t *taken = calloc(t.n, 1);
   for (uint32_t i = 0; i < np; i++) taken[picked[i]] = 1;
   char **re = xmalloc(count * sizeof *re);
   uint32_t k = 0;
   for (uint32_t i = 0; i < np; i++) re[k++] = names[picked[i]];
-  for (uint32_t i = 0; i < count; i++)
+  if (ladder)
+    for (uint32_t i = t.n; i < count; i++) re[k++] = names[i];
+  for (uint32_t i = 0; i < (ladder ? t.n : count); i++)
     if (i >= t.n || !taken[i]) re[k++] = names[i];
   memcpy(names, re, count * sizeof *names);
-  free(re), free(taken), free(picked);
+  free(re), free(taken), free(picked), free(start);
   pick_free(&t);
+}
+
+// ---------------------------------------------------------------- the ladder (--ladder, #247)
+
+// --ladder: a panel that climbs the hill with the list. A fixed panel of
+// strong hill warriors gives a young warrior nothing to win: the best it gets
+// is a tie, and the cheapest tie is to be small with many processes. So the
+// panel starts weak and gets stronger as the list beats it.
+// The candidates are all warriors of the pick's sample that do not die at
+// once (--island-panels own: of the island's half, `mine`), in the order of
+// their average in its round robin, and the panel is picked by kinds from the
+// weakest third of them (at least as many as the panel has): allowed[c] = 1
+// for those. Returns how many candidates there are.
+uint32_t ladder_allowed(const pick_table *t, const uint8_t *mine, uint8_t *allowed) {
+  uint32_t count = 0;
+  for (uint32_t c = 0; c < t->n; c++) count += (!mine || mine[c]) && t->kind[c] != KIND_DIES;
+  const uint32_t third = count / 3 > t->want ? count / 3 : t->want;
+  memset(allowed, 0, t->n);
+  for (uint32_t i = t->n, k = 0; i-- > 0 && k < third;) { // t->order: the strongest first
+    const uint32_t c = t->order[i];
+    if ((mine && !mine[c]) || t->kind[c] == KIND_DIES) continue;
+    allowed[c] = 1, k++;
+  }
+  return count;
+}
+
+// --ladder: the holdout is drawn from the warriors outside the pick's sample,
+// since every warrior of the sample is a candidate that may come into the
+// panel. 0, or 1 after a message when the folder has too few (before the
+// round robin of the pick is played).
+int ladder_holdout(const run *r, uint32_t count) {
+  const uint32_t sample = r->p.pick_sample ? r->p.pick_sample : PICK_SAMPLE, n = count < sample ? count : sample;
+  if (count - n >= r->p.holdout) return 0;
+  fprintf(stderr, "42evolve: --ladder: %s has %u warriors outside the sample of %u, the holdout needs %u: a smaller --pick-sample or "
+                  "--holdout\n", r->p.opponents, count - n, n, r->p.holdout);
+  return 1;
+}
+
+void ladder_add(run *r, const char *file, int kind, double avg, int used) {
+  if (r->ladder_n == r->ladder_cap) {
+    r->ladder_cap = r->ladder_cap ? 2 * r->ladder_cap : 256;
+    struct rung *g = xmalloc(r->ladder_cap * sizeof *g);
+    if (r->ladder_n) memcpy(g, r->ladder, r->ladder_n * sizeof *g);
+    free(r->ladder);
+    r->ladder = g;
+  }
+  r->ladder[r->ladder_n++] = (struct rung){xstrdup(file), kind, avg, (uint8_t)(used != 0)};
+}
+
+// The ladder of r: those candidates, the weakest first (among equals the
+// later one of the sample); used: the picked, its panel.
+void ladder_set(run *r, const pick_table *t, char **names, const uint8_t *mine, const uint32_t *picked, uint32_t np) {
+  for (uint32_t i = t->n; i-- > 0;) {
+    const uint32_t c = t->order[i];
+    if ((mine && !mine[c]) || t->kind[c] == KIND_DIES) continue;
+    int used = 0;
+    for (uint32_t k = 0; k < np; k++) used |= picked[k] == c;
+    ladder_add(r, names[c], t->kind[c], t->avg[c], used);
+  }
+}
+
+static int by_double(const void *a, const void *b) {
+  const double x = *(const double *)a, y = *(const double *)b;
+  return x < y ? -1 : x > y;
+}
+
+// The rung of the panel warrior in slot j, UINT32_MAX none.
+static uint32_t rung_of(const run *r, uint32_t j) {
+  for (uint32_t k = 0; r->panel[j].file && k < r->ladder_n; k++)
+    if (r->ladder[k].used && !strcmp(r->ladder[k].file, r->panel[j].file)) return k;
+  return UINT32_MAX;
+}
+
+// A step of the ladder, before every --ladder-every-th batch (run_step()). A
+// panel warrior is beaten when the median of the members' points per 100
+// rounds against it is --ladder-above or more (the upper one of an even
+// count). The most beaten first (the lower slot of equals), at most
+// LADDER_STEP of them, so that the values of the list do not jump: each is
+// replaced by the next stronger candidate of its kind that was never in the
+// panel; when its kind has none, by the strongest candidate of any kind that
+// was never in, if that one is stronger. One that has no such candidate
+// stays, and when none is left nothing changes any more. Everybody in plays
+// the new warrior (replace_panel(), event `rotate`). Then the event `ladder`:
+// what was replaced, how strong the panel is now (the mean of its warriors'
+// averages in the pick), and how many candidates are left. The step reads
+// only the run's own list, so a run is the same on any thread count, and
+// after a resume: the state before a batch is the one before its step.
+#define LADDER_STEP 3
+void ladder_climb(run *r) {
+  const params *p = &r->p;
+  const uint32_t P = r->panel_n, M = members(r);
+  double *med = xmalloc((P ? P : 1) * sizeof *med), *col = xmalloc((M ? M : 1) * sizeof *col);
+  uint8_t *tried = xmalloc(P ? P : 1);
+  uint32_t beaten = 0, changed = 0;
+  for (uint32_t j = 0; j < P; j++) {
+    for (uint32_t k = 0; k < M; k++) col[k] = r->pts[r->active[P + k] * r->cap + j];
+    qsort(col, M, sizeof *col, by_double);
+    med[j] = M ? col[M / 2] : -1;
+    beaten += med[j] >= p->ladder_above;
+  }
+  char *text = 0;
+  size_t len = 0;
+  FILE *log = open_memstream(&text, &len);
+  if (!log) {
+    fprintf(stderr, "42evolve: out of memory\n");
+    exit(1);
+  }
+  while (changed < LADDER_STEP) {
+    uint32_t j = UINT32_MAX;
+    for (uint32_t k = 0; k < P; k++)
+      if (!tried[k] && med[k] >= p->ladder_above && (j == UINT32_MAX || med[k] > med[j])) j = k;
+    if (j == UINT32_MAX) break;
+    tried[j] = 1;
+    const uint32_t at = rung_of(r, j);
+    if (at == UINT32_MAX) continue;
+    uint32_t next = UINT32_MAX;
+    for (uint32_t k = at + 1; k < r->ladder_n && next == UINT32_MAX; k++)
+      if (!r->ladder[k].used && r->ladder[k].kind == r->ladder[at].kind) next = k;
+    for (uint32_t k = r->ladder_n; next == UINT32_MAX && k-- > at + 1;) // the top of its kind: the strongest left of any kind
+      if (!r->ladder[k].used) next = k;
+    if (next == UINT32_MAX) continue;
+    warrior *o = load_opponent(r, r->ladder[next].file, 0);
+    if (!o) exit(1);
+    o->kind = PANEL;
+    o->id = r->next_id++;
+    fprintf(log, "%s{\"slot\":%u,\"out\":%" PRIu64 ",\"in\":%" PRIu64 ",\"file\":", changed ? "," : "", j, r->panel[j].id, o->id);
+    json_str(log, o->file, 1);
+    fprintf(log, ",\"kind\":\"%s\",\"avg\":%.6f,\"was\":%.6f,\"median\":%.6f}", style_kind_name(r->ladder[next].kind), r->ladder[next].avg,
+            r->ladder[at].avg, med[j]);
+    replace_panel(r, j, o); // the run's from here: only the struct is freed
+    free(o);
+    r->ladder[next].used = 1;
+    changed++;
+  }
+  fclose(log);
+  double strength = 0;
+  uint32_t on = 0, left = 0;
+  for (uint32_t j = 0; j < P; j++) {
+    const uint32_t at = rung_of(r, j);
+    if (at != UINT32_MAX) strength += r->ladder[at].avg, on++;
+  }
+  for (uint32_t k = 0; k < r->ladder_n; k++) left += !r->ladder[k].used;
+  fprintf(r->events, "{\"type\":\"ladder\",\"batch\":%u,\"above\":%.17g,\"beaten\":%u,\"replaced\":[%s],\"strength\":%.6f,\"left\":%u}\n", r->batch,
+          p->ladder_above, beaten, text ? text : "", on ? strength / on : 0, left);
+  if (changed) event_values(r); // the values the batch starts from
+  free(text), free(med), free(col), free(tried);
 }
 
 void event_pick(run *r) {
