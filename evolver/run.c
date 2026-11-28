@@ -323,6 +323,7 @@ void setup_matrix(run *r) {
     r->slot[i] = &r->panel[i];
     r->keep[i] = 1;
   }
+  if (r->p.changes_learn) r->learn = xmalloc(r->p.learn_window * sizeof *r->learn); // --changes-learn: zeros
 }
 
 // ---------------------------------------------------------------- a run's steps
@@ -367,6 +368,7 @@ int run_new(run *r, uint32_t threads, int optimize) {
   r->best_id = NO_ID;
   r->best_holdout = -1;
   setup_matrix(r);
+  r->learn_base = p->changes; // --changes-learn: the weights it starts from
   load_starts(r);
   return 0;
 }

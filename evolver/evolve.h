@@ -83,6 +83,8 @@ typedef struct {
   int events_brief;         // --events brief (#187): a newcomer that leaves in its batch is a short enter line, without its complete line
   int ladder;               // --ladder (#247): the panel starts from the weakest third of the pick's candidates and climbs (ladder_climb())
   uint32_t ladder_every;    // --ladder-every E: a step of the ladder before every E-th batch
+  int changes_learn;        // --changes-learn (#251): the weights of the changes follow what stays, per island (learn_changes())
+  uint32_t learn_every, learn_window; // --learn-every E, --learn-window W: a step every E batches over the last W
   uint32_t yield_half;      // --yield-half H: with --parents yield every member's counts are halved every H batches, 0 never
   uint32_t optimize_moves;  // --optimize-moves: the bits of MOVE_* that --optimize tries, 0 constants only
   double ladder_above;      // --ladder-above T: a panel warrior is beaten when the median of the members' points against it is T or more
@@ -255,6 +257,13 @@ typedef struct {
     uint8_t used;
   } *ladder;
   uint32_t ladder_n, ladder_cap;
+
+  // --changes-learn (#251): per batch of the last learn_window, per kind of
+  // change, its evaluated children and their successes (slot batch % W);
+  // learn_base: the weights of --changes the learned ones are relative to
+  uint32_t (*learn)[CH_ALL][2];
+  genome_mix learn_base;
+  int learn_base_set; // load_state(): the state had a changes-base line
 
   uint32_t batch;
   uint64_t next_id;

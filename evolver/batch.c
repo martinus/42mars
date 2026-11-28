@@ -1055,14 +1055,16 @@ static void enter_survivors(run *r, batch *b) {
 // YIELD_CAP both are halved, so that a draw needs few numbers. After every
 // --yield-half-th batch all members' counts are halved: the list changes,
 // and with it what a member's children are worth.
+// With --changes-learn every child gets its success too (a child of no
+// member, a mutant of a start warrior, is a success when it stayed).
 static void count_children(run *r, batch *b) {
   const params *p = &r->p;
-  if (p->parents != PARENTS_YIELD) return;
+  if (p->parents != PARENTS_YIELD && !p->changes_learn) return;
   const m42_score *res = b->staged ? r->wlt1 : r->wlt;
   for (uint32_t i = 0; i < b->sn; i++) {
     candidate *x = b->sv[i];
     const uint32_t s = b->slot_of[i];
-    if (s == UINT32_MAX || x->parents[0] == NO_ID || !strcmp(x->ops, "reintroduce")) continue;
+    if (s == UINT32_MAX) continue;
     const uint32_t ps = slot_of_id(r, x->parents[0]);
     int twin = ps != UINT32_MAX && r->slot[ps]->kind == MEMBER;
     for (uint32_t j = 0; j < r->panel_n && twin; j++) {
@@ -1071,6 +1073,7 @@ static void count_children(run *r, batch *b) {
     }
     x->success = !twin;
   }
+  if (p->parents != PARENTS_YIELD) return;
   for (uint32_t i = 0; i < b->B; i++) { // a warrior back from the archive has its own old id as parent: no member
     const candidate *x = &b->c[i];
     if (x->reached < 1 || x->parents[0] == NO_ID) continue;
@@ -1082,6 +1085,53 @@ static void count_children(run *r, batch *b) {
   }
   if (p->yield_half && (r->batch + 1) % p->yield_half == 0)
     for (uint32_t i = r->panel_n; i < r->active_n; i++) r->slot[r->active[i]]->kids /= 2, r->slot[r->active[i]]->kids_ok /= 2;
+}
+
+// --changes-learn (#251): the weights of the changes were one list for the
+// whole run, and no list is best for both phases of a run (the fourth
+// comparison: the spectrum mix was 6.6 points better from our warriors and
+// 7.5 worse from random code). So each island learns them. Per kind k over
+// the last --learn-window batches: n_k its evaluated children (a child with
+// several changes counts for each kind once), s_k the successes among them
+// (count_children()). Every --learn-every batches the rate of a kind, pulled
+// toward the rate r of all kinds while it has few children, is
+// genome_mix_learn(). No step while the window has no success. Event
+// `changes` with `learned` and r; the window and the weights of --changes
+// are in the state.
+static void learn_changes(run *r, const batch *b) {
+  params *p = &r->p;
+  if (!p->changes_learn) return;
+  const uint32_t W = p->learn_window;
+  uint32_t (*now)[2] = r->learn[r->batch % W]; // this batch's counts in place of those of W batches ago
+  memset(now, 0, sizeof r->learn[0]);
+  for (uint32_t i = 0; i < b->B; i++) {
+    const candidate *x = &b->c[i];
+    if (x->reached < 1) continue;
+    uint8_t seen[CH_ALL] = {0};
+    for (const char *q = x->ops; *q;) {
+      while (*q == ' ') q++;
+      const char *e = q;
+      while (*e && *e != ' ') e++;
+      for (int k = 0; k < CH_ALL && e > q; k++) {
+        const char *name = genome_change_name(k);
+        if (strlen(name) == (size_t)(e - q) && !strncmp(name, q, (size_t)(e - q)) && !seen[k]) {
+          seen[k] = 1, now[k][0]++, now[k][1] += (uint32_t)x->success;
+          break;
+        }
+      }
+      q = e;
+    }
+  }
+  if ((r->batch + 1) % p->learn_every) return;
+  double n[CH_ALL] = {0}, s[CH_ALL] = {0};
+  const uint32_t filled = r->batch + 1 < W ? r->batch + 1 : W; // at the start fewer batches than the window
+  for (uint32_t w = 0; w < filled; w++)
+    for (int k = 0; k < CH_ALL; k++) n[k] += r->learn[w][k][0], s[k] += r->learn[w][k][1];
+  const double rate = genome_mix_learn(&r->learn_base, n, s, &p->changes);
+  if (!(rate > 0)) return;
+  char mix[CH_ALL * 32];
+  genome_mix_text(&p->changes, mix, sizeof mix);
+  fprintf(r->events, "{\"type\":\"changes\",\"batch\":%u,\"changes\":\"%s\",\"learned\":true,\"rate\":%.17g}\n", r->batch, mix, rate);
 }
 
 // Every --bench-every batches: the member best against the panel plays the
@@ -1192,6 +1242,7 @@ void run_batch(run *r) {
   count_children(r, &b);
   event_parents(r, b.c, b.B);
   event_batch(r, &b);
+  learn_changes(r, &b);
   batch_free(&b);
   if (r->buffering) {
     fclose(r->events);

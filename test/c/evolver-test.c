@@ -534,6 +534,42 @@ static void test_beta(void) {
     }
 }
 
+// genome_mix_learn() (--changes-learn, #251): a kind whose children never succeed falls to a quarter of its
+// weight and no further, one that always succeeds rises to 4 times it and no further, a kind with few children is
+// pulled to the mean, no kind drawn goes to 0, one of weight 0 stays 0, and no success at all changes nothing.
+static void test_learn(void) {
+  genome_mix base = {{0}}, out;
+  base.w[CH_OPCODE] = 80, base.w[CH_INSERT] = 100, base.w[CH_DELETE] = 100, base.w[CH_ORG] = 2, base.w[CH_MOVE] = 40, base.w[CH_REPLACE] = 1;
+  double n[CH_ALL] = {0}, s[CH_ALL] = {0};
+  n[CH_OPCODE] = 1000000, s[CH_OPCODE] = 0;     // never: a quarter
+  n[CH_INSERT] = 100000, s[CH_INSERT] = 50000;  // 0.5, 12 times the rate: 4 times
+  n[CH_DELETE] = 100000, s[CH_DELETE] = 0;
+  n[CH_ORG] = 100000, s[CH_ORG] = 0;            // a quarter of 2 is 0.5, rounded to 1
+  n[CH_REPLACE] = 100000, s[CH_REPLACE] = 0;    // a quarter of 1 rounds to 0: at least 1
+  n[CH_MOVE] = 0, s[CH_MOVE] = 0;               // no children: the mean, its weight
+  n[CH_TUNE] = 50, s[CH_TUNE] = 50;             // weight 0: stays 0
+  out = base;
+  const double r = genome_mix_learn(&base, n, s, &out);
+  const double N = 1400050, S = 50050;
+  CHECK(fabs(r - S / N) < 1e-15, "the rate %.17g, not %.17g", r, S / N);
+  CHECK(out.w[CH_OPCODE] == 20 && out.w[CH_DELETE] == 25, "a kind that never succeeds: %u, %u, not 20, 25", out.w[CH_OPCODE], out.w[CH_DELETE]);
+  CHECK(out.w[CH_INSERT] == 400, "a kind 6 times as good: %u, not 400", out.w[CH_INSERT]);
+  CHECK(out.w[CH_ORG] == 1 && out.w[CH_REPLACE] == 1, "weights 2 and 1, a quarter of them: %u, %u, not 1, 1", out.w[CH_ORG], out.w[CH_REPLACE]);
+  CHECK(out.w[CH_MOVE] == 40 && out.w[CH_TUNE] == 0, "no children %u (40), weight 0 %u (0)", out.w[CH_MOVE], out.w[CH_TUNE]);
+  // few children: pulled to the mean by 200 children of the mean rate
+  for (int k = 0; k < CH_ALL; k++) n[k] = s[k] = 0;
+  n[CH_OPCODE] = 1000, s[CH_OPCODE] = 100, n[CH_INSERT] = 200, s[CH_INSERT] = 40; // r = 140 / 1200
+  out = base;
+  genome_mix_learn(&base, n, s, &out);
+  const double rr = 140.0 / 1200, ins = 100 * ((40 + 200 * rr) / 400) / rr, op = 80 * ((100 + 200 * rr) / 1200) / rr;
+  CHECK(out.w[CH_INSERT] == (uint32_t)(ins + 0.5) && out.w[CH_OPCODE] == (uint32_t)(op + 0.5), "pulled: %u %u, not %.3f %.3f", out.w[CH_INSERT],
+        out.w[CH_OPCODE], ins, op);
+  // no success: no change
+  for (int k = 0; k < CH_ALL; k++) s[k] = 0;
+  genome_mix before = out;
+  CHECK(genome_mix_learn(&base, n, s, &out) == 0 && !memcmp(&before, &out, sizeof out), "no success changed the weights");
+}
+
 int main(void) {
   test_rebuild();
   test_duplicate_and_crossover();
@@ -547,6 +583,7 @@ int main(void) {
   test_loop();
   test_mix();
   test_beta();
+  test_learn();
   if (failures) {
     fprintf(stderr, "%d failures\n", failures);
     return 1;

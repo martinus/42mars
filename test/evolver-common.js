@@ -58,7 +58,7 @@ export const TINY = ['--opponents', join(root, 'warriors/koenigstuhl/tiny'), '--
 // 1) of those the tests look at: by its place, so that a field added at the end changes no test (#247: six tests
 // matched the end of the line).
 export const stateParams = (text) => /^params (.*)$/m.exec(text)[1].split(' ');
-export const PARAM = { parents: 22, gen: 44, tie: 47, parsimony: 48, noSpl: 49, survivorsBy: 50, replaceParent: 51, events: 52, ladder: 53, ladderEvery: 54, ladderAbove: 55, yieldHalf: 56 };
+export const PARAM = { parents: 22, gen: 44, tie: 47, parsimony: 48, noSpl: 49, survivorsBy: 50, replaceParent: 51, events: 52, ladder: 53, ladderEvery: 54, ladderAbove: 55, yieldHalf: 56, changesLearn: 57, learnEvery: 58, learnWindow: 59 };
 export const stateParam = (text, name) => stateParams(text)[PARAM[name] - 1];
 
 export function run(dir, args) {
