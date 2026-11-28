@@ -58,7 +58,7 @@ export const TINY = ['--opponents', join(root, 'warriors/koenigstuhl/tiny'), '--
 // 1) of those the tests look at: by its place, so that a field added at the end changes no test (#247: six tests
 // matched the end of the line).
 export const stateParams = (text) => /^params (.*)$/m.exec(text)[1].split(' ');
-export const PARAM = { gen: 44, tie: 47, parsimony: 48, noSpl: 49, survivorsBy: 50, replaceParent: 51, events: 52, ladder: 53, ladderEvery: 54, ladderAbove: 55 };
+export const PARAM = { parents: 22, gen: 44, tie: 47, parsimony: 48, noSpl: 49, survivorsBy: 50, replaceParent: 51, events: 52, ladder: 53, ladderEvery: 54, ladderAbove: 55, yieldHalf: 56 };
 export const stateParam = (text, name) => stateParams(text)[PARAM[name] - 1];
 
 export function run(dir, args) {
@@ -284,7 +284,7 @@ export function checkValues(evs) {
       if (start.params.parents === 'duel' && w !== l && pts.get(`${w},${l}`) !== pts.get(`${l},${w}`)) {
         assert.ok(pts.get(`${w},${l}`) > pts.get(`${l},${w}`), `${e.name}: parent ${w} lost to ${l}`);
         duels++;
-      } else {
+      } else if (start.params.parents !== 'yield') { // --parents yield: by a draw for each (test/evolver-yield.test.js)
         assert.ok(value(w) >= value(l), `${e.name}: parent ${w} has less value than ${l}`);
       }
     }

@@ -34,6 +34,38 @@ static inline uint32_t rng_below(rng *r, uint64_t n) { return (uint32_t)(((rng_n
 // lo .. hi, both included.
 static inline int32_t rng_range(rng *r, int32_t lo, int32_t hi) { return lo + (int32_t)rng_below(r, (uint64_t)(hi - lo) + 1); }
 
+// 0 <= x < 1.
+static inline double rng_unit(rng *r) { return (double)(rng_next(r) >> 11) * (1.0 / 9007199254740992.0); }
+
+// A draw from the beta distribution Beta(a, b) for whole a and b of 1 or more
+// with a + b - 1 at most RNG_BETA_MAX: the a-th smallest of a + b - 1 uniform
+// numbers. No libm, so the same draw on every platform.
+#define RNG_BETA_MAX 1024
+static inline double rng_beta(rng *r, uint32_t a, uint32_t b) {
+  double u[RNG_BETA_MAX];
+  const uint32_t n = a + b - 1;
+  for (uint32_t i = 0; i < n; i++) u[i] = rng_unit(r);
+  int lo = 0, hi = (int)n - 1; // the a-th smallest, u[a - 1] of the sorted numbers, by selection around a pivot
+  const int k = (int)a - 1;
+  while (lo < hi) {
+    const double pivot = u[lo + (hi - lo) / 2];
+    int i = lo, j = hi;
+    while (i <= j) {
+      while (u[i] < pivot) i++;
+      while (u[j] > pivot) j--;
+      if (i <= j) {
+        const double t = u[i];
+        u[i] = u[j], u[j] = t;
+        i++, j--;
+      }
+    }
+    if (k <= j) hi = j;
+    else if (k >= i) lo = i;
+    else break; // between the two parts: it is the pivot
+  }
+  return u[k];
+}
+
 // 1 with probability p.
 static inline int rng_chance(rng *r, double p) { return (double)(rng_next(r) >> 11) * (1.0 / 9007199254740992.0) < p; }
 

@@ -53,7 +53,7 @@ typedef struct {
   double screen_factor, alpha, reintroduce;
   int sd;
   uint64_t seed;
-  int parents;              // PARENTS_VALUE: tournament of two by push-off value; PARENTS_DUEL: by their match
+  int parents;              // PARENTS_VALUE: tournament of two by push-off value; PARENTS_DUEL: by their match; PARENTS_YIELD: by what their children did
   char start[1024];         // --start: a folder of warriors the first batch starts from, "" random ones
   genome_mix changes;       // --changes: how often each kind of change is drawn
   uint32_t screen_members;  // --screen-members: the screen plays the panel and this many members
@@ -83,10 +83,12 @@ typedef struct {
   int events_brief;         // --events brief (#187): a newcomer that leaves in its batch is a short enter line, without its complete line
   int ladder;               // --ladder (#247): the panel starts from the weakest third of the pick's candidates and climbs (ladder_climb())
   uint32_t ladder_every;    // --ladder-every E: a step of the ladder before every E-th batch
+  uint32_t yield_half;      // --yield-half H: with --parents yield every member's counts are halved every H batches, 0 never
   double ladder_above;      // --ladder-above T: a panel warrior is beaten when the median of the members' points against it is T or more
 } params;
 
-enum { PARENTS_VALUE, PARENTS_DUEL };
+enum { PARENTS_VALUE, PARENTS_DUEL, PARENTS_YIELD };
+#define YIELD_CAP 500 // --parents yield: a member's counts are halved above this (count_children()); below RNG_BETA_MAX
 
 enum { PANEL_PICKED, PANEL_RANDOM, PANEL_KINDS }; // --panel-choice
 
@@ -111,6 +113,7 @@ typedef struct {
   style st;                 // members: the numbers behind it, when it entered
   double holdout; // members: average against the holdout warriors, -1 not measured
   char ops[128]; // the names of the changes, space separated: 6 of at most 17 characters
+  uint32_t kids, kids_ok; // members, --parents yield (#248): its children as a first parent that were evaluated, and those that were a success
   uint32_t foe_island; // panel: a foe of --groups (#183), a member of island foe_island (from 1) whose id was foe_id there; 0 a hill warrior
   uint64_t foe_id;
 } warrior;

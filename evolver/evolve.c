@@ -47,6 +47,7 @@ params default_params(void) {
   p.seed = 1;
   p.changes = genome_mix_default();
   p.ladder_every = 10;
+  p.yield_half = 100;
   p.ladder_above = 200;
   return p;
 }
@@ -65,7 +66,7 @@ static void usage(void) {
           "         [--batch 128] [--survivors N] [--rounds 100] [--screen-rounds 20] [--screen-factor 0.8]\n"
           "         [--bench-every 10] [--bench-rounds 100] [--alpha 1] [--sd opponent|sum]\n"
           "         [--reintroduce 0.02] [--init-length 10] [--seed 1] [--draw-seed S]\n"
-          "         [--parents value|duel] [--start <dir>] [--changes name=weight,...]\n"
+          "         [--parents value|duel|yield [--yield-half 100]] [--start <dir>] [--changes name=weight,...]\n"
           "         [--panel-choice picked|random|kinds] [--pick-sample 300] [--panel-files a.red,b.red,...]\n"
           "         [--screen-members N] [--screen-stop z | --screen-check z] [--stage N (screen rounds; 0 none)]\n"
           "         [--fill | --no-fill] [--panel-rounds N] [--diversity all|panel] [--average all|panel]\n"
@@ -143,6 +144,7 @@ typedef struct {
   int panel_choice_given, draw_seed_given, positions_given, pushoff_given, genome_given, migrate_given;
   int events_given; // --events
   int ladder_option; // --ladder-every or --ladder-above given
+  int yield_option;  // --yield-half given
   int variant_default; // the variants of new_island_defaults(), not given
   const char *pushoff_fallback; // the option that made the default push-off value, not pareto-sd (#199)
   uint32_t islands_n, islands_keep, islands_every, islands_rounds; // --islands, --keep, --select-after, --score-rounds
@@ -198,6 +200,7 @@ static int option_text(cli *c, const char *a, const char *v, double d, int *rc) 
   else if (!strcmp(a, "--parents")) {
     if (!strcmp(v, "value")) p->parents = PARENTS_VALUE;
     else if (!strcmp(v, "duel")) p->parents = PARENTS_DUEL;
+    else if (!strcmp(v, "yield")) p->parents = PARENTS_YIELD;
     else usage();
   } else if (!strcmp(a, "--panel-choice")) {
     c->panel_choice_given = 1;
@@ -307,6 +310,7 @@ static void option_number(cli *c, const char *a, int number, double d, uint32_t 
   else if (!strcmp(a, "--panel-rounds")) p->panel_rounds = u, c->panel_rounds_given = 1;
   else if (!strcmp(a, "--pick-sample")) p->pick_sample = u;
   else if (!strcmp(a, "--ladder-every")) p->ladder_every = u, c->ladder_option = 1;
+  else if (!strcmp(a, "--yield-half")) p->yield_half = u, c->yield_option = 1;
   else if (!strcmp(a, "--ladder-above")) p->ladder_above = d, c->ladder_option = 1;
 
   else if (!strcmp(a, "--screen-stop") || !strcmp(a, "--screen-check")) {
@@ -411,6 +415,7 @@ static const char *new_run_defaults(cli *c) {
   params *p = &c->p;
   if (!p->opponents[0]) usage();
   if (c->ladder_option && !p->ladder) return "--ladder-every and --ladder-above with --ladder";
+  if (c->yield_option && p->parents != PARENTS_YIELD) return "--yield-half with --parents yield";
   // new runs: generators (docs/evolver-gen.md), not for --optimize, which keeps lists
   if (!c->genome_given && !c->optimize_file) p->gen = 1;
   if (p->gen && !c->changes_given) p->changes = gen_mix_default(); // the kinds that make structure too

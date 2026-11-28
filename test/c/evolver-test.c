@@ -508,6 +508,32 @@ static void test_mix(void) {
   CHECK(!ops[0] && !memcmp(&c, &p, sizeof c), "crossover without a second parent changed something: %s", ops);
 }
 
+// rng_beta() (--parents yield, #248): the a-th smallest of the a + b - 1 numbers of rng_unit() it draws, the
+// same as sorting them, for small and for the largest counts; its mean, a / (a + b), over many draws.
+static int by_double(const void *x, const void *y) {
+  const double a = *(const double *)x, b = *(const double *)y;
+  return a < b ? -1 : a > b;
+}
+
+static void test_beta(void) {
+  rng r = rng_seed(4, 5, 6);
+  static double u[RNG_BETA_MAX];
+  for (int t = 0; t < 2000; t++) {
+    const uint32_t n = 1 + rng_below(&r, t < 1000 ? 12 : RNG_BETA_MAX), a = 1 + rng_below(&r, n), b = n + 1 - a;
+    rng x = rng_seed(7, (uint64_t)t, 0), y = x;
+    for (uint32_t i = 0; i < n; i++) u[i] = rng_unit(&y);
+    qsort(u, n, sizeof *u, by_double);
+    const double got = rng_beta(&x, a, b);
+    CHECK(got == u[a - 1], "rng_beta(%u, %u): %.17g, the %u-th smallest is %.17g", a, b, got, a, u[a - 1]);
+  }
+  for (uint32_t a = 1; a <= 9; a += 4)
+    for (uint32_t b = 1; b <= 9; b += 4) {
+      double s = 0;
+      for (int i = 0; i < 20000; i++) s += rng_beta(&r, a, b);
+      CHECK(fabs(s / 20000 - (double)a / (a + b)) < 0.01, "the mean of Beta(%u, %u): %.4f", a, b, s / 20000);
+    }
+}
+
 int main(void) {
   test_rebuild();
   test_duplicate_and_crossover();
@@ -520,6 +546,7 @@ int main(void) {
   test_changes();
   test_loop();
   test_mix();
+  test_beta();
   if (failures) {
     fprintf(stderr, "%d failures\n", failures);
     return 1;

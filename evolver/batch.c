@@ -64,6 +64,7 @@ typedef struct {
   uint32_t stop_at; // --screen-stop, --screen-check: the rounds after which it stopped (would have), 0 not
   int reached;     // 0 bred, 1 evaluated (not a repeat), 2 past the screen, 3 still in the list after its batch
   int keep;        // --start: a start warrior in the first batch, which enters whatever its screen
+  int success;     // --parents yield: still in the list after its batch and no twin of its first parent (count_children())
   uint64_t id;
 } candidate;
 
@@ -71,11 +72,26 @@ typedef struct {
 // wins. --parents duel: the one with more points in their match against
 // each other wins (as in YACE, where winners of fights reproduce), a draw
 // goes by value. *rival: the other one.
+// --parents yield (#248): the push-off value says how good and how different
+// a member is, not whether its children get anywhere: the strongest members
+// sit on a peak that one change does not climb, and a few parents got most
+// of the children. Each of the two draws a number from Beta(1 + s, 1 + n - s),
+// n its children that were evaluated and s those that were a success
+// (count_children()), and the higher draw wins (Thompson sampling), the
+// first on a tie. A new member has Beta(1, 1), any number from 0 to 1 alike:
+// it wins often until its children have shown what they do. One with 300
+// children and no success almost never wins.
 static const warrior *select_parent(run *r, rng *g, uint64_t *rival) {
   const uint32_t m = members(r);
   const uint32_t i = r->panel_n + rng_below(g, m), j = r->panel_n + rng_below(g, m);
   const pushoff_value *a = &r->values[i], *b = &r->values[j];
   const pushoff_value *win = b->value > a->value ? b : a;
+  if (r->p.parents == PARENTS_YIELD) {
+    const warrior *wa = r->slot[a->index], *wb = r->slot[b->index];
+    const double da = rng_beta(g, 1 + wa->kids_ok, 1 + wa->kids - wa->kids_ok);
+    const double db = rng_beta(g, 1 + wb->kids_ok, 1 + wb->kids - wb->kids_ok);
+    win = db > da ? b : a;
+  }
   if (r->p.parents == PARENTS_DUEL && a->index != b->index) {
     const double ab = r->pts[a->index * r->cap + b->index], ba = r->pts[b->index * r->cap + a->index];
     if (ab != ba) win = ab > ba ? a : b;
@@ -295,18 +311,21 @@ static void screen_more(run *r, const candidate *c, uint32_t B, const uint32_t *
 // back from the archive.
 static void event_parents(run *r, const candidate *c, uint32_t B) {
   uint64_t *pid = xmalloc(B * sizeof *pid);
-  uint32_t (*pn)[4] = xmalloc(B * sizeof *pn), np = 0;
+  uint32_t (*pn)[5] = xmalloc(B * sizeof *pn), np = 0; // the fifth: successes (--parents yield)
   for (uint32_t i = 0; i < B; i++) {
     if (c[i].parents[0] == NO_ID || !strcmp(c[i].ops, "reintroduce")) continue;
     uint32_t k = 0;
     while (k < np && pid[k] != c[i].parents[0]) k++;
     if (k == np) pid[np++] = c[i].parents[0];
     for (int st = 0; st <= c[i].reached; st++) pn[k][st]++;
+    pn[k][4] += (uint32_t)c[i].success;
   }
   if (np) {
     fprintf(r->events, "{\"type\":\"parents\",\"batch\":%u,\"parents\":[", r->batch);
     for (uint32_t k = 0; k < np; k++)
-      fprintf(r->events, "%s[%" PRIu64 ",%u,%u,%u,%u]", k ? "," : "", pid[k], pn[k][0], pn[k][1], pn[k][2], pn[k][3]);
+      if (r->p.parents == PARENTS_YIELD)
+        fprintf(r->events, "%s[%" PRIu64 ",%u,%u,%u,%u,%u]", k ? "," : "", pid[k], pn[k][0], pn[k][1], pn[k][2], pn[k][3], pn[k][4]);
+      else fprintf(r->events, "%s[%" PRIu64 ",%u,%u,%u,%u]", k ? "," : "", pid[k], pn[k][0], pn[k][1], pn[k][2], pn[k][3]);
     fputs("]}\n", r->events);
   }
   free(pid), free(pn);
@@ -490,6 +509,7 @@ static void breed(run *r, batch *b) {
     rng g = rng_seed(p->seed, 0x6272656564u + r->batch, i); // "breed"
     candidate *x = &c[i];
     x->parents[0] = x->parents[1] = x->rival = NO_ID;
+    x->success = 0;
     x->origin = r->batch; // a new line, unless it has parents in the list (below)
     int reintro = 0, copy = 0;
     if (i < r->migr_n) { // --migrate: another island's best member; it enters like a start warrior when it passes
@@ -1021,6 +1041,49 @@ static void enter_survivors(run *r, batch *b) {
   event_values(r);
 }
 
+// --parents yield (#248): what the children of this batch say about their
+// first parents. A child: a candidate bred from a member (not a warrior back
+// from the archive, a migrant, a start or a random warrior). It is a success
+// when it is still in the list after the batch and is no twin of that
+// parent: its results against the panel differ from the parent's in at
+// least one match, on the rounds of the first stage with --stage (both
+// played those with the same seeds; whole matches otherwise). On the '94
+// hill a fifth of the children past the screen were such twins, and none of
+// them was a point better (#246). A child whose parent left in the batch is
+// a success when it stayed. Each member that is still in counts its
+// evaluated children (kids) and the successes among them (kids_ok); above
+// YIELD_CAP both are halved, so that a draw needs few numbers. After every
+// --yield-half-th batch all members' counts are halved: the list changes,
+// and with it what a member's children are worth.
+static void count_children(run *r, batch *b) {
+  const params *p = &r->p;
+  if (p->parents != PARENTS_YIELD) return;
+  const m42_score *res = b->staged ? r->wlt1 : r->wlt;
+  for (uint32_t i = 0; i < b->sn; i++) {
+    candidate *x = b->sv[i];
+    const uint32_t s = b->slot_of[i];
+    if (s == UINT32_MAX || x->parents[0] == NO_ID || !strcmp(x->ops, "reintroduce")) continue;
+    const uint32_t ps = slot_of_id(r, x->parents[0]);
+    int twin = ps != UINT32_MAX && r->slot[ps]->kind == MEMBER;
+    for (uint32_t j = 0; j < r->panel_n && twin; j++) {
+      const m42_score a = res[s * r->cap + j], q = res[ps * r->cap + j];
+      twin = a.wins == q.wins && a.losses == q.losses && a.ties == q.ties;
+    }
+    x->success = !twin;
+  }
+  for (uint32_t i = 0; i < b->B; i++) { // a warrior back from the archive has its own old id as parent: no member
+    const candidate *x = &b->c[i];
+    if (x->reached < 1 || x->parents[0] == NO_ID) continue;
+    const uint32_t ps = slot_of_id(r, x->parents[0]);
+    if (ps == UINT32_MAX || r->slot[ps]->kind != MEMBER) continue;
+    warrior *w = r->slot[ps];
+    w->kids++, w->kids_ok += (uint32_t)x->success;
+    if (w->kids > YIELD_CAP) w->kids /= 2, w->kids_ok /= 2;
+  }
+  if (p->yield_half && (r->batch + 1) % p->yield_half == 0)
+    for (uint32_t i = r->panel_n; i < r->active_n; i++) r->slot[r->active[i]]->kids /= 2, r->slot[r->active[i]]->kids_ok /= 2;
+}
+
 // Every --bench-every batches: the member best against the panel plays the
 // holdout, unless it did already.
 static void bench_best(run *r) {
@@ -1126,6 +1189,7 @@ void run_batch(run *r) {
   play_survivors(r, &b);
   enter_survivors(r, &b);
   bench_best(r);
+  count_children(r, &b);
   event_parents(r, b.c, b.B);
   event_batch(r, &b);
   batch_free(&b);

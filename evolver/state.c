@@ -31,7 +31,7 @@ static const param_field param_fields[] = {
     GONE("--difference"), PF('d', pareto), PF('d', mirror), PF('g', clear), PF('d', gen), GONE("--refactor"),
     PF('u', min_length), PF('g', tie), PF('d', parsimony), PF('d', no_spl),
     PF('d', survivors_by), PF('d', replace_parent), PF('d', events_brief), PF('d', ladder), PF('u', ladder_every),
-    PF('g', ladder_above)};
+    PF('g', ladder_above), PF('u', yield_half)};
 #define PARAM_FIELDS (sizeof param_fields / sizeof *param_fields)
 
 static void save_params(FILE *f, const params *p) {
@@ -123,6 +123,7 @@ void save_state(run *r) {
     genome_save(w->g, text, sizeof text);
     fprintf(f, "member %" PRIu64 " %u %" PRIu64 " %" PRIu64 " %.17g %u %u %u %s\nops %s\nkind %d\norigin %u\n", w->id, w->born,
             w->parents[0], w->parents[1], w->holdout, w->adjective, w->noun, w->earlier, text, w->ops, w->style_kind, w->origin);
+    if (w->kids) fprintf(f, "yield %u %u\n", w->kids, w->kids_ok); // --parents yield: its children and their successes
   }
   for (uint32_t i = 0; i < r->archive_n; i++) {
     genome_save(&r->archive[i], text, sizeof text);
@@ -279,6 +280,10 @@ static int state_line(run *r, char *line, uint64_t *slot_id, uint32_t *slot_at, 
     }
     r->slot[at != UINT32_MAX ? at : free_slot(r)] = w;
     *last = w;
+  } else if (!strncmp(line, "yield ", 6)) { // --parents yield, after its member line
+    if (!*last || sscanf(line + 6, "%u %u", &(*last)->kids, &(*last)->kids_ok) != 2 || (*last)->kids_ok > (*last)->kids ||
+        (*last)->kids > YIELD_CAP)
+      return -1;
   } else if (!strncmp(line, "origin ", 7)) { // after its member line; states before have none
     if (!*last || sscanf(line + 7, "%u", &(*last)->origin) != 1) return -1;
   } else if (!strncmp(line, "kind ", 5)) { // after its member line; states before have none
