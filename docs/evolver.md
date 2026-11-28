@@ -948,3 +948,40 @@ build/42evolve <folder> --optimize <scaled.red> --opponents warriors/koenigstuhl
 - **`--optimize` repairs nothing here.** One step on seven warriors (Furious Stoat, 116.5 to 117.9 on the bench), none on the other six with 4 to 17 constants each. Constants times 10 are no worse a start than single moves can tell.
 
 Verdict: step 2 of #250, a '94 run started from the scaled warriors, is not run. Its bar was a scaled warrior at 125 or more, or one of a design that no '94 run has on top: the best has 123.7, and the ones that score are the clear that '94 runs find by themselves. The tiny hill is no nursery for '94 as the warriors stand. What the table adds to the papers question of #245: 20 lines of `SPL` and `MOV` hold 65 to 83 against papers where the clear holds 30 to 58, and pay for it against everything else.
+
+## When rounds are decided: shorter rounds (#252, step 1)
+
+28th November 2026. #252 proposes a run whose rounds are a tenth as long, where only a fast kill wins and a batch costs much less. Its first step is a measurement with `tools/tournament.mjs --cycles`: when are rounds decided, and does a hill under shorter rounds rank as the real one does?
+
+100 warriors of `warriors/koenigstuhl/94nop` (every 11th file) in a round robin, 4,950 pairs, 100 rounds, at five limits. "Decided" is a round that is no tie. The start positions are the same at every limit, so a round decided by cycle 5,000 is the same round at 80,000:
+
+```sh
+node tools/tournament.mjs <the 100 files> --rounds 100 --cycles <limit> --json rr-<limit>.json
+node tools/tournament.mjs warriors/koenigstuhl/94nop --rounds 100 --cycles <limit> --bench <ours.red> --json <ours>-<limit>.json
+```
+
+| `--cycles` | decided, of all rounds | of those decided at 80,000 | rank correlation of the scores with 80,000 | of the best 20 at 80,000 in the best 20 | instructions per round |
+|---|---|---|---|---|---|
+| 5,000 | 18.6% | 28.4% | 0.30 | 7 | 8,312 |
+| 10,000 | 23.8% | 36.3% | 0.32 | 7 | 15,918 |
+| 20,000 | 31.5% | 48.1% | 0.40 | 7 | 29,963 |
+| 40,000 | 51.2% | 78.3% | 0.80 | 12 | 52,883 |
+| 80,000 | 65.5% | 100% | 1 | 20 | 83,198 |
+
+The five best from random code of `warriors/evolved/94nop/`, each against the 1,107, at 5,000 / 10,000 / 20,000 / 40,000 / 80,000 cycles:
+
+| warrior | score | decided, of those decided at 80,000 | wins of 110,700 rounds |
+|---|---|---|---|
+| Spiky Mongoose XVI | 139.3 / 144.0 / 146.3 / 147.4 / 142.9 | 38% / 54% / 71% / 90% / 100% | 25,927 / 32,685 / 38,456 / 44,847 / 46,259 |
+| Cranky Mongoose VI | 138.9 / 144.2 / 147.0 / 147.3 / 142.7 | 37% / 54% / 71% / 91% / 100% | 25,417 / 32,796 / 38,961 / 44,989 / 46,301 |
+| Restless Gremlin | 136.7 / 143.9 / 146.6 / 144.9 / 139.3 | 33% / 48% / 66% / 89% / 100% | 23,016 / 30,282 / 36,427 / 42,470 / 43,845 |
+| Eager Ferret II | 138.2 / 144.8 / 140.8 / 141.5 / 135.7 | 37% / 53% / 65% / 89% / 100% | 25,372 / 33,041 / 35,301 / 43,042 / 44,285 |
+| Twisted Jackal II | 103.8 / 104.6 / 102.3 / 95.1 / 139.7 | 15% / 24% / 33% / 56% / 100% | 5,464 / 8,285 / 9,824 / 13,224 / 41,634 |
+
+- **The hill decides late.** Of the rounds decided at 80,000 cycles, 28% are decided by cycle 5,000, half by 20,000 and 78% by 40,000. The premise of #252, that hill warriors decide most of their wins in the first few thousand cycles, does not hold for the hill as a whole.
+- **Under short rounds the hill is another game.** The ranks of the 100 warriors correlate with the real ones at 0.30 to 0.40 up to 20,000 cycles, and 7 of the best 20 are still among the best 20. Only 40,000 cycles keep the order (0.80, 12 of 20).
+- **Our clears are the fast ones.** They decide 33 to 38% of their rounds by cycle 5,000 against the hill's 28%, 89 to 91% by 40,000, and they win 23% of all rounds within 5,000 cycles. At 10,000 to 40,000 cycles they score more than at 80,000 (144 to 147 against 136 to 143): what they lose, they lose late. A run under short rounds would not push them out, it would suit them.
+- **The one that is slow is the one that holds against papers.** Twisted Jackal II (109 against papers, the section of #245) wins two thirds of its rounds after cycle 40,000 and scores 95 to 105 under any shorter limit.
+- **The screen with fewer cycles** (the second question of #252) does not pay. Its bar was 90% of the decided rounds by cycle 20,000: the hill has 48% and our clears 65 to 71%. At 40,000 it would be 78% and 89 to 91%, for 36% fewer instructions per round.
+
+What follows for step 2: the rule of #252 for the limit (the shortest at which the hill's ranks correlate above 0.8) gives 40,000 at best, which is no other pressure, since our clears score more there. At 8,000 cycles the run selects for a game whose ranks have little to do with the hill's, in which the clears we have are strong already. The run is queued as #252 asks, `94-short-301` (the command of the baseline with `--cycles 8000`, seed 301, 1,000 batches), to see which designs come up; its warriors are scored again under the real rules.
