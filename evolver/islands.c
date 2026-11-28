@@ -587,7 +587,7 @@ static void islands_close(islands *I) {
 static int island_panels(islands *I, run *root, const params *base) {
   uint32_t count;
   char **names = opponent_files(root, &count);
-  if (base->ladder && ladder_holdout(root, count) != 0) return 2;
+  if (base->ladder && ladder_holdout(root, count) != 0) exit(2); // as pick_panel() for a run
   pick_table t;
   pick_play(root, names, count, &t);
   uint8_t *in_panel = calloc(count, 1), *allowed = xmalloc(t.n), *start = xmalloc(t.n ? t.n : 1);

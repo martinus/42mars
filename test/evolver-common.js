@@ -54,6 +54,13 @@ export const TINY = ['--opponents', join(root, 'warriors/koenigstuhl/tiny'), '--
   '--events', 'full', // every newcomer with its matches, which checkValues replays; test/evolver-brief.test.js has the brief lines
   '--stage', '0']; // the tests of --stage set it
 
+// The numbers of the params line of a state, in the order of param_fields (evolver/state.c), and the places (from
+// 1) of those the tests look at: by its place, so that a field added at the end changes no test (#247: six tests
+// matched the end of the line).
+export const stateParams = (text) => /^params (.*)$/m.exec(text)[1].split(' ');
+export const PARAM = { gen: 44, tie: 47, parsimony: 48, noSpl: 49, survivorsBy: 50, replaceParent: 51, events: 52, ladder: 53, ladderEvery: 54, ladderAbove: 55 };
+export const stateParam = (text, name) => stateParams(text)[PARAM[name] - 1];
+
 export function run(dir, args) {
   const r = spawnSync(evolve, [dir, ...args], { encoding: 'utf8', timeout: Math.ceil(120000 * slowdown()) });
   assert.equal(r.status, 0, r.stderr);

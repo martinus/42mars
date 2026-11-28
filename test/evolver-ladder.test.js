@@ -14,7 +14,7 @@ import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { setup, cleanup, tmp, evolve, skip, TINY, run, events, without, stable, checkValues, checkLadder } from './evolver-common.js';
+import { setup, cleanup, tmp, evolve, skip, TINY, run, events, without, stable, checkValues, checkLadder, stateParam } from './evolver-common.js';
 
 before(() => setup({ base: false })); // no test here reads the base run
 after(cleanup);
@@ -29,6 +29,8 @@ test('--ladder: the panel starts from the weakest third and climbs; a beaten war
   const evs = events(dir);
   const r = checkLadder(dir, evs, { every: 1, above: 60 });
   assert.equal(r.steps, B - 1); // before every batch but the first
+  const state = readFileSync(join(dir, 'state.txt'), 'utf8');
+  assert.deepEqual(['ladder', 'ladderEvery', 'ladderAbove'].map((n) => stateParam(state, n)), ['1', '1', '60']);
   assert.ok(r.replaced >= 4, `${r.replaced} replaced`);
   // the values after each step that changed the panel, and after every batch: the replay of the matrix agrees
   assert.equal(checkValues(evs), B + evs.filter((e) => e.type === 'ladder' && e.replaced.length).length);

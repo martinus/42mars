@@ -13,7 +13,7 @@ import { after, before, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { setup, cleanup, tmp, skip, TINY, run, events, without, stable, base, checkValues, checkOps } from './evolver-common.js';
+import { setup, cleanup, tmp, skip, TINY, run, events, without, stable, base, checkValues, checkOps, stateParam } from './evolver-common.js';
 
 before(setup);
 after(cleanup);
@@ -37,7 +37,7 @@ test('--replace-parent: a newcomer nearest to its first parent duels it by the a
   run(join(tmp, 'duel1'), [...args, '--threads', '1', '--batches', String(B)]);
   const one = events(join(tmp, 'duel1'));
   assert.equal(one[0].params.replaceParent, true);
-  assert.match(readFileSync(join(tmp, 'duel1', 'state.txt'), 'latin1'), /^params .* 0 1 0$/m); // --survivors-by, this, then --events
+  assert.equal(stateParam(readFileSync(join(tmp, 'duel1', 'state.txt'), 'latin1'), 'replaceParent'), '1');
   checkDuels(one, 10);
   checkOps(one);
   run(join(tmp, 'duel-resumed'), [...args, '--threads', '2', '--batches', String(B >> 1)]);

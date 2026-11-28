@@ -10,7 +10,7 @@ import { after, before, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { setup, cleanup, root, tmp, skip, TINY, run, events, without, stable, base, checkValues } from './evolver-common.js';
+import { setup, cleanup, root, tmp, skip, TINY, run, events, without, stable, base, checkValues, stateParam } from './evolver-common.js';
 
 before(setup);
 after(cleanup);
@@ -29,7 +29,7 @@ test('--parsimony: of a newcomer and its twin the longer one leaves, the newcome
   assert.equal(checkValues.twinLeaves, twins.length);
   assert.ok(checkValues.twinChecks > 3 * twins.length, `${checkValues.twinChecks} newcomers checked`);
   assert.ok(twins.length >= 3 && twins.every((e) => e.id > e.twin), 'the newcomers that left as twins');
-  assert.match(readFileSync(join(tmp, 'twins1', 'state.txt'), 'latin1'), /^params .* 1 0 0 0 0$/m); // --parsimony, then --no-spl, --survivors-by, --replace-parent and --events
+  assert.equal(stateParam(readFileSync(join(tmp, 'twins1', 'state.txt'), 'latin1'), 'parsimony'), '1');
   run(join(tmp, 'twins-resumed'), [...args, '--threads', '2', '--batches', String(BATCHES >> 1)]);
   run(join(tmp, 'twins-resumed'), ['--threads', '3', '--batches', String(BATCHES - (BATCHES >> 1))]);
   assert.deepEqual(stable(events(join(tmp, 'twins-resumed'))), stable(one));
